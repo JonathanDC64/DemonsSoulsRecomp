@@ -74,5 +74,51 @@ global the allocator-init reads.
 4. If the allocator expects a pre-reserved heap region, reserve it in the loader and
    point the allocator's base at it.
 
+### Progress this session (still open)
+- **Fixed `sys_initialize_tls` main-thread clobber** (real bug, upstream fix #5): the
+  handler was discarding the loader's PT_TLS image on the game's `(0,0,0)` call,
+  zeroing all TLS vars. Now a no-op when no template is supplied. The D3D12 window
+  now opens, but the `bad_alloc` persists → TLS was not the (sole) cause.
+- **Ruled out the memory-budget hypothesis:** bumping reported available memory
+  192MB→224MB did not change anything.
+- **Built a fatal backtrace pipeline:** on `sys_process_exit`, dump the guest stack
+  back-chain (LRs are 0 — the lifted ABI uses direct C calls + trampolines, not the
+  PPC LR-on-stack convention) **and** the host RVA backtrace (lifted `bl` = real C
+  calls). Symbolize with `llvm-symbolizer --obj=des_boot.exe --relative-address`
+  against the 251 MB PDB.
+- **Localized the abort chain** (entry → … → exit):
+  ```
+  ppu_run → func_016B84B0 → func_01516590 → func_01686CE8 → func_016A0500
+          → func_0168ABD0 → func_0168BBA0 → func_0167AD50 → func_016BB5A4 → sys_process_exit
+  ```
+  - `func_016BB5A4` = exit wrapper; `func_0167AD50`/`func_0168BBA0` = error-message
+    builder/printer (read the message strings via `r2+0x4CB8/0x4CBC/0x4CC0`).
+  - **`func_0168ABD0` is a C++ static-initializer / init-list runner** — it walks a
+    list of `{func,toc}` OPD pairs and calls each via `ps3_indirect_call`. So the
+    `bad_alloc` happens inside a **global constructor during static init**, before
+    the engine's main allocator is set up.
+
+### Concrete next steps (resume here)
+1. Read `func_016A0500` (frame 5, the init driver's caller) and `func_0167AC88` (the
+   per-item check called in `func_0168ABD0`'s loop) to identify which constructor /
+   subsystem is initializing and what it allocates.
+2. Find the engine's `operator new` / allocator-init: the allocation makes no syscall,
+   so the allocator operates on a guest region that must be reserved earlier. Confirm
+   whether a heap-base global is null at the failing constructor.
+3. Consider hooking the guest `__cxa_throw` (find its address) to catch the throw site
+   with a live (non-unwound) backtrace if the failure turns out to unwind.
+
 > This is the expected iterative phase: a large title's first allocation failure in
-> stripped, lifted code. Progress is measured blocker-by-blocker.
+> stripped, lifted code, during C++ static init. Progress is measured
+> blocker-by-blocker, and there will be many before the title is playable.
+
+### Diagnostics reference (all in ps3recomp runtime)
+| Env var | Effect |
+|---|---|
+| `YDKJ_SCTRACE=1` | log every lv2 syscall (num + r3-r6) |
+| `YDKJ_HLETRACE=1` | log every resolved NID/HLE call (name + args + ret) |
+| `YDKJ_WWATCH=0xADDR` / `YDKJ_RWATCH=0xADDR` | log guest writes/reads near an address |
+| (automatic) | guest+host backtrace on `sys_process_exit` |
+
+Symbolize host RVAs:
+`"C:\Program Files\LLVM\bin\llvm-symbolizer.exe" --obj=port\build\des_boot.exe --relative-address 0x... 0x...`

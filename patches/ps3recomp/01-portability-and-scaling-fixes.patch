@@ -14,18 +14,73 @@ index 67c0058..9924b6c 100644
  # Runtime core (syscalls, PPU, SPU, memory)
  file(GLOB_RECURSE RUNTIME_SOURCES
 diff --git a/runtime/ppu/ppu_hle.cpp b/runtime/ppu/ppu_hle.cpp
-index 93ab2a4..b6ecbac 100644
+index 93ab2a4..215bc99 100644
 --- a/runtime/ppu/ppu_hle.cpp
 +++ b/runtime/ppu/ppu_hle.cpp
-@@ -20,6 +20,7 @@
+@@ -20,6 +20,10 @@
  #include "ps3emu/nid.h"   /* ps3_nid_table, ps3_nid_entry */
  #include <stdint.h>
  #include <stdio.h>
 +#include <stdlib.h>   /* getenv (HLE trace toggle) */
++#ifdef _WIN32
++#include <windows.h>  /* RtlCaptureStackBackTrace / GetModuleHandleExA (fatal backtrace) */
++#endif
  
  /* Single flat NID -> handler table (all modules share it; resolution is by
   * NID which is globally unique). Sized for the firmware import surface. */
-@@ -107,8 +108,15 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
+@@ -71,9 +75,51 @@ extern "C" uint32_t prx_resolve_export(uint32_t nid);
+ extern "C" void     ps3_indirect_call(ppu_context* ctx);
+ extern "C" uint32_t vm_read32(uint64_t a);
+ 
++extern "C" uint64_t vm_read64(uint64_t a);
++
+ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
+ {
+     g_last_hle_nid = nid;
++
++    /* Fatal-path guest backtrace: when the game calls sys_process_exit
++     * (nid 0xE6F2C1E7), walk the PPC64 ELFv1 stack (back-chain at 0(sp),
++     * saved LR at 16(caller frame)) and print the guest return-address chain
++     * so we can map the abort path back to the failing call site. */
++    if (nid == 0xE6F2C1E7u) {
++        fprintf(stderr, "[bt] sys_process_exit: guest backtrace (cur lr=0x%08X):\n",
++                (uint32_t)ctx->lr);
++        uint32_t fp = (uint32_t)ctx->gpr[1];
++        for (int d = 0; d < 32 && fp; d++) {
++            uint32_t lr = (uint32_t)vm_read64(fp + 16);
++            uint32_t nx = (uint32_t)vm_read64(fp + 0);
++            fprintf(stderr, "[bt]   #%2d fp=0x%08X  lr=0x%08X\n", d, fp, lr);
++            if (nx <= fp) break;   /* stack grows down: caller frame is higher */
++            fp = nx;
++        }
++#ifdef _WIN32
++        /* Host backtrace: lifted `bl` calls are real nested C calls, so the host
++         * stack holds the func_XXXX chain. Print RVAs to symbolize against the
++         * PDB (llvm-symbolizer --obj=des_boot.exe <rva...>). */
++        {
++            void* frames[48];
++            unsigned short n = RtlCaptureStackBackTrace(0, 48, frames, nullptr);
++            HMODULE self = nullptr;
++            GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
++                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
++                               (LPCSTR)&vm_read64, &self);
++            for (unsigned short i = 0; i < n; i++) {
++                HMODULE m = nullptr;
++                GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
++                                   GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
++                                   (LPCSTR)frames[i], &m);
++                if (m == self)
++                    fprintf(stderr, "[bt-host] rva=0x%llX\n",
++                            (unsigned long long)((char*)frames[i] - (char*)self));
++            }
++        }
++#endif
++        fflush(stderr);
++    }
+     /* PPC64 ELFv1 cross-module ABI: the caller restores its TOC right after the
+      * call with `ld r2, 0x28(r1)`, expecting the import stub to have saved the
+      * caller's r2 into that slot. The real .lib.stub trampoline did this; the
+@@ -107,8 +153,15 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
      }
      g_last_hle_name = e->name;
      hle_generic fn = (hle_generic)e->handler;
@@ -77,6 +132,32 @@ index 55b653f..8675cf5 100644
  }
  
  static ppu_fn ppu_lookup(uint32_t a)
+diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
+index 5f0fe99..a7ea149 100644
+--- a/runtime/ppu/ppu_sysprx.cpp
++++ b/runtime/ppu/ppu_sysprx.cpp
+@@ -35,6 +35,21 @@ static void sys_initialize_tls(ppu_context* ctx)
+     uint32_t seg_size = (uint32_t)ctx->gpr[5];
+     uint32_t mem_size = (uint32_t)ctx->gpr[6];
+ 
++    /* Main-thread no-op: the loader (ppu_run) already built the main thread's
++     * TLS image from the ELF PT_TLS template and pointed r13 at it. PS3 _start
++     * calls sys_initialize_tls(0,0,0) for the main thread, expecting the kernel
++     * to have already done this. If we instead create a fresh zeroed block and
++     * repoint r13, we LOSE the .tdata template -> every TLS variable reads zero
++     * -> the C++ runtime / custom allocator sees null per-thread state and the
++     * first operator new throws bad_alloc. So when no template is supplied, keep
++     * the loader's r13 / TLS image untouched. */
++    if (!seg_addr && !seg_size && !mem_size) {
++        ctx->gpr[3] = 0;   /* CELL_OK */
++        fprintf(stderr, "[crt] sys_initialize_tls: main-thread no-op, keep r13=0x%08X\n",
++                (uint32_t)ctx->gpr[13]);
++        return;
++    }
++
+     uint32_t block = s_tls_next;
+     uint32_t total = ((mem_size + 0x7000u + 0x1000u) + 0xFFFu) & ~0xFFFu;
+     s_tls_next += total;
 diff --git a/tools/ppu_lifter.py b/tools/ppu_lifter.py
 index 8ad277c..2ab3f15 100644
 --- a/tools/ppu_lifter.py

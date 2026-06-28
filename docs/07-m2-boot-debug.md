@@ -533,3 +533,35 @@ IMPLICATION: this is whack-a-mole at the symptom level. The robust fix is the RO
 (a) fix the static-init ordering so objects/heaps are built before use, or (b) back the game's
 DL heap subsystem so its pool-creation runs natively (the original "#2" approach). The lifter
 `cia` stamping + crash-handler `cia` reporting are kept as permanent debugging infrastructure.
+
+### Blockers #4 & #5 CLEARED — boot advancing through C++ static init (2026-06-28)
+
+Two pragmatic fixes (persisted by `scripts/apply_boot_patches.py`, re-applied after each
+re-lift) get the game past its memory-bootstrap and steadily forward through static init:
+
+1. **func_00B0AF28 lazy-build (clears #4).** The accessor for heap-manager singleton
+   X=0x01B92CF8 returned X unbuilt (`*X==0`), so the init runner `func_00A35780` dispatched a
+   virtual method on a NULL vtable. Fix: when `*X==0`, construct X via its real ctor
+   `func_00B25CB8` (on a context copy, so only guest memory is built). Result: the vtable is
+   installed, the unresolved indirect call disappears, the dispatch resolves.
+
+2. **func_00AC8078 NULL-heap -> ds_heap (clears #5).** The DL segregated allocator's bin
+   search spun forever (size-class doubling from 0) when handed a NULL heap descriptor. The
+   game's heap pools are transiently NULL during static init. Fix: when the descriptor is
+   NULL, route the allocation to our backed `ds_heap` (real memory) instead of spinning.
+   Returning "alloc failed" (0) is NOT enough — the game then takes a failure path that hits
+   another unbuilt vtable; the allocation must SUCCEED.
+
+Effect: the init runner `func_00A35780` advanced from +0x28F (blocker #4) through +0x10A9
+(#5) to +0x124A, executing real game code through the indirect-call trampoline, with ~18
+worker threads alive. The DL allocations now succeed via ds_heap (ptr=0x60000000+).
+
+**New blocker #6**: a loop in `func_00A35780+0x123D` (init-runner), chain
+`func_007CF5D0 -> func_007CEE78 -> func_00AE7768 -> func_00A35DB0 -> func_00A35780`, with
+`func_00B26C18` (allocator wrapper) in the stack. Likely another list-walk / use-before-build
+in the same static-init machinery. The lifter `cia` stamping + ds_heap routing are the tools
+to keep grinding these.
+
+These fixes are pragmatic (symptom-level) but VALIDATE the model: provide working memory +
+lazily build singletons, and the game's own static init proceeds. The long-term-clean
+alternative remains backing the DL heap subsystem so all pools initialize natively.

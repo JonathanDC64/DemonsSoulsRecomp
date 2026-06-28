@@ -472,3 +472,35 @@ and spinning.
 
 Diagnostics added to `ppu_loader.cpp` (kept): `ds_dump_bt()` host-backtrace helper, and a
 `YDKJ_WWATCH` backtrace on the exact watched word.
+
+### Blocker #4 — confirmed SAME-THREAD reentrancy in C++ static init
+
+Tagged the accessor probes with the OS thread id (`ds_tid()`). Both the constructing call
+and the half-built-returning call are on the **same thread** (tid identical):
+```
+[B0AF28] enter guard1=0 callno=1 tid=T        (1st: begins construction)
+[B0AF28] === CONSTRUCT-B first-time            (guard1=1, guard2=0, calls guard-helper)
+[B0AF28] >>> CONSTRUCT-A running               (real ctor begins)
+[B0AF28] enter guard1=1 callno=2 tid=T         (SAME thread re-enters mid-construction)
+[B0AF28] RETURN-EXISTING *obj=0 guard2=1 tid=T (returns the half-built object)
+→ CALL1 NULL vtable → spin
+```
+So `func_00A35780` (the static-init list runner) re-enters the *same* singleton's
+initialization on the same thread, before its vtable is installed, and uses it. The object's
+vtable IS written later (WWATCH showed the write *after* the spin point — from another thread
+that also constructs it), but the spinning thread already grabbed the NULL-vtable version.
+
+Same-thread recursive entry into a thread-safe static's init is C++ UB; the retail game must
+not do this on real PS3. So our environment perturbs either the construction order (vtable
+installed later than on PS3) or the init-list iteration (an HLE/resource return value steering
+`func_00A35780`/`func_00A66790` down a branch that revisits the singleton). A wait-loop fix is
+impossible (same-thread → would deadlock, since the ctor is paused up the stack).
+
+Next candidate directions:
+- Find what `func_00A66790`'s post-ctor virtual call does that re-enters `func_00A35780`
+  (likely an HLE/resource query returning a value that differs from PS3, taking a branch that
+  re-walks the init list).
+- Re-examine whether our CRT entry runs global ctors / the init list in the same order PS3
+  does (boot harness vs the game's own `func_00010210` CRT path).
+- Pragmatic hardening: map guest page 0 no-access so the NULL-vtable deref faults in the VEH
+  (loud + exact guest PC) instead of silently reading garbage and spinning.

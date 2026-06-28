@@ -14,7 +14,29 @@ Diagnostic env toggles (in ps3recomp runtime): `YDKJ_SCTRACE=1` (all lv2 syscall
 
 ---
 
-## Blocker #1 (CURRENT) — `operator new` throws `bad_alloc` during early boot
+## Blocker #1 — `bad_alloc` during early boot — ✅ FIXED (2026-06-28)
+
+**Fix:** override the game's `malloc` (`func_0167AC88`) and `free` (`func_0167AC58`) with a
+clean host-backed guest allocator (`port/des_heap.cpp`, region `0x40000000+`), via the new
+lifter `--override-funcs`. The DL system heap can't be backed in our env (no `liblv2`
+`prx_start`), so we bypass it entirely — and it's plug-and-play (our code, no firmware).
+Re-lift: `--override-funcs 0x167AC88=ds_malloc,0x167AC58=ds_free`.
+
+**Result:** static-init `bad_alloc` gone. Boot now passes C++ static init, runs the entry,
+loads system modules (`cellSysmodule`: RTC, L10N, SYNC2, SPURS, RESC, NET), spawns worker
+threads, and runs indefinitely without crashing. Huge cascade unblocked.
+
+## Blocker #2 (CURRENT) — init settles into a mutex-create / lock-unlock loop
+
+After loading the 6 modules, steady state is a tight repeating loop of `sys_mutex_create`
+(syscall 100) + `sys_lwmutex_lock`/`unlock`. Main thread IP keeps moving (progressing, not
+deadlocked). Either heavy object init (a lock per object) or — more likely — a **spin-wait on
+a result that never arrives** (we don't execute SPU code; SPURS was just loaded). Remaining
+minor items: unresolved NID `0x63FF6FF9`, unresolved indirect calls `0x019FFC50` / `0x00A8CF98`.
+Next: determine if the loop is finite init or a stuck wait; if a wait, find what it polls
+(SPU/RSX/thread) and satisfy it (likely an SPU PPU-fallback or a thread/RSX signal).
+
+## (history) Blocker #1 — `operator new` throws `bad_alloc` during early boot
 
 ### Symptom
 After CRT/TLS init the game prints (via its own `sys_tty_write`):

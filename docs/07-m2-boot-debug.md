@@ -438,3 +438,37 @@ Diagnostics added this round (kept): `ppu_loader.cpp` unresolved-call handler no
 `ctx->cia`, the `this`/vtable chain, and a deep `CaptureStackBackTrace`. Probes in the
 generated chunk 005 (AC8078 desc dump, CALL1 dump, cia stamps) are in gitignored files and
 are removed on the next re-lift.
+
+### Blocker #4 — deeper: the singleton is zeroed then used before its vtable is set
+
+Instrumented the lazy accessor `func_00B0AF28` (guard-byte trace) and watched the
+object's vtable slot `0x01B92CF8` (`YDKJ_WWATCH` + host backtraces). Findings:
+
+- The accessor path uses C++ thread-safe-static guards; a **second entry** returns the
+  object while `*(obj)==0` (vtable not set) — `[B0AF28] RETURN-EXISTING *obj=0 guard2=1`.
+- The vtable slot `0x01B92CF8` is written by two routines (zero **before** set):
+  - `func_00AC7578` (+0x38) — a field-clearing ctor that zeroes obj+0(vtable),+4,+0x10..+0x3C
+    (a ~0x40-byte object). This is what leaves `*(obj)=0`.
+  - `func_00B25CB8` (+0x1DD) — sets `*(obj)=0x018736B0` (the vtable) **later**.
+- The failing virtual call (`func_00A35780`@`0x00A359E4`, `vtable[3]`) lands in the window
+  **between the zero and the vtable-set**, so it dereferences a NULL vtable, reads garbage
+  from unmapped guest[0] (`0x018736B0`), the call is unresolved → no-op → NULL heap → spin
+  in `func_00AC8078`.
+- Whole chain is top-level C++ static init: CRT global-ctors (`func_00010210`) →
+  `func_007CF5D0` → `func_007CEE78` → `func_00AE7768` → `func_00A35DB0` →
+  `func_00A35780` (init-list runner) → accessor/dispatch.
+
+So the defect is a **construction-vs-use ordering / reentrancy** in static init: the heap-
+manager singleton is used (virtual init call) after being cleared but before its vtable is
+installed. On real PS3 this same code works, so our environment perturbs the order (extra
+re-entry, or a divergent branch in the init list). Host backtraces can't prove nesting
+(tail-call trampolines unwind the host stack), and the construction spans multiple routines
+(`func_00AC7578` clear, `func_00B25CB8` vtable-set) — so the next step is to find
+`func_00B25CB8`'s caller and why `func_00A35780` dispatches on the object before that runs.
+
+Pragmatic fallback if the ordering proves intractable: map guest page 0 as a no-access guard
+so NULL-vtable derefs trap in the VEH (loud, catchable) instead of silently reading garbage
+and spinning.
+
+Diagnostics added to `ppu_loader.cpp` (kept): `ds_dump_bt()` host-backtrace helper, and a
+`YDKJ_WWATCH` backtrace on the exact watched word.

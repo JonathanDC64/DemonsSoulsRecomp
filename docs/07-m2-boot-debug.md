@@ -182,7 +182,28 @@ Either:
 - So the fix narrows to: **get the DL heap (`0x01A1F850`) backed before the first allocation** —
   either make `func_00C36C80` run first (init-order), or replicate its backing in our runtime.
 
-### Open question for the fix: init-order vs failed-setup
+### CONFIRMED: init-order / heap-init runs but doesn't back the heap
+- We trace ALL syscalls + ALL HLE: **zero `sys_memory_allocate`/`sys_mmapper_allocate_memory`**
+  before the throw, and **no `0x00Cxxxxx` (game-proper) code runs** (ICTRACE has no 0x00C*
+  targets). So the failure is purely in C++ static init / CRT, before `main`.
+- The libc/default heap `0x01A1F850` is initialized by **`func_0167A9C8`** (called via
+  `func_0167ACE0(heap=*(TOC+0x4A68))` during CRT init in `func_000125F0`). `func_0167A9C8`
+  **runs** in our build (we see its `get_user_memory_size`/352 call) but the heap ends up
+  **unbacked** (free-list pointers stay null) → first `operator new` → `bad_alloc`.
+- The 86 MB DL system heap (`func_00C36C80`, called indirectly as a ctor from
+  `func_00C35520`/`func_00C37948`) is a SEPARATE, later heap for game data — not the one the
+  early ctors use. Not the immediate blocker.
+- **So the precise bug: `func_0167A9C8` does not back `0x01A1F850` in our build the way it
+  does on real PS3.** Decoding *why* (which internal branch/precondition differs) needs to
+  watch its control flow at runtime.
+
+### Next step: the `--trace-funcs` lifter feature (clean instrumentation)
+Hand-editing the 3M-line generated chunks is too fragile (broke a `_cs_15` scope; reverted).
+Add `--trace-funcs 0x167A9C8,...` to `ppu_lifter.py` to emit a clean entry/branch log for
+chosen functions, re-lift, and watch `func_0167A9C8` decide whether/how to back the heap.
+Then either fix the precondition it checks or replicate the backing in our HLE.
+
+### (historical) Open question for the fix: init-order vs failed-setup
 Need to know whether `func_00C36C80` (heap backing) *runs but fails* in our build, or *never
 runs* before the throw. Tried instrumenting `func_00C36C80`/`func_0167AC88` entries by editing
 the generated chunks — **too fragile** (broke a `_cs_15` scope in the 3M-line output; reverted).

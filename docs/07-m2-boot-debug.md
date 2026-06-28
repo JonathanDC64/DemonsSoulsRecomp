@@ -168,6 +168,31 @@ Either:
   `_malloc_limit`, cf. the `"WARNING : '_malloc_limit' is ignored"` string) that liblv2's
   `prx_start` would have set. Fixing `get_user_memory_size` to real values did NOT clear it.
 
+### Malloc chain fully traced (this session)
+- `malloc` = **`func_0167AC88`**: loads the default heap from `*(TOC+0x4A68)` = **`0x01A1F850`**
+  and calls the DL allocator **`func_01678748(heap, size)`**.
+- The heap struct at `0x01A1F850` is **statically configured** (vtable/strategy pointers at
+  +0x00/+0x18/+0x30; pool sizes `0x19000000`/`0x0B000000`/`0x12000000` at +0x0C/+0x24/+0x3C)
+  but its **memory/free-list pointers are null (+0x08/+0x10/+0x14/+0x1C/+0x20/+0x28… = 0)** —
+  i.e. **the heap is configured but never *backed* with memory**.
+- It's backed on real PS3 by **`func_00C36C80`** (contains the `sys_memory_allocate(0x5600000
+  /*86MB*/)` at ret-addr `0x00c378b4` seen in the RPCS3 trace) = `DL_SET_SYSTEM_HEAP_SIZE`.
+  **Our build never calls it before the throwing constructor** → `func_01678748` finds null
+  pools → returns 0 → `operator new` throws `std::bad_alloc`.
+- So the fix narrows to: **get the DL heap (`0x01A1F850`) backed before the first allocation** —
+  either make `func_00C36C80` run first (init-order), or replicate its backing in our runtime.
+
+### Open question for the fix: init-order vs failed-setup
+Need to know whether `func_00C36C80` (heap backing) *runs but fails* in our build, or *never
+runs* before the throw. Tried instrumenting `func_00C36C80`/`func_0167AC88` entries by editing
+the generated chunks — **too fragile** (broke a `_cs_15` scope in the 3M-line output; reverted).
+**Better method:** add an opt-in `--trace-funcs <addr,addr>` to `ppu_lifter.py` that emits a
+logging line at chosen function entries (clean, regenerated), OR set a host breakpoint on the
+chunk object's symbol via the debugger. That single data point picks the fix:
+- *never runs* → init-order / a missing early init call → make it run (clean, general fix).
+- *runs but heap stays null* → our `sys_memory_allocate`/`sys_mmapper_allocate_memory` HLE
+  returns something the DL setup rejects → fix the HLE to return a valid guest region.
+
 ### Remaining blocker for #2 + next techniques
 Need to find the exact internal global the static allocator checks (and set it), which
 static RE of stripped lifted code hasn't pinned down (throw unwinds; trampolines blur host

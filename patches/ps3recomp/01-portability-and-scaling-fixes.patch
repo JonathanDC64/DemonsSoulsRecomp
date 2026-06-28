@@ -268,6 +268,19 @@ index 5f0fe99..a7ea149 100644
      uint32_t block = s_tls_next;
      uint32_t total = ((mem_size + 0x7000u + 0x1000u) + 0xFFFu) & ~0xFFFu;
      s_tls_next += total;
+diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
+index aafa8bb..b8e1005 100644
+--- a/runtime/ppu/tests/boot_main.cpp
++++ b/runtime/ppu/tests/boot_main.cpp
+@@ -165,7 +165,7 @@ extern "C" void cellGcm_rsx_process_fifo(void);   /* cellGcmSys.c: drain get->pu
+ 
+ static DWORD WINAPI vblank_ticker(LPVOID)
+ {
+-    int rsx_ok = (rsx_d3d12_backend_init(1280, 720, "You Don't Know Jack (ps3recomp)") == 0);
++    int rsx_ok = (rsx_d3d12_backend_init(1280, 720, "Demon's Souls (ps3recomp)") == 0);
+     fprintf(stderr, "[rsx] backend init %s\n", rsx_ok ? "OK -- window open" : "FAILED");
+     for (;;) {
+         Sleep(16);            /* ~60 Hz */
 diff --git a/runtime/syscalls/sys_cond.c b/runtime/syscalls/sys_cond.c
 index bffaedd..1ae42c4 100644
 --- a/runtime/syscalls/sys_cond.c

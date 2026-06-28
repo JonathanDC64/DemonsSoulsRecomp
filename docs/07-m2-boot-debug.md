@@ -57,8 +57,34 @@ deadlock is **NOT** via event-queue / event-flag / cond / semaphore. That leaves
 - a **guest-level busy-poll** in lifted code (the main thread spins at a fixed guest PC making
   no syscalls/HLE; if it polls via `vm_read16` there's no detector for that width).
 
+### ROOT CAUSE LOCATED — free-list walk runs off the end of our allocator
+Tooling: `ppu_context` has no guest-PC field, and `/O2` chunks don't symbolize via
+llvm-symbolizer. Solution (reusable): added a **linker map** (`/MAP:des_boot.map` in
+`port/CMakeLists.txt`) → resolve any host RVA to `func_<addr>` by finding the symbol just
+below it (preferred base `0x140000000`). (lldb works too but `backtrace all` is too slow on
+the 251 MB PDB; `image lookup -a` is the fast path if needed.)
+
+Spin RVA `0x8986CDB` → **`func_00AC8078` +0x26B**. Reading it: a **free-block list walk** —
+`next = *(node+0x4); node = next - 8`, looped, comparing block sizes (best/first-fit search in
+a memory pool; reads region fields at +0x1C/+0x20/+0x24/+0x28). The chain **never terminates**:
+the HOTMAP addresses climb from `0x600F4000` upward — i.e. just **past our allocator region
+`0x40000000–0x60000000`** — into uninitialized demand-paged memory, following bogus ever-
+increasing "next" pointers forever.
+
+**So our naive bump allocator is the culprit.** The game runs its own memory-pool/free-list
+management on top of malloc'd memory; our `ds_malloc` (no chunk headers, no freelist, no
+coalescing, leaks on free) doesn't satisfy the layout/semantics the pool walker expects, so
+its free-list runs off the end of our region and loops.
+
 ### Next techniques (resume here)
-1. **Get the main thread's guest PC** to read the spin loop: add a global `ppu_context* g_main_ctx`
+1. **Replace the bump allocator with a real one.** `ds_malloc`/`ds_free` need proper free-list
+   management with the chunk metadata the game's allocator-walkers expect — OR, cleaner: stop
+   overriding the game's allocator and instead **back its DL heap properly** (the original #1
+   approach) so its own (correct) free-list management runs. Reconsider override vs. back-the-heap
+   now that we know the game does sophisticated pool management on malloc'd memory.
+2. Confirm by reading `func_00AE60A0`/`func_00451F68` (callers): what pool is being built/walked,
+   and what layout it assumes for blocks returned by malloc.
+3. (superseded) Get the main thread's guest PC: add a global `ppu_context* g_main_ctx`
    (set in `ppu_run`), dump `g_main_ctx->pc` from the watchdog (chunk 005 is `/O2` so the host
    RVA `0x8986CDB` won't symbolize; the guest PC maps trivially to `func_<addr>`). Read that
    function → find the flag it polls + who should set it.

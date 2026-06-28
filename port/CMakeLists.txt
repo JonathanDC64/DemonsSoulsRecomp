@@ -67,3 +67,7 @@ target_link_libraries(des_boot PRIVATE
     ws2_32 xinput ole32 bcrypt          # winsock / gamepad / COM(WASAPI) / RNG
     d3d12 dxgi d3dcompiler uuid dxguid   # RSX D3D12 backend (dxguid: IID_IDXGIFactory4/SwapChain3)
 )
+
+# Emit a linker map so we can resolve host RVAs back to func_<guestaddr> even for
+# /O2 chunks that llvm-symbolizer can't (used to locate busy-loop spin addresses).
+target_link_options(des_boot PRIVATE "/MAP:des_boot.map")

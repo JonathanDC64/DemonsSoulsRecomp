@@ -268,6 +268,82 @@ index 5f0fe99..a7ea149 100644
      uint32_t block = s_tls_next;
      uint32_t total = ((mem_size + 0x7000u + 0x1000u) + 0xFFFu) & ~0xFFFu;
      s_tls_next += total;
+diff --git a/runtime/syscalls/sys_cond.c b/runtime/syscalls/sys_cond.c
+index bffaedd..1ae42c4 100644
+--- a/runtime/syscalls/sys_cond.c
++++ b/runtime/syscalls/sys_cond.c
+@@ -145,6 +145,7 @@ int64_t sys_cond_destroy(ppu_context* ctx)
+  * -----------------------------------------------------------------------*/
+ int64_t sys_cond_wait(ppu_context* ctx)
+ {
++    { static int _st=-1; if(_st<0)_st=getenv("YDKJ_SYNCTRACE")?1:0; if(_st) fprintf(stderr,"[SYNC] tid=%lu COND_WAIT id=0x%X\n",(unsigned long)GetCurrentThreadId(),(unsigned)(uint32_t)ctx->gpr[3]); }
+     uint32_t cond_id    = LV2_ARG_U32(ctx, 0);
+     uint64_t timeout_us = LV2_ARG_U64(ctx, 1);
+     fprintf(stderr, "[WAIT] cond_wait(cond=%u timeout=%llu)\n", cond_id, (unsigned long long)timeout_us);
+@@ -225,6 +226,7 @@ int64_t sys_cond_wait(ppu_context* ctx)
+  * -----------------------------------------------------------------------*/
+ int64_t sys_cond_signal(ppu_context* ctx)
+ {
++    { static int _st=-1; if(_st<0)_st=getenv("YDKJ_SYNCTRACE")?1:0; if(_st) fprintf(stderr,"[SYNC] tid=%lu COND_SIG id=0x%X\n",(unsigned long)GetCurrentThreadId(),(unsigned)(uint32_t)ctx->gpr[3]); }
+     uint32_t cond_id = LV2_ARG_U32(ctx, 0);
+ 
+     if (cond_id == 0 || cond_id > SYS_COND_MAX)
+@@ -250,6 +252,7 @@ int64_t sys_cond_signal(ppu_context* ctx)
+  * -----------------------------------------------------------------------*/
+ int64_t sys_cond_signal_all(ppu_context* ctx)
+ {
++    { static int _st=-1; if(_st<0)_st=getenv("YDKJ_SYNCTRACE")?1:0; if(_st) fprintf(stderr,"[SYNC] tid=%lu COND_SIGALL id=0x%X\n",(unsigned long)GetCurrentThreadId(),(unsigned)(uint32_t)ctx->gpr[3]); }
+     uint32_t cond_id = LV2_ARG_U32(ctx, 0);
+ 
+     if (cond_id == 0 || cond_id > SYS_COND_MAX)
+diff --git a/runtime/syscalls/sys_event.c b/runtime/syscalls/sys_event.c
+index 72a9f55..74b3c22 100644
+--- a/runtime/syscalls/sys_event.c
++++ b/runtime/syscalls/sys_event.c
+@@ -196,6 +196,7 @@ int64_t sys_event_queue_destroy(ppu_context* ctx)
+  * -----------------------------------------------------------------------*/
+ int64_t sys_event_queue_receive(ppu_context* ctx)
+ {
++    { static int _st=-1; if(_st<0)_st=getenv("YDKJ_SYNCTRACE")?1:0; if(_st) fprintf(stderr,"[SYNC] tid=%lu EVQ_RECV id=0x%X\n",(unsigned long)GetCurrentThreadId(),(unsigned)(uint32_t)ctx->gpr[3]); }
+     uint32_t queue_id    = LV2_ARG_U32(ctx, 0);
+     uint32_t event_addr  = LV2_ARG_PTR(ctx, 1);
+     uint64_t timeout_us  = LV2_ARG_U64(ctx, 2);
+@@ -712,6 +713,7 @@ static int flag_check(uint64_t pattern, uint64_t bitpat, uint32_t mode)
+  * -----------------------------------------------------------------------*/
+ int64_t sys_event_flag_wait(ppu_context* ctx)
+ {
++    { static int _st=-1; if(_st<0)_st=getenv("YDKJ_SYNCTRACE")?1:0; if(_st) fprintf(stderr,"[SYNC] tid=%lu EVF_WAIT id=0x%X\n",(unsigned long)GetCurrentThreadId(),(unsigned)(uint32_t)ctx->gpr[3]); }
+     uint32_t flag_id    = LV2_ARG_U32(ctx, 0);
+     uint64_t bitpat     = LV2_ARG_U64(ctx, 1);
+     uint32_t mode       = LV2_ARG_U32(ctx, 2);
+@@ -892,6 +894,7 @@ int64_t sys_event_flag_trywait(ppu_context* ctx)
+ 
+ int64_t sys_event_flag_set(ppu_context* ctx)
+ {
++    { static int _st=-1; if(_st<0)_st=getenv("YDKJ_SYNCTRACE")?1:0; if(_st) fprintf(stderr,"[SYNC] tid=%lu EVF_SET id=0x%X\n",(unsigned long)GetCurrentThreadId(),(unsigned)(uint32_t)ctx->gpr[3]); }
+     uint32_t flag_id = LV2_ARG_U32(ctx, 0);
+     uint64_t bitpat  = LV2_ARG_U64(ctx, 1);
+ 
+diff --git a/runtime/syscalls/sys_semaphore.c b/runtime/syscalls/sys_semaphore.c
+index 112fbf9..de67356 100644
+--- a/runtime/syscalls/sys_semaphore.c
++++ b/runtime/syscalls/sys_semaphore.c
+@@ -161,6 +161,7 @@ int64_t sys_semaphore_destroy(ppu_context* ctx)
+  * -----------------------------------------------------------------------*/
+ int64_t sys_semaphore_wait(ppu_context* ctx)
+ {
++    { static int _st=-1; if(_st<0)_st=getenv("YDKJ_SYNCTRACE")?1:0; if(_st) fprintf(stderr,"[SYNC] tid=%lu SEMA_WAIT id=0x%X\n",(unsigned long)GetCurrentThreadId(),(unsigned)(uint32_t)ctx->gpr[3]); }
+     uint32_t sem_id     = LV2_ARG_U32(ctx, 0);
+     uint64_t timeout_us = LV2_ARG_U64(ctx, 1);
+     fprintf(stderr, "[WAIT] semaphore_wait(sem=%u timeout=%llu)\n", sem_id, (unsigned long long)timeout_us);
+@@ -267,6 +268,7 @@ int64_t sys_semaphore_trywait(ppu_context* ctx)
+  * -----------------------------------------------------------------------*/
+ int64_t sys_semaphore_post(ppu_context* ctx)
+ {
++    { static int _st=-1; if(_st<0)_st=getenv("YDKJ_SYNCTRACE")?1:0; if(_st) fprintf(stderr,"[SYNC] tid=%lu SEMA_POST id=0x%X\n",(unsigned long)GetCurrentThreadId(),(unsigned)(uint32_t)ctx->gpr[3]); }
+     uint32_t sem_id = LV2_ARG_U32(ctx, 0);
+     int32_t  count  = LV2_ARG_S32(ctx, 1);
+ 
 diff --git a/tools/ppu_lifter.py b/tools/ppu_lifter.py
 index 8ad277c..0ad73ff 100644
 --- a/tools/ppu_lifter.py

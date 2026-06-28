@@ -48,15 +48,24 @@ threads **parked in ntdll (OS waits)**. So: main spins waiting on a worker that 
 blocked → effective deadlock. No SPU thread-group activity yet, but SPURS is loaded and the
 SPU crux (we don't execute SPU code) is the prime suspect.
 
-### Next techniques
-1. Symbolize the spin PC: chunk 005 is now `/O2` so llvm-symbolizer returns `??` for
-   `0x8986CDB` — temporarily build chunk 005 `/Od` (or read `g_active_ctx->pc`, the guest PC
-   the lifted code maintains) to get the guest function + the flag it polls.
-2. Identify the parked worker threads' wait (dump their stacks) — what are they blocked on?
-   If they're waiting on SPU thread-group join / a queue the SPU should fill, that's the SPU
-   crux → stand up SPU PPU-fallbacks (`docs/SPU_FALLBACK.md`) for the jobs DeS needs.
-3. Check thread/sync HLE: ensure `sys_lwcond`/`sys_cond`/event-queue signals actually wake
-   waiters (a missed wakeup in our HLE would also cause this exact symptom).
+### Narrowed (YDKJ_SYNCTRACE)
+Instrumented `sys_event_queue_receive`/`flag_wait`/`flag_set`, `sys_cond_wait`/`signal`/`signal_all`,
+`sys_semaphore_wait`/`post` with tid-tagged logging → **ZERO events before the spin.** So the
+deadlock is **NOT** via event-queue / event-flag / cond / semaphore. That leaves:
+- **lwmutex / lwcond** (the lightweight primitives the game hammers — `sys_lwmutex_lock`/`unlock`
+  = 0x1573DC3F/0x1BC200F4 dominate the trace), or
+- a **guest-level busy-poll** in lifted code (the main thread spins at a fixed guest PC making
+  no syscalls/HLE; if it polls via `vm_read16` there's no detector for that width).
+
+### Next techniques (resume here)
+1. **Get the main thread's guest PC** to read the spin loop: add a global `ppu_context* g_main_ctx`
+   (set in `ppu_run`), dump `g_main_ctx->pc` from the watchdog (chunk 005 is `/O2` so the host
+   RVA `0x8986CDB` won't symbolize; the guest PC maps trivially to `func_<addr>`). Read that
+   function → find the flag it polls + who should set it.
+2. **Instrument lwmutex/lwcond** (the ctx-handlers) the same way — see if a worker is parked in
+   `sys_lwcond_wait` for a signal that never comes (missed-wakeup HLE bug) or a lwmutex it can't
+   acquire (lock held by the spinning main thread = classic deadlock).
+3. If it resolves to waiting on SPU work → SPU PPU-fallbacks (`docs/SPU_FALLBACK.md`).
 
 ## (history) Blocker #3 — main() init: slow/large data-structure build loop
 

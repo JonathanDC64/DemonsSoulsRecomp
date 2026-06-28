@@ -153,6 +153,36 @@ Either:
    the iostream ctors (the CRT init-array runners `func_00010D60`/`func_00010D50` in
    `func_000125F0`); if our order differs, fix the init-array execution.
 
+### #2 investigation (replicate heap init) — findings + remaining blocker
+- **Plug-and-play alignment:** LLE-loading `liblv2.sprx` (#1) needs the user's PS3
+  firmware (copyright + not plug-and-play). Replicating liblv2's heap in our own clean
+  code (#2) needs no firmware → correct for the goal. **Decision: pursue #2.**
+- Heap API the game imports from `sysPrxForUser`: `_sys_heap_create_heap` (0xB2FCF2C8),
+  `_sys_heap_malloc` (0x35168520), `_sys_heap_memalign` (0x44265C08),
+  `_sys_heap_free` (0x8A561D92), `_sys_heap_delete_heap`, plus `sys_mmapper_allocate_memory`
+  (0xB257540B). FromSoft's DL allocator wraps these.
+- **No variable/data imports** (`nvar=0` for all 25 libs) — so the heap handle is NOT a
+  liblv2 data export the game reads; the allocator state is an **internal game global**.
+- The early `operator new` throws **without calling** any heap import or memory syscall —
+  it checks an internal "heap ready / malloc limit" global (candidate: the newlib
+  `_malloc_limit`, cf. the `"WARNING : '_malloc_limit' is ignored"` string) that liblv2's
+  `prx_start` would have set. Fixing `get_user_memory_size` to real values did NOT clear it.
+
+### Remaining blocker for #2 + next techniques
+Need to find the exact internal global the static allocator checks (and set it), which
+static RE of stripped lifted code hasn't pinned down (throw unwinds; trampolines blur host
+backtraces). Concrete next techniques (in order of leverage):
+1. **Find & instrument the game's `operator new` / newlib `malloc` directly.** Locate it
+   (e.g. it's the static fn that, on failure, constructs `std::bad_alloc` / references its
+   typeinfo, or the one reached just before the first terminate-path call), add a one-line
+   log in the generated chunk at its entry → see the size + which global it reads as 0.
+2. **Build a minimal guest single-step / watch harness:** set `YDKJ_WWATCH`/`RWATCH` on the
+   `_malloc_limit` / DL heap-state globals once located, to catch the read that triggers the
+   throw and what writes (or fails to write) them at init.
+3. **Diff init vs RPCS3 at instruction granularity** for `func_0167A9C8` (heap config) and
+   the CRT init-array runners, to find the step that sets the malloc limit / heap state on
+   hardware but not for us.
+
 ### Earlier next steps (superseded by root-cause above)
 1. **RPCS3 ground-truth comparison (recommended, authoritative).** Boot DeS in RPCS3
    with LV2/`sys_memory` logging (porting guide method); capture the first ~200 boot

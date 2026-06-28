@@ -97,7 +97,7 @@ index 93ab2a4..215bc99 100644
  }
  
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index 55b653f..8675cf5 100644
+index 55b653f..650e2be 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -169,7 +169,12 @@ extern "C" __declspec(thread) ppu_context* g_active_ctx = nullptr;
@@ -132,6 +132,20 @@ index 55b653f..8675cf5 100644
  }
  
  static ppu_fn ppu_lookup(uint32_t a)
+@@ -220,6 +230,13 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
+     if (addr == 0)
+         return;
+ 
++    /* Env-gated indirect-call trace (YDKJ_ICTRACE): the temporal sequence of
++     * indirect targets is reliable even when host backtraces aren't (tail-call
++     * trampolines unwind the host stack). During static init each constructor is
++     * dispatched here, so the last targets before a fatal abort pinpoint it. */
++    { static int en = -1; if (en < 0) { const char* e = getenv("YDKJ_ICTRACE"); en = e ? 1 : 0; }
++      if (en) { fprintf(stderr, "[ic] 0x%08X\n", addr); fflush(stderr); } }
++
+     ppu_fn fn = ppu_lookup(addr);
+     if (fn) {
+         /* Recursion-depth guard: a malformed/cyclic jump table (or a tail-call
 diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
 index 5f0fe99..a7ea149 100644
 --- a/runtime/ppu/ppu_sysprx.cpp

@@ -98,15 +98,35 @@ global the allocator-init reads.
     `bad_alloc` happens inside a **global constructor during static init**, before
     the engine's main allocator is set up.
 
-### Concrete next steps (resume here)
-1. Read `func_016A0500` (frame 5, the init driver's caller) and `func_0167AC88` (the
-   per-item check called in `func_0168ABD0`'s loop) to identify which constructor /
-   subsystem is initializing and what it allocates.
-2. Find the engine's `operator new` / allocator-init: the allocation makes no syscall,
-   so the allocator operates on a guest region that must be reserved earlier. Confirm
-   whether a heap-base global is null at the failing constructor.
-3. Consider hooking the guest `__cxa_throw` (find its address) to catch the throw site
-   with a live (non-unwound) backtrace if the failure turns out to unwind.
+### Refined diagnosis (important)
+The abort chain `func_0168BC18 → func_0168BBA0 → func_0167AD50 → func_016BB5A4` is
+GCC's **`__verbose_terminate_handler`**: `func_0168BC18` calls the exception object's
+virtual `what()` (vtable dispatch) and the others format/print `"exception: <what>"`
+from TOC strings (`r2+0x4CB8..0x4CC4`) and exit. So this is `std::terminate` running
+**after** a `std::bad_alloc` was thrown and **fully unwound** — the throw site
+(`operator new` → `__cxa_throw`) is already gone from the stack. **Therefore the
+sys_process_exit backtrace can never reach `operator new`** (why it's been elusive).
+
+Established beyond doubt: the game makes **no allocation request at all** (no
+`sys_memory_allocate`/`mmapper`/container syscall, no malloc-via-HLE) before the
+throw. So the engine's `malloc`/`operator new` returns null *immediately* without
+asking the OS — its heap arena is empty and `morecore`/`sbrk` is never reached. Most
+likely the libc/SDK malloc heap was never initialized (heap config = 0), plausibly
+from the unparsed **process param** (`sys_process_param` in `proc_prx_param`).
+
+### Concrete next steps (resume here) — need a throw-site or ground truth
+1. **RPCS3 ground-truth comparison (recommended, authoritative).** Boot DeS in RPCS3
+   with LV2/`sys_memory` logging (porting guide method); capture the first ~200 boot
+   syscalls. If real DeS calls `sys_memory_allocate`/container/`sys_process` setup
+   that ours doesn't, that's the missing piece (we likely returned a value that made
+   DeS skip its normal heap setup).
+2. **Hook the throw, not the exit.** Find guest `__cxa_throw` / `operator new`
+   (`_Znwm`) addresses (e.g. via the bad_alloc typeinfo xref, or by instrumenting a
+   generated chunk) and log at the throw with a LIVE stack → identifies the failing
+   allocation + size.
+3. **Process-param / SDK heap.** Verify what heap-size/config the libc malloc reads
+   at init (from `proc_prx_param`/`sys_process_get_paramsfo`) and ensure the loader
+   surfaces sane values so malloc sets up its arena.
 
 > This is the expected iterative phase: a large title's first allocation failure in
 > stripped, lifted code, during C++ static init. Progress is measured

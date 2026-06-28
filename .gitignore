@@ -1,0 +1,48 @@
+# =========================================================================
+# Copyright firewall: never commit game-derived material (see docs/05-legal.md)
+# Comments MUST be on their own line — a trailing comment becomes part of the
+# pattern and silently disables it.
+# =========================================================================
+
+# Decrypted ELF, analysis output, generated/transliterated C, assets, keys
+work/
+
+# PS3 executables / modules / packages / licenses / keys (anywhere)
+*.elf
+*.self
+*.sprx
+*.prx
+*.BIN
+*.bin
+*.pkg
+*.rap
+*_keys*
+keys.txt
+
+# FromSoftware / game asset formats (anywhere)
+*.flver
+*.tpf
+*.hkx
+*.dcx
+*.param
+*.paramdef
+*.esd
+
+# -------------------------------------------------------------------------
+# Build / generated
+# -------------------------------------------------------------------------
+build/
+*.obj
+*.o
+*.exe
+*.pdb
+*.ilk
+*.lib
+__pycache__/
+*.pyc
+
+# -------------------------------------------------------------------------
+# Third-party: the ps3recomp clone (tracked via its own git + patches/)
+# Leading slash anchors to repo root so patches/ps3recomp/ is NOT ignored.
+# -------------------------------------------------------------------------
+/ps3recomp/

@@ -565,3 +565,30 @@ to keep grinding these.
 These fixes are pragmatic (symptom-level) but VALIDATE the model: provide working memory +
 lazily build singletons, and the game's own static init proceeds. The long-term-clean
 alternative remains backing the DL heap subsystem so all pools initialize natively.
+
+### Blocker #6 — data-structure init cascade begins (2026-06-28)
+
+After #4/#5, the init runner `func_00A35780` advanced to a loop at host +0x123D, inside (an
+inlined) `func_00A35210` (called at guest cia=0x00A35990, args r3=obj, r5/r6 from stack,
+r7=0x1F — looks like a hash/sorted insert with a 31-mask). HOTMAP shows it polls a container
+at ds_heap addr 0x71000000 (tagged ptr 0x71000003): begin (@+3) and end (@+7) read 0, while
+it sweeps an inline array (@+0xB, stride 0xC) — i.e. it iterates a container whose storage is
+zero/uninitialised, so the sweep climbs forever (the same "iterate past a NULL bound" shape
+as the func_00AC8078 spin, but now in game container code).
+
+This is no longer the memory-bootstrap (#4/#5, cleared). It's the FIRST of a likely CASCADE
+of game data-structure init issues: structures get allocated (now succeeding, via ds_heap)
+but their contents/bounds aren't what the game expects, so iterations over them diverge. Each
+is increasingly game-specific RE.
+
+STRATEGIC NOTE: the memory-bootstrap blockers were the hard, high-value unlock (done). The
+remaining cascade is long and suggests a systemic cause worth finding before more whack-a-mole
+— most likely the global-ctor / static-init ORDER or completeness differs from real PS3 (an
+early init that should populate these containers runs differently here), OR a shared upstream
+resource these inits depend on returns empty. Candidate next investigations:
+ - Trace whether ALL global ctors (.init_array via the game CRT func_00010210) run to
+   completion in the same order as RPCS3 (compare init-call sequences).
+ - Identify what populates these containers on real PS3 and why it's empty here (likely an
+   HLE/resource read returning 0/empty that steers an init branch).
+ - Or pivot to backing the DL heap subsystem natively (the "#2" approach) so the game's own
+   memory + init machinery runs end-to-end instead of being patched per-symptom.

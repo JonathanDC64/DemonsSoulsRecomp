@@ -13,6 +13,34 @@ index 67c0058..9924b6c 100644
  
  # Runtime core (syscalls, PPU, SPU, memory)
  file(GLOB_RECURSE RUNTIME_SOURCES
+diff --git a/runtime/ppu/ppu_hle.cpp b/runtime/ppu/ppu_hle.cpp
+index 93ab2a4..b6ecbac 100644
+--- a/runtime/ppu/ppu_hle.cpp
++++ b/runtime/ppu/ppu_hle.cpp
+@@ -20,6 +20,7 @@
+ #include "ps3emu/nid.h"   /* ps3_nid_table, ps3_nid_entry */
+ #include <stdint.h>
+ #include <stdio.h>
++#include <stdlib.h>   /* getenv (HLE trace toggle) */
+ 
+ /* Single flat NID -> handler table (all modules share it; resolution is by
+  * NID which is globally unique). Sized for the firmware import surface. */
+@@ -107,8 +108,15 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
+     }
+     g_last_hle_name = e->name;
+     hle_generic fn = (hle_generic)e->handler;
++    int trace = (getenv("YDKJ_HLETRACE") != nullptr);
++    if (trace)
++        fprintf(stderr, "[hle] %-32s nid=0x%08X r3=%08X r4=%08X r5=%08X\n",
++                e->name, nid, (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4],
++                (uint32_t)ctx->gpr[5]);
+     uint64_t r = fn(ctx->gpr[3], ctx->gpr[4], ctx->gpr[5], ctx->gpr[6],
+                     ctx->gpr[7], ctx->gpr[8], ctx->gpr[9], ctx->gpr[10]);
++    if (trace)
++        fprintf(stderr, "[hle] %-32s -> r3=%08X\n", e->name, (uint32_t)r);
+     ctx->gpr[3] = r;   /* PPC return value */
+ }
+ 
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
 index 55b653f..8675cf5 100644
 --- a/runtime/ppu/ppu_loader.cpp

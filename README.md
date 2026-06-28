@@ -28,6 +28,8 @@ The bet that makes this worth attempting: the remaining work is mostly **normal 
 | [`docs/02-roadmap.md`](docs/02-roadmap.md) | Phased, milestone-based plan specific to Demon's Souls |
 | [`docs/03-setup.md`](docs/03-setup.md) | Environment / prerequisites / decryption procedure |
 | [`docs/04-worklog.md`](docs/04-worklog.md) | Running log of what we did and found |
+| [`docs/06-m0-analysis-findings.md`](docs/06-m0-analysis-findings.md) | M0: decryption + analysis (functions, modules, SPU) |
+| [`docs/07-m2-boot-debug.md`](docs/07-m2-boot-debug.md) | M2: iterative boot-debugging log (current blockers) |
 | [`docs/05-legal.md`](docs/05-legal.md) | The clean-room / no-copyright operating rules |
 
 ## Layout

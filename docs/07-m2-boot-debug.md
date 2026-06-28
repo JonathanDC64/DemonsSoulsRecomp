@@ -629,3 +629,39 @@ REALISTIC PATHS (for a future session):
 
 Net for this session: the hard memory-bootstrap blockers (#4/#5) are CLEARED and persisted;
 the remaining work is a deep static-init construction-ordering problem, not a quick patch.
+
+### RPCS3 differential — findings (2026-06-28)
+
+Booted the same EBOOT.BIN under RPCS3 (v0.0.30; per-game config BLUS30443) headless and
+captured its log (rpcs3/log/RPCS3.log). Notes on mechanics: RPCS3 writes its live log to
+`rpcs3/log/RPCS3.log` (not the top-level one), buffers via RPCS3.buf (flushed on clean exit,
+so SIGKILL loses tail), and the first boot needs minutes for PPU module load + SPU cache
+build. Disabled its auto-updater (check_for_updates=false) to stop it hijacking startup.
+
+Results:
+1. **RPCS3 boots Demon's Souls FULLY** — reached the menu/intro and idled (log at 5:51
+   runtime; syscall histogram shows ~380k sys_timer_usleep, 324k sys_event_queue_receive,
+   226k sys_cond_wait, etc.). So the target is definitely reachable; RPCS3 sails past our
+   static-init spin.
+2. **Demon's Souls is a SPURS/SPU engine (FromSoftware Dantelion2).** It imports the entire
+   `cellSpurs` API and RPCS3 found SPU executables named `SpursTaskZlibInflate_PS3_MASTER`,
+   `SpursTaskCommandDispatcher_PS3_M`, and `n:/dantelion2_autobuild/dist/ps3...`. **Our
+   recomp executes NO SPU code** (the known crux) — so even after clearing every static-init
+   blocker, a working boot ultimately REQUIRES SPU support (run SPU code or PPU-side
+   fallbacks for the SPURS tasks). This is the fundamental gate for the project.
+3. **Our current spin is PRE-SPURS, single-threaded C++ static init.** Our HLE trace right
+   before the spin is all `sysPrxForUser`: `sys_lwmutex_create` (0x2F85C0EF, many times — one
+   guard per static object), then `sys_lwmutex_lock`/`unlock` (0x1573DC3F/0x1BC200F4). No
+   cellSpurs, no sys_spu, no sys_ppu_thread_create yet. So the empty-container spin is a pure
+   PPU static-init construction-ordering issue, not (directly) the missing SPU.
+
+CONCLUSION: the differential confirms (a) the boot is reachable, (b) SPU is the eventual hard
+requirement, and (c) the immediate blocker is early PPU static init. The one piece automation
+can't give is RPCS3's exact memory/register state at our spin (func_00A35780 / the container
+build) — that needs RPCS3's interactive GUI debugger (set a breakpoint at guest 0x00A35780,
+read the container's begin/end). RPCS3 is confirmed working for this, so that differential
+data point is available on request.
+
+STRATEGIC: two real tracks remain, both large — (1) finish the PPU static-init so boot
+progresses, then (2) implement SPU/SPURS (the crux) for an actually-working game. The memory
+bootstrap (#4/#5) milestone stands; everything is committed + reproducible.

@@ -259,10 +259,40 @@ index 5f0fe99..a7ea149 100644
      uint32_t total = ((mem_size + 0x7000u + 0x1000u) + 0xFFFu) & ~0xFFFu;
      s_tls_next += total;
 diff --git a/tools/ppu_lifter.py b/tools/ppu_lifter.py
-index 8ad277c..2ab3f15 100644
+index 8ad277c..0ad73ff 100644
 --- a/tools/ppu_lifter.py
 +++ b/tools/ppu_lifter.py
-@@ -2054,6 +2054,29 @@ class PPULifter:
+@@ -321,6 +321,13 @@ class PPULifter:
+         # (ppu_context, func_entry) stay unprefixed — integration TUs declare
+         # the prefixed table extern manually rather than including two headers.
+         self.prefix = prefix
++        # Per-game function overrides: {guest_addr -> host symbol}. A listed
++        # function's body is replaced with a tail call to the host symbol, so a
++        # title can swap out e.g. its allocator/malloc for a clean host
++        # implementation (used by Demon's Souls: the DL heap can't be backed in
++        # our env, so malloc/free are redirected to a host guest-memory pool).
++        self.override_funcs: dict[int, str] = {}
++        self.override_syms: set[str] = set()
+ 
+     def lift_function(self, instructions: list[Instruction],
+                       start: int, end: int) -> LiftedFunction:
+@@ -331,6 +338,15 @@ class PPULifter:
+             end_addr=end,
+         )
+ 
++        # Per-game override: replace the whole body with a call to a host symbol.
++        ov = self.override_funcs.get(start)
++        if ov is not None:
++            func.body_lines.append(
++                f"    {ov}(ctx); return;  /* OVERRIDE -> host */")
++            self.override_syms.add(ov)
++            self.functions.append(func)
++            return func
++
+         # Firmware-import stub: replace the whole body with an HLE dispatch.
+         nid = self.hle_stub_nids.get(start)
+         if nid is not None:
+@@ -2054,6 +2070,29 @@ class PPULifter:
          if not all_refs:
              return 0
  
@@ -292,7 +322,7 @@ index 8ad277c..2ab3f15 100644
          # Build an interval map: sorted list of (start, end) for existing funcs
          func_intervals = sorted((f.start_addr, f.end_addr) for f in self.functions)
  
-@@ -2095,7 +2118,7 @@ class PPULifter:
+@@ -2095,7 +2134,7 @@ class PPULifter:
              # short tail from any interior entry; bounding it keeps the common case
              # exact and turns the pathological case into a harmless truncated stub.
              fend = min(fend, target + _MAX_MID_TAIL)
@@ -301,7 +331,7 @@ index 8ad277c..2ab3f15 100644
              # lift_function already appends to self.functions, so it's included
              # in output. Update defined set so we don't re-generate.
              defined.add(target)
-@@ -2116,7 +2139,7 @@ class PPULifter:
+@@ -2116,7 +2155,7 @@ class PPULifter:
                  bound = min(bound, target + _MAX_MID_TAIL)   # cap span (see above)
                  if bound <= target:
                      continue
@@ -310,3 +340,93 @@ index 8ad277c..2ab3f15 100644
                  defined.add(target)
                  count += 1
  
+@@ -2143,6 +2182,9 @@ class PPULifter:
+         defined = {f.start_addr for f in self.functions}
+         for target in sorted((self.call_targets | self.branch_targets) - defined):
+             lines.append(f"void {self.prefix}func_{target:08X}(ppu_context* ctx); /* external */")
++        # Host override symbols (provided by the per-game project, e.g. des_heap.cpp)
++        for sym in sorted(self.override_syms):
++            lines.append(f'extern "C" void {sym}(ppu_context* ctx); /* override host impl */')
+         lines.append("")
+         return "\n".join(lines)
+ 
+@@ -2430,12 +2472,14 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi):
+ _WORKER_STATE: dict = {}
+ 
+ 
+-def _worker_init(segs, big_endian, name_map, prefix, hle_stub_nids=None):
++def _worker_init(segs, big_endian, name_map, prefix, hle_stub_nids=None,
++                 override_funcs=None):
+     _WORKER_STATE["segs"] = segs
+     _WORKER_STATE["be"] = big_endian
+     _WORKER_STATE["names"] = name_map
+     _WORKER_STATE["prefix"] = prefix
+     _WORKER_STATE["hle_stub_nids"] = hle_stub_nids or {}
++    _WORKER_STATE["override_funcs"] = override_funcs or {}
+ 
+ 
+ def _worker_lift(task):
+@@ -2446,6 +2490,7 @@ def _worker_lift(task):
+     # .lib.stub trampoline (which derefs an unpopulated import table) is lifted as
+     # real code and bctrl's to garbage. (Single-threaded lift set this directly.)
+     lifter.hle_stub_nids = _WORKER_STATE.get("hle_stub_nids", {})
++    lifter.override_funcs = _WORKER_STATE.get("override_funcs", {})
+     results = []
+     for start, end in bounds:
+         blob = b""
+@@ -2457,7 +2502,7 @@ def _worker_lift(task):
+         f = lifter.lift_function(insns, start, end)
+         results.append((f.name, f.start_addr, f.end_addr, f.body_lines, f.calls,
+                         f.fallthrough_to))
+-    return idx0, results, lifter.call_targets, lifter.branch_targets
++    return idx0, results, lifter.call_targets, lifter.branch_targets, lifter.override_syms
+ 
+ 
+ def _parallel_lift(lifter, func_bounds, segs, big_endian, jobs):
+@@ -2478,10 +2523,11 @@ def _parallel_lift(lifter, func_bounds, segs, big_endian, jobs):
+     # close() (no new tasks) + join() (graceful worker exit) avoids the deadlock.
+     pool = mp.Pool(processes=jobs, initializer=_worker_init,
+                    initargs=(segs, big_endian, lifter.name_map, lifter.prefix,
+-                             lifter.hle_stub_nids))
++                             lifter.hle_stub_nids, lifter.override_funcs))
+     try:
+-        for idx0, results, ct, bt in pool.imap_unordered(_worker_lift, tasks):
++        for idx0, results, ct, bt, osyms in pool.imap_unordered(_worker_lift, tasks):
+             results_by_idx[idx0] = results
++            lifter.override_syms |= osyms
+             lifter.call_targets |= ct
+             lifter.branch_targets |= bt
+             done += len(results)
+@@ -2541,8 +2587,24 @@ def main() -> None:
+                              "instead of its literal .lib.stub trampoline, and "
+                              "split out as its own 0x20-byte function so direct "
+                              "calls to it dispatch to the HLE handler.")
++    parser.add_argument("--override-funcs", metavar="LIST", default=None,
++                        help="Comma-separated addr=symbol pairs (e.g. "
++                             "0x167AC88=ds_malloc,0x167AC58=ds_free). Each listed "
++                             "function's body is replaced with a tail call to the "
++                             "host symbol, letting a title swap out e.g. its "
++                             "allocator for a clean host implementation.")
+     args = parser.parse_args()
+ 
++    override_funcs: dict[int, str] = {}
++    if args.override_funcs:
++        for pair in args.override_funcs.split(","):
++            pair = pair.strip()
++            if not pair:
++                continue
++            addr_s, _, sym = pair.partition("=")
++            override_funcs[int(addr_s, 0)] = sym.strip()
++        print(f"  overrides: {len(override_funcs)} function(s) -> host symbols")
++
+     # Load firmware-import stubs (addr -> NID) up front; applied to func_bounds
+     # and the lifter below.
+     hle_stubs: dict[int, int] = {}
+@@ -2799,6 +2861,7 @@ def main() -> None:
+     lifter = PPULifter(prefix=args.symbol_prefix)
+     lifter.code_hi = args.code_end
+     lifter.hle_stub_nids = hle_stubs
++    lifter.override_funcs = override_funcs
+     lifter.function_entries = _func_entries
+ 
+     # Optional: load a recovered-name map (from Ghidra analysis) to annotate

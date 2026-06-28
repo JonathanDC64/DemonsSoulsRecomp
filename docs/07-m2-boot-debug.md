@@ -31,7 +31,34 @@ threads, and runs indefinitely without crashing. Huge cascade unblocked.
 The mutex-create loop was finite (257 mutexes for a static object array) and completed.
 **The game then reached `main()` (`func_016B84B0`)** and runs its own init. Big milestone.
 
-## Blocker #3 (CURRENT) — main() init: slow/large data-structure build loop
+## Blocker #3 — main() data-structure build loop — ✅ CLEARED by /O2
+
+Building chunk 005 (the hot loop: `func_00AE1408`+`func_00ADCB28`) with `/O2` cleared it:
+HOTMAP went from hundreds of dumps to **zero** — the mass-memory loop now completes fast.
+Also dropped the Debug `/RTC1` runtime-checks (big overhead, /O2-incompatible) by configuring
+with an empty `CMAKE_BUILD_TYPE` + explicit `/Od /Zi`. Per-chunk `/O2` capability added to
+`port/CMakeLists.txt` (`DES_O2_CHUNKS`). So blocker #3 *was* partly unoptimized-build speed.
+
+## Blocker #4 (CURRENT) — main thread busy-waits (thread-coordination spin)
+
+Past the scan, the main thread pins at a **fixed PC** (host rva `0x8986CDB`, same at 8s & 15s)
+with **no syscalls, no HLE calls, no heavy memory reads** (no HOTMAP/HOTREAD). It's a tight
+busy-wait on a condition another thread should set — and the watchdog shows many worker
+threads **parked in ntdll (OS waits)**. So: main spins waiting on a worker that is itself
+blocked → effective deadlock. No SPU thread-group activity yet, but SPURS is loaded and the
+SPU crux (we don't execute SPU code) is the prime suspect.
+
+### Next techniques
+1. Symbolize the spin PC: chunk 005 is now `/O2` so llvm-symbolizer returns `??` for
+   `0x8986CDB` — temporarily build chunk 005 `/Od` (or read `g_active_ctx->pc`, the guest PC
+   the lifted code maintains) to get the guest function + the flag it polls.
+2. Identify the parked worker threads' wait (dump their stacks) — what are they blocked on?
+   If they're waiting on SPU thread-group join / a queue the SPU should fill, that's the SPU
+   crux → stand up SPU PPU-fallbacks (`docs/SPU_FALLBACK.md`) for the jobs DeS needs.
+3. Check thread/sync HLE: ensure `sys_lwcond`/`sys_cond`/event-queue signals actually wake
+   waiters (a missed wakeup in our HLE would also cause this exact symptom).
+
+## (history) Blocker #3 — main() init: slow/large data-structure build loop
 
 After `main()`, a 100%-CPU loop with no syscalls. Located via `YDKJ_HOTMAP` + host backtrace:
 ```

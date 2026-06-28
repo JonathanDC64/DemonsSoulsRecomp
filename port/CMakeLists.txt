@@ -40,14 +40,26 @@ target_include_directories(des_boot PRIVATE
     "${PS3RECOMP_DIR}/runtime/ppu"
 )
 
-# Huge generated TUs need /bigobj (COFF >65k sections). First-boot build uses
-# /Od for fast compile + debuggability; switch to /O2 once it runs.
+# Huge generated TUs need /bigobj (COFF >65k sections). Baseline is /Od (fast
+# compile) + /Zi (symbols for host backtraces). NOTE: configure with an empty
+# CMAKE_BUILD_TYPE so the Debug config's /RTC1 (runtime checks: big slowdown,
+# and incompatible with /O2) is NOT added.
 if(MSVC)   # also true for clang-cl
     target_compile_options(des_boot PRIVATE
-        /bigobj /Od /EHsc /Zc:__cplusplus
+        /bigobj /Od /Zi /EHsc /Zc:__cplusplus
         /wd4100 /wd4244 /wd4267 /wd4146 /wd4334
     )
     target_compile_definitions(des_boot PRIVATE _CRT_SECURE_NO_WARNINGS)
+    # Per-chunk optimization: the hot main-init data-structure loop lives in
+    # chunk 005 (func_00AE1408 + func_00ADCB28). Build it /O2 so the per-16-byte
+    # copy inlines — tests whether blocker #3 is just unoptimized-build slowness.
+    # (Full /O2 over all 36 chunks is impractical; opt the hot one.)
+    set(DES_O2_CHUNKS
+        "${RECOMP_DIR}/ppu_recomp_005.cpp"
+    )
+    foreach(_c ${DES_O2_CHUNKS})
+        set_source_files_properties("${_c}" PROPERTIES COMPILE_OPTIONS "/O2;/Zi")
+    endforeach()
 endif()
 
 target_link_libraries(des_boot PRIVATE

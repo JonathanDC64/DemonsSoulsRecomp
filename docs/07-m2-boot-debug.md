@@ -26,7 +26,38 @@ Re-lift: `--override-funcs 0x167AC88=ds_malloc,0x167AC58=ds_free`.
 loads system modules (`cellSysmodule`: RTC, L10N, SYNC2, SPURS, RESC, NET), spawns worker
 threads, and runs indefinitely without crashing. Huge cascade unblocked.
 
-## Blocker #2 (CURRENT) — init settles into a mutex-create / lock-unlock loop
+## Blocker #2 — module-load init — ✅ PASSED; now in main()
+
+The mutex-create loop was finite (257 mutexes for a static object array) and completed.
+**The game then reached `main()` (`func_016B84B0`)** and runs its own init. Big milestone.
+
+## Blocker #3 (CURRENT) — main() init: slow/large data-structure build loop
+
+After `main()`, a 100%-CPU loop with no syscalls. Located via `YDKJ_HOTMAP` + host backtrace:
+```
+main(func_016B84B0) → func_004553B8 → func_00451F68 → func_00AE60A0
+   → func_00AE1408  (loop)  → func_00ADCB28 (16-byte block copy) + vm reads/writes
+```
+- `func_00ADCB28` = a 16-byte block copy; `func_00AE1408` is the driver: it allocs 0x38-byte
+  nodes (`func_00A941F8`), does per-iteration vtable calls, and reads/writes an ever-growing
+  region at `0x60000000+` (HOTMAP addresses climb 0x600F4000 → 0x9A7AE000+ and keep going,
+  past the ~905 MB DL-pool size; rate slows 29→2 MB/s over time).
+- Signature = **building a large data structure (O(n²)-ish), pathologically slow under the
+  `/Od` debug build** (a function call + trampoline drain per 16-byte copy). Possibly also a
+  data/allocator-layout mismatch making the structure larger/corrupt than on hardware.
+
+### Next techniques
+1. **Rule out `/Od` slowness:** build the hot chunk(s) (chunk 005 has these fns) with `/O2`
+   (full `/O2` over 1.4 GB is impractical — do per-file/per-chunk optimization) and see if it
+   completes quickly → then it was just unoptimized speed.
+2. **Check the `0x60000000+` region:** what does our `sys_memory_allocate`/`sys_mmapper`
+   HLE return for the game's big allocations? If the game expects data at addresses it
+   `sys_memory_allocate`'d (RPCS3: 0x30000000+) and ours differ / aren't populated, the
+   structure build reads zeros and may loop wrong. Verify region addresses match expectations.
+3. Read `func_00AE60A0`/`func_00451F68` to learn what dataset is being built (asset table?
+   object registry?) and its expected bound.
+
+## (history) Blocker #2 — init settles into a mutex-create / lock-unlock loop
 
 After loading the 6 modules, steady state is a tight repeating loop of `sys_mutex_create`
 (syscall 100) + `sys_lwmutex_lock`/`unlock`. Main thread IP keeps moving (progressing, not

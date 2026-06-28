@@ -130,7 +130,7 @@ index 93ab2a4..f056d47 100644
  }
  
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index 55b653f..e07c061 100644
+index 55b653f..56b4932 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -23,6 +23,33 @@
@@ -167,7 +167,17 @@ index 55b653f..e07c061 100644
  
  extern "C" uint8_t* vm_base;   /* defined by the host */
  
-@@ -169,7 +196,12 @@ extern "C" __declspec(thread) ppu_context* g_active_ctx = nullptr;
+@@ -132,6 +159,9 @@ uint32_t vm_read32(uint64_t a) { if (vm_oob((uint32_t)a,4)) return 0; uint32_t v
+           uint32_t b2=(bi+1)&(NB-1); for(uint32_t i=0;i<NB;i++) if(i!=bi && cnt[i]>cnt[b2]) b2=i;
+           fprintf(stderr,"[HOTMAP] hottest read32: 0x%08X (%ux)  2nd: 0x%08X (%ux)\n",
+                   addr[bi],cnt[bi],addr[b2],cnt[b2]);
++#ifdef _WIN32
++          { static int _n=0; if (_n++ < 3) dbg_host_bt("hotmap"); }  /* who is scanning? */
++#endif
+           for(uint32_t i=0;i<NB;i++) cnt[i]=0; } } }
+     /* Hot-poll detector: a thread spinning on the same address (e.g. a GCM FIFO
+      * get-pointer / label waiting on RSX) reads it thousands of times in a row. */
+@@ -169,7 +199,12 @@ extern "C" __declspec(thread) ppu_context* g_active_ctx = nullptr;
   * -----------------------------------------------------------------------*/
  typedef void (*ppu_fn)(ppu_context*);
  
@@ -181,7 +191,7 @@ index 55b653f..e07c061 100644
  #define PPU_HASH_SIZE (1u << PPU_HASH_BITS)
  #define PPU_HASH_MASK (PPU_HASH_SIZE - 1)
  
-@@ -181,11 +213,16 @@ extern "C" void ppu_register_function(uint64_t addr, ppu_fn fn)
+@@ -181,11 +216,16 @@ extern "C" void ppu_register_function(uint64_t addr, ppu_fn fn)
  {
      uint32_t a = (uint32_t)addr;
      uint32_t i = (a * 2654435761u) & PPU_HASH_MASK;
@@ -199,7 +209,7 @@ index 55b653f..e07c061 100644
  }
  
  static ppu_fn ppu_lookup(uint32_t a)
-@@ -220,6 +257,13 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
+@@ -220,6 +260,13 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
      if (addr == 0)
          return;
  
@@ -213,7 +223,7 @@ index 55b653f..e07c061 100644
      ppu_fn fn = ppu_lookup(addr);
      if (fn) {
          /* Recursion-depth guard: a malformed/cyclic jump table (or a tail-call
-@@ -309,9 +353,16 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -309,9 +356,16 @@ extern "C" void lv2_syscall(ppu_context* ctx)
      case 352: {   /* sys_memory_get_user_memory_size(sys_memory_info_t* info)
                     * info = { u32 total_user_memory; u32 available_user_memory } */
          uint32_t info = (uint32_t)ctx->gpr[3];

@@ -592,3 +592,40 @@ resource these inits depend on returns empty. Candidate next investigations:
    HLE/resource read returning 0/empty that steers an init branch).
  - Or pivot to backing the DL heap subsystem natively (the "#2" approach) so the game's own
    memory + init machinery runs end-to-end instead of being patched per-symptom.
+
+### Systemic-root hunt — finding: pervasive use-during-construction in C++ static init (2026-06-28)
+
+Investigated the systemic cause of the post-bootstrap cascade. Results:
+
+- **Not a missing data file.** No cellFs/file opens happen before the spin — the game is still
+  in pure in-memory C++ static init, before any I/O. So empty containers aren't from a failed
+  resource read.
+- **Not a single empty registry.** `func_00A35780` (the registry processor) is called once
+  with an EMPTY registry list (`*head==0` at 0x01B9111C), correctly taking its init/create
+  path. It then builds a nested container and spins iterating it while the container's
+  begin/end pointers are still 0 (the container object is freshly allocated zeros; its ctor
+  hasn't set begin=end=storage yet).
+- **The pattern is pervasive.** Every layer is the same shape: a structure (vtable, container
+  begin/end, free-list bound) is read/iterated before the code that initializes it has run.
+  #4 (object vtable), #5 (heap pool), #6 (nested container begin/end) are all instances. Our
+  pragmatic patches clear individual instances but the pattern recurs one construction layer
+  deeper each time.
+
+CONCLUSION: there is no single fixable "root value" — the divergence is in *construction
+ordering / re-entrancy* across the game's C++ static init, and it is pervasive. Likely either
+(a) our execution subtly diverges from real PS3 so inits run in a different order / re-enter
+(possibly exacerbated by the force-build-on-context-copy itself, which builds guest memory but
+discards register-flow side effects), or (b) the whole DL heap + container machinery needs to
+run natively rather than be patched per-symptom.
+
+REALISTIC PATHS (for a future session):
+ 1. **DL-heap pivot** — back the game's DL system heap so its own allocator + container ctors
+    run end-to-end (most likely to dissolve the whole class; larger up-front work).
+ 2. **RPCS3 differential** — run the same boot under RPCS3 with PPU tracing and diff the
+    init-call / construction sequence to pinpoint the FIRST divergence (where our order/values
+    first differ from real hardware). Surgical but needs RPCS3 trace plumbing.
+ 3. **Reconsider scope** — a full boot-to-menu is a long effort; the memory bootstrap (done)
+    was the first major milestone of many.
+
+Net for this session: the hard memory-bootstrap blockers (#4/#5) are CLEARED and persisted;
+the remaining work is a deep static-init construction-ordering problem, not a quick patch.

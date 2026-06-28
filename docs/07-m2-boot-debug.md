@@ -372,3 +372,69 @@ backtraces). Concrete next techniques (in order of leverage):
 
 Symbolize host RVAs:
 `"C:\Program Files\LLVM\bin\llvm-symbolizer.exe" --obj=port\build\des_boot.exe --relative-address 0x... 0x...`
+
+---
+
+## Blocker #4 — ROOT CAUSE FOUND: use-before-construction of a C++ singleton (2026-06-28)
+
+Earlier theory (free-list runs off the bump allocator) was **wrong**. After upgrading
+`ds_heap` to a real free-list allocator + fixing a region collision with
+`sys_memory_allocate` (0x40000000-0x50000000 → moved ds_heap to 0x60000000-0xC0000000;
+both correct keepers), the spin was **unchanged** → it is allocator-independent.
+
+### The spin mechanism (func_00AC8078)
+`func_00AC8078` is the game's segregated free-list allocator's free-block search.
+With a **NULL/0 heap descriptor**, its size-class bin loop never terminates:
+```
+loc_00AC80E8:  r9 = r9 << 1;   // r9 starts 0 (gran/shift from NULL desc) → stays 0
+               r11 += 8;
+               if (r7 > r9) goto loc_00AC80E8;   // needed_size > 0 always → INFINITE
+```
+So the spin is a symptom: it received a NULL heap.
+
+### Why the heap is NULL (the real bug)
+The heap should come from a **virtual method call** that silently no-op'd. Traced via
+`ctx->cia` stamping + a call-site probe to the **exact** failing instruction:
+`func_00A35780` @ guest `0x00A359E4` — a `vtable[3]` dispatch on the singleton object
+`0x01B92CF8` (BSS). Probe at the call:
+```
+[CALL1] obj=0x01B92CF8 *obj(vt)=0x00000000 vt[3]=0 *(vt[3])=0 r10=0 ctr=0x018736B0
+```
+**`*(obj) == 0` — the object's vtable pointer is NULL: it is used BEFORE it is
+constructed.** The lifted virtual call dereferences through 0: `r10=*(0+0xC)=0`, then
+`ctr=*(0)=vm_read32(0)=0x018736B0` (incidental garbage in our flat VM's unmapped low
+memory — guest[0] is not file-backed). The runtime can't resolve 0x018736B0 (it's the
+*data* address of a vtable), logs "unresolved indirect call", and **returns without doing
+anything** → the method that sets up the heap never runs → NULL heap → spin.
+
+The 0x018736B0 / vtable-chasing was a **red herring**; the defect is the NULL vtable.
+
+### Where construction goes wrong
+The singleton accessor is `func_00B0AF28` (Meyers-style lazy static): it checks two guard
+bytes and either returns the existing instance or constructs (ctor `func_00A668B0` stores
+the vtable; `func_00A66790` runs post-init). It returned the object **unconstructed**
+(vtable still 0). Construction is gated by C++ **thread-safe static init**:
+`func_00B0AF28` → multi-TOC thunk `0x000121B0` → guard helper `0x01664CD8`
+(`bl 0x0166F990` acquire / guard counter / `bl 0x0166F910` release — lock-protected).
+
+WWATCH on `0x01B92CF8` confirms the vtable IS eventually written `0x018736B0`, but **after**
+the failing use → a use-before-init **ordering / guard** failure.
+
+### Ruled out
+- Our allocator (spin present with both the zeroed bump allocator and the new free-list).
+- Region collision (fixed; spin unchanged).
+- Relocations (EBOOT is fixed-load: no `.rela`, no `PT_DYNAMIC`; the vtable global
+  `@0x018FE1E8`=0x018736B0 is already correct in-file).
+
+### Next step (continuing #1)
+Investigate the thread-safe-static-init guard path: `0x01664CD8` and its lock funcs
+`0x0166F990`/`0x0166F910` (are these lwmutex/sync primitives our runtime mishandles?), and
+whether the init runner `func_00A35780`/`func_00A35DB0` re-enters the singleton during its
+own construction. Likely fix: make the guard/lock behave correctly so the constructor
+actually runs before the accessor returns. Secondary hardening: map guest page 0 as a
+fault/guard so NULL-vtable derefs trap loudly instead of reading garbage.
+
+Diagnostics added this round (kept): `ppu_loader.cpp` unresolved-call handler now prints
+`ctx->cia`, the `this`/vtable chain, and a deep `CaptureStackBackTrace`. Probes in the
+generated chunk 005 (AC8078 desc dump, CALL1 dump, cia stamps) are in gitignored files and
+are removed on the next re-lift.

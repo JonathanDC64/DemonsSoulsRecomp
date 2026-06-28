@@ -665,3 +665,31 @@ data point is available on request.
 STRATEGIC: two real tracks remain, both large — (1) finish the PPU static-init so boot
 progresses, then (2) implement SPU/SPURS (the crux) for an actually-working game. The memory
 bootstrap (#4/#5) milestone stands; everything is committed + reproducible.
+
+### Fresh look + research (2026-06-28) — lwmutex fix applied; container spin narrowed
+
+Resources consulted: ps3recomp's own docs (GAME_PORTING_GUIDE Phase 11 confirms the SPURS
+zlib task -> host-zlib fallback approach, and "compare with RPCS3"); RPCS3 source
+(Emu/Cell/Modules/sys_lwmutex_.cpp); PS3 dev wiki (PRX, LV2). 
+
+REAL FIX FOUND & APPLIED (ps3recomp 4950f4e): our `sys_lwmutex` was a no-op owner-stamp that
+always returned CELL_OK and treated every re-lock as recursive. Per RPCS3, a same-thread
+re-lock of a NON-recursive lwmutex must return **CELL_EDEADLK** — the C++ thread-safe-static
+guard relies on that to detect recursive initialization. Reworked create/lock/unlock to real
+semantics (combined attribute incl. SYS_SYNC_RECURSIVE at attr+4; owner==tid -> EDEADLK unless
+recursive; real per-thread owner via ds_tid). Effect: advanced the static-init spin
+(func_00A35780 +0x129D -> +0x133A) — recursion-detection was one genuine factor.
+
+REMAINING (blocker #6): still spins iterating a packed container at 0x71000000 (begin@+3,
+end@+7, both 0 / element ptr ~0x70FFFFFF) during X's construction on the registry's SINGLE
+(empty-registry create) path: func_00A35780 -> func_00B0AF28/func_00B25CB8 -> ... ->
+func_00A35210 (a std::lower_bound-style binary search that never converges on the
+empty/misaligned container). All heavily /O2-inlined, which is why host->guest mapping is
+fuzzy. Two ways to crack it: (a) RPCS3 GUI debugger — breakpoint at guest 0x00A35780, read the
+container begin/end to get ground truth (is it empty here on real HW, i.e. our loop is a
+lifter empty-check bug, or populated, i.e. our construction diverged); (b) build chunk 005
+without /O2 to de-inline func_00A35210 and instrument it standalone (risks reviving the slow
+blocker-#3 loop). 
+
+NET: the research delivered a correct lwmutex fix + strategic clarity (RPCS3 boots fully; SPU
+is the eventual gate). PPU static init is partially advanced; the container spin remains.

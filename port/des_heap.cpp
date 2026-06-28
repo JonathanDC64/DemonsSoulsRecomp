@@ -1,98 +1,153 @@
-/* Demon's Souls — clean host-backed guest allocator.
+/* Demon's Souls — clean host-backed guest allocator (real free-list).
  *
- * The game's FromSoftware "DL" system heap (struct at guest 0x01A1F850) is
- * statically configured but never *backed* with memory in our environment:
- * on real PS3 liblv2.sprx's prx_start sets up the libc heap before the first
- * C++ static constructor allocates, but we HLE liblv2 so that never runs ->
- * the first `operator new` hits a null heap -> std::bad_alloc -> terminate.
+ * The game's FromSoftware "DL" system heap can't be backed in our environment
+ * (liblv2.sprx prx_start doesn't run), so we redirect the game's malloc family
+ * to this allocator via the lifter's --override-funcs. Plug-and-play: our own
+ * code, no firmware/keys.
  *
- * Rather than reverse + replicate FromSoft's dlmalloc-style allocator (or load
- * firmware, which would break the plug-and-play / no-keys goal), we redirect the
- * game's malloc family to this clean allocator. The lifter's --override-funcs
- * replaces the chosen guest functions' bodies with a tail call to these symbols.
+ * v2 — proper free-list allocator (was a leaking bump allocator). The game runs
+ * its own memory-pool / free-list management on top of malloc'd blocks; a bump
+ * allocator that never reclaimed filled its region and the game's free-list
+ * walker ran off the end into uninitialized memory and span forever. This
+ * version reclaims + coalesces on free, so the working set stays bounded.
  *
- * Allocations come from a dedicated guest region (0x40000000..0x60000000) that
- * the flat-VM demand-pager backs on first touch. A host-side size map supports
- * realloc/calloc copying. free() currently leaks (bump allocator) — fine to get
- * boot far; a freelist can be added later if fragmentation matters.
+ * Region: 0x60000000..0xC0000000 (1.5 GB), demand-paged by the flat VM. Chosen
+ * to NOT collide with: the game image (<0x1850000), TLS (0x10F00000), the lv2
+ * mmapper (0x11000000+), sys_memory_allocate HLE (0x40000000-0x50000000), or
+ * thread stacks (0xD0000000+). Metadata is host-side (no in-band headers), so
+ * the game can never corrupt it and there's no header/alignment interference.
  */
 #include "ppu_recomp.h"      /* ppu_context */
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <unordered_map>
+#include <mutex>
+#include <utility>
 
 extern "C" uint8_t* vm_base; /* host base of the flat guest address space */
 
 namespace {
 
-constexpr uint32_t kHeapBase = 0x40000000u;
-constexpr uint32_t kHeapEnd  = 0x60000000u;   /* 512 MB */
-uint32_t g_next = kHeapBase;
-std::unordered_map<uint32_t, uint32_t> g_sizes;   /* guest ptr -> requested size */
+constexpr uint32_t HBASE = 0x60000000u;
+constexpr uint32_t HEND  = 0xC0000000u;     /* 1.5 GB */
+constexpr uint32_t ALIGNB = 16u;
+constexpr uint32_t MIN_SPLIT = 32u;
 
-uint32_t heap_alloc(uint32_t size, uint32_t align)
-{
-    if (align < 16u) align = 16u;
-    if (size == 0u)  size = 1u;
-    g_next = (g_next + (align - 1u)) & ~(align - 1u);
-    uint32_t p = g_next;
-    g_next += (size + 15u) & ~15u;
-    if (g_next >= kHeapEnd) {
-        fprintf(stderr, "[ds_heap] OUT OF MEMORY (req=0x%X, used=0x%X)\n",
-                size, p - kHeapBase);
-        return 0u;
+std::mutex g_mtx;
+std::map<uint32_t,uint32_t>            g_free_addr;  /* addr  -> size (sorted; coalescing) */
+std::multimap<uint32_t,uint32_t>       g_free_size;  /* size  -> addr (best-fit search)    */
+std::unordered_map<uint32_t,std::pair<uint32_t,uint32_t>> g_used; /* userptr -> (block,size) */
+bool g_init = false;
+uint64_t g_peak = 0, g_cur = 0;
+
+inline uint32_t alnup(uint32_t v, uint32_t a) { return (v + (a - 1)) & ~(a - 1); }
+
+void add_free(uint32_t a, uint32_t s) { g_free_addr[a] = s; g_free_size.insert({s, a}); }
+void rm_free(uint32_t a, uint32_t s) {
+    g_free_addr.erase(a);
+    auto r = g_free_size.equal_range(s);
+    for (auto it = r.first; it != r.second; ++it)
+        if (it->second == a) { g_free_size.erase(it); break; }
+}
+void ensure_init() { if (!g_init) { g_init = true; add_free(HBASE, HEND - HBASE); } }
+
+/* Carve a block of at least `need` bytes. Returns (block_addr, block_size) or (0,0). */
+std::pair<uint32_t,uint32_t> carve(uint32_t need) {
+    ensure_init();
+    need = alnup(need < 16u ? 16u : need, ALIGNB);
+    auto it = g_free_size.lower_bound(need);
+    if (it == g_free_size.end()) {
+        fprintf(stderr, "[ds_heap] OUT OF MEMORY need=0x%X cur=0x%llX peak=0x%llX used=%zu\n",
+                need, (unsigned long long)g_cur, (unsigned long long)g_peak, g_used.size());
+        return {0u, 0u};
     }
-    g_sizes[p] = size;
-    return p;
+    uint32_t size = it->first, addr = it->second;
+    rm_free(addr, size);
+    uint32_t blk;
+    if (size - need >= MIN_SPLIT) { add_free(addr + need, size - need); blk = need; }
+    else                         { blk = size; }
+    g_cur += blk; if (g_cur > g_peak) g_peak = g_cur;
+    return {addr, blk};
+}
+
+void release(uint32_t addr, uint32_t size) {
+    g_cur -= size;
+    /* coalesce with the following free block */
+    auto nx = g_free_addr.find(addr + size);
+    if (nx != g_free_addr.end()) { uint32_t ns = nx->second; rm_free(addr + size, ns); size += ns; }
+    /* coalesce with the preceding free block */
+    auto it = g_free_addr.lower_bound(addr);
+    if (it != g_free_addr.begin()) {
+        --it;
+        if (it->first + it->second == addr) { uint32_t pa = it->first, ps = it->second; rm_free(pa, ps); addr = pa; size += ps; }
+    }
+    add_free(addr, size);
 }
 
 } // namespace
 
 extern "C" {
 
-/* malloc(size) -> ptr   (r3 = size; return r3) */
-void ds_malloc(ppu_context* ctx)
-{
-    ctx->gpr[3] = heap_alloc((uint32_t)ctx->gpr[3], 16u);
+/* malloc(size) -> ptr   (r3 = size) */
+void ds_malloc(ppu_context* ctx) {
+    std::lock_guard<std::mutex> lk(g_mtx);
+    auto pr = carve((uint32_t)ctx->gpr[3]);
+    if (pr.first) g_used[pr.first] = pr;
+    ctx->gpr[3] = pr.first;
 }
 
-/* free(ptr)             (r3 = ptr) */
-void ds_free(ppu_context* ctx)
-{
-    g_sizes.erase((uint32_t)ctx->gpr[3]);   /* bump allocator: space not reclaimed */
+/* free(ptr)   (r3 = ptr) */
+void ds_free(ppu_context* ctx) {
+    uint32_t p = (uint32_t)ctx->gpr[3];
+    if (!p) return;
+    std::lock_guard<std::mutex> lk(g_mtx);
+    auto it = g_used.find(p);
+    if (it == g_used.end()) return;          /* not ours / double-free: ignore */
+    uint32_t blk = it->second.first, sz = it->second.second;
+    g_used.erase(it);
+    release(blk, sz);
 }
 
 /* memalign(align, size) -> ptr   (r3 = align, r4 = size) */
-void ds_memalign(ppu_context* ctx)
-{
-    ctx->gpr[3] = heap_alloc((uint32_t)ctx->gpr[4], (uint32_t)ctx->gpr[3]);
+void ds_memalign(ppu_context* ctx) {
+    uint32_t align = (uint32_t)ctx->gpr[3], size = (uint32_t)ctx->gpr[4];
+    if (align < ALIGNB) align = ALIGNB;
+    std::lock_guard<std::mutex> lk(g_mtx);
+    auto pr = carve(size + align);
+    if (!pr.first) { ctx->gpr[3] = 0; return; }
+    uint32_t aligned = alnup(pr.first, align);
+    g_used[aligned] = pr;                     /* user ptr = aligned; block = pr.first */
+    ctx->gpr[3] = aligned;
 }
 
 /* calloc(count, size) -> zeroed ptr   (r3 = count, r4 = size) */
-void ds_calloc(ppu_context* ctx)
-{
-    uint64_t total = (uint64_t)(uint32_t)ctx->gpr[3] * (uint32_t)ctx->gpr[4];
-    if (total > 0xFFFFFFFFull) total = 0xFFFFFFFFull;
-    uint32_t p = heap_alloc((uint32_t)total, 16u);
-    if (p) memset(vm_base + p, 0, (size_t)total);
-    ctx->gpr[3] = p;
+void ds_calloc(ppu_context* ctx) {
+    uint64_t tot = (uint64_t)(uint32_t)ctx->gpr[3] * (uint32_t)ctx->gpr[4];
+    if (tot > 0xFFFFFFFFull) tot = 0xFFFFFFFFull;
+    std::lock_guard<std::mutex> lk(g_mtx);
+    auto pr = carve((uint32_t)tot);
+    if (pr.first) { g_used[pr.first] = pr; memset(vm_base + pr.first, 0, (size_t)tot); }
+    ctx->gpr[3] = pr.first;
 }
 
 /* realloc(ptr, size) -> ptr   (r3 = ptr, r4 = size) */
-void ds_realloc(ppu_context* ctx)
-{
-    uint32_t old = (uint32_t)ctx->gpr[3];
-    uint32_t nsz = (uint32_t)ctx->gpr[4];
-    if (!old) { ctx->gpr[3] = heap_alloc(nsz, 16u); return; }
-    if (!nsz) { g_sizes.erase(old); ctx->gpr[3] = 0u; return; }
-    uint32_t np = heap_alloc(nsz, 16u);
-    if (np) {
-        auto it = g_sizes.find(old);
-        uint32_t osz = (it != g_sizes.end()) ? it->second : nsz;
-        memcpy(vm_base + np, vm_base + old, osz < nsz ? osz : nsz);
-    }
-    ctx->gpr[3] = np;
+void ds_realloc(ppu_context* ctx) {
+    uint32_t p = (uint32_t)ctx->gpr[3], n = (uint32_t)ctx->gpr[4];
+    std::lock_guard<std::mutex> lk(g_mtx);
+    if (!p) { auto pr = carve(n); if (pr.first) g_used[pr.first] = pr; ctx->gpr[3] = pr.first; return; }
+    auto it = g_used.find(p);
+    if (it == g_used.end()) { ctx->gpr[3] = 0; return; }
+    uint32_t blk = it->second.first, bs = it->second.second;
+    uint32_t usable = bs - (p - blk);
+    if (n <= usable) { ctx->gpr[3] = p; return; }   /* fits in place */
+    auto pr = carve(n);
+    if (!pr.first) { ctx->gpr[3] = 0; return; }
+    memcpy(vm_base + pr.first, vm_base + p, usable < n ? usable : n);
+    g_used.erase(it); release(blk, bs);
+    g_used[pr.first] = pr;
+    ctx->gpr[3] = pr.first;
 }
 
 } // extern "C"

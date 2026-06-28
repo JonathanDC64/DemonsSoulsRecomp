@@ -14,7 +14,7 @@ index 67c0058..9924b6c 100644
  # Runtime core (syscalls, PPU, SPU, memory)
  file(GLOB_RECURSE RUNTIME_SOURCES
 diff --git a/runtime/ppu/ppu_hle.cpp b/runtime/ppu/ppu_hle.cpp
-index 93ab2a4..215bc99 100644
+index 93ab2a4..f056d47 100644
 --- a/runtime/ppu/ppu_hle.cpp
 +++ b/runtime/ppu/ppu_hle.cpp
 @@ -20,6 +20,10 @@
@@ -80,7 +80,40 @@ index 93ab2a4..215bc99 100644
      /* PPC64 ELFv1 cross-module ABI: the caller restores its TOC right after the
       * call with `ld r2, 0x28(r1)`, expecting the import stub to have saved the
       * caller's r2 into that slot. The real .lib.stub trampoline did this; the
-@@ -107,8 +153,15 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
+@@ -82,10 +128,20 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
+      * loads (the C++ ctor list, globals, ...) read garbage -> boot corruption. */
+     vm_write64(ctx->gpr[1] + 0x28, ctx->gpr[2]);
+ 
++    /* Trace EVERY hle call (all resolution paths: prx / ctx / generic), not just
++     * the generic one. Cached getenv. Resolve nid->name afterward if needed. */
++    static int hletrace = -1;
++    if (hletrace < 0) hletrace = getenv("YDKJ_HLETRACE") ? 1 : 0;
++    if (hletrace)
++        fprintf(stderr, "[hle] nid=0x%08X r3=%08X r4=%08X r5=%08X r6=%08X\n", nid,
++                (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4],
++                (uint32_t)ctx->gpr[5], (uint32_t)ctx->gpr[6]);
++
+     /* Real libsre (loaded PRX) takes priority over the HLE stub. */
+     {
+         uint32_t opd = prx_resolve_export(nid);
+         if (opd) {
++            if (hletrace) fprintf(stderr, "[hle]   -> prx export\n");
+             uint32_t code = vm_read32(opd);
+             uint32_t toc  = vm_read32(opd + 4);
+             ctx->gpr[2] = toc;            /* libsre's own TOC */
+@@ -96,7 +152,10 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
+     }
+ 
+     for (uint32_t i = 0; i < g_ctx_count; i++)
+-        if (g_ctx[i].nid == nid) { g_ctx[i].fn(ctx); return; }
++        if (g_ctx[i].nid == nid) {
++            if (hletrace) fprintf(stderr, "[hle]   -> ctx handler\n");
++            g_ctx[i].fn(ctx); return;
++        }
+ 
+     ps3_nid_entry* e = g_hle_inited ? ps3_nid_table_find(&g_hle_nids, nid) : nullptr;
+     if (!e || !e->handler) {
+@@ -107,8 +166,15 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
      }
      g_last_hle_name = e->name;
      hle_generic fn = (hle_generic)e->handler;
@@ -97,10 +130,44 @@ index 93ab2a4..215bc99 100644
  }
  
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index 55b653f..650e2be 100644
+index 55b653f..e07c061 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
-@@ -169,7 +169,12 @@ extern "C" __declspec(thread) ppu_context* g_active_ctx = nullptr;
+@@ -23,6 +23,33 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#ifdef _WIN32
++#include <windows.h>  /* host backtrace for boot debugging */
++#endif
++
++/* Print a host RVA backtrace (lifted bl = real C calls). Symbolize with
++ * llvm-symbolizer --obj=des_boot.exe --relative-address <rva...>. */
++#ifdef _WIN32
++static void dbg_host_bt(const char* tag)
++{
++    void* frames[40];
++    unsigned short n = RtlCaptureStackBackTrace(0, 40, frames, nullptr);
++    HMODULE self = nullptr;
++    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
++                       GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
++                       (LPCSTR)&dbg_host_bt, &self);
++    for (unsigned short i = 0; i < n; i++) {
++        HMODULE m = nullptr;
++        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
++                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
++                           (LPCSTR)frames[i], &m);
++        if (m == self)
++            fprintf(stderr, "[bt-%s] rva=0x%llX\n", tag,
++                    (unsigned long long)((char*)frames[i] - (char*)self));
++    }
++    fflush(stderr);
++}
++#endif
+ 
+ extern "C" uint8_t* vm_base;   /* defined by the host */
+ 
+@@ -169,7 +196,12 @@ extern "C" __declspec(thread) ppu_context* g_active_ctx = nullptr;
   * -----------------------------------------------------------------------*/
  typedef void (*ppu_fn)(ppu_context*);
  
@@ -114,7 +181,7 @@ index 55b653f..650e2be 100644
  #define PPU_HASH_SIZE (1u << PPU_HASH_BITS)
  #define PPU_HASH_MASK (PPU_HASH_SIZE - 1)
  
-@@ -181,11 +186,16 @@ extern "C" void ppu_register_function(uint64_t addr, ppu_fn fn)
+@@ -181,11 +213,16 @@ extern "C" void ppu_register_function(uint64_t addr, ppu_fn fn)
  {
      uint32_t a = (uint32_t)addr;
      uint32_t i = (a * 2654435761u) & PPU_HASH_MASK;
@@ -132,7 +199,7 @@ index 55b653f..650e2be 100644
  }
  
  static ppu_fn ppu_lookup(uint32_t a)
-@@ -220,6 +230,13 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
+@@ -220,6 +257,13 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
      if (addr == 0)
          return;
  
@@ -146,6 +213,25 @@ index 55b653f..650e2be 100644
      ppu_fn fn = ppu_lookup(addr);
      if (fn) {
          /* Recursion-depth guard: a malformed/cyclic jump table (or a tail-call
+@@ -309,9 +353,16 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+     case 352: {   /* sys_memory_get_user_memory_size(sys_memory_info_t* info)
+                    * info = { u32 total_user_memory; u32 available_user_memory } */
+         uint32_t info = (uint32_t)ctx->gpr[3];
+-        if (info) { vm_write32(info + 0, 0x10000000u);   /* 256 MB total */
+-                    vm_write32(info + 4, 0x0C000000u); } /* 192 MB available */
++        /* Match real PS3 game-mode values (verified against RPCS3 booting DeS):
++         * Total=0x0D500000 (213 MB), Avail=0x0B650000 (~182 MB). The previous
++         * 256/192 MB was wrong -- game mode hands the title ~213 MB, and the
++         * engine's heap sizing depends on these exact figures. */
++        if (info) { vm_write32(info + 0, 0x0D500000u);   /* 213 MB total user mem */
++                    vm_write32(info + 4, 0x0B650000u); } /* ~182 MB available */
+         ctx->gpr[3] = 0;
++#ifdef _WIN32
++        { static int once = 0; if (!once) { once = 1; dbg_host_bt("mem352"); } }
++#endif
+         return;
+     }
+     case 330: {   /* sys_mmapper_allocate_address(u64 size, u64 flags,
 diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
 index 5f0fe99..a7ea149 100644
 --- a/runtime/ppu/ppu_sysprx.cpp

@@ -114,7 +114,46 @@ asking the OS — its heap arena is empty and `morecore`/`sbrk` is never reached
 likely the libc/SDK malloc heap was never initialized (heap config = 0), plausibly
 from the unparsed **process param** (`sys_process_param` in `proc_prx_param`).
 
-### Concrete next steps (resume here) — need a throw-site or ground truth
+### ROOT CAUSE FOUND (RPCS3 ground-truth comparison)
+Booted DeS in RPCS3 with trace logging (log at `rpcs3/log/RPCS3.log`). The real boot:
+```
+liblv2: 0x1f53ddc  sys_memory_allocate(size=0x10000, flags=0x200) -> 0x10000000
+liblv2: 0x1f57788  sys_memory_allocate(size=0x80000, flags=0x200) -> 0x10010000
+game 0x167aa30     sys_memory_get_user_memory_size -> Avail=0xb650000 Total=0xd500000
+game 0x1679474     sys_memory_allocate(size=0x100000, flags=0x400) -> 0x30000000
+game 0x00c378b4    sys_memory_allocate(size=0x5600000 /*86MB*/, flags=0x400) -> 0x30100000
+...
+```
+Two facts:
+1. **Real `get_user_memory_size` returns Total=0xD500000 (213 MB), Avail=0xB650000** — not
+   256/192. Fixed our handler to match (didn't fix the hang, but is correct).
+2. **The first two allocations come from `liblv2.sprx` (loaded at 0x1f5xxxx) — its module
+   init (`prx_start`) setting up the libc heap.** We do **not** load/run `liblv2`; we HLE
+   its exports. So that heap-init never runs.
+
+**Mechanism (high confidence):** With all HLE paths traced (fixed `YDKJ_HLETRACE` to cover
+ctx/prx paths — the calls were all ctx-handlers, previously invisible), the boot makes
+**only** `sys_initialize_tls`, 11× `sys_lwmutex_create` (= `std::ios_base::Init` / iostream
+global ctors), `sys_time_get_system_time`, `sys_ppu_thread_get_id`, lwmutex lock/unlock,
+then the terminate handler + `sys_process_exit`. **No `operator new`/`malloc`/`_sys_heap_malloc`/
+`sys_mmapper_allocate_memory` is ever called** (game imports `_sys_heap_malloc` +
+`sys_mmapper_allocate_memory` but never reaches them). So a C++ static constructor allocates
+against the never-initialized libc/DL heap → DL "nonexistent heap" → `std::bad_alloc` →
+terminate. On real PS3 this works because `liblv2`'s `prx_start` set up the heap first.
+
+### THE FIX (next) — provide the liblv2 heap init
+Either:
+1. **LLE-load `liblv2.sprx`** (firmware module) via the harness `ps3_load_prx_modules()` hook
+   + `prx_loader.c`, run its `prx_start` so the libc heap is set up as on hardware. Cleanest
+   match to real behavior; needs the decrypted `liblv2.sprx` + PRX relocation/init.
+2. **Replicate the heap init in our runtime/HLE**: at boot, do the equivalent
+   `sys_memory_allocate(0x10000)/(0x80000)` and initialize whatever libc-malloc / DL
+   runtime-heap globals the game reads, so the static allocator has a backing arena.
+3. **Investigate C++ init order**: confirm whether a heap-setup constructor should run before
+   the iostream ctors (the CRT init-array runners `func_00010D60`/`func_00010D50` in
+   `func_000125F0`); if our order differs, fix the init-array execution.
+
+### Earlier next steps (superseded by root-cause above)
 1. **RPCS3 ground-truth comparison (recommended, authoritative).** Boot DeS in RPCS3
    with LV2/`sys_memory` logging (porting guide method); capture the first ~200 boot
    syscalls. If real DeS calls `sys_memory_allocate`/container/`sys_process` setup

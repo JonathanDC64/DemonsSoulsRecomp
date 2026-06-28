@@ -504,3 +504,32 @@ Next candidate directions:
   does (boot harness vs the game's own `func_00010210` CRT path).
 - Pragmatic hardening: map guest page 0 no-access so the NULL-vtable deref faults in the VEH
   (loud + exact guest PC) instead of silently reading garbage and spinning.
+
+### Blocker #4 CLEARED (experiment) — use-before-build confirmed; now blocker #5 (same class)
+
+Re-lifted with `ctx->cia` stamping before every bl/bctrl/bcctrl/bctr (lifter change), so the
+exact guest PC of any divergence is recorded with no /O2-inlining/trampoline ambiguity. With
+caller-PC + object-identity probes, the picture is now exact:
+
+- `func_00A35780` (static-init runner) does, in order:
+  - `0x00A359E4`: `X = func_00B0AF28()` — accessor returns X=0x01B92CF8 with **`*X=0` (unbuilt)**
+  - `0x00A35A14`: `X.vtable[3]()` — dispatch on a NULL vtable → no-op → downstream NULL heap → spin
+  - `0x00A35AFC`: `func_00B25CB8(X)` — actually CONSTRUCTS X (too late)
+- The accessor `func_00B0AF28` never builds X; X is built only by `func_00B25CB8`. So X is
+  **used before it is constructed**.
+
+EXPERIMENT: made `func_00B0AF28` lazily build X (call `func_00B25CB8` on a ctx copy when
+`*X==0`, guarded against recursion). Result: `*X` becomes 0x018736B0, **the unresolved
+indirect call disappears, and the spin moves on** — init advanced one subsystem further
+(func_007CEE78+0x8A9 → +0x8CF). This CONFIRMS use-before-build is the root cause.
+
+New state — **blocker #5, same class**: `func_00AC8078` spins again with `desc=0x00000000`
+(NULL heap), called from `func_00B26C18+0x68`, reached at `func_00A35780+0x10A9`. So another
+heap manager's POOL is NULL — the game's heap managers have uninitialized pools because
+pool-creation is itself a virtual call on a not-yet-built object (a bootstrap cycle). The
+force-build (specific to func_00B0AF28's singleton) doesn't cover this different object.
+
+IMPLICATION: this is whack-a-mole at the symptom level. The robust fix is the ROOT — either
+(a) fix the static-init ordering so objects/heaps are built before use, or (b) back the game's
+DL heap subsystem so its pool-creation runs natively (the original "#2" approach). The lifter
+`cia` stamping + crash-handler `cia` reporting are kept as permanent debugging infrastructure.

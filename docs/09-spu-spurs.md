@@ -259,3 +259,33 @@ target** clear: `cellSpursInitializeWithAttribute` must stand up a minimal HLE "
 Open RE question: confirm cond=3's waiter (which guest fn) and the exact ready-condition it re-checks
 after wake, so the HLE signal is honored rather than spuriously looping. (Probe sys_cond_wait's
 g_active_ctx->cia to get the waiter; correlate with the Dantelion2 SPURS-init function.)
+
+---
+
+## 11. Firmware question RESOLVED — HLE the SPURS kernel (no firmware needed) [2026-06-29]
+
+Q: "firmware" = PS3 system software (cellSpurs/libsre.sprx live in PS3UPDAT.PUP, freely downloadable
+from Sony). Is the real SPURS kernel obtainable? A: yes, but **RPCS3 does NOT use it.**
+
+RPCS3 deep-dive (Emu/Cell/Modules/cellSpurs.cpp + cellSpursSpu.cpp): SPURS is **pure HLE**.
+`cellSpursInitializeWithAttribute` builds a SYNTHETIC sys_spu_image (segs=null, nsegs=0, entry
+0x818/0x848) — NO firmware load, no sys_spu_image_open. The SPURS kernel/sys-service/taskset-PM are
+reimplemented in C++ (`spursKernelEntry`, `spursSysServiceEntry`, `spursTasksetEntry`,
+`spursTasksetSelectTask`). Game task ELFs are parsed (`spursTasksetLoadElf`) and run as real SPU
+code; workload completion -> PPU via `sys_event_port_send(eventPort, 0,0, (1u<<31)>>wid)` ->
+event-helper thread -> registered handlers. **SPURS games run on RPCS3 with no firmware installed.**
+
+Decision for our port: **HLE the SPURS kernel (Option B confirmed).** Rationale:
+- It's what the gold-standard emulator does; no firmware required.
+- Aligns with this project's goals: clean-room (no Sony code in the tool), no decryption keys,
+  plug-and-play. (Option A — lift the firmware kernel — would need user firmware + keys at build and
+  would put recompiled Sony code in the tool. Not chosen.)
+- Our SPU recompiler already runs the GAME's 12 task images (0 ISA gaps); only the *scheduler* is
+  HLE'd. We reimplement it CLEAN (reference RPCS3's behavior/contract, write our own C — RPCS3 is GPL).
+- Precedent: `sp00nznet/flow` (flOw) is a shipped ps3recomp port of a SPURS game.
+
+Reference contract (RPCS3 cellSpursSpu.cpp): kernel entry 0x818(k1)/0x848(k2); sys-service workload
+embedded at LS 0x100; taskset PM entry 0xA00 / syscall 0xA70; tasks LS 0x3000+; PPU notify =
+`sys_event_port_send` with bit `(1u<<31)>>wid` per workload id. To add RPCS3 SPU core / cellSpursSpu
+to the reference clone: `git -C C:\dev\rpcs3-reference sparse-checkout add rpcs3/Emu/Cell` (already
+has Modules; cellSpursSpu.cpp is under Modules).

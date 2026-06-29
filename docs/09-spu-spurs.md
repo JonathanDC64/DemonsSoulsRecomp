@@ -452,3 +452,38 @@ the cellSpurs API. Implementing them (so the task gets a real context) is the pr
 job to run on real data and signal completion (releasing func_00A31158 -> the main thread's cond=3).
 The "unknown LS branch" targets are most likely downstream of the garbage context, not a lifter gap —
 re-check after the context is real.
+
+### 15b. The 3 NIDs identified; real blocker is the task context, not them [2026-06-29]
+
+Recovered the 3 "undocumented" cellSpurs NIDs by reverse-hashing candidate SDK names against the PS3
+NID scheme (NID = first 4 LE bytes of SHA1(name + 16-byte suffix); same as RPCS3's ppu_generate_id).
+Tool: `scripts/nid_name.py`. Results:
+- 0x8F122EF8 = **cellSpursTasksetAttributeSetTasksetSize**
+- 0x34552FA6 = **cellSpursTaskExitCodeInitialize**
+- 0xA121A224 = **cellSpursTaskAttributeSetExitCodeContainer**
+
+These are attribute setters / exit-code-container init — NOT context-size functions, so they do NOT
+cause eaContext=0 (correcting §15a's guess). Returning them as named no-op stubs is ~equivalent to the
+current unresolved->0, so they're not the boot blocker (implement for hygiene only).
+
+**Real blocker:** the game calls cellSpursCreateTask with **eaContext=0**, which in SPURS means "let
+SPURS allocate the task's context save area from the taskset pool." Our HLE passes that 0 straight
+through, so the SPU task ABI hands the job r3.word1 (eaContext) = 0; the task entry (which checks the
+0x40 marker then DMAs 64 bytes from eaContext — the ABI we use is correct) DMAs from address 0 ->
+garbage descriptor -> garbage computed branches (the "[SPU] unknown LS address" targets are downstream
+of this, NOT a lifter gap).
+
+**FIX (next):** in cellSpursCreateTask (libs/spurs/cellSpurs.c), when eaContext==0, allocate a guest
+context save area and synthesize a valid initial task context (per docs/11 §3: TaskInfo/context layout)
+before dispatch, so the SPU job DMAs a real descriptor. This is the SPURS task-context HLE — the core
+of docs/11 §3. cellSpursTaskGetContextSaveAreaSize gives the size from the ELF's LS pattern.
+
+## How RPCS3 handles "undocumented" cellSpurs functions (for reference)
+RPCS3 maps NID->function by NAME: REG_FUNC(cellSpurs, name) computes the NID via ppu_generate_id(name),
+so it only "knows" a function whose name is in its source. For NIDs whose name it lacks it logs a
+missing/unknown import and the call returns to a stub. Many cellSpurs PPU functions in RPCS3 are
+UNIMPLEMENTED_FUNC stubs (or commented out) -- RPCS3 gets away with that because it runs the REAL SPURS
+SPU kernel as actual SPU code, so the heavy lifting is on the SPU side, not the PPU API. We can't stub
+as freely: we HLE the SPURS scheduler, so PPU-side cellSpurs functions that set up real SPU state
+(context, taskset) must actually work. "Undocumented" is a misnomer -- they're documented SDK
+functions; the names just weren't in RPCS3/our tables, recoverable via scripts/nid_name.py.

@@ -157,3 +157,40 @@ PPU "reaches main loop" milestone.
 
 Reference clone: `C:\dev\rpcs3-reference`. Memory: `demons-souls-frontier-rsx-gcm`,
 `demons-souls-rpcs3-differential`, `demons-souls-rpcs3-crossref`.
+
+---
+
+## 7. Entry point PINPOINTED (2026-06-29) — where the SPU integration begins
+
+Tracing the boot SPURS sequence (YDKJ_HLETRACE), the game does, in order:
+`sys_spu_initialize(6)` -> `_cellSpursAttributeInitialize` -> `cellSpursAttributeSetNamePrefix`
+-> **`cellSpursInitializeWithAttribute`** -> `_cellSpursEventFlagInitialize`
+-> **`cellSpursEventFlagAttachLv2EventQueue`** (attaches the SPURS event flag to lv2 **queue 1**).
+Then the **SPURuntimeService** PPU thread blocks on `sys_event_queue_receive(q=1)`.
+
+Current state of our HLE:
+- `cellSpursInitializeWithAttribute` (libs/spurs/cellSpurs.c) is a PURE STUB: it records attrs and
+  returns CELL_OK. It does NOT create/start the SPURS kernel SPU thread group. (i.e. we're in the
+  plan's "Option B": no on-SPU SPURS kernel; workload images are meant to be dispatched directly.)
+- The only SPU dispatch in cellSpurs.c is in cellSpursAddWorkload/CreateTask -> `spu_workload_dispatch_async`.
+- MISSING: the **completion wiring** — when an SPU workload/task finishes (or signals the SPURS event
+  flag), nothing posts an event to the attached lv2 queue (queue 1), so SPURuntimeService never wakes.
+
+So the unblock chain to build is: game adds a workload/task -> we dispatch the lifted SPU image ->
+on completion (or on the SPU signaling the SPURS event flag) -> POST an lv2_event to the queue that
+`cellSpursEventFlagAttachLv2EventQueue` bound (queue 1) -> `sys_event_queue_receive` returns ->
+SPURuntimeService runs -> clears the PPURuntimeService flag (*(0x01B91E20)). Closing that single
+loop is the SPU-side "reaches main loop" milestone.
+
+NEXT CONCRETE STEPS:
+- a. In `cellSpursEventFlagAttachLv2EventQueue`, record the (event-flag -> lv2 queue id) binding.
+- b. Implement `cellSpursEventFlagSet` / the SPU-side event-flag signal so it posts an lv2_event to
+     the bound queue (queue 1). (Check what the SPURS event-flag wait/set semantics are vs RPCS3.)
+- c. Trace whether/when the game calls cellSpursAddWorkload/cellSpursCreateTaskset/CreateTask after
+     init (it may be driven from another thread or gated on the service running). Identify the first
+     workload/task image (fingerprint) the service depends on.
+- d. Dispatch that first image via spu_workload_dispatch, have it (or a temporary shim) signal the
+     event flag -> queue 1, and confirm SPURuntimeService unblocks.
+- e. Decide whether to keep Option B (direct dispatch + HLE the SPURS kernel's scheduling) or run the
+     recompiled SPURS kernel on a real SPU thread group (Option A, RPCS3-style). Option B is likely
+     faster to first-pixels; Option A is more faithful for complex taskset scheduling.

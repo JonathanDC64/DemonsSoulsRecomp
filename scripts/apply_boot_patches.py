@@ -49,13 +49,16 @@ PATCHES = [
     (
         "func_00AC8078 NULL-heap -> ds_heap",
         "void func_00AC8078(ppu_context* ctx) {",
-        "void func_00AC8078(ppu_context* ctx) {\n        uint64_t _cs_24 = ctx->gpr[24];",
+        # Insert right after the opening brace (robust to a leading DS_FRAME(...)
+        # guard line from a --shadow-stack lift, which used to break the old
+        # signature+_cs_24 match). The NULL-heap check returns early before
+        # DS_FRAME is constructed, so the shadow stack stays balanced.
+        "void func_00AC8078(ppu_context* ctx) {\n",
         "void func_00AC8078(ppu_context* ctx) {\n"
         "        if ((uint32_t)ctx->gpr[3] == 0) { /* boot-patch: NULL heap pool -> ds_heap */\n"
         "            uint32_t _sz = (uint32_t)ctx->gpr[4]; uint32_t _al = (uint32_t)ctx->gpr[5];\n"
         "            if (_al > _sz) _sz = _al; if (_sz < 16) _sz = 16;\n"
-        "            ctx->gpr[3] = _sz; ds_malloc(ctx); return; }\n"
-        "        uint64_t _cs_24 = ctx->gpr[24];",
+        "            ctx->gpr[3] = _sz; ds_malloc(ctx); return; }\n",
     ),
 ]
 _OBSOLETE_PATCHES = [

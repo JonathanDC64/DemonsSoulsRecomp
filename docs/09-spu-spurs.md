@@ -194,3 +194,57 @@ NEXT CONCRETE STEPS:
 - e. Decide whether to keep Option B (direct dispatch + HLE the SPURS kernel's scheduling) or run the
      recompiled SPURS kernel on a real SPU thread group (Option A, RPCS3-style). Option B is likely
      faster to first-pixels; Option A is more faithful for complex taskset scheduling.
+
+---
+
+## 8. Architecture DECISION forced (2026-06-29): HLE the SPURS kernel (Option B)
+
+Evidence: of the 12 EBOOT SPU images, **11 have entry at LS 0x3070-0x3090** (= `CELL_SPURS_TASK_TOP
+0x3000`) → they are **SPURS task binaries**; `spu_0010` (entry 0x100) is a policy/workload module.
+**None** is the SPURS kernel (no `SPURS_GUID_*`, no `0x818/0x848` kernel entry). The SPURS kernel
+(the on-SPU scheduler) ships in **cellSpurs.prx (firmware)** — which we do NOT have and (clean-room)
+do NOT want. => **We cannot run the real SPURS kernel; we must HLE the SPURS scheduler/runtime** and
+execute only the game's task/policy images (which lift with 0 gaps). RPCS3 takes Option A (it runs
+the firmware kernel as real SPU code); we are forced to Option B.
+
+## 9. The SPURS bring-up handshake (why boot stalls before any task)
+
+Boot SPURS calls observed (HLETRACE), then it STOPS — no CreateTaskset/CreateTask/AddWorkload:
+`_cellSpursAttributeInitialize` -> `cellSpursAttributeSetNamePrefix` -> `cellSpursInitializeWithAttribute`
+-> `_cellSpursEventFlagInitialize` -> `cellSpursEventFlagAttachLv2EventQueue` (binds to lv2 queue 1).
+Three game threads then deadlock waiting for SPURS to come "up":
+- **SPURuntimeService** (func_00C5DAB0): loops `sys_event_queue_receive(q=1, infinite)`; dispatches
+  events whose **source == 0xFFFFFFFF53505501** (`SYS_SPU_THREAD_EVENT_USER_KEY`) to handlers
+  func_00C5BE78 / func_00C5D6D8; exits on a `0xFEE1DEAD` game sentinel. It needs SPU USER events.
+- **PPURuntimeService** (func_00C3A878 -> func_00C3A358): sets flag `*(0x01B91E20)=1`, pumps
+  usleep+cellSysutilCheckCallback until it clears (cleared after SPU-side work completes).
+- A thread on **`cond_wait(cond=3, infinite)`** — the init thread waiting for the services/SPURS to
+  reach a ready state.
+Our `cellSpursInitializeWithAttribute` is a pure stub (records attrs, returns OK) — it never brings
+the SPURS system "up", so nothing ever drives those three waits.
+
+## 10. Revised plan (Option B = HLE SPURS)
+
+The job is to HLE the SPURS runtime well enough that the game's task images run and the PPU-side
+handshake completes. Build order:
+1. **Make `cellSpursInitializeWithAttribute` actually bring SPURS "up"** in HLE terms: record the
+   instance, set up the workload table, and start a HOST "SPURS service" — a thread (or callback)
+   that plays the role of the firmware kernel + PPU handler: it watches for added workloads/created
+   tasks and, when one runs/completes, posts the right lv2 event.
+2. **Wire `cellSpursEventFlagAttachLv2EventQueue`** to record (event-flag -> lv2 queue id=1) so our
+   service knows where to post USER events (source 0xFFFFFFFF53505501) the SPURuntimeService consumes.
+3. **Reverse the USER-event payload format** the SPURuntimeService expects (decode func_00C5BE78 /
+   func_00C5D6D8: which fields in data1/2/3 select the workload/handler). This is required to post a
+   *correct* event, not a blind one.
+4. **Identify the init handshake**: who waits on cond=3 and what signal releases it (likely the
+   SPURS handler/service reaching ready, or a first system-workload event). Make our HLE service
+   produce exactly that so the init thread proceeds to actually create tasks.
+5. **Task execution**: when the game creates tasks (cellSpursCreateTaskset/CreateTask), dispatch the
+   matching image (one of the 12) via `spu_run_lifted_job_abi(..., spurs_task_abi=1)`; run its DMAs;
+   post the completion USER event. Validate output via `--trace` vs RPCS3 where needed.
+
+RISK/NOTE: HLE-ing SPURS is real work — the game (Dantelion2) wraps SPURS in its own runtime-service
+layer with its own event protocol (the 0x53505501 USER events + 0xFEE1DEAD sentinel + cond=3
+handshake). Step 3 (decode the event payload) and step 4 (the cond=3 release) are the two reverse-
+engineering gates before tasks can run. The SPU *execution* itself is the solved part (lifter +
+runtime ready; 0 ISA gaps).

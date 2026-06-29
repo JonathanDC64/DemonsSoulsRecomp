@@ -248,3 +248,14 @@ layer with its own event protocol (the 0x53505501 USER events + 0xFEE1DEAD senti
 handshake). Step 3 (decode the event payload) and step 4 (the cond=3 release) are the two reverse-
 engineering gates before tasks can run. The SPU *execution* itself is the solved part (lifter +
 runtime ready; 0 ISA gaps).
+
+### 9a. cond=3 never signaled (the concrete init block)
+SYNCTRACE confirms: cond id 3 is `COND_WAIT`-ed exactly once and **never signaled** for the whole
+run. So the SPURS init thread blocks on cond=3 forever. On real PS3 the cellSpurs PPU
+handler/event-helper thread (created inside cellSpursInitializeWithAttribute) reaches "ready" and
+signals it. Our stub creates no such thread → permanent block. This makes the **first concrete HLE
+target** clear: `cellSpursInitializeWithAttribute` must stand up a minimal HLE "SPURS service" that
+(a) releases whatever the init thread waits on (cond=3) and (b) later feeds USER events to queue 1.
+Open RE question: confirm cond=3's waiter (which guest fn) and the exact ready-condition it re-checks
+after wake, so the HLE signal is honored rather than spuriously looping. (Probe sys_cond_wait's
+g_active_ctx->cia to get the waiter; correlate with the Dantelion2 SPURS-init function.)

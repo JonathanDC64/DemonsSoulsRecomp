@@ -37,18 +37,28 @@ CHUNK = pathlib.Path(__file__).resolve().parent.parent / "work" / "recomp" / "pp
 # -> infinite *(0x78) poll near cellSysutilCheckCallback). Disabling them lets boot reach
 # the same point and advance further. Kept here (disabled) as a record; re-enable only if
 # a genuine post-UB regression is proven. See docs/07, memory demons-souls-rotl-ub-bug.
-PATCHES = []
-_OBSOLETE_PATCHES = [
+# Patch 1 (func_00AC8078 NULL-heap -> ds_heap) is a LEGITIMATE shim, kept enabled: the DL
+# segregated allocator is sometimes invoked with a NULL heap descriptor (r3==0) for a
+# registry/object whose backing heap isn't wired up in our runtime; route those allocations
+# to the backed ds_heap instead of spinning in the bin-doubling loop. (Distinct from the
+# rotate-by-zero UB -- that's fixed separately; this NULL-heap case persists.) Size is r4
+# (confirmed via probe: 0x180), fall back to r5 if larger, min 16.
+# Patch 2 (force-build singleton X) stays DISABLED -- it was obsoleted by the rotl-UB fix
+# and corrupts a downstream singleton (see _OBSOLETE_PATCHES / commit history).
+PATCHES = [
     (
         "func_00AC8078 NULL-heap -> ds_heap",
         "void func_00AC8078(ppu_context* ctx) {",
         "void func_00AC8078(ppu_context* ctx) {\n        uint64_t _cs_24 = ctx->gpr[24];",
         "void func_00AC8078(ppu_context* ctx) {\n"
         "        if ((uint32_t)ctx->gpr[3] == 0) { /* boot-patch: NULL heap pool -> ds_heap */\n"
-        "            uint32_t _sz = (uint32_t)ctx->gpr[5]; if (_sz < 16) _sz = 16;\n"
+        "            uint32_t _sz = (uint32_t)ctx->gpr[4]; uint32_t _al = (uint32_t)ctx->gpr[5];\n"
+        "            if (_al > _sz) _sz = _al; if (_sz < 16) _sz = 16;\n"
         "            ctx->gpr[3] = _sz; ds_malloc(ctx); return; }\n"
         "        uint64_t _cs_24 = ctx->gpr[24];",
     ),
+]
+_OBSOLETE_PATCHES = [
     (
         "func_00B0AF28 lazy-build singleton X",
         "void func_00B0AF28(ppu_context* ctx) {",

@@ -26,8 +26,19 @@ import sys, pathlib
 
 CHUNK = pathlib.Path(__file__).resolve().parent.parent / "work" / "recomp" / "ppu_recomp_005.cpp"
 
-# (description, anchor_that_must_exist_once, old, new)
-PATCHES = [
+# OBSOLETE (2026-06-29): Both patches below were workarounds for symptoms of a single
+# root cause -- a rotate-by-zero undefined-behavior bug in the lifter's ppc_rotl64/
+# ppc_rlwinm/ppc_rlwimi helpers (fixed in ps3recomp 58fd9d8). That UB miscompiled the
+# C++ thread-safe-static guard logic (bit math via rldicl/rlwinm), which is what left
+# singleton X's vtable NULL (#4) and the DL allocator with a NULL heap (#5). With the UB
+# fixed, the guards construct correctly on their own, so these patches are not only
+# unnecessary but HARMFUL: the force-build of X (#2) builds it on a context copy and
+# corrupts a downstream Meyers singleton (func_00A98AB0 -> returned a garbage 0xB8 'this'
+# -> infinite *(0x78) poll near cellSysutilCheckCallback). Disabling them lets boot reach
+# the same point and advance further. Kept here (disabled) as a record; re-enable only if
+# a genuine post-UB regression is proven. See docs/07, memory demons-souls-rotl-ub-bug.
+PATCHES = []
+_OBSOLETE_PATCHES = [
     (
         "func_00AC8078 NULL-heap -> ds_heap",
         "void func_00AC8078(ppu_context* ctx) {",

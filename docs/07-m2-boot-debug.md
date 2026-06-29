@@ -765,3 +765,35 @@ construction path. The robust fix is to **functionally initialize the game's DL 
 (the banked "#2" DL-heap-backing) so the game's own allocator AND the object/container
 constructors run natively, instead of patching symptoms. The force-build + NULL-heap->ds_heap
 fallbacks carried us through the memory bootstrap but cannot fully replace a working heap.
+
+## BREAKTHROUGH (2026-06-29) — root was a rotate-by-zero UB in the lifter, not a C++ cascade
+
+After returning to `master` (override approach) and re-lifting, the boot still spun in the
+C++ static-init machinery. Backtrace-resolved the spin to `func_00A35780` (a type/factory
+registry), in a 0xC-stride container-copy loop reading `begin=0x70FFFFFF, end=0` from low
+memory and running away. The copy pointer `r28` should have been `r27+0x70` (the registry
+node's container header), but was 0/garbage.
+
+Root cause (NOT the construction cascade we'd been chasing): the lifter's rotate helpers
+invoked C undefined behavior for rotate-by-zero:
+- `ppc_rotl64(v,n)`: `(v<<n)|(v>>(64-n))` → `v>>64` UB when n==0.
+- `ppc_rlwinm`/`ppc_rlwimi`: `(rs<<sh)|(rs>>(32-sh))` → `rs>>32` UB when sh==0.
+
+`rldicl rA,rS,0,32` (32-bit truncate) and `rlwinm …,0,…` (mask/move) are everywhere; clang
+-O2 miscompiled them inside the huge `func_00A35780`. Probe proof:
+`ppc_rldicl(0x01B91198,0,32)` returned **0x00000002** instead of 0x01B91198, so
+`r28 = r27+0x70` came out wrong → runaway copy. Many earlier "NULL pointer / use-before-
+construction" symptoms (blocker #4/#5/#6, the RPCS3 register-then-wipe) were downstream of
+this single miscompile.
+
+Fix (ps3recomp 58fd9d8): guard the shift on sh/n==0 in all three helpers. After the fix,
+`r28` computes correctly (0x01B91198), the node container is empty (begin=end=0) so the copy
+is skipped, and boot advances PAST the entire static-init cascade into
+**`cellSysmoduleLoadModule`** (PRX module loading).
+
+New frontier (next blockers): unresolved HLE NID `0x63FF6FF9`, and unresolved indirect calls
+at guest `0x00A8CED4` and `0x00AE16F4`. Memory: [[demons-souls-rotl-ub-bug]].
+
+Open cleanup: re-evaluate whether `scripts/apply_boot_patches.py` (force-build singleton X,
+func_00AC8078 NULL-heap->ds_heap) is still required now that the miscompile is gone — some of
+those NULL-pointer symptoms may have been the UB, not real construction-order bugs.

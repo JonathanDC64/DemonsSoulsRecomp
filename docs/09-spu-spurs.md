@@ -619,3 +619,35 @@ callback pointer. NEXT: seed/resolve 0x04DC0 (extend SPU jump-table / fn-ptr
 discovery) and trace why a branch to LS 0 occurs (uninitialized callback in the task
 arg's OPD list?), so the task runs to its exit + writes 0xD002A910 -> releases
 func_00A31158 -> cond=3.
+
+### 15i. SPU task is the SPURS command dispatcher; inline jump table seeded [2026-06-29]
+
+With musttail (§15h) the task ran but halted at `[SPU] indirect branch to unknown LS
+0x04DC0 / 0x00000`. Pinned the task (run inline via SPU_INLINE=1; hang_watchdog
+sampled the PPU thread's RIP; symbolized vs des_boot.map) to **func_00004694** --
+decoded as the SPURS task's COMMAND-QUEUE DISPATCHER:
+  - queue empty (LS[0x13480]==LS[0x13400]) -> func_00005120 (RdEventStat/WrEventAck
+    event-wait) -> loop;
+  - else: getllar + DMA the next command, advance head, then
+    `r2 = LS[r84 + (opcode-1)*4]; ctx->pc = r2; bi r2` -- a jump-table dispatch.
+The table base r84 = LS 0x475C is a clean **37-entry handler table** (opcodes 1..37
+-> 0x4850..0x5094) embedded IN .text between func_00004694 and func_00004804 (read
+straight out of the ELF). 0x04DC0 = opcode 16's handler, never lifted because it's
+reachable only via this computed dispatch; the fn-ptr discovery scanned only NON-text
+segments. 0x00000 was a downstream effect (missing handler -> garbage reg -> bi 0).
+
+FIX (spu_lifter): also detect jump tables embedded in .text -- a RUN of >=6
+consecutive 4-aligned words all pointing into .text is reliably a jump table -- and
+seed each entry. Re-lift: all 37 handlers lift; zero unresolved branches.
+
+RESULT: the task dispatches its command queue cleanly and cycles in func_00004694;
+process stable; PPU still parked on func_00A31158's 0xD002A910 wait.
+
+FRONTIER (#7): the task is a persistent command-queue WORKER. To complete it needs
+the SPURS runtime environment we don't yet provide: the queue ring (head/tail @LS
+0x13400/0x13480) and command stream properly set up by the taskset kernel, and the
+completion/exit protocol (the handler/command that writes 0xD002A910 the PPU polls).
+NEXT: trace what populates LS 0x13400/0x13480 + what the dispatched handlers expect
+(are they processing real commands or garbage from an un-set-up queue?), then provide
+the missing SPURS scaffolding -> task reaches its exit + 0xD002A910 store -> releases
+func_00A31158 -> cond=3. (docs/11 HLE SPURS task framework.)

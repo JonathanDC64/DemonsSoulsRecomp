@@ -797,3 +797,33 @@ at guest `0x00A8CED4` and `0x00AE16F4`. Memory: [[demons-souls-rotl-ub-bug]].
 Open cleanup: re-evaluate whether `scripts/apply_boot_patches.py` (force-build singleton X,
 func_00AC8078 NULL-heap->ds_heap) is still required now that the miscompile is gone — some of
 those NULL-pointer symptoms may have been the UB, not real construction-order bugs.
+
+## MILESTONE (2026-06-29): full PPU boot to main loop — SPU gate reached
+
+Demon's Souls now boots end-to-end on the PPU recompilation, from the user's own disc EBOOT,
+into its running 60fps main loop. Verified on a CLEAN re-lift + build (no debug probes; all
+fixes are in the committed lifter + runtime). Boot path now traverses:
+static init (C++ ctors) -> sysmodule load -> RSX backend init + window open -> Dantelion2
+runtime-service threads (PPURuntimeService, SPURuntimeService, HighGraphics) -> sys cache mount
+-> main loop (per frame: sys_timer_usleep(16666us) + cellSysutilCheckCallback). No crash, no spin.
+
+Root-cause fixes that got here (this session), each cleared a whole class of symptoms:
+1. Rotate-by-zero UB in the lifter (ppc_rotl64/rlwinm/rlwimi did v>>64 / rs>>32) — clang
+   miscompiled it; was THE root of the C++ static-init "construction cascade". (ps3recomp 58fd9d8)
+2. SYS_MUTEX_MAX/SYS_COND_MAX 256 -> 8192. (788c645)
+3. sys_event_flag_* syscall numbers were wrong (139-146), colliding with sys_timer_usleep/sleep
+   (141/142); the per-frame usleep was mis-dispatched to event_flag_wait -> spin. Corrected to
+   real PS3 numbers via RPCS3 cross-ref. (5a41644)
+4. Disabled the now-obsolete+harmful force-build-X workaround (the UB fix replaced it). (main bf55cc0)
+5. hle_ppu_thread_create/exit didn't propagate the return to r3 -> _sys_ppu_thread_create looked
+   like an error -> assert path clobbered the TOC (r2=0) -> garbage singleton -> the 0x78 spin.
+   (42bbd07)
+6. cellSysutil HLE handlers deref'd raw guest pointers as host pointers -> segfault; fixed to
+   translate via vm_base + BE store. (af71a5d)
+
+GATE: SPU/SPURS. [SPU] initialize(nspu=6) runs but no SPU executes; SPURuntimeService blocks on
+sys_event_queue_receive(q=1) (the SPU-completion queue) forever, and the PPU side waits on a flag
+the SPU would clear. For DeS this is fundamental (SPURS tasks do real work: zlib inflate, render
+command processing) — advancing requires actual SPU execution (recompile SPU + SPURS runtime),
+the large banked effort. Cross-referencing RPCS3's Cell/SPU + lv2 implementations
+(C:\dev\rpcs3-reference) is the way in. See memory: demons-souls-frontier-rsx-gcm, ...-rpcs3-differential.

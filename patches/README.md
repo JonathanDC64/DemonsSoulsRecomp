@@ -2,24 +2,29 @@
 
 We use [ps3recomp](https://github.com/sp00nznet/ps3recomp) as the recompilation
 base. The full clone lives in `../ps3recomp/` (gitignored — third-party, large).
-Our fixes to it are committed inside that clone's own git **and** exported here as
-portable patches so they survive a re-clone and are ready to upstream.
 
-Apply with: `cd ps3recomp && git apply ../patches/ps3recomp/<file>.patch`
+**Canonical home of our changes:** our ps3recomp fork —
+[github.com/JonathanDC64/ps3recomp](https://github.com/JonathanDC64/ps3recomp)
+(branch `master`, currently 27 commits ahead of upstream `sp00nznet/master`). Clone
+that instead of upstream to get every fix already applied.
 
-## 01-portability-and-scaling-fixes.patch
+`01-portability-and-scaling-fixes.patch` is a **convenience export** of the full
+delta vs upstream (`git diff sp00nznet/master..fork/master`), so the fixes survive a
+re-clone of upstream and are ready to upstream as a PR. It may lag the fork; regenerate with:
 
-Four fixes, all needed to lift+build+boot a large (106k-function) PS3 title that
-the tool's prior test targets (≤14k functions, e.g. Uncharted) never exercised.
-All are general improvements, not Demon's Souls-specific.
+```
+git -C ps3recomp diff origin/master..master > patches/ps3recomp/01-portability-and-scaling-fixes.patch
+```
 
-| # | File | Problem | Fix |
-|---|------|---------|-----|
-| 1 | `tools/ppu_lifter.py` | `generate_mid_function_entries()` rescans the full ~6M-instruction list twice per target × thousands of targets × up to 25 passes → multi-O(N²) hang (~40 min, no output) on a 96k-fn binary. | Binary-search-slice the instruction list to `[target, span)` before each `lift_function` call. Behaviour-preserving (it already ignores out-of-range insns). Lift time → <1 min. |
-| 2 | `runtime/ppu/ppu_loader.cpp` | Function registry is a fixed **64K-slot** open-addressing hash (`PPU_HASH_BITS=16`), sized for ~14k-fn games. A 106k-fn title overflows it; `ppu_register_function` then probes a full table **forever** (100% CPU hang during init). | `PPU_HASH_BITS` 16 → 19 (524,288 slots, ~0.2 load at 106k) **and** a bounded-probe guard that logs+returns instead of spinning. |
-| 3 | `CMakeLists.txt` | `libs/network/sceNpCommerce.c` defines the same `sceNpCommerce2*` symbols as `sceNpCommerce2.c`. MSVC `lib` only warned (LNK4006); `lld-link` errors on the duplicates when linking an exe. | Exclude the duplicate `sceNpCommerce.c` from the runtime lib sources. |
-| 4 | (see project `port/compat/dirent.h`) | `runtime/ppu/ppu_fs.cpp` includes `<dirent.h>` unconditionally (only guards `<io.h>` for MinGW) → no build under MSVC/clang-cl. | Minimal Win32 `<dirent.h>` shim shipped in our `port/compat/` and put on the include path (kept in our tree, not the clone). |
+Apply to a fresh upstream clone with: `cd ps3recomp && git apply ../patches/ps3recomp/01-portability-and-scaling-fixes.patch`
 
-> Note: the "EXEC has 0 imports" issue seen early on was **not** a tool bug — it was
-> using the wrong tool (`prx_analyzer.py`/`elf_parser.py`). `ppu_loader.py` reads
-> imports from `proc_prx_param` correctly despite stripped section names.
+## What it contains (all general improvements, not Demon's Souls-specific)
+
+Grouped by area — see the fork's commit log for per-change detail:
+
+- **Lifter (`tools/ppu_lifter.py`)** — O(N²) mid-function-entry slicing fix (multi-minute hang → <1 min on a 106k-fn binary); **PIC switch jump-table reconstruction** (two-level-TOC base resolution + inline-table fallback, lifted as an in-function `ctr` switch — was emitting unresolved indirect calls); **rotate-by-zero UB** fix in `ppc_rotl64`/`rlwinm`/`rlwimi` (clang miscompiled the ubiquitous `rldicl …,0,32` under -O2); optional `--override-funcs`; **`--shadow-stack`** (per-function guest call-stack guard for reliable backtraces).
+- **SPU lifter (`tools/spu_lifter.py`) / `runtime/spu`** — added `eqv`/`sumb`/`mpyhhu` (covers all of DeS's SPU images).
+- **Runtime (`runtime/ppu`)** — function-registry hash 64K→512K slots + bounded-probe guard (106k-fn titles overflowed the old table → init hang); propagate HLE ctx-handler return to r3; shadow-call-stack backing store + `ds_dump_shadow`; indirect-call/trampoline diagnostics.
+- **Syscalls** — corrected event-flag syscall numbers (were colliding with timer/usleep); raised `SYS_MUTEX_MAX`/`SYS_COND_MAX` 256→8192; real `sys_lwmutex` deadlock semantics; **implemented `sys_memory_get_page_attribute` (351)** with per-allocation page-size tracking.
+- **GCM (`libs/video/cellGcmSys.c`)** — moved the FIFO control register into guest memory + `get→put` drain (the title polls it as a guest address; a host pointer made its FIFO-drain wait spin).
+- **Build/portability** — exclude duplicate `sceNpCommerce.c` (lld-link dup symbols); Win32 `<dirent.h>` shim (in our `port/compat/`, on the include path).

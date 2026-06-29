@@ -13,6 +13,203 @@ index 67c0058..9924b6c 100644
  
  # Runtime core (syscalls, PPU, SPU, memory)
  file(GLOB_RECURSE RUNTIME_SOURCES
+diff --git a/libs/system/cellSysutil.c b/libs/system/cellSysutil.c
+index 79b65a1..1486203 100644
+--- a/libs/system/cellSysutil.c
++++ b/libs/system/cellSysutil.c
+@@ -152,62 +152,49 @@ s32 cellSysutilCheckCallback(void)
+ 
+ s32 cellSysutilGetSystemParamInt(s32 id, s32* value)
+ {
+-    if (!value)
++    /* `value` arrives as a raw GUEST address (the HLE dispatch passes r4 verbatim), NOT a
++     * host pointer. Translate it into the VM and write the result big-endian (PS3 is BE).
++     * Dereferencing it directly faulted (guest addr used as host addr). */
++    extern uint8_t* vm_base;
++    uint32_t gaddr = (uint32_t)(uintptr_t)value;
++    if (!gaddr)
+         return CELL_SYSUTIL_ERROR_VALUE;
+ 
++    s32 v;
+     switch (id) {
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_LANG:
+-        *value = CELL_SYSUTIL_LANG_ENGLISH_US;
+-        break;
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_ENTER_BUTTON_ASSIGN:
+-        *value = CELL_SYSUTIL_ENTER_BUTTON_ASSIGN_CROSS;
+-        break;
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_DATE_FORMAT:
+-        *value = 0; /* YYYYMMDD */
+-        break;
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_TIME_FORMAT:
+-        *value = 0; /* 24-hour */
+-        break;
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_TIMEZONE:
+-        *value = 0; /* UTC */
+-        break;
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_SUMMERTIME:
+-        *value = 0; /* No DST */
+-        break;
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_GAME_PARENTAL_LEVEL:
+-        *value = 0; /* No restriction */
+-        break;
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_GAME_PARENTAL_LEVEL0_RESTRICT:
+-        *value = 0;
+-        break;
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_CURRENT_USER_HAS_NP_ACCOUNT:
+-        *value = 1; /* Has NP account */
+-        break;
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_CAMERA_PLFREQ:
+-        *value = 0; /* 60Hz */
+-        break;
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_PAD_RUMBLE:
+-        *value = 1; /* Rumble on */
+-        break;
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_KEYBOARD_TYPE:
+-        *value = 0; /* US/101 */
+-        break;
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_PAD_AUTOOFF:
+-        *value = 0; /* Disabled */
+-        break;
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_LANG:                        v = CELL_SYSUTIL_LANG_ENGLISH_US; break;
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_ENTER_BUTTON_ASSIGN:        v = CELL_SYSUTIL_ENTER_BUTTON_ASSIGN_CROSS; break;
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_DATE_FORMAT:                v = 0; break; /* YYYYMMDD */
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_TIME_FORMAT:                v = 0; break; /* 24-hour */
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_TIMEZONE:                   v = 0; break; /* UTC */
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_SUMMERTIME:                 v = 0; break; /* No DST */
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_GAME_PARENTAL_LEVEL:        v = 0; break; /* No restriction */
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_GAME_PARENTAL_LEVEL0_RESTRICT: v = 0; break;
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_CURRENT_USER_HAS_NP_ACCOUNT: v = 1; break; /* Has NP account */
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_CAMERA_PLFREQ:              v = 0; break; /* 60Hz */
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_PAD_RUMBLE:                 v = 1; break; /* Rumble on */
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_KEYBOARD_TYPE:              v = 0; break; /* US/101 */
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_PAD_AUTOOFF:                v = 0; break; /* Disabled */
+     default:
+         printf("[cellSysutil] GetSystemParamInt: unknown id 0x%04X\n", id);
+-        *value = 0;
++        v = 0;
+         break;
+     }
+ 
++    /* big-endian store into guest memory */
++    uint8_t* p = vm_base + gaddr;
++    p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16);
++    p[2] = (uint8_t)(v >> 8);  p[3] = (uint8_t)v;
+     return CELL_OK;
+ }
+ 
+-s32 cellSysutilGetSystemParamString(s32 id, char* buf, u32 bufsize)
++s32 cellSysutilGetSystemParamString(s32 id, char* buf_guest, u32 bufsize)
+ {
+-    if (!buf || bufsize == 0)
++    /* buf_guest is a raw GUEST address; translate into the VM. (byte string -> no bswap) */
++    extern uint8_t* vm_base;
++    if (!(uint32_t)(uintptr_t)buf_guest || bufsize == 0)
+         return CELL_SYSUTIL_ERROR_VALUE;
++    char* buf = (char*)(vm_base + (uint32_t)(uintptr_t)buf_guest);
+ 
+     switch (id) {
+     case CELL_SYSUTIL_SYSTEMPARAM_ID_NICKNAME:
+@@ -282,12 +269,14 @@ s32 cellSysutilDisableBgmPlaybackEx(void)
+  * System cache
+  * -----------------------------------------------------------------------*/
+ 
+-s32 cellSysCacheMount(char* cachePath)
++s32 cellSysCacheMount(char* cachePath_g)
+ {
++    extern uint8_t* vm_base;
+     printf("[cellSysutil] SysCacheMount()\n");
+ 
+-    if (!cachePath)
++    if (!(uint32_t)(uintptr_t)cachePath_g)
+         return CELL_EINVAL;
++    char* cachePath = (char*)(vm_base + (uint32_t)(uintptr_t)cachePath_g); /* guest addr -> host */
+ 
+     /* Provide a temp directory path */
+     strncpy(s_cache_path, "/dev_hdd1/caches", CELL_SYSCACHE_PATH_MAX - 1);
+@@ -311,14 +300,19 @@ s32 cellSysCacheClear(void)
+  * Disc game check
+  * -----------------------------------------------------------------------*/
+ 
+-s32 cellDiscGameGetBootDiscInfo(u32* type, char* titleId, u32 titleIdSize)
++s32 cellDiscGameGetBootDiscInfo(u32* type_g, char* titleId_g, u32 titleIdSize)
+ {
++    extern uint8_t* vm_base;
+     printf("[cellSysutil] DiscGameGetBootDiscInfo()\n");
+ 
+-    if (type)
+-        *type = CELL_DISCGAME_TYPE_HDD; /* pretend HDD game */
++    if ((uint32_t)(uintptr_t)type_g) {
++        uint8_t* p = vm_base + (uint32_t)(uintptr_t)type_g;     /* BE u32 store */
++        uint32_t t = CELL_DISCGAME_TYPE_HDD;
++        p[0]=(uint8_t)(t>>24); p[1]=(uint8_t)(t>>16); p[2]=(uint8_t)(t>>8); p[3]=(uint8_t)t;
++    }
+ 
+-    if (titleId && titleIdSize > 0) {
++    if ((uint32_t)(uintptr_t)titleId_g && titleIdSize > 0) {
++        char* titleId = (char*)(vm_base + (uint32_t)(uintptr_t)titleId_g);
+         strncpy(titleId, "GAME00000", titleIdSize - 1);
+         titleId[titleIdSize - 1] = '\0';
+     }
+diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
+index d07f842..104ff4f 100644
+--- a/libs/video/cellGcmSys.c
++++ b/libs/video/cellGcmSys.c
+@@ -156,6 +156,14 @@ static CellGcmReportData s_report_data[CELL_GCM_MAX_REPORT_COUNT];
+ #define GCM_LABEL_STRIDE      0x10u
+ static u32 s_labels[CELL_GCM_MAX_LABEL_COUNT];
+ 
++/* FIFO control block (put@0/get@4/ref@8) in GUEST memory, same rationale as the
++ * label window: the recompiled game reads/writes it via vm_read32/vm_write32, so
++ * cellGcmGetControlRegister must return a GUEST EA — &s_control (a host pointer)
++ * read as a guest offset is garbage, which makes the title's "wait until the RSX
++ * has drained the FIFO" (get==put) loops spin forever (e.g. func_009F7518). The
++ * vblank consumer (cellGcm_rsx_process_fifo) advances get->put each tick. */
++#define GCM_CONTROL_GUEST_EA  0x03002000u
++
+ /* ---------------------------------------------------------------------------
+  * Internal helpers
+  * -----------------------------------------------------------------------*/
+@@ -300,6 +308,12 @@ s32 cellGcmInit(u32 cmdSize, u32 ioSize, u32 ioAddress)
+         s_io_mapping_count = 1;
+     }
+ 
++    /* FIFO control block in GUEST memory (the EA cellGcmGetControlRegister hands
++     * back). Start drained: put==get==0. */
++    vm_write32(GCM_CONTROL_GUEST_EA + 0, 0);   /* put */
++    vm_write32(GCM_CONTROL_GUEST_EA + 4, 0);   /* get */
++    vm_write32(GCM_CONTROL_GUEST_EA + 8, 0);   /* ref */
++
+     s_gcm_initialized = 1;
+     return CELL_OK;
+ }
+@@ -356,7 +370,11 @@ s32 cellGcmGetConfiguration(CellGcmConfig* config)
+ /* NID: 0x8572A8E0 */
+ CellGcmControl* cellGcmGetControlRegister(void)
+ {
+-    return &s_control;
++    /* Return the GUEST EA of the FIFO control block (put/get/ref), NOT &s_control
++     * (host). The recompiled game uses this value as a guest address to poll
++     * get/put; a host pointer read as a guest offset is garbage and makes its
++     * "RSX drained the FIFO" (get==put) wait spin forever (func_009F7518). */
++    return (CellGcmControl*)(uintptr_t)GCM_CONTROL_GUEST_EA;
+ }
+ 
+ /* ---------------------------------------------------------------------------
+@@ -440,6 +458,13 @@ void cellGcm_rsx_process_fifo(void)
+     static int  s_inited = 0;
+     static u32  s_get    = 0;     /* guest EA we've drained up to */
+ 
++    /* Acknowledge the FIFO control block: advance get -> put so the title's
++     * "wait until the RSX has consumed all submitted commands" (get==put) loops
++     * complete. Done unconditionally (even before a context exists) since the
++     * game may poll get/put during early GCM bring-up. */
++    { u32 put = vm_read32(GCM_CONTROL_GUEST_EA + 0);
++      vm_write32(GCM_CONTROL_GUEST_EA + 4, put); }
++
+     if (!s_gcm_context_ea) return;
+     if (!s_inited) { rsx_state_init(&s_state); s_get = s_config.ioAddress; s_inited = 1; }
+ 
 diff --git a/runtime/ppu/ppu_hle.cpp b/runtime/ppu/ppu_hle.cpp
 index 93ab2a4..f056d47 100644
 --- a/runtime/ppu/ppu_hle.cpp
@@ -130,7 +327,7 @@ index 93ab2a4..f056d47 100644
  }
  
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index 55b653f..56b4932 100644
+index 55b653f..a3238b0 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -23,6 +23,33 @@
@@ -167,7 +364,24 @@ index 55b653f..56b4932 100644
  
  extern "C" uint8_t* vm_base;   /* defined by the host */
  
-@@ -132,6 +159,9 @@ uint32_t vm_read32(uint64_t a) { if (vm_oob((uint32_t)a,4)) return 0; uint32_t v
+@@ -100,13 +127,15 @@ static void vm_hotmap(uint32_t ea, int width)
+         for (uint32_t i = 0; i < NB; i++) cnt[i] = 0;
+     }
+ }
++extern "C" __declspec(thread) ppu_context* g_active_ctx;
++extern "C" void ds_dump_shadow(void);   /* defined below; used by the HOTREAD64 spin probe */
+ extern "C" {
+ uint8_t  vm_read8 (uint64_t a) { if (vm_oob((uint32_t)a,1)) return 0; vm_hotmap((uint32_t)a,1);
+ #ifdef VM_SAMPLE_READS
+     { static uint64_t c=0; if ((++c % 2000000ull)==0) fprintf(stderr, "[sample] read8  0x%08X ra0=%p ra1=%p\n", (uint32_t)a, __builtin_return_address(0), __builtin_return_address(1)); }
+ #endif
+     { static __declspec(thread) uint32_t last=0xFFFFFFFFu; static __declspec(thread) uint32_t n=0;
+-      if ((uint32_t)a==last) { if (++n==200000) { fprintf(stderr, "[HOTREAD8] spinning on 0x%08X\n", (uint32_t)a); n=0; } }
++      if ((uint32_t)a==last) { if (++n==200000) { fprintf(stderr, "[HOTREAD8] spinning on 0x%08X cia=0x%08X\n", (uint32_t)a, g_active_ctx?(uint32_t)g_active_ctx->cia:0); n=0; } }
+       else { last=(uint32_t)a; n=0; } }
+     return vm_base[(uint32_t)a]; }
+ uint16_t vm_read16(uint64_t a) { if (vm_oob((uint32_t)a,2)) return 0; vm_hotmap((uint32_t)a,2); uint16_t v; memcpy(&v, vm_base + (uint32_t)a, 2);
+@@ -132,6 +161,9 @@ uint32_t vm_read32(uint64_t a) { if (vm_oob((uint32_t)a,4)) return 0; uint32_t v
            uint32_t b2=(bi+1)&(NB-1); for(uint32_t i=0;i<NB;i++) if(i!=bi && cnt[i]>cnt[b2]) b2=i;
            fprintf(stderr,"[HOTMAP] hottest read32: 0x%08X (%ux)  2nd: 0x%08X (%ux)\n",
                    addr[bi],cnt[bi],addr[b2],cnt[b2]);
@@ -177,7 +391,27 @@ index 55b653f..56b4932 100644
            for(uint32_t i=0;i<NB;i++) cnt[i]=0; } } }
      /* Hot-poll detector: a thread spinning on the same address (e.g. a GCM FIFO
       * get-pointer / label waiting on RSX) reads it thousands of times in a row. */
-@@ -169,7 +199,12 @@ extern "C" __declspec(thread) ppu_context* g_active_ctx = nullptr;
+@@ -144,14 +176,16 @@ uint64_t vm_read64(uint64_t a) { if (vm_oob((uint32_t)a,8)) return 0; vm_hotmap(
+     { static uint64_t c=0; if ((++c % 2000000ull)==0) fprintf(stderr, "[sample] read64 0x%08X\n", (uint32_t)a); }
+ #endif
+     { static __declspec(thread) uint32_t last=0xFFFFFFFFu; static __declspec(thread) uint32_t n=0;
+-      if ((uint32_t)a==last) { if (++n==200000) { fprintf(stderr, "[HOTREAD64] spinning on 0x%08X\n", (uint32_t)a); n=0; } } else { last=(uint32_t)a; n=0; } }
++      if ((uint32_t)a==last) { if (++n==200000) { fprintf(stderr, "[HOTREAD64] spinning on 0x%08X (=0x%016llX) cia=0x%08X\n", (uint32_t)a, (unsigned long long)__builtin_bswap64(v), g_active_ctx?(uint32_t)g_active_ctx->cia:0); { static int _sd=0; if(_sd++<2) ds_dump_shadow(); } n=0; } } else { last=(uint32_t)a; n=0; } }
+     return __builtin_bswap64(v); }
+ void vm_write8 (uint64_t a, uint8_t  v) { if (vm_oob((uint32_t)a,1)) return; vm_base[(uint32_t)a] = v; }
+ void vm_write16(uint64_t a, uint16_t v) { if (vm_oob((uint32_t)a,2)) return; v = __builtin_bswap16(v); memcpy(vm_base + (uint32_t)a, &v, 2); }
+ void vm_write32(uint64_t a, uint32_t v) { if (vm_oob((uint32_t)a,4)) return;
+     { static int64_t w=-2; if (w==-2) { const char* e=getenv("YDKJ_WWATCH"); w = e?(int64_t)strtoul(e,0,0):-1; }
+-      if (w>=0) { uint32_t ea=(uint32_t)a; if (ea>=(uint32_t)w && ea<(uint32_t)w+0x40)
+-        fprintf(stderr,"[WWATCH] write32 0x%08X = 0x%08X  ra=%p\n", ea, v, __builtin_return_address(0)); } }
++      if (w>=0) { uint32_t ea=(uint32_t)a; if (ea>=(uint32_t)w && ea<(uint32_t)w+0x40) {
++        void* ra=__builtin_return_address(0); static HMODULE _m=0;
++        if(!_m) GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)ra,&_m);
++        fprintf(stderr,"[WWATCH] write32 0x%08X = 0x%08X  rva=0x%llX\n", ea, v, (unsigned long long)((uintptr_t)ra-(uintptr_t)_m)); } } }
+     v = __builtin_bswap32(v); memcpy(vm_base + (uint32_t)a, &v, 4); }
+ void vm_write64(uint64_t a, uint64_t v) { if (vm_oob((uint32_t)a,8)) return; v = __builtin_bswap64(v); memcpy(vm_base + (uint32_t)a, &v, 8); }
+ }
+@@ -169,7 +203,12 @@ extern "C" __declspec(thread) ppu_context* g_active_ctx = nullptr;
   * -----------------------------------------------------------------------*/
  typedef void (*ppu_fn)(ppu_context*);
  
@@ -191,7 +425,7 @@ index 55b653f..56b4932 100644
  #define PPU_HASH_SIZE (1u << PPU_HASH_BITS)
  #define PPU_HASH_MASK (PPU_HASH_SIZE - 1)
  
-@@ -181,11 +216,16 @@ extern "C" void ppu_register_function(uint64_t addr, ppu_fn fn)
+@@ -181,11 +220,16 @@ extern "C" void ppu_register_function(uint64_t addr, ppu_fn fn)
  {
      uint32_t a = (uint32_t)addr;
      uint32_t i = (a * 2654435761u) & PPU_HASH_MASK;
@@ -209,7 +443,84 @@ index 55b653f..56b4932 100644
  }
  
  static ppu_fn ppu_lookup(uint32_t a)
-@@ -220,6 +260,13 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
+@@ -201,6 +245,32 @@ static ppu_fn ppu_lookup(uint32_t a)
+ 
+ extern "C" uint32_t ppu_function_count(void) { return g_fn_count; }
+ 
++/* Host function pointer -> guest address (reverse of ppu_lookup). Linear scan of
++ * the registry; only used by the YDKJ_TRTRACE diagnostic (rare), so O(n) is fine.
++ * Returns 0 if the pointer isn't a registered lifted function. */
++static uint32_t ppu_reverse_lookup(ppu_fn fn)
++{
++    if (!fn) return 0;
++    for (uint32_t i = 0; i < PPU_HASH_SIZE; i++)
++        if (g_fn[i] == fn) return g_addr[i];
++    return 0;
++}
++
++/* YDKJ_DTTRACE diagnostic: called from the lifted DRAIN_TRAMPOLINE macro before
++ * each tail-call hop. Logs ONLY null-`this` (r3==0) hops, so a use-before-
++ * construction null-object method call (and the tail-call chain reaching it) is
++ * isolated from the flood of normal trampolines. */
++extern "C" void ppu_tr_log(void* tf, void* ctxv)
++{
++    static int en = -1; if (en < 0) { const char* e = getenv("YDKJ_DTTRACE"); en = e ? 1 : 0; }
++    if (!en) return;
++    ppu_context* ctx = (ppu_context*)ctxv;
++    if ((uint32_t)ctx->gpr[3] != 0) return;
++    fprintf(stderr, "[dt] -> 0x%08X r3=0 r4=0x%08X\n",
++            ppu_reverse_lookup((ppu_fn)tf), (uint32_t)ctx->gpr[4]);
++    fflush(stderr);
++}
++
+ /* Bridge the lifter-emitted function_table[] (declared in ppu_recomp.h) into the
+  * address->function hash map. The host boot harness calls this once at startup. */
+ extern "C" void ppu_recomp_register(void)
+@@ -210,6 +280,43 @@ extern "C" void ppu_recomp_register(void)
+ }
+ 
+ /* Indirect call (bctrl/bctr): CTR holds the already-OPD-resolved code address. */
++/* Shadow call stack backing store. The lifted DS_FRAME guard (emitted per
++ * function by a --shadow-stack lift) pushes/pops guest function addresses here,
++ * giving a reliable guest backtrace where host backtraces and the guest
++ * back-chain both fail (tail-call trampolines, Dantelion2 frames). Defined
++ * unconditionally so it links regardless of whether the lift enabled DS_FRAME;
++ * if disabled, the stack simply stays empty. */
++#if defined(_MSC_VER)
++  #define DS_TLS __declspec(thread)
++#else
++  #define DS_TLS __thread
++#endif
++extern "C" {
++    DS_TLS unsigned g_ds_sp = 0; DS_TLS unsigned g_ds_stk[8192];
++    /* Per-entry ring (addr,this), never popped: the temporal call sequence,
++     * including tail-callers the stack pops -- reveals where `this` goes 0. */
++    DS_TLS unsigned g_ds_ring_pos = 0; DS_TLS unsigned g_ds_ring_a[1024];
++    DS_TLS unsigned g_ds_ring_r3[1024];
++}
++
++extern "C" void ds_dump_shadow(void)
++{
++    unsigned n = g_ds_sp; if (n > 8192u) n = 8192u;
++    fprintf(stderr, "[shadow] guest call stack depth=%u (innermost first):\n", g_ds_sp);
++    unsigned shown = n < 32u ? n : 32u;
++    for (unsigned i = 0; i < shown; i++)
++        fprintf(stderr, "   #%u 0x%08X\n", i, g_ds_stk[n - 1 - i]);
++    if (n == 0) { fprintf(stderr, "   (empty -- lift without --shadow-stack?)\n"); fflush(stderr); return; }
++    /* Temporal ring with `this`: find where this transitions valid->0. */
++    unsigned win = g_ds_ring_pos < 64u ? g_ds_ring_pos : 64u;
++    fprintf(stderr, "[shadow] last %u entries (addr this) -- watch this:valid->0:\n", win);
++    for (unsigned i = 0; i < win; i++) {
++        unsigned idx = (g_ds_ring_pos - win + i) & 1023u;
++        fprintf(stderr, "   0x%08X this=0x%08X\n", g_ds_ring_a[idx], g_ds_ring_r3[idx]);
++    }
++    fflush(stderr);
++}
++
+ extern "C" void ps3_indirect_call(ppu_context* ctx)
+ {
+     g_active_ctx = ctx;
+@@ -220,6 +327,13 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
      if (addr == 0)
          return;
  
@@ -218,12 +529,88 @@ index 55b653f..56b4932 100644
 +     * trampolines unwind the host stack). During static init each constructor is
 +     * dispatched here, so the last targets before a fatal abort pinpoint it. */
 +    { static int en = -1; if (en < 0) { const char* e = getenv("YDKJ_ICTRACE"); en = e ? 1 : 0; }
-+      if (en) { fprintf(stderr, "[ic] 0x%08X\n", addr); fflush(stderr); } }
++      if (en) { fprintf(stderr, "[ic] 0x%08X r3=0x%08X r4=0x%08X\n", addr, (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4]); fflush(stderr); } }
 +
      ppu_fn fn = ppu_lookup(addr);
      if (fn) {
          /* Recursion-depth guard: a malformed/cyclic jump table (or a tail-call
-@@ -309,9 +356,16 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -244,6 +358,9 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
+         while (g_trampoline_fn) {
+             void (*tf)(void*) = g_trampoline_fn;
+             g_trampoline_fn = 0;
++            { static int tr = -1; if (tr < 0) { const char* e = getenv("YDKJ_TRTRACE"); tr = e ? 1 : 0; }
++              if (tr) { uint32_t ga = ppu_reverse_lookup((ppu_fn)tf);
++                        fprintf(stderr, "[tr] -> 0x%08X r3=0x%08X\n", ga, (uint32_t)ctx->gpr[3]); fflush(stderr); } }
+             tf(ctx);
+         }
+         s_depth--;
+@@ -260,13 +377,14 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
+         return;   /* don't spam the log on a tight retry loop */
+     }
+     last = cur; streak = 0;
+-    fprintf(stderr, "[ppu] unresolved indirect call -> 0x%08X\n", (uint32_t)ctx->ctr);
++    fprintf(stderr, "[ppu] unresolved indirect call -> 0x%08X  (cia/probe=0x%08X)\n", (uint32_t)ctx->ctr, (uint32_t)ctx->cia);
+     static int dumped = 0;
+     if (dumped < 3) {
+         dumped++;
++        ds_dump_shadow();   /* reliable guest backtrace (no-op/empty unless --shadow-stack lift) */
+         { void* ra = __builtin_return_address(0); HMODULE m=NULL;
+           GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)ra,&m);
+-          fprintf(stderr, "      host_ra=%p rva=0x%llX (llvm-symbolizer --obj=ydkj_boot.exe)\n",
++          fprintf(stderr, "      host_ra=%p rva=0x%llX (llvm-symbolizer --obj=des_boot.exe)\n",
+                 ra, (unsigned long long)((uintptr_t)ra-(uintptr_t)m)); }
+         fprintf(stderr, "      lr=0x%08X r2=0x%08X r3=0x%08X r11=0x%08X r12=0x%08X\n",
+                 (uint32_t)ctx->lr, (uint32_t)ctx->gpr[2], (uint32_t)ctx->gpr[3],
+@@ -275,6 +393,28 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
+             fprintf(stderr, "      r%-2d: %08X %08X %08X %08X %08X %08X %08X %08X\n", r,
+                 (uint32_t)ctx->gpr[r+0],(uint32_t)ctx->gpr[r+1],(uint32_t)ctx->gpr[r+2],(uint32_t)ctx->gpr[r+3],
+                 (uint32_t)ctx->gpr[r+4],(uint32_t)ctx->gpr[r+5],(uint32_t)ctx->gpr[r+6],(uint32_t)ctx->gpr[r+7]);
++        /* Virtual-dispatch chain dump: r3 is usually the C++ 'this'. Show the
++         * vtable (*this) and its slots, so we can see whether the bad target is
++         * the vtable address itself (one-level-too-shallow dispatch). */
++        { void* bt[48]; USHORT n = CaptureStackBackTrace(0, 48, bt, NULL);
++          HMODULE m=NULL; GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)bt[0],&m);
++          fprintf(stderr, "      --- host backtrace (%u frames, rva) ---\n", n);
++          for (USHORT i=0;i<n;i++) fprintf(stderr,"        #%u rva=0x%llX\n", i, (unsigned long long)((uintptr_t)bt[i]-(uintptr_t)m)); }
++        uint32_t obj = (uint32_t)ctx->gpr[3];
++        if (obj && obj < 0x40000000u) {
++            uint32_t vt = vm_read32(obj + 0);
++            fprintf(stderr, "      this=0x%08X  *this(vtable)=0x%08X  *(this+4)=0x%08X\n",
++                    obj, vt, vm_read32(obj + 4));
++            if (vt && vt < 0x40000000u) {
++                fprintf(stderr, "      vtable[0..7] @0x%08X:", vt);
++                for (int i = 0; i < 8; i++) fprintf(stderr, " %08X", vm_read32(vt + i*4));
++                fprintf(stderr, "\n");
++                uint32_t slotC = vm_read32(vt + 0xC);            /* vtable[3] */
++                fprintf(stderr, "      vtable[3]=0x%08X -> *=0x%08X (would-be code)\n",
++                        slotC, slotC ? vm_read32(slotC) : 0);
++            }
++        }
++        fflush(stderr);
+     }
+ }
+ 
+@@ -291,6 +431,19 @@ extern "C" void ppu_unlifted_stub(uint64_t addr, ppu_context* ctx)
+     }
+ }
+ 
++/* Debug: current OS thread id, for lifted-code probes. */
++extern "C" unsigned ds_tid(void) { return (unsigned)GetCurrentThreadId(); }
++
++/* Debug: dump a host backtrace (rva) on demand from lifted code. */
++extern "C" void ds_dump_bt(const char* tag)
++{
++    void* bt[40]; USHORT n = CaptureStackBackTrace(0, 40, bt, NULL);
++    HMODULE m=NULL; GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)bt[0],&m);
++    fprintf(stderr, "      --- bt[%s] (%u frames, rva) ---\n", tag, n);
++    for (USHORT i=0;i<n;i++) fprintf(stderr,"        #%u rva=0x%llX\n", i, (unsigned long long)((uintptr_t)bt[i]-(uintptr_t)m));
++    fflush(stderr);
++}
++
+ /* The real lv2 syscall table (runtime/syscalls/lv2_register.c). */
+ extern "C" int lv2_try_syscall(ppu_context* ctx);
+ 
+@@ -309,9 +462,16 @@ extern "C" void lv2_syscall(ppu_context* ctx)
      case 352: {   /* sys_memory_get_user_memory_size(sys_memory_info_t* info)
                     * info = { u32 total_user_memory; u32 available_user_memory } */
          uint32_t info = (uint32_t)ctx->gpr[3];
@@ -243,7 +630,7 @@ index 55b653f..56b4932 100644
      }
      case 330: {   /* sys_mmapper_allocate_address(u64 size, u64 flags,
 diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
-index 5f0fe99..a7ea149 100644
+index 5f0fe99..41113cc 100644
 --- a/runtime/ppu/ppu_sysprx.cpp
 +++ b/runtime/ppu/ppu_sysprx.cpp
 @@ -35,6 +35,21 @@ static void sys_initialize_tls(ppu_context* ctx)
@@ -268,11 +655,118 @@ index 5f0fe99..a7ea149 100644
      uint32_t block = s_tls_next;
      uint32_t total = ((mem_size + 0x7000u + 0x1000u) + 0xFFFu) & ~0xFFFu;
      s_tls_next += total;
+@@ -81,35 +96,59 @@ static void sys_process_is_stack(ppu_context* ctx)
+ #define LWM_OWNER  0x00
+ #define LWM_ATTR   0x08
+ #define LWM_RECUR  0x0C
+-#define LWM_TID    1u   /* single-thread boot: one fixed owner id */
++#define SYS_SYNC_RECURSIVE 0x10u
++#define CELL_EDEADLK       0x80010008u   /* recursive lock of a non-recursive mutex */
++
++extern "C" unsigned ds_tid(void);        /* current OS thread id (always > 0) */
+ 
++/* Match real PS3 / RPCS3 semantics. The crucial behavior vs the old no-op stamp:
++ * a same-thread re-lock of a NON-recursive lwmutex returns CELL_EDEADLK. The CRT's
++ * C++ thread-safe-static-init guard relies on that error to detect recursive
++ * initialization; without it, a recursive guard acquire "succeeds" and the
++ * half-constructed object/registry is handed back -> the use-during-construction
++ * spins we were chasing. The recursive flag lives in the attribute struct at +4. */
+ static void sys_lwmutex_create(ppu_context* ctx)
+ {
+     uint32_t lwm  = (uint32_t)ctx->gpr[3];
+     uint32_t attr = (uint32_t)ctx->gpr[4];
+-    uint32_t protocol = attr ? vm_read32(attr + 0) : 0;
+-    vm_write32(lwm + 0x00, 0);          /* owner */
+-    vm_write32(lwm + 0x04, 0);          /* waiter */
+-    vm_write32(lwm + LWM_ATTR, protocol);
+-    vm_write32(lwm + LWM_RECUR, 0);     /* recursive_count */
+-    vm_write32(lwm + 0x10, 0);          /* sleep_queue */
++    uint32_t protocol  = attr ? vm_read32(attr + 0) : 0;
++    uint32_t recursive = attr ? vm_read32(attr + 4) : 0;   /* SYS_SYNC_RECURSIVE / _NOT_ */
++    vm_write32(lwm + LWM_OWNER, 0);                  /* owner = free */
++    vm_write32(lwm + 0x04, 0);                       /* waiter */
++    vm_write32(lwm + LWM_ATTR, protocol | recursive);/* combined attribute */
++    vm_write32(lwm + LWM_RECUR, 0);                  /* recursive_count */
++    vm_write32(lwm + 0x10, 0);                       /* sleep_queue */
+     vm_write32(lwm + 0x14, 0);
+     ctx->gpr[3] = 0;
+ }
+ static void sys_lwmutex_lock(ppu_context* ctx)
+ {
+-    uint32_t lwm = (uint32_t)ctx->gpr[3];
+-    vm_write32(lwm + LWM_OWNER, LWM_TID);
+-    vm_write32(lwm + LWM_RECUR, vm_read32(lwm + LWM_RECUR) + 1);
+-    ctx->gpr[3] = 0;   /* CELL_OK */
++    uint32_t lwm   = (uint32_t)ctx->gpr[3];
++    uint32_t owner = vm_read32(lwm + LWM_OWNER);
++    uint32_t attr  = vm_read32(lwm + LWM_ATTR);
++    uint32_t tid   = ds_tid();
++    if (owner == 0) {                                /* free -> acquire */
++        vm_write32(lwm + LWM_OWNER, tid);
++        ctx->gpr[3] = 0;
++    } else if (owner == tid) {                       /* same thread re-lock */
++        if (attr & SYS_SYNC_RECURSIVE) {
++            vm_write32(lwm + LWM_RECUR, vm_read32(lwm + LWM_RECUR) + 1);
++            ctx->gpr[3] = 0;
++        } else {
++            ctx->gpr[3] = CELL_EDEADLK;              /* <-- recursion detection */
++        }
++    } else {                                         /* held by another thread */
++        vm_write32(lwm + LWM_OWNER, tid);            /* boot is effectively serial; take it */
++        ctx->gpr[3] = 0;
++    }
+ }
+ static void sys_lwmutex_trylock(ppu_context* ctx) { sys_lwmutex_lock(ctx); }
+ static void sys_lwmutex_unlock(ppu_context* ctx)
+ {
+     uint32_t lwm = (uint32_t)ctx->gpr[3];
+-    uint32_t rc = vm_read32(lwm + LWM_RECUR);
+-    if (rc) vm_write32(lwm + LWM_RECUR, rc - 1);
+-    if (rc <= 1) vm_write32(lwm + LWM_OWNER, 0);
++    uint32_t rc  = vm_read32(lwm + LWM_RECUR);
++    if (rc > 0) vm_write32(lwm + LWM_RECUR, rc - 1); /* unwind one recursion level */
++    else        vm_write32(lwm + LWM_OWNER, 0);      /* fully released -> free */
+     ctx->gpr[3] = 0;
+ }
+ 
+@@ -168,8 +207,13 @@ static void crt_ok(ppu_context* ctx) { ctx->gpr[3] = 0; }
+  * object table and calls heap addresses as function pointers. */
+ extern "C" int64_t sys_ppu_thread_create(ppu_context* ctx);
+ extern "C" int64_t sys_ppu_thread_exit(ppu_context* ctx);
+-static void hle_ppu_thread_create(ppu_context* ctx) { sys_ppu_thread_create(ctx); }
+-static void hle_ppu_thread_exit(ppu_context* ctx)   { sys_ppu_thread_exit(ctx); }
++/* Propagate the return value into r3: the ctx-handler HLE path (ppu_hle.cpp) invokes
++ * fn(ctx) WITHOUT assigning gpr[3] from the return (unlike the generic path), so these
++ * wrappers must set it themselves. Without this, _sys_ppu_thread_create's caller saw r3
++ * = its first arg (a pointer) instead of CELL_OK=0, took the error/assert path, and that
++ * assert helper clobbered the TOC (r2) -> garbage C++ singleton -> boot hang. */
++static void hle_ppu_thread_create(ppu_context* ctx) { ctx->gpr[3] = sys_ppu_thread_create(ctx); }
++static void hle_ppu_thread_exit(ppu_context* ctx)   { ctx->gpr[3] = sys_ppu_thread_exit(ctx); }
+ 
+ /* _cellGcmInitBody (NID 0x15BAE46B) -- the GCM init every PS3 game calls via the
+  * cellGcmInit() SDK macro. cellGcmSys.c provides the layout-correct core
 diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
-index aafa8bb..b8e1005 100644
+index aafa8bb..bfa00a8 100644
 --- a/runtime/ppu/tests/boot_main.cpp
 +++ b/runtime/ppu/tests/boot_main.cpp
-@@ -165,7 +165,7 @@ extern "C" void cellGcm_rsx_process_fifo(void);   /* cellGcmSys.c: drain get->pu
+@@ -64,13 +64,13 @@ static LONG WINAPI ydkj_crash_filter(EXCEPTION_POINTERS* ep)
+         fprintf(stderr, "[CRASH] %s fault address 0x%llX\n",
+                 er->ExceptionInformation[0] ? "write" : "read",
+                 (unsigned long long)er->ExceptionInformation[1]);
+-    if (g_active_ctx) fprintf(stderr, "[CRASH] guest ctr=0x%08X lr=0x%08X r3=0x%08X\n",
+-          (uint32_t)g_active_ctx->ctr, (uint32_t)g_active_ctx->lr, (uint32_t)g_active_ctx->gpr[3]);
++    if (g_active_ctx) fprintf(stderr, "[CRASH] guest cia=0x%08X ctr=0x%08X lr=0x%08X r3=0x%08X\n",
++          (uint32_t)g_active_ctx->cia, (uint32_t)g_active_ctx->ctr, (uint32_t)g_active_ctx->lr, (uint32_t)g_active_ctx->gpr[3]);
+     HMODULE mod = NULL;
+     GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                        (LPCSTR)er->ExceptionAddress, &mod);
+-    fprintf(stderr, "[CRASH] module=%p rva=0x%llX  (llvm-symbolizer --obj=ydkj_boot.exe 0x%llX)\n",
++    fprintf(stderr, "[CRASH] module=%p rva=0x%llX  (llvm-symbolizer --obj=des_boot.exe 0x%llX)\n",
+             (void*)mod, (unsigned long long)((char*)er->ExceptionAddress - (char*)mod),
+             (unsigned long long)((char*)er->ExceptionAddress - (char*)mod));
+     /* Host call stack (RVAs) so the lifted caller can be symbolized. */
+@@ -165,15 +165,17 @@ extern "C" void cellGcm_rsx_process_fifo(void);   /* cellGcmSys.c: drain get->pu
  
  static DWORD WINAPI vblank_ticker(LPVOID)
  {
@@ -281,6 +775,90 @@ index aafa8bb..b8e1005 100644
      fprintf(stderr, "[rsx] backend init %s\n", rsx_ok ? "OK -- window open" : "FAILED");
      for (;;) {
          Sleep(16);            /* ~60 Hz */
+         cellGcmTickVBlank();
+         cellGcmTickFlip();
++        cellGcm_rsx_process_fifo();          /* drain FIFO (get->put) + run commands;
++                                              * needed even with no window so the title's
++                                              * get==put FIFO waits complete */
+         if (rsx_ok) {
+             if (rsx_d3d12_backend_pump_messages() != 0) { rsx_ok = 0; }
+-            cellGcm_rsx_process_fifo();      /* execute the game's GCM commands */
+             rsx_d3d12_backend_present();     /* present the frame */
+         }
+     }
+diff --git a/runtime/spu/spu_helpers.h b/runtime/spu/spu_helpers.h
+index ab9145f..f0c4f53 100644
+--- a/runtime/spu/spu_helpers.h
++++ b/runtime/spu/spu_helpers.h
+@@ -77,6 +77,20 @@ static inline u128 spu_nand(u128 a, u128 b){ u128 r; r._u64[0]=~(a._u64[0]&b._u6
+ static inline u128 spu_nor(u128 a, u128 b) { u128 r; r._u64[0]=~(a._u64[0]|b._u64[0]); r._u64[1]=~(a._u64[1]|b._u64[1]); return r; }
+ static inline u128 spu_andc(u128 a, u128 b){ u128 r; r._u64[0]=a._u64[0]&~b._u64[0]; r._u64[1]=a._u64[1]&~b._u64[1]; return r; }
+ static inline u128 spu_orc(u128 a, u128 b) { u128 r; r._u64[0]=a._u64[0]|~b._u64[0]; r._u64[1]=a._u64[1]|~b._u64[1]; return r; }
++static inline u128 spu_eqv(u128 a, u128 b) { u128 r; r._u64[0]=~(a._u64[0]^b._u64[0]); r._u64[1]=~(a._u64[1]^b._u64[1]); return r; }
++/* sumb: sum the 4 bytes of each word; RA's sum -> odd (low) halfword, RB's -> even (high)
++ * halfword of that word. Byte sums are order-independent so LE byte indexing is fine.
++ * (RA->odd / RB->even per SPU ISA; if a trace-diff vs RPCS3 ever disagrees, swap the two.) */
++static inline u128 spu_sumb(u128 a, u128 b) {
++    u128 r;
++    for (int w = 0; w < 4; w++) {
++        uint16_t sa = (uint16_t)(a._u8[4*w]+a._u8[4*w+1]+a._u8[4*w+2]+a._u8[4*w+3]);
++        uint16_t sb = (uint16_t)(b._u8[4*w]+b._u8[4*w+1]+b._u8[4*w+2]+b._u8[4*w+3]);
++        r._u16[2*w]   = sa;   /* odd halfword (low 16 bits of word) <- RA */
++        r._u16[2*w+1] = sb;   /* even halfword (high 16 bits)       <- RB */
++    }
++    return r;
++}
+ static inline u128 spu_andi(u128 a, int32_t imm){ u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]&(uint32_t)imm; return r; }
+ static inline u128 spu_ori(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]|(uint32_t)imm; return r; }
+ static inline u128 spu_xori(u128 a, int32_t imm){ u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]^(uint32_t)imm; return r; }
+@@ -198,6 +212,7 @@ static inline u128 spu_addx(u128 a, u128 b, u128 t) { u128 r; for(int i=0;i<4;i+
+ /* LE host: high half of word i = _s16[2i+1], low half = _s16[2i]. */
+ static inline u128 spu_mpyh(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._s32[i]=((int32_t)a._s16[2*i+1] * (int32_t)b._s16[2*i]) << 16; return r; }
+ static inline u128 spu_mpyhh(u128 a, u128 b){ u128 r; for(int i=0;i<4;i++) r._s32[i]=(int32_t)a._s16[2*i+1] * (int32_t)b._s16[2*i+1]; return r; }
++static inline u128 spu_mpyhhu(u128 a, u128 b){ u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)a._u16[2*i+1] * (uint32_t)b._u16[2*i+1]; return r; }
+ static inline u128 spu_mpys(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++){ int32_t p=(int32_t)a._s16[2*i]*(int32_t)b._s16[2*i]; r._s32[i]=(int16_t)(p>>16); } return r; }
+ static inline u128 spu_mpyui(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)a._u16[2*i]*(uint32_t)(uint16_t)imm; return r; }
+ static inline u128 spu_fcmeq(u128 a, u128 b){ u128 r; for(int i=0;i<4;i++){ float fa=fabsf(a._f32[i]),fb=fabsf(b._f32[i]); r._u32[i]=(fa==fb)?0xFFFFFFFFu:0; } return r; }
+diff --git a/runtime/syscalls/lv2_syscall_table.h b/runtime/syscalls/lv2_syscall_table.h
+index 1b866dc..4f60747 100644
+--- a/runtime/syscalls/lv2_syscall_table.h
++++ b/runtime/syscalls/lv2_syscall_table.h
+@@ -88,14 +88,18 @@ extern "C" {
+ #define SYS_EVENT_PORT_DISCONNECT       137
+ #define SYS_EVENT_PORT_SEND             138
+ 
+-#define SYS_EVENT_FLAG_CREATE           139
+-#define SYS_EVENT_FLAG_DESTROY          140
+-#define SYS_EVENT_FLAG_WAIT             141
+-#define SYS_EVENT_FLAG_TRYWAIT          142
+-#define SYS_EVENT_FLAG_SET              143
+-#define SYS_EVENT_FLAG_CLEAR            144
+-#define SYS_EVENT_FLAG_CANCEL           145
+-#define SYS_EVENT_FLAG_GET              146
++/* Correct PS3 lv2 numbers (cross-referenced w/ RPCS3 lv2.cpp). The old values
++ * (139-146) were wrong and collided with sys_timer_usleep/sleep (141/142) and
++ * sys_event_port_connect_ipc (140) — which broke the game's per-frame usleep
++ * (it was mis-dispatched to event_flag_wait). */
++#define SYS_EVENT_FLAG_CREATE           82
++#define SYS_EVENT_FLAG_DESTROY          83
++#define SYS_EVENT_FLAG_WAIT             85
++#define SYS_EVENT_FLAG_TRYWAIT          86
++#define SYS_EVENT_FLAG_SET              87
++#define SYS_EVENT_FLAG_CLEAR            118
++#define SYS_EVENT_FLAG_CANCEL           132
++#define SYS_EVENT_FLAG_GET              139
+ 
+ #define SYS_LWMUTEX_CREATE              150
+ #define SYS_LWMUTEX_DESTROY             151
+@@ -129,7 +133,7 @@ extern "C" {
+ #define SYS_MEMORY_ALLOCATE             348
+ #define SYS_MEMORY_FREE                 349
+ #define SYS_MEMORY_ALLOCATE_FROM_CONTAINER 350
+-#define SYS_MEMORY_GET_PAGE_ATTRIBUTE   358
++#define SYS_MEMORY_GET_PAGE_ATTRIBUTE   351   /* 0x15F (was wrongly 358; verified vs RPCS3 lv2.cpp) */
+ #define SYS_MEMORY_GET_USER_MEMORY_SIZE 352
+ #define SYS_MEMORY_CONTAINER_CREATE     353
+ #define SYS_MEMORY_CONTAINER_DESTROY    354
 diff --git a/runtime/syscalls/sys_cond.c b/runtime/syscalls/sys_cond.c
 index bffaedd..1ae42c4 100644
 --- a/runtime/syscalls/sys_cond.c
@@ -309,6 +887,19 @@ index bffaedd..1ae42c4 100644
      uint32_t cond_id = LV2_ARG_U32(ctx, 0);
  
      if (cond_id == 0 || cond_id > SYS_COND_MAX)
+diff --git a/runtime/syscalls/sys_cond.h b/runtime/syscalls/sys_cond.h
+index 3c60e8e..4212ebe 100644
+--- a/runtime/syscalls/sys_cond.h
++++ b/runtime/syscalls/sys_cond.h
+@@ -25,7 +25,7 @@
+ extern "C" {
+ #endif
+ 
+-#define SYS_COND_MAX  256
++#define SYS_COND_MAX  8192   /* pairs 1:1 with mutexes; raise alongside SYS_MUTEX_MAX */
+ 
+ typedef struct sys_cond_info {
+     int      active;
 diff --git a/runtime/syscalls/sys_event.c b/runtime/syscalls/sys_event.c
 index 72a9f55..74b3c22 100644
 --- a/runtime/syscalls/sys_event.c
@@ -337,6 +928,109 @@ index 72a9f55..74b3c22 100644
      uint32_t flag_id = LV2_ARG_U32(ctx, 0);
      uint64_t bitpat  = LV2_ARG_U64(ctx, 1);
  
+diff --git a/runtime/syscalls/sys_memory.c b/runtime/syscalls/sys_memory.c
+index 686cec4..1067fbd 100644
+--- a/runtime/syscalls/sys_memory.c
++++ b/runtime/syscalls/sys_memory.c
+@@ -114,6 +114,7 @@ int64_t sys_memory_allocate(ppu_context* ctx)
+     a->addr         = alloc_addr;
+     a->size         = size;
+     a->container_id = 0;
++    a->page_size    = alignment;  /* 0x100000 (1M) or 0x10000 (64K) */
+ 
+     bump_unlock();
+ 
+@@ -173,6 +174,49 @@ int64_t sys_memory_get_user_memory_size(ppu_context* ctx)
+     return CELL_OK;
+ }
+ 
++/* ---------------------------------------------------------------------------
++ * sys_memory_get_page_attribute (syscall 351 / 0x15F)
++ *
++ * r3 = address to query
++ * r4 = pointer to sys_page_attribute_t:
++ *        +0x00 attribute   (u64)
++ *        +0x08 access_right(u64)
++ *        +0x10 page_size   (u32)   <- the field titles actually check
++ *        +0x14 pad         (u32)
++ *
++ * Was unimplemented (fell through to the return-0 stub), so the output struct
++ * was never filled -> callers reading page_size got stack garbage. Dantelion2's
++ * graphics init (func_009F6D40) queries a 1MB-page buffer and only proceeds to
++ * construct a sub-object when page_size == 0x100000; the stub made it take the
++ * failure path, leaving that sub-object NULL -> later null-deref crash.
++ * -----------------------------------------------------------------------*/
++int64_t sys_memory_get_page_attribute(ppu_context* ctx)
++{
++    uint32_t addr     = LV2_ARG_U32(ctx, 0);
++    uint32_t attr_out = LV2_ARG_PTR(ctx, 1);
++
++    /* Report the page size of the allocation containing addr. */
++    uint32_t page_size = 0x10000;  /* default 64K */
++    for (int i = 0; i < SYS_MEMORY_ALLOC_MAX; i++) {
++        if (g_sys_mem_allocs[i].active &&
++            addr >= g_sys_mem_allocs[i].addr &&
++            addr <  g_sys_mem_allocs[i].addr + g_sys_mem_allocs[i].size) {
++            page_size = g_sys_mem_allocs[i].page_size ? g_sys_mem_allocs[i].page_size : 0x10000;
++            break;
++        }
++    }
++
++    if (attr_out != 0) {
++        write_be32(attr_out + 0x00, 0);          /* attribute    (hi) */
++        write_be32(attr_out + 0x04, 0x00040000); /* attribute    (lo) PROT_READ_WRITE-ish */
++        write_be32(attr_out + 0x08, 0);          /* access_right (hi) */
++        write_be32(attr_out + 0x0C, 0x00000008); /* access_right (lo) PPU_THREAD-ish */
++        write_be32(attr_out + 0x10, page_size);  /* page_size */
++        write_be32(attr_out + 0x14, 0);          /* pad */
++    }
++    return CELL_OK;
++}
++
+ /* ---------------------------------------------------------------------------
+  * sys_memory_container_create
+  *
+@@ -389,6 +433,7 @@ void sys_memory_init(lv2_syscall_table* tbl)
+     lv2_syscall_register(tbl, SYS_MEMORY_ALLOCATE,             sys_memory_allocate);
+     lv2_syscall_register(tbl, SYS_MEMORY_FREE,                 sys_memory_free);
+     lv2_syscall_register(tbl, SYS_MEMORY_GET_USER_MEMORY_SIZE, sys_memory_get_user_memory_size);
++    lv2_syscall_register(tbl, SYS_MEMORY_GET_PAGE_ATTRIBUTE,   sys_memory_get_page_attribute);
+     lv2_syscall_register(tbl, SYS_MEMORY_CONTAINER_CREATE,     sys_memory_container_create);
+     lv2_syscall_register(tbl, SYS_MEMORY_CONTAINER_DESTROY,    sys_memory_container_destroy);
+     lv2_syscall_register(tbl, SYS_MEMORY_CONTAINER_GET_SIZE,   sys_memory_container_get_size);
+diff --git a/runtime/syscalls/sys_memory.h b/runtime/syscalls/sys_memory.h
+index 562ed8a..7ae67ac 100644
+--- a/runtime/syscalls/sys_memory.h
++++ b/runtime/syscalls/sys_memory.h
+@@ -32,6 +32,7 @@ typedef struct sys_mem_alloc_info {
+     uint32_t addr;
+     uint32_t size;
+     int32_t  container_id;  /* 0 = main pool */
++    uint32_t page_size;     /* 0x100000 (1M) or 0x10000 (64K) from the alloc flags */
+ } sys_mem_alloc_info;
+ 
+ /* Container */
+@@ -58,6 +59,7 @@ extern uint32_t                 g_sys_mem_bump_ptr;  /* bump allocator pointer *
+ int64_t sys_memory_allocate(ppu_context* ctx);
+ int64_t sys_memory_free(ppu_context* ctx);
+ int64_t sys_memory_get_user_memory_size(ppu_context* ctx);
++int64_t sys_memory_get_page_attribute(ppu_context* ctx);
+ int64_t sys_memory_container_create(ppu_context* ctx);
+ int64_t sys_memory_container_destroy(ppu_context* ctx);
+ int64_t sys_memory_container_get_size(ppu_context* ctx);
+diff --git a/runtime/syscalls/sys_mutex.h b/runtime/syscalls/sys_mutex.h
+index 0ce9de2..6ea78df 100644
+--- a/runtime/syscalls/sys_mutex.h
++++ b/runtime/syscalls/sys_mutex.h
+@@ -27,7 +27,7 @@
+ extern "C" {
+ #endif
+ 
+-#define SYS_MUTEX_MAX  256
++#define SYS_MUTEX_MAX  8192   /* PS3 lv2 default; Dantelion2 creates many mutexes during init */
+ 
+ /* Protocol types */
+ #define SYS_SYNC_FIFO            0x1
 diff --git a/runtime/syscalls/sys_semaphore.c b/runtime/syscalls/sys_semaphore.c
 index 112fbf9..de67356 100644
 --- a/runtime/syscalls/sys_semaphore.c
@@ -358,10 +1052,31 @@ index 112fbf9..de67356 100644
      int32_t  count  = LV2_ARG_S32(ctx, 1);
  
 diff --git a/tools/ppu_lifter.py b/tools/ppu_lifter.py
-index 8ad277c..0ad73ff 100644
+index 8ad277c..468f2bb 100644
 --- a/tools/ppu_lifter.py
 +++ b/tools/ppu_lifter.py
-@@ -321,6 +321,13 @@ class PPULifter:
+@@ -297,6 +297,20 @@ class PPULifter:
+         # callee's epilogue runs against the caller's frame (frame drift). Set by
+         # main() from the disassembly; empty = legacy (range-based routing only).
+         self.function_entries: set[int] = set()
++        # Discovered computed-`bctr` switch dispatchers: {bctr_addr: [case addrs]}.
++        # Lifted IN-FUNCTION as `switch ((uint32_t)ctx->ctr) { case ADDR: goto
++        # loc_ADDR; ... }` so the dispatcher and its case bodies stay one function
++        # (switch-in-a-loop dispatchers share back-edges/labels with their cases —
++        # splitting cases into separate functions breaks those gotos). Falls back to
++        # ps3_indirect_call for unknown targets. Populated by main() from
++        # discover_jump_tables; empty = no static jump-table dispatch (bctr -> the
++        # plain indirect-call path).
++        self.jump_tables: dict[int, list[int]] = {}
++        # --shadow-stack: emit a per-function DS_FRAME RAII guard + define
++        # DS_SHADOW_STACK, so the runtime maintains a thread-local guest call
++        # stack (reliable backtrace where host/back-chain walks fail on tail-call
++        # trampolines). Off by default -> DS_FRAME is a no-op (zero overhead).
++        self.shadow_stack: bool = False
+         # Optional executable-code window [code_lo, code_hi). When set, branch /
+         # call targets that fall outside it are NOT promoted to func_X (they are
+         # data the boundary detector mis-read as code -- e.g. .rodata living in
+@@ -321,6 +335,13 @@ class PPULifter:
          # (ppu_context, func_entry) stay unprefixed — integration TUs declare
          # the prefixed table extern manually rather than including two headers.
          self.prefix = prefix
@@ -375,7 +1090,7 @@ index 8ad277c..0ad73ff 100644
  
      def lift_function(self, instructions: list[Instruction],
                        start: int, end: int) -> LiftedFunction:
-@@ -331,6 +338,15 @@ class PPULifter:
+@@ -331,6 +352,15 @@ class PPULifter:
              end_addr=end,
          )
  
@@ -391,7 +1106,85 @@ index 8ad277c..0ad73ff 100644
          # Firmware-import stub: replace the whole body with an HLE dispatch.
          nid = self.hle_stub_nids.get(start)
          if nid is not None:
-@@ -2054,6 +2070,29 @@ class PPULifter:
+@@ -356,6 +386,17 @@ class PPULifter:
+                         except ValueError:
+                             pass
+ 
++        # Computed-`bctr` switch case targets that land inside this function need
++        # `loc_ADDR:` labels so the in-function `switch (...ctr) { case: goto }`
++        # (emitted at the dispatcher's bctr in _translate) resolves. Dispatchers
++        # for this range are any jump_tables key in [start, end).
++        if self.jump_tables:
++            for disp_addr, case_addrs in self.jump_tables.items():
++                if start <= disp_addr < end:
++                    for c in case_addrs:
++                        if start <= c < end:
++                            internal_targets.add(c)
++
+         emitted_labels: set[int] = set()
+         for insn in instructions:
+             if insn.addr < start or insn.addr >= end:
+@@ -929,7 +970,7 @@ class PPULifter:
+                     return f"/* bl -> non-code 0x{tgt:08X} */;"
+                 func.calls.append(tgt)
+                 self.call_targets.add(tgt)
+-                return f"{self.prefix}func_{tgt:08X}(ctx); DRAIN_TRAMPOLINE(ctx);"
++                return f"ctx->cia = 0x{addr:08X}; {self.prefix}func_{tgt:08X}(ctx); DRAIN_TRAMPOLINE(ctx);"
+             except ValueError:
+                 return f"/* bl {target} */;"
+ 
+@@ -958,8 +999,8 @@ class PPULifter:
+                 and (mn.endswith("ctr") or mn.endswith("ctrl"))):
+             cond = self._branch_condition(mn, ops)
+             if mn.endswith("ctrl"):   # link = call: keep executing after it
+-                return f"if ({cond}) {{ ps3_indirect_call(ctx); DRAIN_TRAMPOLINE(ctx); }}"
+-            return f"if ({cond}) {{ ps3_indirect_call(ctx); DRAIN_TRAMPOLINE(ctx); return; }}"
++                return f"if ({cond}) {{ ctx->cia = 0x{addr:08X}; ps3_indirect_call(ctx); DRAIN_TRAMPOLINE(ctx); }}"
++            return f"if ({cond}) {{ ctx->cia = 0x{addr:08X}; ps3_indirect_call(ctx); DRAIN_TRAMPOLINE(ctx); return; }}"
+ 
+         # Conditional branches
+         if mn.startswith("b") and mn not in ("bl", "b", "blr", "bctr", "bctrl"):
+@@ -992,13 +1033,37 @@ class PPULifter:
+                 return f"/* {mn} {insn.operands} */;"
+ 
+         if mn == "bctr":
+-            return "ps3_indirect_call(ctx); return;"
++            # Static switch dispatch: the PIC table computation already left the
++            # absolute case address in CTR (`add target, off, base; mtctr; bctr`),
++            # so dispatch on it directly. In-range cases jump to a local label
++            # (keeps switch-in-loop dispatchers whole); out-of-range cases tail-call
++            # the case function. Unknown CTR values fall back to the indirect-call
++            # resolver. Without this, the runtime indirect-call lands on an unlifted
++            # mid-function case address ("unresolved indirect call").
++            cases = self.jump_tables.get(addr)
++            if cases:
++                lines = ["switch ((uint32_t)ctx->ctr) {"]
++                for c in cases:
++                    if func.start_addr <= c < func.end_addr:
++                        # in-range: label comes from the internal_targets pre-pass
++                        lines.append(f"    case 0x{c:08X}u: goto loc_{c:08X};")
++                    else:
++                        # out-of-range case body: must be a callable function;
++                        # register it so the mid-function pass materializes it.
++                        self.branch_targets.add(c)
++                        lines.append(
++                            f"    case 0x{c:08X}u: {{ {self.prefix}func_{c:08X}(ctx); return; }}")
++                lines.append(
++                    f"    default: ctx->cia = 0x{addr:08X}; ps3_indirect_call(ctx); return;")
++                lines.append("    }")
++                return "\n    ".join(lines)
++            return f"ctx->cia = 0x{addr:08X}; ps3_indirect_call(ctx); return;"
+ 
+         if mn == "bctrl":
+             # Indirect call through CTR register. The CTR value is a GUEST
+             # address (or OPD pointer). We dispatch through a hash table
+             # that maps guest addresses to host function pointers.
+-            return "ps3_indirect_call(ctx); DRAIN_TRAMPOLINE(ctx);"
++            return f"ctx->cia = 0x{addr:08X}; ps3_indirect_call(ctx); DRAIN_TRAMPOLINE(ctx);"
+ 
+         # ------- SPR -------
+         if mn == "mflr":
+@@ -2054,6 +2119,29 @@ class PPULifter:
          if not all_refs:
              return 0
  
@@ -421,7 +1214,7 @@ index 8ad277c..0ad73ff 100644
          # Build an interval map: sorted list of (start, end) for existing funcs
          func_intervals = sorted((f.start_addr, f.end_addr) for f in self.functions)
  
-@@ -2095,7 +2134,7 @@ class PPULifter:
+@@ -2095,7 +2183,7 @@ class PPULifter:
              # short tail from any interior entry; bounding it keeps the common case
              # exact and turns the pathological case into a harmless truncated stub.
              fend = min(fend, target + _MAX_MID_TAIL)
@@ -430,7 +1223,7 @@ index 8ad277c..0ad73ff 100644
              # lift_function already appends to self.functions, so it's included
              # in output. Update defined set so we don't re-generate.
              defined.add(target)
-@@ -2116,7 +2155,7 @@ class PPULifter:
+@@ -2116,7 +2204,7 @@ class PPULifter:
                  bound = min(bound, target + _MAX_MID_TAIL)   # cap span (see above)
                  if bound <= target:
                      continue
@@ -439,7 +1232,44 @@ index 8ad277c..0ad73ff 100644
                  defined.add(target)
                  count += 1
  
-@@ -2143,6 +2182,9 @@ class PPULifter:
+@@ -2136,6 +2224,36 @@ class PPULifter:
+                                             self.prefix + "function_table")
+                     if self.prefix else HEADER_PREAMBLE)
+         lines = [preamble]
++        # Shadow call stack (reliable guest backtrace). DS_FRAME is a no-op unless
++        # DS_SHADOW_STACK is defined (emitted only for a --shadow-stack lift). The
++        # backing storage (g_ds_sp/g_ds_stk) + ds_dump_shadow() live in the runtime
++        # (ppu_loader.cpp) so they exist regardless; here we only declare/define the
++        # zero-cost guard the chunks emit per function.
++        if self.shadow_stack:
++            lines.append("#define DS_SHADOW_STACK 1")
++        lines.append(
++            "#ifdef DS_SHADOW_STACK\n"
++            "#if defined(_MSC_VER)\n"
++            "  #define DS_TLS __declspec(thread)\n"
++            "#else\n"
++            "  #define DS_TLS __thread\n"
++            "#endif\n"
++            'extern "C" {\n'
++            "  extern DS_TLS unsigned g_ds_sp; extern DS_TLS unsigned g_ds_stk[8192];\n"
++            "  extern DS_TLS unsigned g_ds_ring_pos; extern DS_TLS unsigned g_ds_ring_a[1024];\n"
++            "  extern DS_TLS unsigned g_ds_ring_r3[1024];\n"
++            "}\n"
++            "struct DsFrame {\n"
++            "  DsFrame(unsigned a, unsigned r3){\n"
++            "    if (g_ds_sp < 8192u) g_ds_stk[g_ds_sp] = a; ++g_ds_sp;\n"
++            "    unsigned p = g_ds_ring_pos++ & 1023u; g_ds_ring_a[p] = a; g_ds_ring_r3[p] = r3;\n"
++            "  }\n"
++            "  ~DsFrame(){ if (g_ds_sp) --g_ds_sp; }\n"
++            "};\n"
++            "#define DS_FRAME(a, ctx) DsFrame _dsf((a), (unsigned)(ctx)->gpr[3])\n"
++            "#else\n"
++            "#define DS_FRAME(a, ctx) ((void)0)\n"
++            "#endif")
+         # Forward declarations
+         for func in self.functions:
+             lines.append(f"void {func.name}(ppu_context* ctx);")
+@@ -2143,6 +2261,9 @@ class PPULifter:
          defined = {f.start_addr for f in self.functions}
          for target in sorted((self.call_targets | self.branch_targets) - defined):
              lines.append(f"void {self.prefix}func_{target:08X}(ppu_context* ctx); /* external */")
@@ -449,31 +1279,212 @@ index 8ad277c..0ad73ff 100644
          lines.append("")
          return "\n".join(lines)
  
-@@ -2430,12 +2472,14 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi):
+@@ -2156,7 +2277,7 @@ class PPULifter:
+         # Emit helper macros
+         lines.append("/* Rotate helpers */")
+         lines.append("static inline uint32_t ppc_rlwinm(uint32_t rs, int sh, int mb, int me) {")
+-        lines.append("    uint32_t rotated = (rs << sh) | (rs >> (32 - sh));")
++        lines.append("    uint32_t rotated = sh ? ((rs << sh) | (rs >> (32 - sh))) : rs; /* sh==0: avoid rs>>32 UB */")
+         lines.append("    uint32_t mask;")
+         lines.append("    if (mb <= me) {")
+         lines.append("        mask = ((uint32_t)-1 >> mb) & ((uint32_t)-1 << (31 - me));")
+@@ -2167,7 +2288,7 @@ class PPULifter:
+         lines.append("}")
+         lines.append("")
+         lines.append("static inline uint32_t ppc_rlwimi(uint32_t ra, uint32_t rs, int sh, int mb, int me) {")
+-        lines.append("    uint32_t rotated = (rs << sh) | (rs >> (32 - sh));")
++        lines.append("    uint32_t rotated = sh ? ((rs << sh) | (rs >> (32 - sh))) : rs; /* sh==0: avoid rs>>32 UB */")
+         lines.append("    uint32_t mask;")
+         lines.append("    if (mb <= me) {")
+         lines.append("        mask = ((uint32_t)-1 >> mb) & ((uint32_t)-1 << (31 - me));")
+@@ -2181,7 +2302,7 @@ class PPULifter:
+         lines.append("/* 64-bit rotate helpers */")
+         lines.append("static inline uint64_t ppc_rotl64(uint64_t v, int n) {")
+         lines.append("    n &= 63;")
+-        lines.append("    return (v << n) | (v >> (64 - n));")
++        lines.append("    return n ? ((v << n) | (v >> (64 - n))) : v; /* n==0: avoid v>>64 UB */")
+         lines.append("}")
+         lines.append("static inline uint64_t ppc_mask64(int mb, int me) {")
+         lines.append("    uint64_t mask;")
+@@ -2219,6 +2340,7 @@ class PPULifter:
+         if label:
+             lines.append(f"/* {label} */")
+         lines.append(f"void {func.name}(ppu_context* ctx) {{")
++        lines.append(f"    DS_FRAME(0x{func.start_addr:08X}, ctx);")
+         for bline in func.body_lines:
+             lines.append(f"    {bline}" if not bline.endswith(":") else bline)
+ 
+@@ -2344,7 +2466,7 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi):
+     for i in range(n):
+         if all_insns[i].mnemonic != 'bctr':
+             continue
+-        win = all_insns[max(0, i - 30):i]
++        win = all_insns[max(0, i - 120):i]
+         # the ctr source register (last mtctr before the bctr)
+         rC = None
+         for w in reversed(win):
+@@ -2363,30 +2485,54 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi):
+             continue
+         # `lwzx rD, rA, rB` computes MEM(rA + rB); the table-base register may be
+         # EITHER operand — gcc emits both `lwzx rD, base, idx` and the swapped
+-        # `lwzx rD, idx, base`. Try each candidate; the real base is the one
+-        # loaded TOC-relative via `lwz base, disp(r2)`. (Hardcoding p[2] as the
+-        # base silently skipped every dispatcher with the operands swapped.)
++        # `lwzx rD, idx, base`.
+         r_val = p[0]
+-        disp = None; r_base = None
+-        for cand in (p[1], p[2]):
++
++        # Resolve a register's runtime ADDRESS value by walking back to its
++        # defining load (stopping at the function's terminators). Handles:
++        #   (1) single TOC load   `lwz base, dispA(r2)`            -> MEM(toc+dispA)
++        #   (2) two-level TOC load `lwz mid, dispA(r2);             -> MEM(MEM(toc+dispA)+dispB)
++        #                           lwz base, dispB(mid)`
++        # The two-level form is what DeS/gcc emits for switch tables behind a
++        # secondary data anchor (lwz rM,disp(r2); lwz base,disp(rM)) — the prior
++        # single-level-only resolver silently skipped every such dispatcher.
++        def _reg_load(cand):
+             for w in reversed(win):
+-                if w.mnemonic == 'lwz':
++                if w.mnemonic in ('bctr', 'bctrl', 'blr', 'bl', 'blrl'):
++                    break
++                if w.mnemonic in ('lwz', 'ld'):
+                     a = [x.strip() for x in w.operands.split(',')]
+-                    if len(a) == 2 and a[0] == cand and '(r2)' in a[1]:
+-                        disp = mem_disp(a[1]); r_base = cand; break
+-            if disp is not None:
+-                break
+-        if disp is None or not toc:
+-            continue
+-        # offset table iff an `add rC, *, r_base` combines the loaded value + base
+-        is_offset = any(
+-            w.mnemonic == 'add' and
+-            [x.strip() for x in w.operands.split(',')][0] == rC and
+-            r_base in [x.strip() for x in w.operands.split(',')][1:]
+-            for w in win)
+-        table_base = read_u32((toc + disp) & 0xFFFFFFFF)
+-        if table_base is None:
+-            continue
++                    if len(a) == 2 and a[0] == cand and '(' in a[1]:
++                        return (mem_disp(a[1]), a[1].split('(')[1].rstrip(')'))
++            return None
++
++        def _base_addr(cand):
++            ld = _reg_load(cand)
++            if ld is None:
++                return None
++            d, rA = ld
++            if d is None:
++                return None
++            if rA == 'r2':
++                return read_u32((toc + d) & 0xFFFFFFFF) if toc else None
++            mid = _reg_load(rA)
++            if mid is None or mid[1] != 'r2' or mid[0] is None or not toc:
++                return None
++            m = read_u32((toc + mid[0]) & 0xFFFFFFFF)
++            if m is None:
++                return None
++            return read_u32((m + d) & 0xFFFFFFFF)
++
++        # offset table iff an `add rC, *, base` combines the loaded value + base.
++        addw = next((w for w in reversed(win)
++                     if w.mnemonic == 'add'
++                     and [x.strip() for x in w.operands.split(',')][0] == rC), None)
++        is_offset = addw is not None
++        base_cands = [p[1], p[2]]
++        if is_offset:
++            adds = [x.strip() for x in addw.operands.split(',')][1:]
++            base_cands = [c for c in (p[1], p[2]) if c in adds] or base_cands
++
+         # case count from the bound check `cmp[l]wi crN, rIdx, COUNT`
+         count = None
+         for w in reversed(win):
+@@ -2396,22 +2542,44 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi):
+                 except ValueError:
+                     count = None
+                 break
+-        if count is None or count < 0 or count > 4096:
++        count_known = count is not None and 0 <= count <= 4096
++        if not count_known:
+             count = 256
+-        targets = []
+-        for k in range(count + 1):
+-            v = read_u32((table_base + k * 4) & 0xFFFFFFFF)
+-            if v is None:
+-                break
+-            if is_offset:
+-                off = v - (1 << 32) if (v & 0x80000000) else v
+-                t = (table_base + off) & 0xFFFFFFFF
+-            else:
+-                t = v
+-            if text_lo <= t < text_hi and t % 4 == 0:
+-                targets.append(t)
+-            else:
++
++        def _read_targets(tb):
++            out = []
++            for k in range(count + 1):
++                v = read_u32((tb + k * 4) & 0xFFFFFFFF)
++                if v is None:
++                    break
++                if is_offset:
++                    off = v - (1 << 32) if (v & 0x80000000) else v
++                    t = (tb + off) & 0xFFFFFFFF
++                else:
++                    t = v
++                if text_lo <= t < text_hi and t % 4 == 0:
++                    out.append(t)
++                else:
++                    break
++            return out
++
++        table_base = None
++        for cand in base_cands:
++            a = _base_addr(cand)
++            if a is not None:
++                table_base = a
+                 break
++        targets = _read_targets(table_base) if table_base is not None else []
++        # Fallback: gcc PIC switch tables are emitted INLINE immediately after the
++        # dispatching `bctr`; when the base register can't be resolved statically
++        # (e.g. anchored through a register we lost), the table is at bctr+4. Only
++        # for offset tables and only if it yields a (near-)complete valid table, so
++        # a non-table `bctr` followed by real code isn't misread as a jump table.
++        if (not targets) and is_offset:
++            fb = (all_insns[i].addr + 4) & 0xFFFFFFFF
++            cand = _read_targets(fb)
++            if count_known and len(cand) >= count:
++                targets = cand
+         if targets:
+             tables[all_insns[i].addr] = sorted(set(targets))
+     return tables
+@@ -2430,12 +2598,15 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi):
  _WORKER_STATE: dict = {}
  
  
 -def _worker_init(segs, big_endian, name_map, prefix, hle_stub_nids=None):
 +def _worker_init(segs, big_endian, name_map, prefix, hle_stub_nids=None,
-+                 override_funcs=None):
++                 override_funcs=None, jump_tables=None):
      _WORKER_STATE["segs"] = segs
      _WORKER_STATE["be"] = big_endian
      _WORKER_STATE["names"] = name_map
      _WORKER_STATE["prefix"] = prefix
      _WORKER_STATE["hle_stub_nids"] = hle_stub_nids or {}
 +    _WORKER_STATE["override_funcs"] = override_funcs or {}
++    _WORKER_STATE["jump_tables"] = jump_tables or {}
  
  
  def _worker_lift(task):
-@@ -2446,6 +2490,7 @@ def _worker_lift(task):
+@@ -2446,6 +2617,8 @@ def _worker_lift(task):
      # .lib.stub trampoline (which derefs an unpopulated import table) is lifted as
      # real code and bctrl's to garbage. (Single-threaded lift set this directly.)
      lifter.hle_stub_nids = _WORKER_STATE.get("hle_stub_nids", {})
 +    lifter.override_funcs = _WORKER_STATE.get("override_funcs", {})
++    lifter.jump_tables = _WORKER_STATE.get("jump_tables", {})
      results = []
      for start, end in bounds:
          blob = b""
-@@ -2457,7 +2502,7 @@ def _worker_lift(task):
+@@ -2457,7 +2630,7 @@ def _worker_lift(task):
          f = lifter.lift_function(insns, start, end)
          results.append((f.name, f.start_addr, f.end_addr, f.body_lines, f.calls,
                          f.fallthrough_to))
@@ -482,12 +1493,13 @@ index 8ad277c..0ad73ff 100644
  
  
  def _parallel_lift(lifter, func_bounds, segs, big_endian, jobs):
-@@ -2478,10 +2523,11 @@ def _parallel_lift(lifter, func_bounds, segs, big_endian, jobs):
+@@ -2478,10 +2651,12 @@ def _parallel_lift(lifter, func_bounds, segs, big_endian, jobs):
      # close() (no new tasks) + join() (graceful worker exit) avoids the deadlock.
      pool = mp.Pool(processes=jobs, initializer=_worker_init,
                     initargs=(segs, big_endian, lifter.name_map, lifter.prefix,
 -                             lifter.hle_stub_nids))
-+                             lifter.hle_stub_nids, lifter.override_funcs))
++                             lifter.hle_stub_nids, lifter.override_funcs,
++                             lifter.jump_tables))
      try:
 -        for idx0, results, ct, bt in pool.imap_unordered(_worker_lift, tasks):
 +        for idx0, results, ct, bt, osyms in pool.imap_unordered(_worker_lift, tasks):
@@ -496,7 +1508,7 @@ index 8ad277c..0ad73ff 100644
              lifter.call_targets |= ct
              lifter.branch_targets |= bt
              done += len(results)
-@@ -2541,8 +2587,24 @@ def main() -> None:
+@@ -2541,8 +2716,31 @@ def main() -> None:
                               "instead of its literal .lib.stub trampoline, and "
                               "split out as its own 0x20-byte function so direct "
                               "calls to it dispatch to the HLE handler.")
@@ -506,6 +1518,13 @@ index 8ad277c..0ad73ff 100644
 +                             "function's body is replaced with a tail call to the "
 +                             "host symbol, letting a title swap out e.g. its "
 +                             "allocator for a clean host implementation.")
++    parser.add_argument("--shadow-stack", action="store_true",
++                        help="Emit a per-function shadow-call-stack guard (DS_FRAME) "
++                             "and define DS_SHADOW_STACK, so the runtime keeps a "
++                             "thread-local guest call stack for a reliable backtrace "
++                             "(ds_dump_shadow). For debugging use-before-construction "
++                             "bugs where host/back-chain walks fail on tail calls. "
++                             "Adds per-call overhead; off by default (DS_FRAME no-op).")
      args = parser.parse_args()
  
 +    override_funcs: dict[int, str] = {}
@@ -521,11 +1540,72 @@ index 8ad277c..0ad73ff 100644
      # Load firmware-import stubs (addr -> NID) up front; applied to func_bounds
      # and the lifter below.
      hle_stubs: dict[int, int] = {}
-@@ -2799,6 +2861,7 @@ def main() -> None:
+@@ -2734,6 +2932,7 @@ def main() -> None:
+     # extend the dispatcher function over the case block: the mid-entry tail
+     # mechanism lifts target..func_end, so a far end explodes the output.)
+     jt_targets = set()
++    _jump_tables = {}
+     if not args.raw:
+         try:
+             seg_map = [(ph.p_vaddr, ph.p_vaddr + ph.p_filesz,
+@@ -2754,19 +2953,17 @@ def main() -> None:
+             tables = discover_jump_tables(all_insns, _read_u32, toc, text_lo, text_hi)
+             for ts in tables.values():
+                 jt_targets.update(ts)
+-            import bisect
+-            fb = dict(func_bounds)
+-            allstarts = sorted(set(fb) | jt_targets)
+-            added = 0
+-            for t in sorted(jt_targets):
+-                if t in fb:
+-                    continue
+-                k = bisect.bisect_right(allstarts, t)
+-                fb[t] = allstarts[k] if k < len(allstarts) else text_hi
+-                added += 1
+-            func_bounds = sorted(fb.items())
+-            print(f"  jump tables: {len(tables)} dispatchers, {len(jt_targets)} case targets, "
+-                  f"+{added} case funcs")
++            # Do NOT split functions at case targets. The dispatcher is lifted with
++            # an in-function `switch ((uint32_t)ctx->ctr)` (see PPULifter.jump_tables
++            # / the bctr handler in _translate), so case bodies must stay inside the
++            # dispatcher's function for the `goto loc_ADDR` to resolve and for
++            # switch-in-loop back-edges/shared labels to keep working. (The old model
++            # promoted each case to its own func_X and routed the bctr through the
++            # runtime indirect-call resolver — which breaks loop dispatchers and
++            # leaves PIC tables the resolver can't see as "unresolved indirect call".)
++            _jump_tables = tables
++            print(f"  jump tables: {len(tables)} dispatchers, {len(jt_targets)} case targets "
++                  f"(in-function switch dispatch)")
+         except Exception as exc:
+             print(f"  jump-table discovery skipped: {exc}", file=sys.stderr)
+ 
+@@ -2798,8 +2995,11 @@ def main() -> None:
+ 
      lifter = PPULifter(prefix=args.symbol_prefix)
      lifter.code_hi = args.code_end
++    lifter.shadow_stack = args.shadow_stack
      lifter.hle_stub_nids = hle_stubs
 +    lifter.override_funcs = override_funcs
      lifter.function_entries = _func_entries
++    lifter.jump_tables = _jump_tables
  
      # Optional: load a recovered-name map (from Ghidra analysis) to annotate
+     # generated functions with meaningful names as comments.
+diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
+index b7ce4cb..f8bbc61 100644
+--- a/tools/spu_lifter.py
++++ b/tools/spu_lifter.py
+@@ -322,11 +322,12 @@ class SPULifter:
+             "a": "spu_a", "sf": "spu_sf", "ah": "spu_ah", "sfh": "spu_sfh",
+             "and": "spu_and", "or": "spu_or", "xor": "spu_xor",
+             "nand": "spu_nand", "nor": "spu_nor", "andc": "spu_andc", "orc": "spu_orc",
++            "eqv": "spu_eqv", "sumb": "spu_sumb",
+             "ceq": "spu_ceq", "ceqh": "spu_ceqh", "ceqb": "spu_ceqb",
+             "cgt": "spu_cgt", "cgth": "spu_cgth", "cgtb": "spu_cgtb",
+             "clgt": "spu_clgt", "clgth": "spu_clgth", "clgtb": "spu_clgtb",
+             "mpy": "spu_mpy", "mpyu": "spu_mpyu",
+-            "mpyh": "spu_mpyh", "mpyhh": "spu_mpyhh", "mpys": "spu_mpys",
++            "mpyh": "spu_mpyh", "mpyhh": "spu_mpyhh", "mpyhhu": "spu_mpyhhu", "mpys": "spu_mpys",
+             "fa": "spu_fa", "fs": "spu_fs", "fm": "spu_fm",
+             "fi": "spu_fi",   # floating interpolate (reciprocal refine)
+             "fceq": "spu_fceq", "fcgt": "spu_fcgt",

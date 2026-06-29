@@ -4,6 +4,43 @@ Reverse-chronological. Each entry: what we did, what we found, what's next.
 
 ---
 
+## 2026-06-29 — PPU boot complete → RSX/GCM → SPU/SPURS gate
+
+Condensed; the blow-by-blow lives in the milestone docs ([`07`](07-m2-boot-debug.md), [`08`](08-ppu-boot-complete.md),
+[`09`](09-spu-spurs.md)–[`11`](11-spurs-runtime-spec.md)).
+
+**Did / found (in order):**
+- **M2 cleared → full PPU boot to the 60 fps main loop.** Six root-cause fixes; the keystone was a
+  **rotate-by-zero UB** the lifter emitted (`v>>64` / `rs>>32` for shift==0) that clang miscompiled
+  under -O2 — it was the root of the whole C++ static-init "construction cascade." Also: event-flag
+  syscall numbers (collided with timer/usleep), MUTEX/COND max 256→8192, HLE ctx-handler return→r3,
+  guest-pointer translation in libs/system. Full PPU reference + reproduce recipe in [`08`](08-ppu-boot-complete.md).
+- **PIC jump-table lifting** — the lifter skipped gcc switch tables reached via a two-level-TOC base,
+  emitting unresolved indirect calls (e.g. broke the HighGraphics state machine). Fixed: two-level
+  base resolution + inline-table fallback, lifted as an in-function `ctr` switch. 18→695 dispatchers.
+- **Shadow call stack** (`ppu_lifter --shadow-stack`) — reliable guest backtraces where host/back-chain
+  walks fail on tail-call trampolines. The tool that cracked the next two bugs.
+- **`sys_memory_get_page_attribute` (351)** was misnumbered + stubbed → a GCM-setup branch saw garbage
+  page_size and skipped constructing a sub-object → null-deref. Implemented it (+ per-alloc page size).
+  → boot reached **`_cellGcmInitBody`** (RSX/GCM init).
+- **GCM FIFO control register** lived as a host pointer the game read as a guest address → its
+  FIFO-drain wait spun. Moved it into guest memory + drain `get→put` each vblank. → graphics-init
+  thread proceeds and **dispatches its first SPU workload**.
+
+**Now at the SPU/SPURS gate (M3):** `func_00A31158` dispatches a 68KB SPU workload (currently a
+`spu_workload` MISS) + calls 3 unresolved cellSpurs NIDs, then waits for completion. The SPU
+recompiler is DeS-complete (0 ISA gaps, [`09`](09-spu-spurs.md)); remaining = clean-room HLE SPURS
+runtime ([`11`](11-spurs-runtime-spec.md) has the 20-fn checklist).
+
+**Repo:** ps3recomp changes pushed to the fork (github.com/JonathanDC64/ps3recomp); port pushed to the
+private DemonsSoulsPC repo (firewall-clean — docs/patches/port glue only).
+
+**Next:** implement the 3 cellSpurs job-chain NIDs; lift+register the DeS SPU images so the workload
+HITs; run the job + deliver completion so the graphics thread releases (→ feeds the main thread's
+cond=3 wait).
+
+---
+
 ## 2026-06-28 (cont.) — git set up; M2 boot debugging begun (allocator bad_alloc)
 
 **Did:**

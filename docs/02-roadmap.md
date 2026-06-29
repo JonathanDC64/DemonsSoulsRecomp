@@ -4,9 +4,16 @@ Milestone-based plan. Each milestone produces a concrete artifact and de-risks t
 
 **Game:** Demon's Souls (USA), Title ID **BLUS30443**. Engine: FromSoftware proprietary (the early "Souls" engine).
 
+> **Status (2026-06-29):** ✅ M0, ✅ M1, ✅ M2 (full PPU boot to the main loop) — see
+> [`08-ppu-boot-complete.md`](08-ppu-boot-complete.md). RSX/GCM bring-up started (FIFO control
+> register working). **🔜 Currently in M3 (SPU/SPURS):** boot dispatches its first SPU workload and
+> waits on it — see [`09`](09-spu-spurs.md)–[`11`](11-spurs-runtime-spec.md). M4/M5 not yet reached.
+> The checklists below are the original plan, kept for reference; the milestone docs (07–11) are the
+> live record.
+
 ---
 
-## M0 — Environment & quantified assessment  ·  *achievable now*
+## M0 — Environment & quantified assessment  ·  ✅ DONE
 
 **Goal:** know exactly what we're dealing with, in numbers.
 
@@ -24,7 +31,7 @@ Milestone-based plan. Each milestone produces a concrete artifact and de-risks t
 
 ---
 
-## M1 — PPU lift + build + boot to entry  ·  *hard but mechanical*
+## M1 — PPU lift + build + boot to entry  ·  ✅ DONE
 
 **Goal:** the recompiled binary starts, runs CRT init, and enters game code with a **null renderer**.
 
@@ -37,7 +44,7 @@ Milestone-based plan. Each milestone produces a concrete artifact and de-risks t
 
 ---
 
-## M2 — HLE coverage to reach the main loop  ·  *hard, iterative*
+## M2 — HLE coverage to reach the main loop  ·  ✅ DONE (boots to the 60 fps main loop)
 
 **Goal:** get past initialization to the game's main update loop.
 
@@ -49,7 +56,7 @@ Milestone-based plan. Each milestone produces a concrete artifact and de-risks t
 
 ---
 
-## M3 — SPU job reimplementation  ·  *the crux, open-ended*
+## M3 — SPU job reimplementation  ·  🔜 CURRENT FRONTIER
 
 **Goal:** the SPU work DeS depends on produces correct output on the host.
 

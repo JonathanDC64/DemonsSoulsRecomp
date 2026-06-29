@@ -289,3 +289,55 @@ embedded at LS 0x100; taskset PM entry 0xA00 / syscall 0xA70; tasks LS 0x3000+; 
 `sys_event_port_send` with bit `(1u<<31)>>wid` per workload id. To add RPCS3 SPU core / cellSpursSpu
 to the reference clone: `git -C C:\dev\rpcs3-reference sparse-checkout add rpcs3/Emu/Cell` (already
 has Modules; cellSpursSpu.cpp is under Modules).
+
+---
+
+## 12. HLE SPURS implementation spec (the build plan) [2026-06-29]
+
+The bring-up is a circular dependency, confirmed by tracing: **`cond=3` (init thread, never
+signaled) ← the Dantelion2 runtime services reaching "ready" ← SPURS producing events ← the (HLE)
+SPURS kernel + the game's tasks running.** So there is NO shim shortcut; we must implement enough of
+the SPURS runtime that events flow. Current state of our HLE (`ps3recomp/libs/spurs/cellSpurs.c`,
+991 lines): attribute/init/eventflag funcs are bare stubs; `cellSpursInitializeWithAttribute` records
+attrs only; `cellSpursEventFlagAttachLv2EventQueue` is a no-op; workload table + CreateTaskset exist;
+`cellSpursAddWorkload`/`CreateTask` funnel to `spu_workload_dispatch_async`. Reference to reimplement
+clean: RPCS3 `Emu/Cell/Modules/cellSpursSpu.cpp` (+ cellSpurs.cpp).
+
+Dantelion2 service contract (from RE this session):
+- SPURuntimeService (func_00C5DAB0): `sys_event_queue_receive(q=1)`; dispatches events with
+  **source == 0xFFFFFFFF53505501** (SYS_SPU_THREAD_EVENT_USER_KEY) to func_00C5BE78/func_00C5D6D8;
+  byte `(data2>>24)&0xFF` selects handler vs the value 0x20; exits on source **0xFEE1DEAD**.
+- PPURuntimeService (func_00C3A878 -> func_00C3A358): sets flag *(0x01B91E20)=1, pumps
+  usleep+cellSysutilCheckCallback until it clears.
+- init thread: `sys_cond_wait(cond=3)` via DLConditionVariable::wait (func_00B5D3E8), waiting for
+  services/SPURS ready.
+
+### Phased build
+**Phase A — SPURS "comes up" (release cond=3).** Make `cellSpursInitializeWithAttribute` stand up an
+HLE SPURS instance: create the lv2 event queue/port infra, and start a host "SPURS service" thread
+that emulates the kernel+PPU-handler. Goal: drive whatever the init thread's cond=3 waits on. First
+confirm cond=3's exact ready-predicate (re-RE func_009E0370 / the waiter — its host backtrace was
+trampoline-scrambled; use cia-stamping at the cond_wait + read the predicate loop, or single-step
+the waiter). If cond=3 is "wait for SPURuntimeService ready," have the service signal it (sys_cond_signal)
+once stood up.
+**Phase B — event delivery.** Implement `cellSpursEventFlagAttachLv2EventQueue` to record the
+(event-flag -> lv2 queue) binding, and a `spurs_post_user_event(queue, payload)` that posts an event
+with source 0xFFFFFFFF53505501 to the bound queue (RPCS3 uses `sys_event_port_send(port,0,0,
+(1u<<31)>>wid)` for workload-ready). Decode func_00C5BE78/func_00C5D6D8 to learn the exact payload
+(which fields select the workload/handler) so posted events are correct, not blind.
+**Phase C — task execution.** On cellSpursCreateTaskset/CreateTask, dispatch the matching game image
+(one of the 12) via `spu_run_lifted_job_abi(..., spurs_task_abi=1)`; run its DMAs; on STOP/exit post
+the completion USER event so the service dispatches the PPU callback and clears the PPURuntimeService
+flag. Validate task output via `spu_lifter --trace` diff vs an RPCS3 SPU trace when a result looks wrong.
+**Phase D — iterate** task-by-task toward the title screen / first rendered frame.
+
+### Pre-req RE tasks (do these first; they unblock the build)
+1. Pin cond=3's waiter + ready-predicate (what value/flag, who must set it).
+2. Decode the SPURuntimeService USER-event payload (func_00C5BE78 / func_00C5D6D8).
+3. Confirm where lv2 queue 1 is created (game vs cellSpursEventFlagAttachLv2EventQueue) and the
+   event-flag<->queue relationship.
+These three are pure analysis (no firmware, no new infra) and define exactly what Phase A/B must emit.
+
+ESTIMATE: this is a multi-session build (the SPURS runtime + Dantelion2 wrapper handshake is real
+work). The SPU *execution* substrate is done (lifter 0-gap, runtime tested); the remaining effort is
+the scheduler/event HLE + the per-task bring-up. No quick unblock exists (circular dependency).

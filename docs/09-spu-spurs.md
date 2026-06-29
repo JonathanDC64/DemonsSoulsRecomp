@@ -341,3 +341,33 @@ These three are pure analysis (no firmware, no new infra) and define exactly wha
 ESTIMATE: this is a multi-session build (the SPURS runtime + Dantelion2 wrapper handshake is real
 work). The SPU *execution* substrate is done (lifter 0-gap, runtime tested); the remaining effort is
 the scheduler/event HLE + the per-task bring-up. No quick unblock exists (circular dependency).
+
+---
+
+## 13. Contract details RE'd for the build [2026-06-29] (Phase A/B/C inputs)
+
+Hard data gathered this session (so the build doesn't re-derive it):
+- **lv2 queues at boot** (our `[evt] queue_create`): id=1 **key=0x1** size=127 (the SPU->PPU USER-event
+  queue the **SPURuntimeService** drains), id=2 key=0x10000 size=127. **The GAME creates queue 1
+  itself** (not cellSpursEventFlagAttachLv2EventQueue) — so events must be posted INTO queue 1.
+- **SPURuntimeService event protocol** (func_00C5DAB0): `sys_event_queue_receive(q=1)` returns
+  (r3=res, r4=source, r5=data1, r6=data2, r7=data3). Logic:
+  - r3 != 0 (recv error) -> exit/cleanup (loc_00C5DB68).
+  - source(r4) == 0xFEE1DEAD -> exit (game shutdown sentinel).
+  - source(r4) != 0xFFFFFFFF53505501 -> ignore, loop.
+  - else msg-type byte = `(data2>>24)&0xFF`: ==1 -> func_00C5D6D8(r31, data1); ==0x20 -> func_00C5BE78(
+    r31, data1); else loop. (r31 = service context object; data1=r5, data3=r7 passed through.)
+  So a valid SPU-user event = source 0xFFFFFFFF53505501 + data2 high byte in {1,0x20}. Posting one
+  drives the service ONCE; what it then does (func_00C5D6D8 / func_00C5BE78) decodes the workload.
+- **conds**: 1/2/3 all created by func_009DFDA8 (generic DLConditionVariable ctor), unnamed; cond 3
+  paired with mutex 1093, never signaled -> the init-thread block. (The signal comes from a thread
+  that's itself blocked on the SPU side -> circular.)
+- **sys_event send infra** exists: `g_sys_event_queues[qid-1].buffer[tail]` + the port-send path
+  (sys_event.c ~L370-413) — reusable to post events into queue 1 from the HLE SPURS service.
+
+VERIFIED: no shortcut. Spurious-waking cond=3, or posting a blind event, won't pass the waiters'
+predicates — they need REAL SPU task results flowing via queue-1 events. So Phase A cannot be faked;
+it requires the HLE SPURS service to run a task (or the system-service workload) and post a genuine
+completion/notify event. The SPU execution substrate (lifter 0-gap, runtime) is ready; the build is
+the SPURS scheduler + event delivery + per-task bring-up. This is a multi-file, coordinated
+implementation (RPCS3 does it in ~5k lines of cellSpursSpu.cpp) — the realistic next phase of the project.

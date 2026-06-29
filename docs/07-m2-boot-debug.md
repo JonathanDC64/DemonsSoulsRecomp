@@ -693,3 +693,33 @@ blocker-#3 loop).
 
 NET: the research delivered a correct lwmutex fix + strategic clarity (RPCS3 boots fully; SPU
 is the eventual gate). PPU static init is partially advanced; the container spin remains.
+
+### ROOT FOUND via RPCS3 differential (2026-06-28) — registry registered then wiped
+
+Used RPCS3's interpreter + debugger (breakpoint at guest 0x00A35780, main PPU thread) to read
+the registry list head on real hardware, and WWATCH on our side. Decisive comparison:
+  - r2 (TOC) = 0x019B5040 in both. Registry head chain: *(r2-0x6C50)=0x01905EAC=r30;
+    *(r30-0x7FD4)=0x01B9111C = list-head sentinel (SAME static addr in both).
+  - **RPCS3: *(0x01B9111C) = 0x01B91128** (head -> a real node; registry POPULATED).
+  - **Ours: *(0x01B9111C) = 0** (registry EMPTY).
+
+WWATCH on 0x01B9111C in our recomp shows WHY ours ends up empty:
+  - func_00A35780 +0xA6E  writes *head = 0x01B91128   (registration runs correctly!)
+  - func_00A35780 +0x137D/+0x139F/+0x13C0  then runs a 3-stores/iter copy-or-memset loop that
+    zeroes 0x01B9111C, +0x20, +0x24, +0x28 ... (wipes the registry) and never terminates.
+
+So our recomp registers the entry then a runaway loop WIPES it (and spins). The loop's end
+bound derives from the empty/uninitialised source container at 0x71000000 (begin==end==0 read
+at 0x71000003/0x71000007). On real PS3 the registry is already populated when func_00A35780
+runs, so it takes the *walk* path and never executes this *create*-path copy loop.
+
+Likely fix angles (next):
+  1. The copy loop iterating an empty (begin==end) source without terminating smells like a
+     LIFTER empty-check bug in the inlined loop (general win if confirmed) — read the exact
+     loop's begin==end guard.
+  2. Or a static-init ORDER issue: the registering ctors run before func_00A35780 on PS3 but
+     our env reaches func_00A35780 with the registry still empty -> create path -> the buggy
+     loop. (Earlier #4/#6 were symptoms of this same empty-registry/create-path divergence.)
+
+This is the first time we have GROUND TRUTH (RPCS3) pinpointing the divergence: registration
+itself works; the create-path copy loop is what corrupts/wipes it.

@@ -549,3 +549,35 @@ loops -- it needs more of the SPURS framework than just the right r3 (DMA of the
 job-chain walk, completion/signal). NEXT: trace what the body does with the OPD arg (DMA target? a
 job-descriptor list it walks to a terminator?) and supply what's missing so it reaches STOP, then
 signal completion -> func_00A31158. This is the SPURS job-chain/task execution core (docs/11 §3).
+
+### 15g. SPU task host-stack overflow + func_00A31158 frontier crossed [2026-06-29]
+
+Wiring the task-START ABI (§15f) handed the SPURS leaf task its real argument, so it
+finally runs its real work instead of looping on a null arg. That exposed a new
+failure: right after `cellSpursCreateTask` dispatched the task, the **whole process
+terminated** -- exit code 0, no `[CRASH]`, no `[ABORT]`, no `atexit`, no unwind log.
+A long hunt (atexit probe, garbage-`sc` backtrace, SEH guard around the SPU run,
+SPU_TASK_OFF toggle) pinned it: a lifted SPU job's guest `brsl` calls are real nested
+host C calls, and the task's call chain overflows the **default 1 MB host thread
+stack**. A stack-overflow SE can't run the unhandled-exception filter (the stack is
+exhausted), so Windows tears the process down with no log and an exit code that reads
+0. **Fix: reserve a 256 MB stack** for the SPU task threads (committed on demand).
+Process now stays alive 30s+ with the task running concurrently.
+
+Controlled experiment, decisive: `SPU_TASK_OFF=1` suppresses the SPU thread spawn.
+- task OFF -> PPU spins forever on `0xD002A910` at `cia=0x00A31500` (= func_00A31158's
+  wait) -- exactly the documented prior frontier.
+- task ON  -> PPU advances past it.
+So the SPU task IS the producer the `func_00A31158` wait blocks on, and the
+task-start ABI + stack fix move the boot **past the func_00A31158 SPU-handshake
+frontier**.
+
+OPEN (new frontier): the task runs 30s+ without completing (no RETURNED) and the PPU
+parks waiting for completion. Unknown whether that's genuine long work or a
+lifter-induced deep/runaway recursion (256 MB defers, doesn't disprove, an infinite
+chain). NEXT: pin where the task's call chain sits (the existing hang_watchdog
+deadlocks vs the busy SPU thread via SuspendThread+CRT-lock; need a lock-free RIP
+sampler or a depth counter in the lifted prologue), then verify it reaches its real
+exit and writes 0xD002A910 to release func_00A31158. Diagnostics landed: SEH guard +
+ENTER/RETURNED logs (spu_workload), garbage-`sc` backtrace (ppu_loader), atexit probe
+(boot_main), SPU_TASK_OFF toggle.

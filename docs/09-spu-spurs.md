@@ -533,3 +533,19 @@ where the PPU polls it (the exit-code container, cellSpursTaskExitCodeTryGet), r
 This is the substantial M3 work; the SPU recompiler + dispatch + fn-ptr discovery (this session) are the
 substrate it builds on. RPCS3 sidesteps all of it by running the firmware kernel as real SPU code; our
 clean-room path must HLE the kernel.
+
+### 15f. Task-START ABI + real argument [2026-06-29]
+
+The SPU task entry (spu_0001 @0x3070) is finite: save r3(arg)/r4 -> init(func_00003010) -> restore ->
+main body func_000053C8 -> STOP. The body extracts fields out of r3 (the task argument quadword:
+`r3=arg; r4=rotqbyi(arg,4); call func_00004498(r3,r4)`), so a null r3 makes it loop. We were
+dispatching with the kernel-marker ABI (r3={0x40,...}); fixed to the task-START ABI:
+spu_run_lifted_job_abi mode 2 (r3 = 16-byte arg, r4 = tasksetEA), new spu_workload_dispatch_task, +
+capture the argument EA in _cellSpursTaskAttributeInitialize (new eaArgument field) and read it in
+cellSpursCreateTask. Verified the task now gets its real arg: {0x00A662C8, 0x019B5040, 0x00A663A0,
+0x019B5040} = two PPU OPD {func,toc} pairs (0x019B5040 = main TOC).
+STILL doesn't complete: the task processes the arg (DMAs/iterates the PPU OPDs, job-chain-like) and
+loops -- it needs more of the SPURS framework than just the right r3 (DMA of the pointed-to data,
+job-chain walk, completion/signal). NEXT: trace what the body does with the OPD arg (DMA target? a
+job-descriptor list it walks to a terminator?) and supply what's missing so it reaches STOP, then
+signal completion -> func_00A31158. This is the SPURS job-chain/task execution core (docs/11 §3).

@@ -430,3 +430,25 @@ control-register fix). Integrated the SPU side:
 NEXT: pin whether the unknown branches are a lifter gap or a consequence of the null context; implement
 the cellSpurs NIDs + task/job context so the job runs against real data and signals completion.
 Reproduce: `python scripts/build_spu.py` then rebuild port.
+
+### 15a. Null-context root diagnosis [2026-06-29]
+
+Traced the `args=0` from the SPU dispatch back through the cellSpurs task setup (HLETRACE +
+the cellSpurs printfs). func_00A31158's sequence: cellSpursCreateTasksetWithAttribute (0xC10931CB) ->
+`_cellSpursTaskAttributeInitialize` (0xB8474EFF) -> cellSpursCreateTaskWithAttribute (0x1D46FEDF) ->
+dispatch. The attribute-init captured:
+  `_TaskAttributeInitialize(eaElf=0x0177C200 ctx=0x00000000 szctx=0xD0030000)`
+eaElf is correct (so the arg mapping is aligned), but **eaContext=0** and **sizeContext=0xD0030000**
+(a garbage stack address). So the game itself passed a null context + uninitialized size — its context
+computation/allocation is broken upstream.
+
+The break is the **3 unresolved cellSpurs NIDs** func_00A31158 calls (via wrappers func_016B9E64 ->
+0x8F122EF8, func_016B9CE4 -> 0x34552FA6, func_016B9EE4 -> 0xA121A224), which return 0 (unimplemented).
+One of them almost certainly computes/writes the task context-save-area size (cf RPCS3's
+`cellSpursTaskGetContextSaveAreaSize`); returning 0 without writing the out-param leaves the size as
+stack garbage (0xD0030000) and the context allocation null. These NIDs are unnamed (not in RPCS3's
+table, no name in EBOOT.imports.json — only library=cellSpurs), so they need RE from func_00A31158 +
+the cellSpurs API. Implementing them (so the task gets a real context) is the prerequisite for the SPU
+job to run on real data and signal completion (releasing func_00A31158 -> the main thread's cond=3).
+The "unknown LS branch" targets are most likely downstream of the garbage context, not a lifter gap —
+re-check after the context is real.

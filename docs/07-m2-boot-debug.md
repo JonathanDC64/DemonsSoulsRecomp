@@ -743,3 +743,25 @@ Bottom line of the differential investigation: registration logic is correct; th
 that a C++ container reached the create-path copy with begin/end uninitialized — the same
 construction-order/completeness problem, now proven against ground truth. The lwmutex fix
 (EDEADLK) was a correct contributing fix but the construction-order issue remains the wall.
+
+### .init_array / global-ctor investigation (2026-06-28) — iterator is fine; ctor-internal construction is the issue
+
+func_016B84B0 is the C++ global-constructor iterator (__do_global_ctors_aux): list ptr =
+*(r2+20660), walk backward (r31-=4), `mtctr; bctrl` each entry, stop at the -1 sentinel.
+It runs correctly in our recomp, so global ctors DO execute in the same fixed order as real
+PS3 (same binary, same list). The wall is therefore NOT missing/misordered .init_array entries.
+
+The failure is INSIDE a global ctor (func_007CF5D0 -> ... -> func_00A35780): it uses a nested
+C++ container at 0x71000000 whose begin/end (+3/+7) are 0. The container's inline storage is at
++0xB; a correct ctor sets begin=end=&inline_storage. Ours are 0 -> the object was allocated
+(raw zeros, from X's NULL heap via our ds_heap fallback) but its constructor never ran ->
+runaway create-path copy -> wipes the registry. So: allocated-but-not-constructed, the
+use-during-construction cascade, now localized to *within* a running ctor.
+
+SYNTHESIS / real fix direction: these nested objects are allocated from the game's DL system
+heap, which in our build is NULL (we force-build X's vtable and fall back to ds_heap for the
+raw bytes). A raw ds_heap block is not a substitute for a functioning DL heap + the game's own
+construction path. The robust fix is to **functionally initialize the game's DL system heap**
+(the banked "#2" DL-heap-backing) so the game's own allocator AND the object/container
+constructors run natively, instead of patching symptoms. The force-build + NULL-heap->ds_heap
+fallbacks carried us through the memory bootstrap but cannot fully replace a working heap.

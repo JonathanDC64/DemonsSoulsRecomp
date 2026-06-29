@@ -15,14 +15,26 @@ add_library(ps3recomp_runtime STATIC IMPORTED GLOBAL)
 set_target_properties(ps3recomp_runtime PROPERTIES
     IMPORTED_LOCATION "${PS3RECOMP_DIR}/build/ps3recomp_runtime.lib")
 
-# --- Lifted game code (36 generated chunks) --------------------------------
+# --- Lifted game code (generated PPU chunks) -------------------------------
 file(GLOB RECOMP_CHUNKS CONFIGURE_DEPENDS "${RECOMP_DIR}/ppu_recomp_*.cpp")
 list(LENGTH RECOMP_CHUNKS N_CHUNKS)
 message(STATUS "des_boot: ${N_CHUNKS} recompiled chunks from ${RECOMP_DIR}")
 
+# --- Lifted SPU images + workload registration -----------------------------
+# Each DeS SPU image is lifted (spu_lifter.py --symbol-prefix) into
+# ps3recomp/work_spu/<img>/spu_recomp.c; _gen/spu_workloads.cpp registers them
+# with the workload-dispatch registry (by FNV-1a fingerprint) at startup so
+# cellSpurs AddWorkload/CreateTask dispatch runs the recompiled SPU code.
+set(SPU_DIR "${PS3RECOMP_DIR}/work_spu")
+file(GLOB SPU_CHUNKS CONFIGURE_DEPENDS "${SPU_DIR}/*/spu_recomp.c")
+list(LENGTH SPU_CHUNKS N_SPU)
+message(STATUS "des_boot: ${N_SPU} lifted SPU images from ${SPU_DIR}")
+
 # --- The boot executable ---------------------------------------------------
 add_executable(des_boot
     ${RECOMP_CHUNKS}
+    ${SPU_CHUNKS}                                           # lifted SPU images
+    "${SPU_DIR}/_gen/spu_workloads.cpp"                     # SPU workload registration (auto at startup)
     "${RECOMP_DIR}/hle_nid_table.cpp"                       # generated NID->handler table
     "${PS3RECOMP_DIR}/runtime/ppu/ppu_loader.cpp"           # image load, vm, registry, dispatch
     "${PS3RECOMP_DIR}/runtime/ppu/ppu_hle.cpp"              # NID -> HLE bridge

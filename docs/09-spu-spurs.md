@@ -395,3 +395,38 @@ So: main(cond=3) waits for services ready <- services (SPURuntimeService q1, PPU
 wait for SPU events/completion <- needs the SPU thread group executing SPURS tasks. Circular on real
 SPU work, confirmed three ways now. The HLE SPURS build (docs/10 blueprint) is the only path; there
 is no shim. cond=3 is critical (main thread), not a discardable background service.
+
+---
+
+## 15. SPU integration: all 12 images lift + dispatch HITs (DeS SPU code runs natively) [2026-06-29]
+
+The boot now reaches an SPU workload dispatch on the graphics path (func_00A31158, after the GCM
+control-register fix). Integrated the SPU side:
+
+- **All 12 DeS SPU images lift cleanly** — `scripts/build_spu.py` runs `spu_lifter.py --symbol-prefix
+  <img>_` on each `work/spu_images/*.elf` into `ps3recomp/work_spu/<img>/spu_recomp.c` (~8,000 SPU
+  functions total). The only "unsupported" per image is `.word` = data embedded in .text (0 real ISA
+  gaps — confirms docs/09 across the whole set).
+- **Registration** — `build_spu.py` also generates `ps3recomp/work_spu/_gen/spu_workloads.cpp`, which
+  registers each image with the workload-dispatch registry by FNV-1a-64 fingerprint
+  (`spu_workload_register_img`) via a startup constructor. `port/CMakeLists.txt` globs the lifted
+  `spu_recomp.c` + that file into des_boot. (work_spu/ is game-derived → gitignored in the fork.)
+- **Result: the dispatch HITs and DeS SPU code executes natively.** Log:
+  `[spu_workload] dispatch HIT (async) fp=0x4FBCAB40231BF72B args=0x00000000 image=2 -> spawning thread`
+  (fp matches **spu_0001**, the 68KB image the game dispatched). This is the first time recompiled DeS
+  SPU code runs.
+
+**New SPU frontier (two issues):**
+1. **Null task context** — `args=0x00000000`: the SPU job is dispatched with no context EA, because
+   func_00A31158's cellSpurs setup is incomplete (the 3 unresolved cellSpurs NIDs 0x8F122EF8 /
+   0x34552FA6 / 0xA121A224 return 0). Need to implement those + the SPURS task/job ABI so the job gets
+   its real context (and can later signal completion to release func_00A31158's wait).
+2. **SPU indirect-branch targets unresolved** — `[SPU] indirect branch to unknown LS address 0x12C28
+   / 0x04488 (image 2)`: the SPU lifter doesn't register some computed-branch targets (SPU jump
+   tables / function pointers) — the SPU analog of the PIC jump-table gap fixed on the PPU side
+   (ps3recomp 430ced0). Likely needs the same treatment in `spu_lifter.py` (discover SPU jump tables /
+   register indirect-branch targets), and/or the null context is producing garbage targets.
+
+NEXT: pin whether the unknown branches are a lifter gap or a consequence of the null context; implement
+the cellSpurs NIDs + task/job context so the job runs against real data and signals completion.
+Reproduce: `python scripts/build_spu.py` then rebuild port.

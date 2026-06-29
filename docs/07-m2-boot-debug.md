@@ -723,3 +723,23 @@ Likely fix angles (next):
 
 This is the first time we have GROUND TRUTH (RPCS3) pinpointing the divergence: registration
 itself works; the create-path copy loop is what corrupts/wipes it.
+
+### Not a lifter empty-check bug — it's an uninitialized container (begin=end=0)
+
+Read both copy loops in func_00A35780:
+- Walk-path copy (loc_00A358E8) HAS a correct begin==end guard (skips empty).
+- Create-path (loc_00A35ADC/loc_00A35B30) builds + registers the node correctly
+  (`vm_write32(r31+0, r26)` = *head = node), and the runaway copy is in an inlined helper
+  whose SOURCE container has begin==end==0.
+
+The runaway loop is effectively `for (p=&inline_storage; p != container.end; p+=12)`. A
+correctly-constructed *empty* container has `end == &inline_storage` (loop exits at once);
+ours has `end == 0`, so `p` climbs from storage and never meets 0 -> runs forever, zeroing the
+registry. So the container's CONSTRUCTOR never set begin/end (still 0). This is the
+use-during-construction root (confirmed by the RPCS3 differential: real PS3 has these set),
+NOT a single lifter codegen bug. No one-line fix.
+
+Bottom line of the differential investigation: registration logic is correct; the failure is
+that a C++ container reached the create-path copy with begin/end uninitialized — the same
+construction-order/completeness problem, now proven against ground truth. The lwmutex fix
+(EDEADLK) was a correct contributing fix but the construction-order issue remains the wall.

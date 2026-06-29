@@ -501,3 +501,18 @@ resolve them -> halt.
 base via ila/ai + index, lqx/lqd the target, `bi`), read the table, and seed those targets as function
 entries (so spu_recomp_register registers them and spu_indirect_branch resolves). Analog of PPU
 430ced0. Then re-check the SPU job runs to completion + signals (releasing func_00A31158).
+
+### 15d. SPU job now executes (fn-ptr discovery); next = completion handshake [2026-06-29]
+
+Two spu_lifter fixes (fork): (1) conditional indirect branch to $r0 = conditional return; (2)
+function-pointer target discovery — scan non-text PT_LOAD segments for in-text 4-aligned BE words
+(SPU vtables, called via `bisl rX` with rX from LS data) and seed them as function starts. Verified:
+the vtable at vaddr 0x13180 (file 0x10280) holds 0x04488/0x12C28; these were in data GAPS the boundary
+detector skipped, so seeding adds them as new functions. Result: the dispatched SPU job (spu_0001) no
+longer halts on "unknown LS address" — **it runs.**
+But the boot doesn't advance yet: func_00A31158 keeps polling (usleep(100) loop). The SPU job either
+runs without completing or completes without signaling. **NEXT = SPU->PPU completion handshake:** the
+SPU job, on finishing, must signal via the mechanism func_00A31158 polls (a queue/flag/event — cf the
+SPURS event protocol docs/09 §13, docs/11 §4). Determine func_00A31158's exact wait predicate (what it
+polls) and make the SPU job's completion satisfy it. (Also verify the async SPU thread actually reaches
+STOP vs. spinning on a mailbox/DMA it expects from the PPU.)

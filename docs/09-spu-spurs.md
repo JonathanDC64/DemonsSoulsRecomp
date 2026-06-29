@@ -487,3 +487,17 @@ SPU kernel as actual SPU code, so the heavy lifting is on the SPU side, not the 
 as freely: we HLE the SPURS scheduler, so PPU-side cellSpurs functions that set up real SPU state
 (context, taskset) must actually work. "Undocumented" is a misnomer -- they're documented SDK
 functions; the names just weren't in RPCS3/our tables, recoverable via scripts/nid_name.py.
+
+### 15c. SPU job blocker is a SPU-lifter jump-table gap (not the context) [2026-06-29]
+
+Auto-allocating the task context (eaContext==0 -> zeroed guest buffer) was implemented
+(cellSpursCreateTask) and is correct SPURS behavior, but the SPU job hits the SAME branches
+(0x12C28, 0x04488) with the zeroed context as with the null one — so they are computed from the SPU
+CODE (a jump table), not the context. Confirmed: neither 0x12C28 nor 0x04488 is a lifted function in
+spu_0001 (they're mid-function: 0x04488 is inside func_00004464); the SPU lifter has NO jump-table /
+computed-`bi` target discovery (unlike ppu_lifter's discover_jump_tables). So spu_indirect_branch can't
+resolve them -> halt.
+**FIX (next):** port jump-table discovery to spu_lifter.py — find the SPU switch pattern (load table
+base via ila/ai + index, lqx/lqd the target, `bi`), read the table, and seed those targets as function
+entries (so spu_recomp_register registers them and spu_indirect_branch resolves). Analog of PPU
+430ced0. Then re-check the SPU job runs to completion + signals (releasing func_00A31158).

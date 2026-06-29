@@ -581,3 +581,41 @@ sampler or a depth counter in the lifted prologue), then verify it reaches its r
 exit and writes 0xD002A910 to release func_00A31158. Diagnostics landed: SEH guard +
 ENTER/RETURNED logs (spu_workload), garbage-`sc` backtrace (ppu_loader), atexit probe
 (boot_main), SPU_TASK_OFF toggle.
+
+### 15h. Root cause of task non-completion: unbounded host recursion from tail-call loops [2026-06-29]
+
+§15g left the SPU task running 30s+ without completing. Settled it with a stack-size
+sweep (env SPU_STACK_MB knob): time-to-overflow scales LINEARLY with the host thread
+stack -- 4MB->2.3s, 16MB->5.7s, 64MB->20.3s. That is **unbounded recursion**, not
+bounded long work; 256 MB only deferred the crash. (Process exit was the silent
+stack-overflow path from §15g: no SE filter can run, exit code reads 0.)
+
+ROOT: a lifted guest LOOP whose back-edge branches to ANOTHER lifted function's entry
+was emitted as a plain tail call `func_X(ctx); return;`. The lifter intended a tail
+call (no stack growth), but clang-cl did NOT reliably sibling-call-eliminate it (even
+at /O2), so every iteration nested one more host C frame. The spu_0001 static call
+graph shows the tell: micro-cycles between functions 4-12 bytes apart (e.g.
+0x3030<->0x3034) -- one guest loop split across two functions whose back-edge became
+a nested call. (The recursion is DIRECT func->func, not via spu_indirect_branch -- a
+depth guard there never fired.)
+
+FIX (lifter): emit cross-function tail branches through
+  SPU_TAILCALL(call) = `__attribute__((musttail)) return call`   (clang)
+which GUARANTEES the tail call at any opt level (a jump, O(1) host stack); call+return
+fallback elsewhere. All lifted SPU funcs are `void f(spu_context*)`, so it's always
+valid. Three sites: fall-through chain, conditional branch, unconditional branch.
+Re-lift (build_spu.py); fingerprints unchanged. SPU TUs therefore do NOT need /O2 for
+correctness (musttail is honored at /Od) -- reverted the /O2-on-SPU experiment.
+Added spu_channels recursion guard (>6000 indirect nests -> pin + halt) as a net.
+
+RESULT: spu_0001 survives a 4 MB stack 30s+ (was ~1s); the task runs bounded and the
+PPU stays cleanly parked on func_00A31158's 0xD002A910 wait. Process stable.
+
+NEW FRONTIER: the task halts at unresolved indirect branches -- `[SPU] indirect
+branch to unknown LS address 0x04DC0 (image 2)` then `0x00000` -- before completing
+the work that writes 0xD002A910. 0x04DC0 = a real LS target not registered as a
+function (a jump-table/fn-ptr target the discovery missed); 0x00000 = a null/garbage
+callback pointer. NEXT: seed/resolve 0x04DC0 (extend SPU jump-table / fn-ptr
+discovery) and trace why a branch to LS 0 occurs (uninitialized callback in the task
+arg's OPD list?), so the task runs to its exit + writes 0xD002A910 -> releases
+func_00A31158 -> cond=3.

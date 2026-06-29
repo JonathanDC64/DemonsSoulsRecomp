@@ -72,6 +72,13 @@ if(MSVC)   # also true for clang-cl
     foreach(_c ${DES_O2_CHUNKS})
         set_source_files_properties("${_c}" PROPERTIES COMPILE_OPTIONS "/O2;/Zi")
     endforeach()
+    # NOTE: lifted SPU images host guest loops that branch to another lifted
+    # function's entry. The lifter emits those as forced tail calls
+    # (SPU_TAILCALL = clang __attribute__((musttail))), which iterate in O(1) host
+    # stack at ANY optimization level -- so the SPU TUs do NOT need /O2 for
+    # correctness (without the forced tail call, /Od nesting overflowed the stack
+    # and silently killed the process). They stay at the /Od baseline for fast
+    # builds; opt them later only if SPU compute throughput matters.
 endif()
 
 target_link_libraries(des_boot PRIVATE

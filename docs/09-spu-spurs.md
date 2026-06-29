@@ -516,3 +516,20 @@ SPU job, on finishing, must signal via the mechanism func_00A31158 polls (a queu
 SPURS event protocol docs/09 §13, docs/11 §4). Determine func_00A31158's exact wait predicate (what it
 polls) and make the SPU job's completion satisfy it. (Also verify the async SPU thread actually reaches
 STOP vs. spinning on a mailbox/DMA it expects from the PPU.)
+
+### 15e. SPU job runs but doesn't complete — needs the SPURS kernel framework [2026-06-29]
+
+After fn-ptr discovery the SPU job (spu_0001) executes but never RETURNs (no completion log) within a
+run, and the spin detectors show it is NOT busy-polling a channel (rdch/rchcnt). So it's a memory/state
+loop, not a channel wait. Root: we dispatch the task ELF DIRECTLY (spu_workload), bypassing the SPURS
+taskset policy module + kernel. RPCS3 instead runs the real taskset PM as SPU code, which: sets up the
+task's real context, drives its state machine, feeds work, handles CELL_SPURS_TASK_SYSCALL_EXIT (writes
+task_exit_code[taskId] to PPU memory + runs the on-exit hook). With a synthesized zeroed context and no
+kernel driving it, our task loops in its own dispatch/wait logic and never reaches a valid exit.
+**So completing this is the full HLE SPURS task framework (docs/11 §3-4):** stand up the taskset
+PM/kernel behavior (taskset context @LS 0x2700, task select/dispatch, the task-start ABI r3=args
+r4={tasksetEA,args}, syscall handling incl. EXIT) so the task runs to a real exit, writes its exit code
+where the PPU polls it (the exit-code container, cellSpursTaskExitCodeTryGet), releasing func_00A31158.
+This is the substantial M3 work; the SPU recompiler + dispatch + fn-ptr discovery (this session) are the
+substrate it builds on. RPCS3 sidesteps all of it by running the firmware kernel as real SPU code; our
+clean-room path must HLE the kernel.

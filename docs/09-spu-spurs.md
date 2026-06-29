@@ -371,3 +371,27 @@ it requires the HLE SPURS service to run a task (or the system-service workload)
 completion/notify event. The SPU execution substrate (lifter 0-gap, runtime) is ready; the build is
 the SPURS scheduler + event delivery + per-task bring-up. This is a multi-file, coordinated
 implementation (RPCS3 does it in ~5k lines of cellSpursSpu.cpp) — the realistic next phase of the project.
+
+---
+
+## 14. Thread map + spurious-wake experiment [2026-06-29]
+
+Spurious-wakeup experiment (YDKJ_CVWAKE: convert infinite cond-waits to 1.5s spurious wakeups —
+semantically legal): RULED OUT as a shortcut. cond=3's waiter wakes, calls a sys_net function
+(NID 0xFDB8F926 = func_016B9A64), then re-waits — its predicate is never satisfied. No PPU-ordering
+shortcut exists; the boot needs the real SPURS/SPU work. (Reverted the experiment.)
+
+Definitive thread map (SYNCTRACE tid correlation):
+- **tid 22992 = MAIN thread** -> blocks on `sys_cond_wait(cond=3)` (mutex 1093). When woken it does
+  sys_net (NP/online) init then re-waits. This is THE critical boot block: the main thread waiting
+  for the runtime services to reach "ready".
+- **tid 30932 = SPURuntimeService** (func_00C5DAB0) -> blocks on `sys_event_queue_receive(q=1)`
+  waiting for SPU USER events.
+- **PPURuntimeService** (func_00C3A878) -> usleep+cellSysutilCheckCallback pump, waiting on flag
+  *(0x01B91E20).
+- HighGraphics (func_00C3A878) -> ran, returned.
+
+So: main(cond=3) waits for services ready <- services (SPURuntimeService q1, PPURuntimeService flag)
+wait for SPU events/completion <- needs the SPU thread group executing SPURS tasks. Circular on real
+SPU work, confirmed three ways now. The HLE SPURS build (docs/10 blueprint) is the only path; there
+is no shim. cond=3 is critical (main thread), not a discardable background service.

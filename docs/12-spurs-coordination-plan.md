@@ -330,3 +330,31 @@ populate the structures the leaf reads, so its getllar EAs become valid -- no ne
 separately reverse-engineer the current garbage 0x48037A00. PIVOT: proceed to B2 (the real
 create path) using the B1 layout header; revisit the leaf's exact getllar target once the
 PM-built structures are in place (it should then point into the real taskset/context).
+
+---
+## B3 integration result + KEY trace — the leaf reads PPC CODE as its queue state [2026-06-30]
+
+Wired Option B into the live path (committed): cellSpursCreateTask builds the real
+CellSpursTaskset (spurs_taskset_init + add_task, spurs=0x01B92E00, slot 0, ready|enabled)
+and spu_async_run builds the SpursTasksetContext @LS 0x2700 before running the leaf. No
+crash, no regression. BUT the leaf's getllar control (0x48037A00) is UNCHANGED -> the leaf
+does not read the taskset/PM-context we built.
+
+Traced the leaf's LS queue pointers at the getllar (SPU_RESV_LOG):
+  LS[0x13400] = 78 63 00 20 7C 08 02 A6 F8 21 FF 71 ...  (= clrldi r3; mflr r0; stdu r1,-0x90
+               -- a PPU function PROLOGUE)
+  LS[0x13480] = 7B E3 00 20 7B A5 00 20 38 80 01 03 48 03 7A 05  (PPU insns; the last word
+               0x48037A05 is a `bl` -> masked to the line = the getllar EA 0x48037A00)
+So the leaf's queue head pointer is a PPC opcode word (0x78630020) and the getllar EA is a
+`bl` instruction word. The leaf is reading PPC CODE as its queue/job state -- garbage. That
+is why the PM context didn't help: the leaf's own queue is corrupted with code before it
+ever consults valid structures.
+
+ROOT (reframed): the leaf's job-data source is wrong -- it DMA'd PPC code into its queue
+area. Likely the arg (two PPU callback ENTRY points {0x00A662C8, TOC, 0x00A663A0, TOC}) is
+being processed as DATA pointers and the leaf DMAs the callbacks' CODE; or the leaf's
+context (eaContext, our auto-zeroed 0x03100000) should carry a real job descriptor it
+instead derives from code. NEXT: trace the leaf's queue SETUP (func_00004558 + the DMA that
+fills LS[0x13400]/[0x13480]) to find what address it DMAs from and what that region SHOULD
+contain (a job/command descriptor, not callback code) -- i.e. how the game is meant to feed
+the leaf valid jobs. This is upstream of the PM context; the B1/B2/B3 scaffolding stays.

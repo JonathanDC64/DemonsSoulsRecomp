@@ -884,3 +884,42 @@ vs "wait on the SPURS command queue", and what SPURS/taskset field it tests -- i
 the PM kernel normally seeds (the command-queue ring base + an initial empty/again state)
 so the leaf parks on the queue instead of mis-parsing the argument. Diagnostic kept
 (SPU_QLOG). Scaffolding (B1/B2/B3 + r4) stays.
+
+### 15q. GATE CROSSED: task-argument ABI was wrong; real arg is r8 pointer, not r10 [2026-06-30]
+
+15p showed the leaf DMAs its argument words as descriptors and arg[0] was PPU code. Traced
+the PPU caller of _cellSpursTaskAttributeInitialize (NID 0xB8474EFF, stub func_016B9F64)
+to func_00A31158 @0x00A314A8 and compared BOTH call sites. The real ABI is SIX args, not
+eight:
+```
+r3=attr  r4=revision(1)  r5=sdkVersion(0x250001)  r6=eaElf  r7=eaContext(0)  r8=argument
+```
+r8 is a POINTER to the 16-byte CellSpursTaskArgument -- NOT sizeContext. r9/r10 are
+clobbered/stale at the call (the preceding func_00A30980 trashes them). Our 8-arg HLE read
+the argument from r10 (stale) -> garbage {func_00A662C8, TOC, func_00A663A0, TOC} (two real
+PPU callbacks that happened to be left in r10's pointee). Decisive confirmations:
+ - r8 = &{*(r30-0x7FEC), r24, r29, r29} on a CALLER STACK buffer (0xD002A980, right next to
+   the 0xD002A910 wait flag); it varies per call site (a pointer, not a const size).
+ - arg[1] = r24 = func_00A941F8(0x40,..) = a 64-BYTE alloc, and the leaf DMAs EXACTLY 64
+   bytes from arg[1]. arg[0] = the 256-byte source. Sizes match a real descriptor pair.
+
+FIX (cellSpurs.c / cellSpurs.h): _cellSpursTaskAttributeInitialize now treats its 6th GPR
+(r8) as the argument pointer and COPIES the 16 bytes into the attribute immediately (the
+src is a stack buffer that won't survive to CreateTask); CellSpursTaskAttribute gained
+argValue[4]+hasArgValue; cellSpursCreateTask uses the copied value. sizeContext/lsPattern
+aren't in this ABI -> 0 (context auto-allocates).
+
+RESULT -- THE SPURS GATE IS CROSSED. The real argument is arg={0x01B51000, 0x45B4DC10, 0,0}:
+arg[0]=0x01B51000 is the RESULT SLOT the PPU's func_00A31158 polls (per 15j); arg[1] a
+64-byte buffer. The leaf now DMAs REAL data, and its GETLLAR shows it handling the actual
+completion protocol: `45 A4 B2 80 .. 01 B5 10 80` (0x45A4B280 = the expected result ptr ->
+written to result slot 0x01B51000). func_00A31158 releases and boot advances FAR past the
+multi-session SPURS blocker into late init: HG_Watchdog thread spawn, _cellGcmInitBody, and
+the INPUT subsystem -- cellKb/cellPad/cellMouse Init, cellPad SetPortSetting ports 0-5.
+
+NEW FRONTIER (#8): crash shortly after, in cellPadGetInfo2 follow-on. Guest jumps to
+cia=0x00B7C000 (NOT a lifted function) with lr=0 -- a vtable/fn-ptr indirect call to an
+unlifted/invalid target -- and write-faults 0x1B3B33C (r3=0x01B3B338). Also a benign
+[ppu] unresolved indirect call -> 0x01969238 earlier. NEXT: determine whether 0x00B7C000
+is a real function the lifter missed (extend discovery) or an uninitialized C++ object/
+vtable (this= pointers pervade the shadow stack), and resolve so input init completes.

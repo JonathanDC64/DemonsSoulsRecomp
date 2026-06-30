@@ -923,3 +923,23 @@ unlifted/invalid target -- and write-faults 0x1B3B33C (r3=0x01B3B338). Also a be
 [ppu] unresolved indirect call -> 0x01969238 earlier. NEXT: determine whether 0x00B7C000
 is a real function the lifter missed (extend discovery) or an uninitialized C++ object/
 vtable (this= pointers pervade the shadow stack), and resolve so input init completes.
+
+### 15r. Post-gate: late-init HLE guest-pointer translation crashes [2026-06-30]
+
+With the SPURS gate crossed (15q) the boot races through late init and now hits a CLASS of
+bug: HLE library functions receive raw 32-bit GUEST effective addresses in pointer args but
+deref them as HOST pointers -> segfault. (The generic HLE adapter passes GPRs verbatim;
+modules must translate via vm_base, as cellSpurs/cellFs do. Modules written without it
+were never exercised with a real pointer until now.)
+ - cellPadGetInfo2 (NID 0xA703A51D): memset(info=r3=0x01B3B338,..) on the guest EA -> host
+   write-fault 0x1B3B33C. FIXED: cellPad.c gained GUEST_PTR + translation in GetInfo2,
+   GetData, GetCapabilityInfo, SetActDirect. Crash gone; boot advanced (threads 7/9 return,
+   new cond=15 wait).
+ - cellRtcSetTick (NID 0x99B13034): same pattern, read-fault 0xFEFFA70 (r3=0x0FEFFA78).
+   Fixing cellRtc.c + cellKb.c + cellMouse.c (all input/util modules on the live path) with
+   the same GUEST_PTR translation.
+PATTERN/heuristic: an HLE crash whose fault address ~= a register holding a guest EA (and
+"last HLE NID" names a pointer-taking function) = missing guest->host translation in that
+module. Fix = add GUEST_PTR(p,T)=(vm_base+ea) and reassign each deref'd pointer param at
+entry. This is mechanical HLE-completeness work, not RE -- expected to recur a few times as
+late boot touches more modules. NEXT: rebuild, re-run, fix the next module the boot hits.

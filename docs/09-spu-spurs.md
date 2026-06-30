@@ -651,3 +651,38 @@ NEXT: trace what populates LS 0x13400/0x13480 + what the dispatched handlers exp
 (are they processing real commands or garbage from an un-set-up queue?), then provide
 the missing SPURS scaffolding -> task reaches its exit + 0xD002A910 store -> releases
 func_00A31158 -> cond=3. (docs/11 HLE SPURS task framework.)
+
+### 15j. Scout past the SPURS gate; downstream map; completion contract decoded [2026-06-29]
+
+Decoded the func_00A31158 PPU wait precisely (ppu_recomp_005 loc_00A314FC):
+  loop { sys_timer_usleep(30); r0 = [r26+0x80]; r9 = [r26+0]; if (r0 != r9) repeat; }
+i.e. it spins until [r26+0] == [r26+0x80]. Scouted by forcing them equal after 40
+spins: observed **r26=0x01B51000, [r26+0]=0 (done/result slot), [r26+0x80]=0x45A4B280**.
+0x45A4B280 is NOT a count -- it's a POINTER in the SPURS-managed region (taskset EA
+was 0x45B4B300). So the PPU submits work and waits until the SPU task **writes the
+result pointer 0x45A4B280 into [r26+0]=0x01B51000**. The SPU can't: its command queue
+(loaded from the zeroed auto-context) is empty, so it processes nothing and never
+writes the result.
+
+Forcing the wait satisfied released func_00A31158 and the boot ADVANCED (stdout 34->49):
+  -> [Dantelion2 Panic] DLStdAllocator.inl(268) "Transaction failed" (core dump, but
+     execution continued)
+  -> input init: cellKb Init, cellPad Init + SetPortSetting x6, cellMouse Init
+  -> then a CRASH: write fault 0x01B3B33C, guest cia=0x00B7C000, last HLE =
+     cellPadGetInfo2 (0xA703A51D).
+The panic + crash are SCOUT ARTIFACTS: we faked SPU completion, so the PPU consumed
+garbage where the SPU should have produced results. DECISIVE LESSON: SPURS completion
+cannot be faked -- downstream (allocator, pad) genuinely needs the real SPU output.
+But the scout proved there's a substantial boot road past SPURS (input + more), so
+this gate is worth building through.
+
+BUILD PLAN (Track 2, docs/11), now anchored to the real contract:
+  1. The SPU task is a SPURS taskset command-queue worker. Its queue/state is DMA'd
+     from its context; the PPU submits work via the taskset (EA 0x45B4B300) and
+     expects the result pointer at [0x01B51000].
+  2. Wire PPU-submitted work -> the SPU task's queue (shared EA) so func_00004694
+     dequeues real commands and dispatches the 37 handlers.
+  3. Run the handlers to produce the real result; write the result pointer to the
+     PPU-polled slot (the SPURS task EXIT / completion protocol).
+  Reference RPCS3's cellSpurs taskset/queue LLE + the SDK headers for the struct
+  layouts (clean-room: contracts only, reimplement).

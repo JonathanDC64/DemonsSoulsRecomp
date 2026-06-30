@@ -1311,3 +1311,33 @@ NEXT: determine what signals cond 2 -- find the cond_signal(2) producer in the r
 why it never runs), and/or which cellSysutil callback the loop expects delivered. This is a
 new multi-thread / cellSysutil steady-state frontier, reached AFTER full engine init (Havok/
 audio/save) -- the deepest boot point yet. Diagnostic: one-shot [cond2-bt] in sys_cond_wait.
+
+### 15ee. Frontier #11 root: cond 2 is a job-queue; producer needs SPU->PPU events [2026-06-30]
+
+Read the full coordinator (func @0x00B5D5xx-0x00B5D6xx): it's a doubly-linked-list WORK QUEUE
+consumer -- dequeues jobs (list at obj+0x7C/+0x48/+0x20, classic head<->&head empty check)
+and waits on cond 2 (obj+0x48) when empty, pumping cellSysutilCheckCallback between. So cond 2
+= "job enqueued"; the PRODUCER never enqueues a job / never signals cond 2.
+
+Ruled OUT cellSysutil as the dependency: cellSysutilCheckCallback only dispatches when a
+SysutilEvent is enqueued (post_sysutil_event), and nothing posts one at boot -- but games
+don't need a sysutil callback to START (those are runtime XMB/exit/menu events). The loop
+pumps it as a courtesy; the real wait is for jobs.
+
+So the missing producer is another thread. The system has many threads parked on SPURS event
+queues (q=1 service, q=5 image-7 taskset, q=12), semaphores, and cond 3/9/E/F -- with ZERO
+cond_signals and ZERO flips all run. In a SPURS engine the job producers ARE the service/
+event-helper threads, which are driven by SPU->PPU EVENTS that our HLE never posts (we run
+the SPU tasks but don't deliver their workload/completion events to the attached lv2 queues).
+That gap (long on the roadmap: "make SPU->PPU completion real -- post lv2_event to the queue
+on task/workload signal") is the well-grounded root of Frontier #11.
+
+ASSESSMENT/RECOMMENDATION: the boot now reaches the game's MAIN LOOP after full engine init
+(Havok/audio/save) -- the deepest point ever, via 5+ gates crossed this session (task-arg ABI,
+deferred scheduling, image-7 syscallAddr, GCM label-255, RSX semaphore-writes). The next major
+build is SPU->PPU EVENT DELIVERY: when an SPU task/workload signals (via the SPURS event flag /
+a workload event), post the corresponding lv2 event to the queue the game attached (q=1/q=5/
+etc.), so the parked service threads wake, produce jobs, and signal cond 2. This is substantial
+(event format + the taskset/workload->queue binding + the SPURS event-helper contract) and
+deserves a focused pass -- it's the clear next milestone, cross-referenced against RPCS3's
+SPURS event posting + the cellSpursEventFlag/AttachLv2EventQueue path.

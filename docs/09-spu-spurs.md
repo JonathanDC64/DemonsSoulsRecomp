@@ -1191,3 +1191,38 @@ posts the event. Two pieces remain (docs/13 Parts B+C):
 STATUS: image=7 executes correctly end-to-end (runs -> EXIT -> returns); only the PPU
 completion handshake (count to r26) remains. NEXT: find the taskset on-exit handler (x78)
 + run all N tasks, so the counter reaches r26 and func_009F9600 releases.
+
+### 15aa. q=5 completion-flow trace: counter never incremented; we never post the event [2026-06-30]
+
+Traced the completion path end-to-end:
+ - The PPU batch manager func_009F94A8(this=r25, counterPtr=r27) creates the N image=7
+   tasks, inits a completion COUNTER at 0xD002AD50 = 0, then busy-waits (func_00B5D8D8(0x1E)
+   = lv2 syscall 0x8D usleep-yield) until *(0xD002AD50) >= r26 (expected count, derived from
+   the manager object r25).
+ - WATCHPOINT (YDKJ_WWATCH=0xD002AD50, all widths): the counter is written ONLY = 0 (init);
+   it is NEVER incremented. So the PPU spins forever.
+ - RPCS3 EXIT path (spursTasksetProcessSyscall EXIT) only calls the on-exit handler when
+   ctxt->x2FD4==4 or ctxt->x2FC0!=0; image=7 (no exit-code container, elf&5==0) hits NEITHER
+   -> no per-task on-exit callback. So the counter is NOT incremented by an on-task-exit
+   handler. It is incremented by a PPU handler that runs on a SPU->PPU COMPLETION EVENT
+   delivered to lv2 event queue 5 (one of the queues the game attached: AttachLv2EventQueue
+   q=3..12; a thread waits on event_queue_receive(q=5)).
+ - Our HLE NEVER posts that completion event: image=7 runs + EXITs, but nothing signals q=5.
+   (cellSpursEventFlagSet only ORs bits + broadcasts to cellSpursEventFlagWait waiters; it
+   does NOT push to the lv2 queue -- and that wait is separate from the counter poll anyway.)
+
+MACHINERY INVENTORY:
+ - HAVE: sys_event_queue_push_by_id(queue_id, evt) [sys_event.c] -- can post to q=5.
+ - MISSING: (a) the taskset/SPURS -> lv2-queue binding (cellSpursAttachLv2EventQueue +
+   cellSpursEventFlagAttachLv2EventQueue are STUBS -- they don't record which queue id),
+   (b) the EXIT -> post-completion-event step, (c) the event PAYLOAD the q=5 handler expects.
+
+PART C (concrete): on task EXIT (spu_spurs_taskset_syscall num=0), post a completion event
+to the taskset's lv2 queue (q=5) via sys_event_queue_push_by_id so the PPU q=5 handler wakes
+and increments 0xD002AD50. Needs: record the attach binding (which queue id), and the event
+payload (SPURS source key 0xFFFFFFFF535055xx + workload/task id -- confirm from the q=5
+receiver or RPCS3's SPURS event format). PART B: run all N tasks so the counter reaches r26.
+
+This is the SPU->PPU completion-event delivery the project flagged as planned -- now the
+precise, last thing blocking the second SPURS gate. NEXT: nail the q=5 event payload + the
+attach binding, then implement EXIT->post + multi-slot.

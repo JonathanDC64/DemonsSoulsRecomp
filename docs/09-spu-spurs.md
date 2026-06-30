@@ -1390,3 +1390,30 @@ work descriptor (image-2 published 0x45A4B280 -> result slot 0x01B51000; what ST
 handler A expect at data1, and does the SPU fully populate it?), then wire the event post to
 that real production point. Read func_01674898 (the allocating method) for the descriptor
 format. The probe (SPURS_EVTEST/SPURS_EVDATA) stays as the chain-validation harness.
+
+### 15hh. Handler B (selector 1) = the WORK path: event drives cellSpursCreateTaskWithAttribute [2026-06-30]
+
+Tested both dispatch selectors (SPURS_EVSEL):
+ - sel=0 -> handler A (func_00C5BE78): a string/buffer build (func_01674898 -> func_01681BC0
+   -> DLStdAllocator); panics "Transaction failed" with synthetic data1. Likely diagnostic/
+   default path.
+ - sel=1 -> handler B (func_00C5D6D8): the WORK path -- it reaches
+   **cellSpursCreateTaskWithAttribute** (NID 0x1573DC3F) i.e. it CREATES THE NEXT TASK(S),
+   then crashes reading 0x40A09B5C (a garbage ptr derived from synthetic data1=0x45A4B280).
+
+THE PIPELINE (now clear): an SPU task completes -> posts a SPURS USER event (q=1, source
+0xFFFFFFFF53505501, sel=1) -> handler B creates the next SPURS task(s) for the work -> ...
+-> the DLSpursManager coordinator's job queue advances -> cond 2 signaled -> main loop
+proceeds. So cond 2 is fed by the SPURS task PIPELINE continuing, driven by SPU-completion
+events. Both handlers crash/panic on a SYNTHETIC data1 -- they need the REAL work descriptor
+the SPU produced (handler B reads a struct/ptr field at data1; 0x45A4B280 -> 0x40A09B5C garbage).
+
+BUILD (scoped, methodical -- the mechanism is proven, this is the real piece): 
+ 1. data1 contract: read func_00C5D6D8 (handler B) -- what struct it expects at data1 (it
+    derefs a field -> 0x40A09B5C), and what cellSpursCreateTaskWithAttribute it builds.
+ 2. SPU production: find where the SPU task writes that work descriptor (image-2 published
+    0x45A4B280; is THAT the descriptor, just not fully populated, or a different object?).
+ 3. Trigger+post: when the SPU produces a work item, post the USER event (sel=1, data1=real
+    descriptor) to q=1 so handler B creates the next task.
+This is the SPURS task-pipeline continuation -- a focused multi-layer build, now precisely
+scoped. Probe (SPURS_EVTEST/EVDATA/EVSEL) is the validation harness (env-gated).

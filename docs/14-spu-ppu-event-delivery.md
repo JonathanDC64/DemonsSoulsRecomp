@@ -113,3 +113,27 @@ run). So the service's registered-thread list is empty -> handler B can never ma
 
 Refs: RPCS3 SPUThread.cpp / lv2/sys_event.h / lv2/sys_spu.h / cellSpursSpu.cpp; PSL1GHT
 ppu/include/sys/spu.h (sysSpuThreadConnectEvent); psdevwiki LV2 Functions and Syscalls.
+
+## DEFINITIVE: synthetic events can't work; real lv2-SPU-thread substrate required — 2026-06-30
+
+Built sys_spu_thread_post_user_event() (the decoded contract, sys_event.c) and re-probed with
+the CORRECT layout (data1=lv2id, data2=(spup<<32)|data0, data3=payload, spup=1->handler B).
+Result: the service WAKES (event_queue_receive(q=1) -> cond_wait(cond=3)) then PANICS
+(Dantelion2 PPUThreadHandle.cpp(50) + DLStdAllocator.inl(268)) and the game runs its
+PANIC-RECOVERY path (re-inits cellKb/cellPad/queue_create/CreateTaskset). So the apparent
+"cond-2 progress" was recovery re-init, not a clean advance.
+
+CONCLUSION (final for the synthetic phase): a fabricated USER event CANNOT drive this. handler
+B operates on REAL, STATEFUL model state -- it looks up the SPU thread by lv2_id in the
+service's registered list and processes real work; with no registered lv2 SPU threads and no
+real work, it panics. So the build MUST be the real substrate:
+ - cellSpursInitialize creates the SPURS lv2 SPU thread group + threads (real lv2 ids) and
+   connects the event ports so the service registers them (list keyed by lv2_id populated).
+ - The SPU tasks run as those lv2 threads (or are bridged to them) so they have ids + produce
+   real work + real send_event payloads.
+ - Then the USER events carry real lv2_ids + real work -> handler B finds the thread, creates
+   the next task, signals cond 2 -> first frame.
+
+This bridges our host-thread spu_workload model with the lv2 SPU-thread + SPURS-event model --
+a substantial architectural integration, and the definitive next build. KEPT as harness:
+sys_spu_thread_post_user_event() helper + the SPURS_EVTEST/EVLV2/EVSEL/EVDATA probe.

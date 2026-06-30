@@ -1008,3 +1008,19 @@ pointers (0xA73400E8 / null) originate in its DMA'd arg data -- dump guest mem a
 0x477FE220/0x477FD800/0x477FE600 to see if the data is game-written-garbage (a setup
 dependency) or mis-DMA'd, and (c) check image-7 jump-table coverage (the r71 dispatch
 table). image=7 is its own multi-step SPU bring-up, like the image=2 leaf was.
+
+### 15t-refine. image=7 immediate args are VALID; the bad ptr is deeper [2026-06-30]
+
+Added an [argdump] of image=7's three arg-pointed structures at dispatch. They are
+WELL-FORMED, not garbage:
+  arg[0]=0x477FE220: 477FF580 0 0 0  477FD410 0 0 0      (two valid 0x477Fxxxx ptrs)
+  arg[1]=0x477FD800: 0 0 FFFFFFFF FFFFFFFF  0 0 00000022 0  (a mask + count)
+  arg[2]=0x477FE600: 477E7500 0 0 0  477E7500 0 0 0      (a valid 0x477Exxxx ptr)
+None contains 0xA73400E8. So the direct-ABI arg CAPTURE is correct -- image=7 reaches the
+bad pointer by walking the SECOND level (DMAing 0x477FF580 / 0x477FD410 / 0x477E7500 and
+following a fn-ptr/table slot inside). The failing dispatch `r71=LS[r82+92]` and the
+branch-to-LS-0 (r3=0 at link 0x17C00) are both image=7 reading an unpopulated
+function-pointer table in a deeper structure. So the remaining work is image=7's internal
+multi-level data graph / fn-ptr-table setup -- a focused per-image bring-up. NEXT: dump the
+second-level structs (0x477FF580/0x477FD410/0x477E7500) to find the null/garbage fn-ptr
+slot, and per-task slots in spurs_create_task_core (the game makes 3 image-7 tasks).

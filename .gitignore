@@ -46,3 +46,5 @@ __pycache__/
 # Leading slash anchors to repo root so patches/ps3recomp/ is NOT ignored.
 # -------------------------------------------------------------------------
 /ps3recomp/
+spu_profile.log
+spu_watchdog.log

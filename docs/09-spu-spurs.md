@@ -1341,3 +1341,26 @@ etc.), so the parked service threads wake, produce jobs, and signal cond 2. This
 (event format + the taskset/workload->queue binding + the SPURS event-helper contract) and
 deserves a focused pass -- it's the clear next milestone, cross-referenced against RPCS3's
 SPURS event posting + the cellSpursEventFlag/AttachLv2EventQueue path.
+
+### 15ff. SPU->PPU event chain CONFIRMED end-to-end (probe); data1 = work descriptor [2026-06-30]
+
+Probe (SPURS_EVTEST=1, one-shot in sys_cond_wait): posted a SPURS USER event
+{source=0xFFFFFFFF53505501, data1=0, data2=0} to q=1. RESULT -- the chain is REAL:
+ - The parked SPURuntimeService (q=1) WOKE: event_queue_receive(q=1) returned, the service
+   advanced (then cond_wait(cond=3)).
+ - Handler A (func_00C5BE78) was DISPATCHED and ran an allocator transaction, which FAILED
+   with data1=0: "[Dantelion2 Panic] DLStdAllocator.inl(268) Transaction failed" -> DL_PANIC.
+
+So source key + queue (q=1) + dispatch are all CORRECT -- the SPU->PPU event mechanism is
+proven. The remaining requirement: data1 must be a VALID work-descriptor pointer (handler A
+allocates from / dereferences it; data1=0 -> allocator panic). i.e. the USER event's data1
+is the SPU-produced work item the handler enqueues.
+
+REMAINING for the build (docs/14): (1) determine data1 = the SPU work descriptor (what the
+SPU produces + where in main memory) and the selector ((data2>>32)&0xFF), (2) the trigger
+(when an SPU task/workload produces a work item -> post the USER event with that data1),
+(3) record the eventflag->queue binding (q=1). The probe validates posting; the open piece
+is the correct payload/trigger, tied to the SPU tasks' output. NEXT: read handler A's use of
+data1 (what struct/size it allocates) + what the SPU tasks write as their result descriptor,
+to supply the right data1. The chain (event->service->handler->job->cond 2) is now verified
+up to the handler.

@@ -189,3 +189,36 @@ LFQueue control?) and which cellSpurs PPU op is supposed to write it (cellSpursR
       wakes, drains, DMA-publishes the result.
 The 0x0 getllar also suggests verifying the coordinator's context (eaContext, currently
 auto-zeroed) is initialized with the real queue head/tail -- a parallel root to check.
+
+---
+## Phase 0-next CONCLUSION — the watched control is UNINITIALIZED (root pinned)
+
+Dumped the line at the coordinator's getllar: **0x48037A00 content = all zeros** (and
+the second getllar 0x00000000 is the null next-pointer computed from that zeroed
+control). No PPU write32 ever hits 0x48037A00 either. So the blocker chain bottoms out:
+
+  result-handoff (0x01B51000) <- SPU coordinator publishes <- coordinator drains its
+  queue <- coordinator wakes on LR (primitive BUILT) <- PPU writes the control line
+  <- the control line 0x48037A00 is INITIALIZED with valid queue head/tail/data.
+
+The last link is missing: **0x48037A00 (the SPURS queue/control the coordinator polls)
+is never initialized** -- it stays zeroed, so there is no work and no valid pointers,
+and nothing ever writes it to fire LR. This is the same recurring root (the SPURS data
+structures aren't set up because our HLE create/init chain is incomplete), now pinned to
+a specific structure.
+
+### Next (the real fix, now precisely located)
+Find what initializes 0x48037A00 and why it's skipped:
+- Identify the structure: a cellSync LFQueue control? a cellSpurs workload/queue? Trace
+  where the coordinator's context yields 0x48037A00 (its DMA'd taskset/context field) and
+  what guest setup allocates+fills it.
+- Grep the boot for the cellSync/cellSpurs queue-init the DLSpursManager runs
+  (cellSyncLFQueueInitialize / cellSpursQueueInitialize / _cellSpursQueueInitialize) and
+  confirm whether it's implemented + actually targets 0x48037A00, or stubbed/misrouted.
+- Implement/fix that init so the control has real head/tail (+ the work pushed). Then the
+  push writes 0x48037A00 -> LR fires (primitive ready) -> coordinator drains -> DMA-
+  publishes 0x45A4B280 -> func_00A31158 releases.
+
+Net: the mechanism (LR) and the exit-code path are built + tested; the remaining work is
+the SPURS queue/control INITIALIZATION (a bounded, locatable target now, not a vague
+subsystem). The cellSync LFQueue core already exists (we implement push/pop).

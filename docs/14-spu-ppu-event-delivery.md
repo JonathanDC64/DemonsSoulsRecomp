@@ -74,3 +74,42 @@ isn't modeled.
 Read func_00C5BE78 / func_00C5D6D8 to pin data1 + confirm they reach cond 2; record the
 attach bindings; then wire the trigger + post. The source key (0xFFFFFFFF53505501) and
 dispatch are now known, which was the hard part.
+
+## DECODED CONTRACT (RPCS3 lv2 + cellSpursSpu) — 2026-06-30
+
+The USER event the SPURuntimeService waits on is a sys_spu_thread_send_event, NOT
+cellSpursEventFlag. Exact format (RPCS3 SPUThread.cpp:6037, lv2/sys_event.h, lv2/sys_spu.h):
+- `SYS_SPU_THREAD_EVENT_USER_KEY = 0xFFFFFFFF53505501` (the source; confirmed = our key).
+- When an SPU executes `sys_spu_thread_send_event(spup, data0, data)` (an SPU channel write,
+  SPU_WrOutIntrMbox-based), the lv2 kernel does:
+  `queue->send(USER_KEY, lv2_id, (u64{spup}<<32) | (data0 & 0xFFFFFF), data)`
+  i.e. event = { source=USER_KEY, data1=lv2_id, data2=(spup<<32)|data0, data3=data }.
+- The SPURS KERNEL is the sender (cellSpursSpu.cpp:1163 wkl-notify, :1237
+  `sys_spu_thread_send_event(spurs->spuPort, 2, 0)`), on workload/task state changes.
+
+Reconciles with the SPURuntimeService dispatch (func_00C5DAB0):
+- selector = (data2>>32)&0xFF = **spup** (the SPU port). spup picks handler A vs B.
+- handler gets r4 = event.data1 = lv2_id; r5 = event.data3 = the SPU `data` payload.
+- handler B (func_00C5D6D8) SEARCHES service_obj+0x18 for the SPU thread by lv2_id, then
+  creates the next task -> this is why a synthetic data1 misses (no registered lv2 thread).
+
+## THE GAP (confirmed)
+Our cellSpurs HLE creates NO lv2 SPU threads and connects NO event ports (0 of each in the
+run). So the service's registered-thread list is empty -> handler B can never match.
+
+## BUILD (now fully specified)
+1. cellSpursInitializeWithAttribute: create the SPURS lv2 SPU thread group + N SPU threads
+   (sys_spu_thread_group_create / _initialize -> real lv2 ids) and a spuPort, and let the
+   game connect events (sys_spu_thread_connect_event SYS_SPU_THREAD_EVENT_USER, spup) so the
+   service registers them in its list (keyed by lv2_id). [We already have lv2 handlers for
+   group create/connect; cellSpurs just needs to call/record them with stable ids.]
+2. On SPU work signal (our SPU task reaching the point the real kernel would notify -- e.g.
+   task EXIT/produce, or the SPU executing sys_spu_thread_send_event via SPU_WrOutIntrMbox):
+   post the USER event to the connected queue with
+   { source=0xFFFFFFFF53505501, data1=<that SPU thread's lv2 id>, data2=(spup<<32)|data0,
+     data3=<payload> }. spup selects handler B (the work path).
+3. Verify: service dispatches handler B -> finds the lv2 thread -> creates the next task ->
+   coordinator's queue advances -> cond 2 signaled -> first frame.
+
+Refs: RPCS3 SPUThread.cpp / lv2/sys_event.h / lv2/sys_spu.h / cellSpursSpu.cpp; PSL1GHT
+ppu/include/sys/spu.h (sysSpuThreadConnectEvent); psdevwiki LV2 Functions and Syscalls.

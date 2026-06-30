@@ -1075,3 +1075,31 @@ poll of the result/completion). This also naturally handles the 3-task multi-slo
 Cross-ref RPCS3 spursTasksetProcessRequest/scheduling. NEXT: find what the game calls
 AFTER creating the image=7 tasks (cellSpursWakeUp? a flag?) that should gate their run,
 and defer dispatch to that point so the per-task structs are populated first.
+
+### 15w. Part A (deferred scheduling) DONE + Q2 result: image=7 data is cross-produced [2026-06-30]
+
+Implemented docs/13 Part A: cellSpursCreateTask now REGISTERS the task pending (no thread
+spawn); spu_pending_flush() runs pending tasks at the head of the PPU wait syscalls
+(sys_event_queue_receive / sys_cond_wait / sys_semaphore_wait / sys_timer_usleep). env
+SPU_TASK_EAGER=1 forces the old run-on-create for A/B. [spu_workload.c, the 4 syscalls]
+
+RESULTS:
+ - REGRESSION-FREE: image=2 still defers, flushes at the first PPU wait, and crosses its
+   gate (cellGcm SetFlipMode + cellPad/Kb Init still reached). At flush its data is good
+   (r3[0]=0x01B51000 holds 0x45A4B280) -- as expected (ready at create).
+ - Q2 ANSWER (decisive): with deferral, image=7's arg structs at FLUSH time are
+   BYTE-IDENTICAL to create time -- arg[2]=0x477FE600 still -> 0x477E7500 (still zeros).
+   image=7 STILL hits CELL_SPURS_TASK_ERROR_NULL_POINTER (same 0xA73400E8 / LS 0x4D /
+   0x80410911). So deferral did NOT populate image=7's data.
+
+CONCLUSION: image=7's blocker is NOT a race with the creating thread's synchronous setup --
+it is a DATA-FLOW dependency: the struct at 0x477E7500 (image=7's arg[2] target) is filled
+by SOME OTHER producer that hasn't run by the time the PPU waits on q=5. Candidates: (a)
+another task in the taskset / a coordinator SPU job, (b) image=7 is a job-CHAIN processor
+and the job descriptors at 0x477E7500 are meant to be filled elsewhere, (c) image=7 reading
+a ptr from 0x477E7500 is a wrong branch driven by arg[1]'s mask(0xFFFF..)/count(0x22) and
+the zeroed struct is a valid "empty" state our lifted code mishandles.
+
+Part A stays (correct RPCS3-faithful architecture, regression-free, needed for multi-task).
+NEXT: find what writes 0x477E7500 -- add a guest-write watchpoint on 0x477E7400..0x477E7600
+to identify the producer (PPU code or another SPU task), which decides (a)/(b)/(c).

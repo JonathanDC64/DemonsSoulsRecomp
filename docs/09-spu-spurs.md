@@ -943,3 +943,33 @@ PATTERN/heuristic: an HLE crash whose fault address ~= a register holding a gues
 module. Fix = add GUEST_PTR(p,T)=(vm_base+ea) and reassign each deref'd pointer param at
 entry. This is mechanical HLE-completeness work, not RE -- expected to recur a few times as
 late boot touches more modules. NEXT: rebuild, re-run, fix the next module the boot hits.
+
+### 15s. Second task path: direct cellSpursCreateTask ABI; image=7 frontier [2026-06-30]
+
+Past the input/audio/GCM init (15q/15r) the boot reaches a SECOND SPURS-completion spin:
+PPU at cia=0x009F9604 polls stack flag 0xD002AD50, fed by a second task (image=7,
+elf=0x017BE200, taskset 0x477ED800). It was dispatched with arg={0,0,0,0} and branched to
+LS 0 (r3=0). Cause: this task is created via the DIRECT cellSpursCreateTask (NID
+0xBEB600AC), whose real ABI is (taskset, taskId, elf, context, size, lsPattern, argument=
+r9) -- our HLE had a WithAttribute-style signature (treated r8 as an attribute), so the
+direct path never read the r9 argument pointer.
+
+FIX (cellSpurs.c): split into spurs_create_task_core + two entries -- the direct
+cellSpursCreateTask reads the 16-byte CellSpursTaskArgument from r9; CreateTaskWithAttribute
+uses the attr's copied argValue (15q). image=7 now gets a real arg
+{0x477FE220, 0x477FD800, 0x477FE600, 0x01BBD480} (data pointers in the 0x477Fxxxx region).
+
+FRONTIER #9 (image=7 specifics): with the real arg, image=7 still doesn't complete -- it
+takes indirect branches to unlifted LS 0x0004D (r3=0x80410911, an 0x8041xxxx cellSpurs
+ERROR code; r80=0xFFFFFDA4) and LS 0x00000. So image=7 (a different SPU program than the
+image=2 leaf) is hitting an error/assert path: either (a) its SPURS taskset/environment is
+still incomplete for this task type, or (b) the lifter missed an in-.text jump table for
+image 7 (cf 15i for image 2 -- re-run build_spu jump-table discovery on image 7). The
+0xD002AD50 spin persists until image=7 completes its handoff. NEXT: trace image=7's path to
+the 0x80410911 error (what it checks) + check image-7 jump-table coverage.
+
+NET THIS SESSION: crossed the multi-session SPURS gate (15q) via the task-argument ABI fix,
+then advanced through input (cellPad/Kb/Mouse) + audio (cellAvconfExt) + GCM flip-mode init
+and a first completed SPU task, now parked at a second task (image=7). The blocker class
+shifted from SPURS reverse-engineering to (mostly mechanical) HLE/ABI completeness + a
+second per-image SPU bring-up.

@@ -1226,3 +1226,38 @@ receiver or RPCS3's SPURS event format). PART B: run all N tasks so the counter 
 This is the SPU->PPU completion-event delivery the project flagged as planned -- now the
 precise, last thing blocking the second SPURS gate. NEXT: nail the q=5 event payload + the
 attach binding, then implement EXIT->post + multi-slot.
+
+### 15bb. CORRECTION: the 2nd blocker is GCM label-255 sync (RSX), NOT SPURS completion [2026-06-30]
+
+Resolved the 0xD002AD50 confusion: func_009F94A8's poll loop reads *(r27) where
+r27 = cellGcmGetLabelAddress(idx) (NID 0xF80196C1 = func_016B8564), and the loop also
+calls func_00B5D8D8(0x1E) = a usleep yield. func_00B5D8D8 ENDS with `r0 = vm_read64(r1+0x90)`
+to restore its saved LR -- and r1+0x90 == 0xD002AD50 for this frame. The HOTREAD64 detector
+flagged that benign per-iteration LR-restore as the "spin address." So 0xD002AD50 is NOT a
+counter; the 15z/15aa "completion counter / post event to q=5" framing was a WRONG LEAD.
+
+THE REAL WAIT: func_009F94A8 polls **GCM label index 255 (0x03000FF0)** until it reaches r26
+(the expected value, read from a struct). Confirmed: GetLabelAddress(index=255)->0x03000FF0
+is requested repeatedly in the loop, and an all-width write-watchpoint on 0x03000FF0 shows
+it is NEVER WRITTEN. So the PPU (PPURuntimeService -> func_00D1DEE8 -> func_009F94A8) waits
+for the RSX/GPU to write label 255, which our HLE never does -> spin.
+
+This is RSX/GCM label synchronization. image=7 (now running clean, 15y) GENERATES RSX
+commands (its 512-byte PUTs to 0x381Dxxxx = a command-buffer/pushbuffer segment); the real
+RSX would execute that buffer, hit a write-label-255 command, and update the label; the PPU
+polls it. Our HLE has no RSX FIFO command execution that writes labels (only
+cellGcmSetFlipCommandWithWaitLabel writes a label, line 539 -- not this path), so label 255
+stays 0.
+
+WHAT'S CORRECT FROM PRIOR WORK (keep): image=7 syscallAddr fix (15y) -- image=7 must run to
+generate the commands; Part A deferred scheduling (15w); all the ABI fixes. WHAT'S A DEAD
+LEAD (drop): the q=5 SPURS-completion-event plan (Part C as written in docs/13) -- the
+counter it targeted doesn't exist; the blocker is a GPU label.
+
+NEW FRONTIER (#10): RSX command-buffer / label processing. The PPU waits on GCM label 255
+that the SPU-built RSX command buffer is supposed to make the GPU write. NEXT: find how
+label 255 is meant to be written -- (a) trace the RSX FIFO / the command image=7 emits (a
+write-label/SET_REFERENCE in the pushbuffer at 0x381Dxxxx), or (b) a cellGcm label-write call
+the game makes -- then have our HLE GCM/RSX write label 255 to the expected value when the
+corresponding submit/flush happens. This is the RSX/GCM frontier (see memory
+frontier-rsx-gcm), now the precise thing gating boot.

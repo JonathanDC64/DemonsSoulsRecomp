@@ -1286,3 +1286,28 @@ the cellSysutil callback pump / the game waiting on a system callback or a worke
 0x1D70 and writes a constant 0x1000 to label 255 -- harmless so far, but it may need its own
 offset/label; revisit if a downstream label wait misbehaves.) NEXT: characterize the cond=2
 / cellSysutil wait -- is it a missing system callback, or genuine steady-state?
+
+### 15dd. FRONTIER #11 characterized: main loop pumps cellSysutil + waits on cond 2 [2026-06-30]
+
+After engine init (15cc) the boot parks. Sync-trace: tid=15696 does COND_WAIT id=0x2 ~134x
+(spurious wakeups -- sys_cond_wait uses a real Win32 CV w/ INFINITE timeout, so the thread
+correctly loops `while(!pred) cond_wait()`), and there are ZERO cond_signals in the whole
+run + ZERO flips (no rendering). So the game reached its main system loop but is stuck
+pre-first-frame waiting on cond 2.
+
+The waiter (one-shot stack probe -> cia=0x00B5D658) is a coordinator loop (func @0x00B5D6xx)
+that: calls func_00A662C8 (DLSpursManager callback) -> func_016BB264 = cellSysutilCheckCallback
+(NID 0x1BC200F4), then func_009E0370 (cond_wait on obj+0x48 = cond 2), then func_00A664E0,
+repeat. I.e. it PUMPS cellSysutilCheckCallback and waits on cond 2 for work/an event.
+
+So cond 2 is the "work ready" / "system event" condition; nothing signals it. Candidates for
+the missing producer: (a) a system callback cellSysutilCheckCallback should deliver (it's a
+no-op in our HLE -- e.g. an init-complete / drawing / save-data callback that signals cond 2),
+(b) another subsystem thread that's itself parked (many threads wait on q=1/q=5/q=12, sem,
+cond 3/9/E/F -- a steady-state SPU/RSX-event dependency), or (c) the SPU/RSX results need to
+propagate to wake the coordinator.
+
+NEXT: determine what signals cond 2 -- find the cond_signal(2) producer in the recomp (and
+why it never runs), and/or which cellSysutil callback the loop expects delivered. This is a
+new multi-thread / cellSysutil steady-state frontier, reached AFTER full engine init (Havok/
+audio/save) -- the deepest boot point yet. Diagnostic: one-shot [cond2-bt] in sys_cond_wait.

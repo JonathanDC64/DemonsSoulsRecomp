@@ -1417,3 +1417,31 @@ BUILD (scoped, methodical -- the mechanism is proven, this is the real piece):
     descriptor) to q=1 so handler B creates the next task.
 This is the SPURS task-pipeline continuation -- a focused multi-layer build, now precisely
 scoped. Probe (SPURS_EVTEST/EVDATA/EVSEL) is the validation harness (env-gated).
+
+### 15ii. Handler B is a stateful routine; the fix is real SPU-side event production [2026-06-30]
+
+Read func_00C5D6D8 (handler B, the work path). With r3=service_obj, r4=data1 it:
+ 1. acquires a lock via service_obj+0x18 (virtual call),
+ 2. SEARCHES a registered list (loc_00C5D770 loop) comparing each element to data1 (r31),
+ 3. builds a string from data1 (func_000113B0 -> func_01674898),
+ 4. (downstream) cellSpursCreateTaskWithAttribute -- creates the next task.
+So data1 must be a WORK-ITEM OBJECT already REGISTERED in the service's list (the crash with
+synthetic data1=0x45A4B280: not registered -> search miss -> fallback derefs garbage
+0x40A09B5C). NB: the earlier crash cia was 0x00B5D658 (the cond-2 COORDINATOR) -- so handler
+B did advance the pipeline (created a task / signaled, the coordinator woke) before crashing
+on the garbage object.
+
+CONCLUSION (honest): this is a STATEFUL subsystem. handler B keys on data1 matching the
+service's accumulated registered-list state, which real event processing builds up
+incrementally as SPU tasks produce work. A one-shot SYNTHETIC event fundamentally can't
+replicate it -- data1 must be a real, registered work item, and the list must be populated
+by the real flow. So the proper fix is SPU-SIDE EVENT PRODUCTION integrated into the normal
+task flow: when an SPU task produces/registers a work item, IT posts the USER event (sel=1,
+data1 = that registered object) -- so the service's list and the events stay consistent.
+
+This is the full SPURS task-pipeline event substrate -- a substantial, methodical build, not
+a synthetic injection. SCOPE for it: (1) the SPU-side mechanism that registers a work item +
+signals (cellSpursEventFlag-from-SPU / the workload event), (2) map it to a USER-event post
+with the real registered data1, (3) ensure the service's registered list is populated by the
+same flow. The mechanism (q=1, source, sel=1->handler B->create task->cond 2) is PROVEN; this
+is connecting it to real, stateful SPU output. Probe harness (SPURS_EVTEST/EVDATA/EVSEL) stays.

@@ -122,3 +122,44 @@ single fact (PPU handler vs SPU-only) determines the entire scope below it.
   the object `r28` here (what manager owns the LFQueue) and whether the SPURS-arg path
   passes the same object; (b) confirm whether a PPU handler thread already runs these on
   schedule, or only the SPU coordinator would. That picks Model PPU-only vs SPU-coordinated.
+
+---
+## Phase 0 CONCLUSION — Model SPU-coordinated, via the LR atomic-wait pattern
+
+Decisive evidence:
+- `SPU_TASK_OFF` -> PPU spins forever => the SPU task IS on the critical path (NOT pure
+  Model PPU-only).
+- The SPU task makes **zero mailbox writes**; it talks only via MFC DMA + events
+  (`SPU_WrEventMask`/`WrEventAck`/`RdEventStat`). So it DMA-publishes its result (it does
+  not signal via mailbox) and is event-driven.
+- It arms event mask **0x400 = SPU_EVENT_LR** (Lock-Line Reservation Lost, confirmed vs
+  RPCS3 SPUThread.h) and waits on `RdEventStat`. Combined with its getllar/putllc atomic
+  loop (func_00004694/func_00005120), this is the classic SPURS pattern: **getllar a
+  control line, arm LR, sleep until another agent (the PPU) writes that line.**
+- Our runtime has reservation state (resv_ea/resv_valid) but **never fires the LR event**
+  when an external write hits a reserved line; `event_status` is only cleared by acks,
+  never set. So the task's `RdEventStat` wait for 0x400 never completes.
+
+So the producer chain is: PPU pushes work / updates the control line -> SPU LR event ->
+SPU task wakes, drains its queue (the 37-handler dispatch), DMA-publishes the result
+pointer to the global slot 0x01B51000 -> func_00A31158 releases.
+
+### Revised build (concrete + bounded, supersedes the vague "large subsystem")
+1. **SPU LR-event delivery (core, bounded):** when a guest write (PPU vm_write* or another
+   SPU's putllc) hits a 128 B line an SPU holds a getllar reservation on, set that SPU's
+   `event_status |= SPU_EVENT_LR (0x400)` (respecting its event mask) so its `RdEventStat`
+   wait wakes. Define SPU_EVENT_* in spu_context.h; hook the PPU vm_write path + the SPU
+   putllc path to check active reservations. Unit-test (extend spu/tests): getllar on a
+   line, arm LR, external write -> RdEventStat returns 0x400.
+2. **Ensure the work is pushed:** confirm who writes the watched control line / pushes the
+   queue the SPU getllars (Phase 0 next: find the line EA from the task's getllar and who
+   on the PPU writes it -- func_00A31158 setup, or a service thread). If the PPU never
+   pushes (because it's blocked on the same wait), the work was queued earlier or via a
+   path we stubbed -- trace + supply it.
+3. **Run to publish:** with LR delivered + work present, the SPU drains + DMA-publishes
+   0x45A4B280 -> 0x01B51000; func_00A31158 releases (and the task later hits stop 0 -> our
+   exit-code path fires). Integration test: boot past func_00A31158, no Dantelion2 panic.
+
+This is meaningfully smaller than full taskset-PM emulation: the linchpin is SPU LR-event
+delivery tied to guest memory writes (a real, testable MFC primitive), plus confirming the
+work-push. NEXT: find the getllar line EA + its PPU writer (Phase 0 step 2 above).

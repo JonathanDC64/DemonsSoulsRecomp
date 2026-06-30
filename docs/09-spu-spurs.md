@@ -973,3 +973,38 @@ then advanced through input (cellPad/Kb/Mouse) + audio (cellAvconfExt) + GCM fli
 and a first completed SPU task, now parked at a second task (image=7). The blocker class
 shifted from SPURS reverse-engineering to (mostly mechanical) HLE/ABI completeness + a
 second per-image SPU bring-up.
+
+### 15t. image=7 characterized: multi-task + bad argument-data pointers [2026-06-30]
+
+Widened SPU_QLOG to image 7 (g_qlog7_budget cap). With its real arg
+{0x477FE220, 0x477FD800, 0x477FE600, 0x01BBD480} image=7 (spu_0006_at_017AE200,
+entry func_00003080) does:
+ - GET 0x477FE600 (48B)->LS 0x1B600, GET 0x477FE220 (80B)->LS 0x19000,
+   GET 0x477FD800 (128B)->LS 0x19080  -- DMAs its three argument structures.
+ - read-modify-write 0x477FE900 (GET+PUT 128B).
+ - then computes BAD source pointers from that data and DMAs them:
+   GET ea=0xA73400E8 (128B) and GET ea=0x00000000 (NULL, 128B).
+ - branch to garbage: func_00016CB8 does `r71 = rotqby(LS[r82+92], r82+92); pc=r71`
+   -> r71=0x4D with r3=0x80410911 (an 0x8041xxxx cellSpurs ERROR code). Also two
+   branches to LS 0 (r3=0,r80=0) near LS 0x17C00. -> halts; never completes; the
+   PPU's 0xD002AD50 spin (cia=0x009F9604) never releases.
+ - it also PUTs many 512B blocks to 0x381Dxxxx (+0x200 stride) -- looks like real
+   output OR an error-spew loop.
+
+So image=7's argument-data structures (at 0x477Fxxxx) contain dangling pointers
+(0xA73400E8, null) -> its dispatch table (LS[r82+92]) resolves to garbage. TWO
+contributing issues identified:
+ 1. MULTI-TASK: the game issues 3 direct CreateTask calls (argPtr 0x477EAA40/50/60,
+    16B apart = a CellSpursTaskArgument array) but our spurs_create_task_core ALWAYS
+    uses slot=0 and re-inits the taskset each call -> only 1 task runs (1 ENTER, 0
+    RETURNED); the others are clobbered. A real taskset holds N tasks (slots 0..N-1).
+ 2. DATA DEPENDENCY: image=7's arg structures reference pointers (0xA73400E8 etc.)
+    that are not validly set up -- either the game fills them incrementally / via a
+    job chain, or they depend on prior-task output our HLE didn't produce correctly.
+
+FRONTIER #9 (next session): (a) make spurs_create_task_core allocate distinct slots
+per task (don't clobber slot 0; thread taskId through), (b) trace where image=7's bad
+pointers (0xA73400E8 / null) originate in its DMA'd arg data -- dump guest mem at
+0x477FE220/0x477FD800/0x477FE600 to see if the data is game-written-garbage (a setup
+dependency) or mis-DMA'd, and (c) check image-7 jump-table coverage (the r71 dispatch
+table). image=7 is its own multi-step SPU bring-up, like the image=2 leaf was.

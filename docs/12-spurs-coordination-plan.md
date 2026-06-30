@@ -163,3 +163,29 @@ pointer to the global slot 0x01B51000 -> func_00A31158 releases.
 This is meaningfully smaller than full taskset-PM emulation: the linchpin is SPU LR-event
 delivery tied to guest memory writes (a real, testable MFC primitive), plus confirming the
 work-push. NEXT: find the getllar line EA + its PPU writer (Phase 0 step 2 above).
+
+---
+## Phase 0-next finding — the watched control line + the missing writer
+
+With SPU_EVENT_LR delivery in place (Phase 1a) + SPU_RESV_LOG instrumentation, the
+coordinator (image 2) getllar's:
+- **line 0x48037A00** (a SPURS control structure in the 0x48xxxxxx region; distinct from
+  taskset 0x45B4B300 / exit-code container 0x45B4DC80 / result 0x45A4B280), and
+- **line 0x00000000** (a null/uninitialized pointer -> the empty-queue branch).
+**LR fired 0 times** -> nothing writes 0x48037A00 while the coordinator waits, so it never
+wakes. I.e. the PPU "push work / ready signal" that should write that control line is not
+happening (stubbed cellSpurs op, or the producer is the blocked thread, or the
+coordinator's control pointers are themselves uninitialized -- the 0x0 getllar hints the
+DMA'd context/queue head-tail are not fully set up).
+
+So the LR primitive is correct + ready, but the chain still needs the WRITE to 0x48037A00.
+NEXT (the decisive sub-step): identify what 0x48037A00 is (the SPURS object's workload/
+LFQueue control?) and which cellSpurs PPU op is supposed to write it (cellSpursReadyCount*
+/ an LFQueue push / the workload signal). Two angles:
+  (a) trace where the coordinator gets 0x48037A00 (its DMA'd context/taskset field) to map
+      the structure;
+  (b) grep the PPU cellSpurs path for the readyCount/workload-signal store and confirm it's
+      stubbed in our HLE -> implement it to write the control line -> LR fires -> coordinator
+      wakes, drains, DMA-publishes the result.
+The 0x0 getllar also suggests verifying the coordinator's context (eaContext, currently
+auto-zeroed) is initialized with the real queue head/tail -- a parallel root to check.

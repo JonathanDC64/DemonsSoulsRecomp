@@ -1103,3 +1103,30 @@ the zeroed struct is a valid "empty" state our lifted code mishandles.
 Part A stays (correct RPCS3-faithful architecture, regression-free, needed for multi-task).
 NEXT: find what writes 0x477E7500 -- add a guest-write watchpoint on 0x477E7400..0x477E7600
 to identify the producer (PPU code or another SPU task), which decides (a)/(b)/(c).
+
+### 15x. Producer hunt: 0x477E7500 is NEVER written -> image=7 calls a null fn-ptr [2026-06-30]
+
+Added an all-width guest-write watchpoint (YDKJ_WWATCH, now covers write8/16/32/64 in
+ppu_loader.cpp). Watching 0x477E7500 with tasks OFF and ON: ZERO hits. So image=7's arg[2]
+struct (0x477E7500) is NEVER written by any PPU store for the whole run -- it is NOT an
+under-populated producer dependency (15v/15w hypothesis (b) is OUT). Also note image=7 does
+not even DMA 0x477E7500 directly (qlog).
+
+Re-reading the failure order: the GPR-provenance dump (15v) was already in the error
+cascade (r80=r82=0x80410911). The FIRST anomaly is earlier: the branch to LS 0 at
+link/r0=0x17C00 with r3=0, r80=0 -- image=7 calls a NULL FUNCTION POINTER. Combined with
+the func_00016CB8 dispatch (`r71 = LS[r82+92]; pc=r71`), image=7 dispatches through
+FUNCTION-POINTER TABLES in LS that are unpopulated -> null/garbage targets -> the
+NULL_POINTER cascade.
+
+REFRAMED ROOT (hypothesis (c) confirmed direction): image=7's LS fn-ptr/dispatch tables are
+not set up. Either (1) the SPU lifter missed seeding an in-.text jump/fn-ptr table for image
+7 (cf 15i for image 2 -- image-7 may have tables the >=6-consecutive-word heuristic didn't
+catch), or (2) image=7 builds those tables at init from data/template we don't provide, or
+(3) a lifter miscompile in image=7's table setup. NEXT: trace image=7's fn-ptr table source
+-- find the call site at ~LS 0x17BFC (returns to 0x17C00) and func_00016CB8's r82/table
+base; check whether the lifter seeded image-7's jump tables (build_spu output) and whether
+the table LS region is ever written/DMA'd. This is image=7's own SPU bring-up (its dispatch
+tables), distinct from the SPURS scheduling work (Part A, done).
+
+Part A (deferred scheduling) remains correct + committed; it is orthogonal to this.

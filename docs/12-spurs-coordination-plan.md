@@ -222,3 +222,39 @@ Find what initializes 0x48037A00 and why it's skipped:
 Net: the mechanism (LR) and the exit-code path are built + tested; the remaining work is
 the SPURS queue/control INITIALIZATION (a bounded, locatable target now, not a vague
 subsystem). The cellSync LFQueue core already exists (we implement push/pop).
+
+---
+## ROOT CAUSE (architectural) — HLE/LLE shared-memory-layout mismatch [2026-06-30]
+
+Why 0x48037A00 is zeroed: our cellSpurs HLE (cellSpurs.c) handles the PPU APIs by
+memset-ing a SIMPLIFIED struct (CellSpurs/CellSpursTaskset/CellSpursEventFlag) and
+tracking PPU-visible fields (eventFlag->bits, spurs->nSpus, ...). It does NOT build the
+REAL SPURS internal memory structures (the control/queue/event-flag internals at the
+SDK's exact offsets) -- because those are libsre/SPU-kernel private layout. But the SPU
+coordinator (spu_0001) is REAL lifted SPU code that reads those real internal structures
+via getllar/DMA (0x48037A00 = one of them). So the two sides disagree on the shared
+memory layout, and the SPU reads zeros.
+
+Confirmed: the game's libsre wrappers (func_016B9xxx) just forward the cellSpurs NID to
+our HLE (boot logs "[cellSpurs] CreateTaskset()" = our stub); the boot uses the SPURS
+EventFlag + lv2 event queues (event_queue_receive(q=1)), NOT a cellSync LFQueue.
+
+This is the crux of HLE-ing the PPU side while running the real SPU side. Three strategic
+resolutions:
+  A. HLE builds the REAL layout: make our cellSpurs set up the exact SDK-layout internal
+     structures the SPU reads. Needs the precise libsre/SDK struct offsets (hard without
+     SDK headers; partially recoverable from the SPU code + RPCS3 SpursTasksetContext etc.).
+  B. LLE the SPURS PM (RPCS3's approach, "correct"): DON'T HLE cellSpurs -- run the REAL
+     libsre taskset POLICY MODULE as actual SPU code (lift fw_spu/libsre.prx's PM binary)
+     under a sys_spu_thread_group, so libsre itself builds the structures + schedules the
+     leaf task exactly as on hardware. Largest, but matches the design and avoids layout
+     guesswork. (We already lift parts of libsre; this extends to the PM SPU binary +
+     sys_spu_thread_group support.)
+  C. Minimal targeted: RE the exact fields the DeS coordinator reads at 0x48037A00 (head/
+     tail + one work entry the 37-handler dispatch expects) and have the HLE fill just
+     those. Smallest, DeS-specific, brittle.
+
+The LR primitive + exit-code path are built+tested and are needed by A and C (and used by
+B's leaf-task path). RECOMMENDATION: evaluate B (LLE the PM) vs A/C -- B is the principled
+fix and reuses our SPU recompiler; A/C are faster but fragile. This is a strategy decision
+for the next push, not a quick patch.

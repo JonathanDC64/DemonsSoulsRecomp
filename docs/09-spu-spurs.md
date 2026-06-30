@@ -686,3 +686,47 @@ BUILD PLAN (Track 2, docs/11), now anchored to the real contract:
      PPU-polled slot (the SPURS task EXIT / completion protocol).
   Reference RPCS3's cellSpurs taskset/queue LLE + the SDK headers for the struct
   layouts (clean-room: contracts only, reimplement).
+
+### 15k. func_00A31158 fully decoded = SPURS task EXIT-CODE completion; PM emulation scoped [2026-06-29]
+
+Traced func_00A31158's call chain (NIDs reverse-hashed via nid_name.py); it is the
+standard SPURS taskset+task create/wait:
+  _cellSpursTasksetAttributeInitialize -> cellSpursTasksetAttributeSetName
+  -> cellSpursTasksetAttributeSetTasksetSize [STUB] -> cellSpursCreateTasksetWithAttribute
+  -> cellSpursTaskExitCodeInitialize [STUB] -> _cellSpursTaskAttributeInitialize
+  -> cellSpursTaskAttributeSetExitCodeContainer [STUB] -> cellSpursCreateTaskWithAttribute
+  -> WAIT (poll exit-code container until [r26+0]==[r26+0x80], r26=0x01B51000,
+     target=0x45A4B280).
+So the PPU wait IS the task EXIT-CODE poll, and 3 of its setup NIDs are stubbed.
+
+RPCS3 cellSpursSpu.cpp gives the contract (the SPU-side taskset POLICY MODULE = kernel
+at LS 0x2700, which we do NOT run -- we dispatch the leaf task ELF directly):
+  - spursTasksetDispatch -> select task -> spursTasksetStartTask (sets task-start ABI,
+    loads the task context per its ls_pattern, branches to the task).
+  - On the task's `stop` = CELL_SPURS_TASK_SYSCALL_EXIT(0): spursTasksetProcessSyscall ->
+    spursTasksetOnTaskExit(addr, taskId, exitCode, args): memcpy an EXIT-HANDLER routine
+    from main memory (addr from taskset->x78 or taskContext x2FC0) into LS 0x10000 and
+    fast_call it with r3=taskset, r4=taskId, r5=exitCode, r6=args. That handler writes
+    the completion the PPU polls.
+  - The leaf task signals the kernel via `stop <code>`; our lifter currently DISCARDS the
+    stop code (emits bare SPU_STATUS_STOPPED_BY_STOP) -- must preserve it.
+
+CONSEQUENCE: our leaf task (a) loops on an empty queue because the PM never delivers
+its work/events, and (b) even if it exited, nothing emulates onTaskExit to write the
+container. The build = emulate the taskset PM for the leaf task.
+
+ORDERED BUILD PLAN (TDD; RPCS3 = contract reference only, reimplement clean):
+  1. Lifter: preserve the SPU `stop` 14-bit code (so the runtime can dispatch task
+     syscalls). Unit test: a tiny task that `stop`s with a code -> code visible.
+  2. Runtime SPURS-task syscall layer: on a task `stop` with the SPURS syscall code,
+     dispatch EXIT/YIELD/WAIT_SIGNAL/POLL. EXIT -> run onTaskExit (load+run the exit
+     handler, or write the exit code to the container EA from
+     cellSpursTaskAttributeSetExitCodeContainer). Unit test: task `stop EXIT` ->
+     exit code lands in the container.
+  3. Implement the 3 stubbed PPU NIDs (TasksetSize, TaskExitCodeInitialize,
+     TaskAttributeSetExitCodeContainer) so the container EA is wired into the task.
+  4. The hard part: get the leaf task to RUN TO its EXIT (it currently waits on
+     PM-delivered events/work). Determine its work source (task arg = two PPU OPDs at
+     0x00A662C8/0x00A663A0) and either deliver it or short-circuit to a clean exit.
+  5. Integrate -> task EXIT -> container written -> func_00A31158 releases -> boot
+     advances past SPURS (scout showed: input init + more).

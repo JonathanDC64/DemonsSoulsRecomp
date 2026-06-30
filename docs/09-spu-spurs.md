@@ -1166,3 +1166,28 @@ completion. NEXT: on task EXIT, notify the PPU -- post to lv2 event queue 5 and/
 the taskset on-exit handler (taskset->x78, RPCS3 spursTasksetOnTaskExit: PPU handler called
 with taskset,taskId,exitCode,args -> posts the event / writes the completion flag). Need to
 find where the q=5 post / 0xD002AD50 write comes from (x78 handler vs the task's own post).
+
+### 15z. Completion protocol mapped: PPU polls a task-count at 0xD002AD50 [2026-06-30]
+
+With image=7 running clean (15y), the remaining block is the PPU's completion wait. Decoded
+func_009F9600 (the cia=0x009F9604 spin):
+  loop: func_00B5D8D8(0x1E); r0 = *(r27); if (r26 > r0) repeat;   // r27 -> 0xD002AD50
+func_00B5D8D8(0x1E) is just a yield -- lv2 syscall 0x8D with r3=0x1E (usleep ~30us). So the
+PPU busy-waits until the COUNTER at 0xD002AD50 (a stack local) reaches r26 (the expected
+completed-task count; r26 = *(r25+0xB10), likely 3 = the 3 image=7 tasks the game created).
+
+So COMPLETION = each task's EXIT must INCREMENT *(0xD002AD50). In SPURS that is the taskset
+ON-EXIT handler's job: RPCS3 spursTasksetOnTaskExit calls the PPU handler (taskset->x78)
+with (taskset, taskId, exitCode, args); that game handler bumps the completion counter /
+posts the event. Two pieces remain (docs/13 Parts B+C):
+ - PART B (multi-slot): run ALL 3 image=7 tasks, not just slot 0 (spurs_create_task_core
+   hardcodes slot 0). The counter must reach 3.
+ - PART C (completion): on task EXIT (our spu_spurs_taskset_syscall num=0), invoke the
+   taskset on-exit handler so the counter advances. Need taskset->x78 (the on-exit handler
+   EA) -- find where DeS registers it (cellSpursCreateTaskset / a taskset attribute), wire
+   EXIT -> ppu_guest_call(x78_opd, taskset, taskId, exitCode, args). If x78 is unset, find
+   what else increments 0xD002AD50 (the task's own DMA, or an event the PM posts).
+
+STATUS: image=7 executes correctly end-to-end (runs -> EXIT -> returns); only the PPU
+completion handshake (count to r26) remains. NEXT: find the taskset on-exit handler (x78)
++ run all N tasks, so the counter reaches r26 and func_009F9600 releases.

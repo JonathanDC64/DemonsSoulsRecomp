@@ -1364,3 +1364,29 @@ is the correct payload/trigger, tied to the SPU tasks' output. NEXT: read handle
 data1 (what struct/size it allocates) + what the SPU tasks write as their result descriptor,
 to supply the right data1. The chain (event->service->handler->job->cond 2) is now verified
 up to the handler.
+
+### 15gg. Synthetic-event limit: handler needs REAL backing work; build = hook SPU production [2026-06-30]
+
+Swept the probe data1 (SPURS_EVDATA): both data1=0 and data1=0x45A4B280 (the published job
+ptr) reach handler A and PANIC in DLStdAllocator.inl(268) "Transaction failed". With
+0x45A4B280 the service even ADVANCED (event_queue_receive(q=1) -> cond_wait(cond=3)) before
+the panic -- so data1 matters, but neither value lets the alloc succeed. Handler A's path:
+func_00C5BE78 -> func_000113B0 (a PLT/import trampoline -> func_01674898, a Dantelion2 method)
+-> ... -> DLStdAllocator transaction -> panic.
+
+KEY REFRAME: a SYNTHETIC event can't fully succeed. Handler A processes a "completed work
+item" and allocates/enqueues based on it -- but our probe has NO real work behind the
+descriptor, so the transaction fails. The probe PROVED the mechanism (source key + q=1 +
+dispatch + the service advancing), but the handler needs the ACTUAL work the SPU produced.
+
+So the build is NOT "guess the right synthetic data1" -- it's: hook the point where an SPU
+task/workload ACTUALLY produces a work item, and post the USER event with data1 = that real
+descriptor. The descriptor + its backing data are what the SPU writes; handler A then
+allocates a job entry for it and signals cond 2.
+
+CONFIRMED SO FAR: SPU->PPU event mechanism (q=1, source 0xFFFFFFFF53505501, dispatch). NEXT
+(methodical, not blind): identify where the SPU tasks (image-2/image-7) write their result/
+work descriptor (image-2 published 0x45A4B280 -> result slot 0x01B51000; what STRUCT does
+handler A expect at data1, and does the SPU fully populate it?), then wire the event post to
+that real production point. Read func_01674898 (the allocating method) for the descriptor
+format. The probe (SPURS_EVTEST/SPURS_EVDATA) stays as the chain-validation harness.

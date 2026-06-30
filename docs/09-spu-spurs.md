@@ -848,3 +848,39 @@ NEXT: trace how func_00004694 computes the command-queue EA from r4/spurs (which
 field holds the queue base), and what our HLE cellSpurs must initialize so the leaf DMAs a
 valid (empty-but-well-formed) queue + can reach the completion command that writes the
 stack flag. The B1/B2/B3 + r4 scaffolding stays and feeds this.
+
+### 15p. SMOKING GUN: leaf DMAs the arg callbacks as job descriptors (wrong code path) [2026-06-30]
+
+Added a queue-DMA tracer (SPU_QLOG, gated on image 2 + LS window [0x13000,0x13600);
+spu_dma.h mfc_do_transfer). With the corrected r4 (15o) the leaf's very first DMAs are:
+```
+GET lsa=0x13400 ea=0x00A662C8 size=256   # arg[0] -- a PPU CODE pointer (callback 1)
+GET lsa=0x13340 ea=0x019B5040 size=64    # arg[1] -- the TOC (0x019B5040)
+PUT lsa=0x13400 ea=0xFBC10080 size=16    # "ptr" read at desc+0xC = the code word FB C1 00 80
+GET lsa=0x13580 ea=0x78630000 size=128   # "queue head" at desc+0 = code word 0x78630020 -> 0x78630000
+... loops: GET 0x78630000/0x78630080/0x78630100 (+0x80), PUT 0xFBC10080 forever
+```
+So the leaf treats `arg[0]`/`arg[1]` as POINTERS TO JOB-CONTROL DESCRIPTORS, DMAs them,
+and walks a "queue" whose head/next pointers it reads out of the DMA'd block. But the
+block at 0x00A662C8 is PPC CODE (prologue `78 63 00 20 | 7C 08 02 A6 mflr | F8 21 FF 71
+stdu | FB C1 00 80 std r30`), so every "pointer" it extracts (0x78630000 head, 0xFBC10080
+put-target) is a misread opcode word -> it loops on garbage EAs and never completes.
+(Confirms the LS 0x13400 PPC-code mystery of the prior turns: it's a DMA of arg[0]'s code.)
+
+This nails the HLE/LLE mismatch precisely and aligns with 15l/15n: arg[0]/arg[1] are the
+DLSpursManager COORDINATOR CALLBACKS (+ TOC), NOT descriptor pointers. So the leaf is on
+the WRONG CODE PATH -- it entered a "process job descriptors pointed to by the argument"
+branch when (given a callback-style arg) it should be on a "register the callbacks / set
+up the command queue / wait for PPU-fed work" branch. What selects the branch is upstream
+of the DMA: either (a) the SPURS/taskset state the leaf inspects (r4->spurs fields, the
+command-queue ring base the PM kernel must seed), or (b) an argument-shape/word-order the
+leaf keys on. Note ALL of r3's words are code/TOC (arg[0]=0x00A662C8, arg[1]=TOC,
+arg[2]=0x00A663A0, arg[3]=TOC) -- no r3 slot holds a data pointer -- so a mere lane-swap
+wouldn't fix it; the descriptor the leaf wants lives elsewhere (a queue the SPURS object/
+taskset points to), un-set-up by our HLE.
+
+NEXT: find the branch in func_000053C8/func_00004694 that decides "DMA arg as descriptor"
+vs "wait on the SPURS command queue", and what SPURS/taskset field it tests -- i.e. what
+the PM kernel normally seeds (the command-queue ring base + an initial empty/again state)
+so the leaf parks on the queue instead of mis-parsing the argument. Diagnostic kept
+(SPU_QLOG). Scaffolding (B1/B2/B3 + r4) stays.

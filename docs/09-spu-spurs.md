@@ -787,3 +787,18 @@ publish 0x45A4B280 to [0x01B51000]. So the direct unblock is PATH B (run the two
 callbacks via ppu_guest_call(TOC=0x019B5040) at cellSpursCreateTask), and the exit-code
 mechanism (Foundation A/B) is the separate task-lifecycle path. NEXT: probe Path B --
 run the callbacks, check whether [0x01B51000] gets 0x45A4B280 (released) and what runs.
+
+### 15n. Callback ABI: cellSpurs queue workers needing a handle [2026-06-29]
+
+func_00A662C8 (callback 1) does r3 += 8, then calls func_016BB264(r3) (a cellSpurs
+internal) and branches on its result code (0x80010005/0x80010009 = EAGAIN/EBUSY). So
+the callbacks are cellSpurs QUEUE WORKERS that poll a queue/handle at r3+8; they need a
+valid queue handle in r3 from the coordinator (running them blind derefs garbage).
+func_00A31158's setup builds a struct {result-slot 0x01B51000, r24(=func_00A941F8 alloc
+~ the job/result 0x45A4B280), r29, r29}: alloc the job, record it as the expected result,
+create the coordinator task, wait until the SPU/worker publishes the job ptr to
+[0x01B51000]. REMAINING = the full SPURS coordination (coordinator processes its queue /
+PPU callbacks run with proper handles -> publish result). Everything is mapped; this is
+the well-scoped next major build (Path A full taskset-PM emulation, or deep Path B that
+reconstructs the queue handle + runs the callbacks). Scout's force-the-result stays the
+bring-up shortcut to probe further downstream.

@@ -312,3 +312,21 @@ object layout) -- B2 must initialize THAT structure too, not just the taskset.
 
 ## First concrete step: B1 + locating 0x48037A00
 Define the structs (B1) and resolve what allocates/owns 0x48037A00 so B2 initializes it.
+
+---
+## B1.5 finding — 0x48037A00 is game-allocated SPURS work memory (zeroed); resolve via B2/B3
+
+Address correlation (one run): spurs object = 0x01B92E00, result slot r26 = 0x01B51000
+(both in the game data region 0x01Bxxxxx); taskset = 0x45B4B300, leaf getllar line =
+0x48037A00 (a separate SPURS work-memory region 0x45-0x48xxxxxx the game allocated for the
+SPURS object / SPU thread group). So 0x48037A00 is SPURS-internal shared memory the leaf
+task reads; it is all-zeros because the SPURS-kernel/PM setup that should populate it never
+ran (our HLE cellSpursInitialize/CreateTaskset only memset the small PPU-facing structs).
+
+CONCLUSION: 0x48037A00 is a SYMPTOM of the missing PM setup, not an independent target.
+Under Option B, the reimplemented PM (B2 builds the real taskset; B3 builds the
+SpursTasksetContext @LS 0x2700, selects the task, sets up its context per ls_pattern) will
+populate the structures the leaf reads, so its getllar EAs become valid -- no need to
+separately reverse-engineer the current garbage 0x48037A00. PIVOT: proceed to B2 (the real
+create path) using the B1 layout header; revisit the leaf's exact getllar target once the
+PM-built structures are in place (it should then point into the real taskset/context).

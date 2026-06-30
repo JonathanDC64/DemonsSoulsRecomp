@@ -730,3 +730,36 @@ ORDERED BUILD PLAN (TDD; RPCS3 = contract reference only, reimplement clean):
      0x00A662C8/0x00A663A0) and either deliver it or short-circuit to a clean exit.
   5. Integrate -> task EXIT -> container written -> func_00A31158 releases -> boot
      advances past SPURS (scout showed: input init + more).
+
+### 15l. The leaf task's arg = two PPU callbacks; DLSpursManager is a job coordinator [2026-06-29]
+
+Step 1 done: the lifter now preserves the SPU stop code (ctx->stop_code). Re-lifting
+spu_0001 shows the entry func_00003070 ends with `stop 0` = CELL_SPURS_TASK_SYSCALL_EXIT
+(the task's normal exit), reached only after its body func_000053C8 returns -- which it
+doesn't, because it loops in the func_00004694 command loop (empty queue -> func_00005120
+event-wait, never returns).
+
+Dumped guest memory at the task-arg pointers (the 16-byte CellSpursTaskArgument):
+  arg = { 0x00A662C8, 0x019B5040(TOC), 0x00A663A0, 0x019B5040(TOC) }
+  @0x00A662C8: 38 63 00 08 7C 08 02 A6 F8 21 FF 71 ... (a PPU function prologue)
+  @0x00A663A0: 38 63 00 08 7C 08 02 A6 F8 21 FF 81 ... (another PPU function prologue)
+So the arg is TWO PPU FUNCTION POINTERS (+ TOC). func_00A662C8 / func_00A663A0 call
+cellSpurs internals (func_016BB264 / func_016BB4C4, libsre) + game logic (func_00A9DD58).
+=> spu_0001 (DLSpursManager) is NOT a self-contained SPU compute task; it is an async-JOB
+COORDINATOR that orchestrates running PPU callbacks (which drive cellSpurs queues). The SPU
+can't run PPU code, so the real flow signals the PPU (mailbox/event) to run the callbacks;
+the empty "command queue" is the coordinator waiting for that round-trip.
+
+TWO PATHS to release func_00A31158 (the task exit-code wait):
+  A. FULL: emulate the SPURS taskset PM (LS 0x2700 ctx, task select/dispatch/start, event
+     + signal delivery, the `stop`-syscall layer incl. EXIT -> onTaskExit writes the exit
+     code) so the SPU coordinator runs its real round-trip to `stop 0`. Correct, large,
+     reusable for all SPURS titles; RPCS3 cellSpursSpu.cpp is the contract reference.
+  B. HLE SHORTCUT: recognize this task at cellSpursCreateTask, pull the two PPU callbacks
+     from the arg, run them on the PPU via ppu_guest_call (TOC=0x019B5040), then write the
+     completion (exit code) to the container func_00A31158 polls. Bypasses the SPU
+     coordinator entirely -- smaller, could unblock the boot now, but DeS-specific and
+     skips the real SPU work (may mis-sequence vs the game's expectations).
+RECOMMEND: try B as a probe to unblock + reveal the next gate (the scout already showed
+input init + more downstream), then build A properly. Either way step-1 stop-code +
+the EXIT=stop0 + onTaskExit contract are the foundation.

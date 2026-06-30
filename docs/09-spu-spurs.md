@@ -1046,3 +1046,32 @@ LS address, (2) back-trace the register chain to the source LS field, (3) decide
 vs zeroed-0x477E7500-dependency. Plus the per-task-slot fix (game makes 3 image-7 tasks).
 This is image=7's own multi-step bring-up, analogous to the image=2 leaf (which took several
 passes). The argdump/qlog diagnostics are in place to drive it.
+
+### 15v. ROOT: image=7 raises CELL_SPURS_TASK_ERROR_NULL_POINTER -- runs before its data is filled [2026-06-30]
+
+GPR provenance dump at the bad GET (image 7, ea=0xA73400E8) shows r80=r82=0x80410911,
+r3=0x80410110, r13=0x80410949 -- these are cellSpurs ERROR codes built by image=7's
+`ilhu 0x8041` instrs. 0x80410911 = **CELL_SPURS_TASK_ERROR_NULL_POINTER** (RPCS3
+cellSpurs.h). So image=7 isn't randomly miscomputing: it DETECTED A NULL POINTER in its
+input and entered an error path; func_00016CB8 then uses the error code as a struct base
+(LS[r82+92] with r82=0x80410911) -> garbage branch (r71=0x4D) -> halt.
+
+WHY the null: image=7's arg[2]-referenced struct (0x477E7500, and the per-task variants
+0x477E5400 / 0x477E6400) are ALL ZEROS -- image=7 reads a null pointer from there.
+
+LIKELY ROOT (architectural): our HLE runs each SPURS task SYNCHRONOUSLY the instant
+cellSpursCreateTask is called (spu_workload_dispatch_task on a host thread immediately).
+But the game creates the 3 image=7 tasks and THEN fills their per-task data / signals the
+SPURS kernel to schedule them. The real SPURS kernel runs a task only when scheduled
+(cellSpursWakeUp / ready-count), by which point the data is populated. Our run-on-create
+races AHEAD of the game's data setup -> image=7 reads still-zero structs -> NULL_POINTER.
+(image=2 worked because its arg[0] result-slot was ready at create time; image=7 needs
+its data filled first.)
+
+FRONTIER #9 -> direction: move from run-on-create to DEFERRED/SCHEDULED task execution --
+register the task (Option B taskset, already built) but DON'T run the SPU until the game
+drives the taskset (e.g. cellSpursWakeUp, a workload ready-count bump, or the PPU's next
+poll of the result/completion). This also naturally handles the 3-task multi-slot case.
+Cross-ref RPCS3 spursTasksetProcessRequest/scheduling. NEXT: find what the game calls
+AFTER creating the image=7 tasks (cellSpursWakeUp? a flag?) that should gate their run,
+and defer dispatch to that point so the per-task structs are populated first.

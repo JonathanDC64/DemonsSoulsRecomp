@@ -802,3 +802,49 @@ PPU callbacks run with proper handles -> publish result). Everything is mapped; 
 the well-scoped next major build (Path A full taskset-PM emulation, or deep Path B that
 reconstructs the queue handle + runs the callbacks). Scout's force-the-result stays the
 bring-up shortcut to probe further downstream.
+
+### 15o. Leaf first-run ABI corrected: r4 = {taskset->args, spurs EA} from LS 0x2700 [2026-06-30]
+
+Cross-referenced RPCS3 `spursTasksetStartTask` + `spursTasksetDispatch` (cellSpursSpu.cpp)
+for the EXACT register ABI the taskset PM hands a fresh leaf on first run:
+```
+gpr[3] = the 16-byte CellSpursTaskArgument (verbatim, BE lanes)
+gpr[4]._u64[1] = taskset->args   (bytes 0-7)     // d0
+gpr[4]._u64[0] = taskset->spurs  (bytes 8-15)    // d1 = SPURS object EA
+pc             = savedContextLr  (= ELF entry on first run, after memset+LoadElf)
+```
+Crucially RPCS3 reads `taskset` from **LS 0x2700** (the taskset HEADER is copied there by
+the kernel), so `spurs`/`args` come from LS 0x2700+0x60/0x68. Our task-start ABI was
+setting only `gpr[4]._u32[1] = tasksetEA` -- WRONG (bare tasksetEA where the SPURS EA
+belongs); the leaf uses r4's SPURS base to locate what to DMA, so it DMA'd from a garbage
+base.
+
+FIX (two parts, RPCS3-faithful, unit-tested):
+1. `spurs_pm_build_context` now copies the taskset HEADER [0x00,0x80) (6 bitsets,
+   spurs@0x60, args@0x68, wid@0x74) from the main-memory taskset into LS 0x2700 before
+   writing the STC fields (which sit at >=0x80, no overlap). [spurs_pm.c]
+2. The task-START ABI builds `r4 = {args (d0), spurs EA (d1)}` from LS 0x2700+0x68/0x60
+   (BE u64), not from the bare tasksetEA. Our gpr lanes are BE order
+   (_u32[0]=bytes0-3 .. _u32[3]=bytes12-15). [spu_lifted_job.h]
+Unit test extended: asserts spurs EA @LS 0x2760, args @LS 0x2768, enabled-bitset copied
+verbatim. PASS.
+
+OBSERVED (the fix demonstrably reaches the leaf): the leaf's queue-ring state CHANGED.
+- Before: `GETLLAR line=0x48037A00`, LS[0x13480] = `7B E3 00 20 ... 48 03 7A 05` (PPC code).
+- After:  the leaf does a SECOND getllar at `line=0x00000000` and **LS[0x13480] is now all
+  zeros** (was PPC `bl` code); LS[0x13400] head still code-looking (`78 63 00 30`).
+So correct r4 made the leaf clear/re-init the tail of its command ring (queue empty path),
+confirming r4 now drives its setup.
+
+STILL Frontier #7 (same gate, not a new one): `0xD0000000-0xDFFFFFFF` is the STACK area
+(vm.h VM_STACK_BASE), so the `0xD002A910` the PPU polls at cia=0x00A31500 is a STACK local
+in func_00A31158's frame -- the completion flag the leaf must write on exit. Shadow stack:
+`0x00B5D8D8 (this=0x1E) <- 0x00A31158 <- 0x009F7518 <- 0x00D1EAD0 <- ...`. The leaf still
+reads code at LS 0x13400 because the command queue in MAIN MEMORY (that it DMAs via the
+now-correct SPURS base) is itself not populated by our HLE cellSpurs -- the queue ring
+head/tail and command stream are still un-set-up.
+
+NEXT: trace how func_00004694 computes the command-queue EA from r4/spurs (which SPURS
+field holds the queue base), and what our HLE cellSpurs must initialize so the leaf DMAs a
+valid (empty-but-well-formed) queue + can reach the completion command that writes the
+stack flag. The B1/B2/B3 + r4 scaffolding stays and feeds this.

@@ -258,3 +258,57 @@ The LR primitive + exit-code path are built+tested and are needed by A and C (an
 B's leaf-task path). RECOMMENDATION: evaluate B (LLE the PM) vs A/C -- B is the principled
 fix and reuses our SPU recompiler; A/C are faster but fragile. This is a strategy decision
 for the next push, not a quick patch.
+
+---
+# OPTION B chosen — reimplement the SPURS taskset Policy Module (clean-room, RPCS3-faithful)
+
+RPCS3 HLEs the SPURS SPU kernel/PM in C++ (cellSpursSpu.cpp) and runs real leaf tasks.
+We do the same: build a PM layer that sets up the real shared-memory structures + LS
+context the leaf task expects, schedules our lifted leaf task, and handles its syscalls.
+Reference contracts (reimplement clean, no GPL copy):
+
+STRUCT LAYOUTS (from RPCS3 cellSpurs.h):
+- CellSpursTaskset (main memory, alignas 128): atomic bitsets running/ready/pending_ready/
+  enabled/signalled/waiting at 0x00/0x10/0x20/0x30/0x40/0x50; spurs ptr 0x60; args 0x68;
+  enable_clear_ls 0x70; wkl_flag_wait_task 0x72; last_scheduled_task 0x73; wid 0x74;
+  x78 (= on-task-exit handler EA) 0x78; TaskInfo task_info[128] @0x80 (48 B each: args 0x00,
+  elf 0x10, context_save_storage|alloc_ls_blocks 0x18, ls_pattern 0x20); size 0x1890;
+  event_flag_id1 0x1898; event_flag_id2 0x189C. (DeS: taskset @0x45B4B300, size=10496.)
+- SpursTasksetContext (LS @0x2700, 0x900 B): taskset ptr 0x27B8; spuNum 0x27CC; dmaTagId
+  0x27D0; taskId 0x27D4; savedContextLr 0x2C80; savedContextSp 0x2C90; savedR80..R127
+  0x2CA0; savedFpscr 0x2FA0; savedEventMask 0x2FB4; x2FC0/x2FC8; taskExitCode 0x2FD0;
+  x2FD4 0x2FD4.
+DISPATCH (spursTasksetDispatch): SELECT_TASK from ready&enabled bitsets -> DMA task_info
+[taskId] to LS 0x2780 -> load the task ELF (ls_pattern) -> savedContextLr=entry ->
+branch into the task. Syscalls via `stop <code>` -> spursTasksetProcessSyscall:
+EXIT(0)->onTaskExit (load handler @taskset.x78 / ctx.x2FC0 to LS 0x10000, run with
+r5=exitCode), YIELD(1), WAIT_SIGNAL(2), POLL(3), RECV_WKL_FLAG(4).
+
+## Option-B phases
+- **B1 (structs):** define CellSpursTaskset / SpursTasksetContext / TaskInfo at the real
+  offsets (shared header). Unit-testable struct-size asserts (CHECK_SIZE analog).
+- **B2 (create path):** rewrite cellSpursCreateTaskset to build the real taskset (bitsets
+  cleared, spurs/args/wid/x78/size/event_flag_ids set); cellSpursCreateTask to write
+  task_info[taskId] (args/elf/context/ls_pattern) AND set ready|enabled bits for the task.
+  This is what populates the structures the leaf task + PM read (fixes the 0x0/zeroed
+  reads). Keep our exit-code wiring (eaExitCode -> ctx).
+- **B3 (PM dispatch):** before running the leaf task, run the PM: build SpursTasksetContext
+  @LS 0x2700, SELECT_TASK (find ready&enabled), DMA its TaskInfo, set up the task-start
+  ABI + LS per ls_pattern, branch to the leaf entry. Replaces the raw
+  spu_workload_dispatch_task. Reuses our SPU run + the stop-code path.
+- **B4 (syscalls):** on the leaf task's `stop <code>` (ctx->stop_code, already preserved),
+  dispatch EXIT->onTaskExit (write exit code + run the handler), YIELD/WAIT_SIGNAL via the
+  taskset bitsets + the SPURS EventFlag (cellSpursEventFlagSet/Wait, which we have PPU-side)
+  + LR delivery (Phase 1a) for the SPU wait.
+- **B5 (completion):** the leaf task / onTaskExit publishes the result (DMA to 0x01B51000)
+  + signals the EventFlag -> lv2 event queue 1 -> the PPU thread in event_queue_receive(q=1)
+  wakes; func_00A31158 releases. Integration test: boot past the SPURS gate, no panic.
+
+## Open question to resolve early in B2/B3
+What is 0x48037A00 (the leaf task's getllar control, NOT inside the taskset @0x45B4B300)?
+Candidates: the SPURS object's workload/queue control, or the SPURS EventFlag's main-mem
+control. Identify it (trace the leaf task's source of that EA, or the event-flag/spurs
+object layout) -- B2 must initialize THAT structure too, not just the taskset.
+
+## First concrete step: B1 + locating 0x48037A00
+Define the structs (B1) and resolve what allocates/owns 0x48037A00 so B2 initializes it.

@@ -1261,3 +1261,28 @@ write-label/SET_REFERENCE in the pushbuffer at 0x381Dxxxx), or (b) a cellGcm lab
 the game makes -- then have our HLE GCM/RSX write label 255 to the expected value when the
 corresponding submit/flush happens. This is the RSX/GCM frontier (see memory
 frontier-rsx-gcm), now the precise thing gating boot.
+
+### 15cc. FRONTIER #10 RESOLVED: RSX writes GCM label 255 -> boot reaches engine init [2026-06-30]
+
+The RSX command stream writes label 255 via NV4097 semaphore methods (found via RSX_MLOG):
+  method 0x1D6C (SET_SEMAPHORE_OFFSET) = 0xFF0  (= label 255 * 0x10, base 0x03000000)
+  method 0x1D70 (BACK_END_WRITE_SEMAPHORE_RELEASE) = value (fence 0x10000,0x20000,0x30000..)
+Our RSX parser (rsx_process_command_buffer/rsx_process_method) decoded these methods but had
+NO handler for them -> label 255 never written -> func_009F94A8 polled it forever.
+
+FIX (rsx_commands.c): handle 0x1D6C (store state->sema_offset) and 0x1D70/0x1D88 (write the
+value to GCM label area 0x03000000 + offset via vm_write32). The methods are in the
+processed buffer (not behind an unfollowed JUMP), so just adding the handler suffices.
+
+RESULT -- HUGE: func_009F94A8's label-255 wait clears and boot CASCADES into full game-engine
+init: Havok physics (hkSpuUtil Helper, Havok PPU Thread), audio (MOMainThread/Streaming/
+Mixer), Demon's Souls save/load (DsSaveLoadMan::AsyncGetHddFreeSizeThread, SLSession),
+NexusRevolution Event/Main, HighGraphics, cellGcmSetFlipMode(2). No regression (image=2/7
+still fine). This is far past the SPURS+RSX gates -- into real subsystem bring-up.
+
+NEW FRONTIER (#11): parked at cellSysutilCheckCallback + cond_wait(cond=2) (160x). Likely
+the cellSysutil callback pump / the game waiting on a system callback or a worker sync.
+(Refinement noted: 0x1D88 TEXTURE_READ_SEMAPHORE_RELEASE currently shares sema_offset with
+0x1D70 and writes a constant 0x1000 to label 255 -- harmless so far, but it may need its own
+offset/label; revisit if a downstream label wait misbehaves.) NEXT: characterize the cond=2
+/ cellSysutil wait -- is it a missing system callback, or genuine steady-state?

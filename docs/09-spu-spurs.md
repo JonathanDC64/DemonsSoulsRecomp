@@ -1130,3 +1130,39 @@ the table LS region is ever written/DMA'd. This is image=7's own SPU bring-up (i
 tables), distinct from the SPURS scheduling work (Part A, done).
 
 Part A (deferred scheduling) remains correct + committed; it is orthogonal to this.
+
+### 15y. image=7 RUNS CLEANLY: the missing piece was syscallAddr (PM task-syscall entry) [2026-06-30]
+
+Traced image=7's first failure (null fn-ptr call at link 0x17C00) to func_00017BD8:
+  r7 = LS[0x2FB0]; r6 = rotqbyi(r7,8)  -> r6.w0 = LS[0x2FB8] = tasksetMgmtAddr = 0x2700
+  r2 = r6 + 0xC4 = 0x27C4;  r4 = LS[0x27C4];  pc = r4   (call)
+LS 0x27C4 = the SpursTasksetContext **syscallAddr** field (RPCS3 cellSpurs.h:
+SpursTasksetContext.syscallAddr @0x27C4, kernelMgmtAddr @0x27C0). Our build_context left it
+0 -> null call -> the whole 0xA73400E8 / 0x80410911 (CELL_SPURS_TASK_ERROR_NULL_POINTER)
+cascade. And func_00017BD8 sets r3=0 first, so the syscall is num 0 = EXIT: image=7 was just
+trying to EXIT via the PM, but syscallAddr=0 sent it to null.
+
+RPCS3 contract: kernel sets ctxt->syscallAddr = CELL_SPURS_TASKSET_PM_SYSCALL_ADDR (0xA70);
+a task branches there; the PM syscall entry runs spursTasksetProcessSyscall(num=r3.w3,
+args=r4.w3) -> EXIT/YIELD/WAIT_SIGNAL/POLL/RECV_WKL_FLAG, then resumes/ends the task.
+
+FIX:
+ - spurs_pm.c build_context now writes syscallAddr=0xA70 and kernelMgmtAddr=0x100 into the
+   SpursTasksetContext (STC_SYSCALL_ADDR/STC_KERNEL_MGMT_ADDR).
+ - spu_channels.c spu_indirect_branch INTERCEPTS a branch to LS 0xA70 and HLEs the task
+   syscall (spu_spurs_taskset_syscall): EXIT -> clean `stop 0` + halt (post-run exit-code
+   write fires); YIELD/WAIT/POLL/RECV_WKL_FLAG -> return success + resume. (We don't have
+   the real PM resident in LS, so we HLE its syscall entry -- matches RPCS3 registering an
+   HLE function at 0xA70.)
+
+RESULT: image=7 now reaches `SPURS taskset syscall num=0 (EXIT)` and RETURNS rc=0 -- ZERO
+errors (no null branch, no 0xA73400E8, no 0x80410911). The crash cascade is fully gone.
+No regression: image=2 still crosses its gate (input/GCM init reached); image=2 doesn't use
+the syscall path.
+
+REMAINING (Part C, completion notification): image=7 exits cleanly but the PPU still spins
+(event_queue_receive(q=5) + HOTREAD64 0xD002AD50 @ cia=0x009F9604) -- nothing notifies it of
+completion. NEXT: on task EXIT, notify the PPU -- post to lv2 event queue 5 and/or invoke
+the taskset on-exit handler (taskset->x78, RPCS3 spursTasksetOnTaskExit: PPU handler called
+with taskset,taskId,exitCode,args -> posts the event / writes the completion flag). Need to
+find where the q=5 post / 0xD002AD50 write comes from (x78 handler vs the task's own post).

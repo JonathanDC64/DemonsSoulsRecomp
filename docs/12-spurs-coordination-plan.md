@@ -106,3 +106,19 @@ Who actually produces the result? Two candidate models — Phase 0 resolves whic
 ## 5. Immediate next action
 Phase 0, step 2 — **find who invokes the two PPU callbacks and with what `r3`.** That
 single fact (PPU handler vs SPU-only) determines the entire scope below it.
+
+---
+## Phase 0 progress (started)
+
+- **Callback ABI found:** `func_00A662C8(r3 = object)`; it does `r3 += 8` then the
+  cellSpurs/cellSync LFQueue op on `object+8` — so `r3` is a manager/job object with its
+  **LFQueue at +8**. At a real call site (cia 0x0005D3C4) `r3 = r28` (an object ptr).
+- **Dual-use:** `func_00A662C8`/`func_00A663A0` are called DIRECTLY by game PPU code at
+  many `0x0005xxxx` sites AND registered as the SPURS task's callbacks (the arg). So they
+  are ordinary PPU queue-worker methods; the SPURS task just defers running them.
+- **Implication for scope:** if a PPU-side DLSpursManager handler runs these callbacks
+  (Model PPU-only), reconstructing `r3` (the manager object, LFQueue at +8) + our existing
+  cellSync LFQueue may suffice — no SPU-kernel emulation. NEXT Phase-0 sub-steps: (a) find
+  the object `r28` here (what manager owns the LFQueue) and whether the SPURS-arg path
+  passes the same object; (b) confirm whether a PPU handler thread already runs these on
+  schedule, or only the SPU coordinator would. That picks Model PPU-only vs SPU-coordinated.

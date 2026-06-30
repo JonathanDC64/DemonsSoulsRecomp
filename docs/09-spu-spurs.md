@@ -1024,3 +1024,25 @@ function-pointer table in a deeper structure. So the remaining work is image=7's
 multi-level data graph / fn-ptr-table setup -- a focused per-image bring-up. NEXT: dump the
 second-level structs (0x477FF580/0x477FD410/0x477E7500) to find the null/garbage fn-ptr
 slot, and per-task slots in spurs_create_task_core (the game makes 3 image-7 tasks).
+
+### 15u. image=7 bad pointer is COMPUTED, not in data; 2nd-level structs mapped [2026-06-30]
+
+Recursed the [argdump] one level into image=7's arg structures. The full tree:
+  arg[0]=0x477FE220: -> 0x477FF580:{0x477F3A80, 0...}  -> 0x477FD410:{0x42040000, 0x42040000, 0...}
+  arg[1]=0x477FD800: {0,0, FFFFFFFF FFFFFFFF, 0,0, 0x22, 0}   (mask + count=0x22)
+  arg[2]=0x477FE600: -> 0x477E7500:{ALL ZEROS}
+0xA73400E8 (the bad GET source) appears NOWHERE in the data -> image=7 COMPUTES it on the
+SPU from this data. Notable: 0x477E7500's struct is all-zeros (uninitialized) -> reading a
+fn-ptr/size from it yields 0 (matches the branch-to-LS-0, r3=0). And 0x42040000 / 0x477F3A80
+are the live inputs. So image=7's halt is a SPU-side computation producing a bad DMA EA
+(0xA73400E8) and a null fn-ptr -- either a lifter miscompile in image=7 (cf the rotl-by-0
+bug) or it consuming the zeroed/under-initialized 0x477E7500 struct.
+
+The DMA EAL is computed through many functions/registers (MFC_EAL written from gpr[21]/
+gpr[55]/gpr[54] at various sites), so isolating the 0xA73400E8 computation needs runtime
+register-provenance tracing at the image=7 MFC_EAL write site, then back-tracing that
+register. NEXT (focused per-image dive): (1) log image=7 MFC_EAL writes with the producing
+LS address, (2) back-trace the register chain to the source LS field, (3) decide lifter-bug
+vs zeroed-0x477E7500-dependency. Plus the per-task-slot fix (game makes 3 image-7 tasks).
+This is image=7's own multi-step bring-up, analogous to the image=2 leaf (which took several
+passes). The argdump/qlog diagnostics are in place to drive it.

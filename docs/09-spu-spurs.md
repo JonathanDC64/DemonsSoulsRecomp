@@ -763,3 +763,27 @@ TWO PATHS to release func_00A31158 (the task exit-code wait):
 RECOMMEND: try B as a probe to unblock + reveal the next gate (the scout already showed
 input init + more downstream), then build A properly. Either way step-1 stop-code +
 the EXIT=stop0 + onTaskExit contract are the foundation.
+
+### 15m. Reconciliation: the func_00A31158 blocker is a RESULT-SLOT handoff, not the exit code [2026-06-29]
+
+Foundation A (fork 9404ead) implemented the 3 stubbed task exit-code setup NIDs
+(cellSpursTaskAttributeSetExitCodeContainer/TaskExitCodeInitialize/TasksetAttribute-
+SetTasksetSize); verified bound+firing, the exit-code container EA is captured
+(0x45B4DC80). BUT reconciling the addresses IN ONE RUN shows the boot blocker is a
+DIFFERENT thing:
+  exit-code container        = 0x45B4DC80   (Foundation A)
+  func_00A31158 wait: r26=0x01B51000 (= *(r30-0x7FEC), a global), [r26+0]=0,
+                      [r26+0x80]=0x45A4B280
+The wait spins until [r26+0] == [r26+0x80]=0x45A4B280, i.e. until a producer writes the
+result pointer 0x45A4B280 into the global slot at 0x01B51000. That is a RESULT/PROMISE
+handoff, NOT the task exit-code container. (The scout confirmed: forcing [r26+0] alone
+released the wait.)
+
+CONCLUSION/COURSE-CORRECTION: Foundation A is correct + part of the SPURS task lifecycle
+(cellSpursTaskExitCodeTryGet/Join read 0x45B4DC80), but it does NOT release func_00A31158.
+The blocker needs the WORK to be PRODUCED -- the DLSpursManager task (a coordinator whose
+arg is two PPU callbacks func_00A662C8/func_00A663A0) must run the callbacks so they
+publish 0x45A4B280 to [0x01B51000]. So the direct unblock is PATH B (run the two PPU
+callbacks via ppu_guest_call(TOC=0x019B5040) at cellSpursCreateTask), and the exit-code
+mechanism (Foundation A/B) is the separate task-lifecycle path. NEXT: probe Path B --
+run the callbacks, check whether [0x01B51000] gets 0x45A4B280 (released) and what runs.

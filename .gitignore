@@ -28,6 +28,12 @@ keys.txt
 *.paramdef
 *.esd
 
+# Ghidra headless decompiler OUTPUT is game-derived (decompiled EBOOT) — never
+# commit. The tools/ghidra/*.java + dump.sh scripts ARE tracked (not derived).
+tools/ghidra/*.txt
+tools/ghidra/*.log
+ghidra_*.txt
+
 # -------------------------------------------------------------------------
 # Build / generated
 # -------------------------------------------------------------------------

@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(cmake --build *)",
+      "Bash(./port/build/des_boot.exe *)",
+      "Bash(timeout * ./port/build/des_boot.exe *)",
+      "Bash(tools/des/rlog.sh *)",
+      "Bash(bash tools/des/rlog.sh *)",
+      "Bash(tools/des/desrun.sh *)",
+      "Bash(bash tools/des/desrun.sh *)",
+      "Bash(tools/des/build.sh *)",
+      "Bash(bash tools/des/build.sh *)"
+    ]
+  }
+}

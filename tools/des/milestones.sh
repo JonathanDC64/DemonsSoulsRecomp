@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# milestones.sh -- boot des_boot and report how far it progressed against an ORDERED
+# list of known boot milestones. A regression safety net: run before/after any change
+# to see if the boot advanced, held, or regressed -- and to bisect.
+# Whitelist as: Bash(tools/des/milestones.sh *)
+#
+# Usage: milestones.sh [timeout_sec]   (default 45)
+#   env passthrough: any VAR=val after the timeout is exported to des_boot.
+set -uo pipefail
+cd "$(dirname "$0")/../.." || exit 1
+TIMEOUT="${1:-45}"; shift || true
+SCRATCH="/c/Users/jonat/AppData/Local/Temp/claude/c--dev-projects-demons-souls-pc-port/e916f056-9f0d-434a-81ed-1ea83209d4b0/scratchpad"
+OUT="$SCRATCH/milestones_run.txt"
+export PS3_VFS_ROOT="D:/Users/jonat/Documents/roms/ps3/Demon's Souls (USA)"
+for kv in "$@"; do export "$kv"; done
+timeout "$TIMEOUT" ./port/build/des_boot.exe work/game/EBOOT.ELF > "$OUT" 2>&1
+rc=$?
+
+# Ordered milestones: "label<TAB>grep-ERE". Each must appear in the log to count as reached.
+# Patterns match our RUNTIME log lines (prefixed), NOT import/registration lines.
+MS=(
+  "D3D12 backend ready|D3D12\] Backend ready"
+  "SPURS init|cellSpurs\] InitializeWithAttribute"
+  "cellUserInfo stat|cellUserInfo\] GetStat"
+  "HighGraphics thread|sys_ppu_thread_create name=\"HighGraphics\""
+  "Core.Res subsystem|sys_ppu_thread_create name=\"Core.Res.Decompressor\""
+  "Core.Res.FileLoader|sys_ppu_thread_create name=\"Core.Res.FileLoader\""
+  "Havok PPU Thread|sys_ppu_thread_create name=\"Havok PPU Thread\""
+  "MO audio|sys_ppu_thread_create name=\"MOMainThread\""
+  "NexusRevolution Main|sys_ppu_thread_create name=\"NexusRevolution Main\""
+  "DsSaveLoadMan|sys_ppu_thread_create name=\"DsSaveLoadMan"
+  "SLSession thread|sys_ppu_thread_create name=\"SLSession\""
+  "cellGameDataCheckCreate2 CALL|cellGame\] DataCheckCreate2\(version"
+  "AsyncHddThread EXITS (frontier)|entry RETURNED.*(0x[0-9A-F]+).*AsyncGetHddFreeSize|\[watch\].*AsyncHdd.*exit"
+  "cellSaveDataAutoLoad2 (DIALOG)|cellSaveData\].*AutoLoad|cellSaveDataAutoLoad2\("
+)
+
+echo "=== des_boot milestones (exit=$rc, $(wc -l < "$OUT") lines) ==="
+reached=0; frontier=""
+for i in "${!MS[@]}"; do
+  label="${MS[$i]%%|*}"; pat="${MS[$i]#*|}"
+  if grep -aqE "$pat" "$OUT"; then
+    printf "  [x] %2d. %s\n" "$((i+1))" "$label"; reached=$((i+1))
+  else
+    printf "  [ ] %2d. %s\n" "$((i+1))" "$label"; [ -z "$frontier" ] && frontier="$label"
+  fi
+done
+crash=$(grep -acE '\[CRASH\]|panic|Runtime error' "$OUT")
+echo "--- reached $reached/${#MS[@]} milestones; first unmet = ${frontier:-<all met!>}; crash-markers=$crash"
+[ "$crash" -gt 0 ] && echo "    WARNING: crash/panic markers present (may be the non-fatal SPU race)"

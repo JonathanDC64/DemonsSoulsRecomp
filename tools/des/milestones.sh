@@ -31,7 +31,7 @@ MS=(
   "DsSaveLoadMan|sys_ppu_thread_create name=\"DsSaveLoadMan"
   "SLSession thread|sys_ppu_thread_create name=\"SLSession\""
   "cellGameDataCheckCreate2 CALL|cellGame\] DataCheckCreate2\(version"
-  "AsyncHddThread EXITS (frontier)|entry RETURNED.*(0x[0-9A-F]+).*AsyncGetHddFreeSize|\[watch\].*AsyncHdd.*exit"
+  "init worker threads exit (game-data path done)|\[SYS\] sys_ppu_thread_exit\(tid=1[0-9] "
   "cellSaveDataAutoLoad2 (DIALOG)|cellSaveData\].*AutoLoad|cellSaveDataAutoLoad2\("
 )
 
@@ -48,3 +48,8 @@ done
 crash=$(grep -acE '\[CRASH\]|panic|Runtime error' "$OUT")
 echo "--- reached $reached/${#MS[@]} milestones; first unmet = ${frontier:-<all met!>}; crash-markers=$crash"
 [ "$crash" -gt 0 ] && echo "    WARNING: crash/panic markers present (may be the non-fatal SPU race)"
+# Thread liveness summary -- CRUCIAL: thrdiag 'running/waiting' is STALE for EXITED
+# threads, so cross-check here before ever calling a thread "hung".
+created=$(grep -acE 'host thread started' "$OUT")
+exited=$(grep -acE '\[SYS\] sys_ppu_thread_exit|entry RETURNED' "$OUT")
+echo "--- threads: created=$created  exited(exit/returned)~=$exited  (a thread that RETURNED is NOT hung, whatever thrdiag says)"

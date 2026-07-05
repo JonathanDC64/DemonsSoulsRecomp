@@ -94,6 +94,26 @@ not the cond signal itself. Next P2 step: find what MAIN's cond-29 loop DEQUEUES
 each cycle (the message object/queue at 0x01ADD640) and which producer should
 enqueue the "advance" message on SPU-task completion.
 
+### Phase 2 — PIECEMEAL BUILD LOG (started 2026-07-05)
+- **Piece 1 ✅ (commit a572fcf):** CellSpursTaskset side-effects on leaf run
+  (running/enabled bits + wklCurrentContention, spurs_taskset_task_start/done in
+  cellspurs_layout.c, wired in spu_workload.c, gated SPURS_LV2THREADS). Verified
+  milestone STABLE@13, no regression. Scheduler-coherence groundwork (A-R6), not
+  the unblock. With this, "all tasks done" is now observable as taskset running==0
+  + contention==0 (A-R5.3) for any poll-based waiter.
+- **Piece 2 (NEXT):** determine the completion CONTENT the current gate needs.
+  MAIN's cond-29 is a live loop (reframe) — instrument what MAIN's cond-29 loop
+  (func_00B498E8 → func_00A662C8 dispatch) DEQUEUES each cycle, and precisely
+  separate the DLEvent (func_009E0148 Set) from the sorted-vector queue in
+  0x01ADD640 (caveat: func_00AE0BE8/func_00AE4D38 are GENERIC STL helpers — the
+  "cond-29 == Core.Res queue" link is unconfirmed; may be a different vector).
+  Output routes: (2a) if a waiter is event-flag based → cellSpursEventFlagSet on
+  leaf completion (A-R6.7); (2b) if it needs a message enqueued + DLEvent Set →
+  produce that content on the mapped SPU-task completion.
+- **Piece 3+:** wire the identified producer to the specific SPU leaf completion
+  (image=2 for HighGraphics per B; the Core.Res decompression leaf for the
+  resource path); verify each via repro.sh distribution shift.
+
 ### Phase 2 — SPU task-completion → MAIN's advance-message content (THE ROOT, ~2–4d) [refocused by P1 + the loop finding]
 Make each SPU leaf's completion reproduce the **task-body completion signal** the PPU
 waiter expects (A-R4.1/R7.2), + the scheduler side-effects (A-R6).

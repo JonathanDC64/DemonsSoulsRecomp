@@ -147,6 +147,21 @@ enqueue the "advance" message on SPU-task completion.
   polls. This is the deeper content chain; the milestone advanced MAIN one phase
   but the dialog needs this transition trigger. Long incremental grind (per docs/19
   honest scope): each pre-title phase produces content that advances the next.
+
+- **CRUX PINNED (2026-07-05): image=2 never completes -> HighGraphics cond-2.**
+  Diffed the current SPURS_LV2THREADS build vs a fresh RPCS3 Trace log. Full thread
+  parity with RPCS3 now. Busiest gate = HighGraphics WAITING cond-2 waits=1221
+  (cond-2 DLEvent obj=0x45A4A678, mutex 0x444) after cellSpursCreateTaskWithAttribute.
+  ROOT: image=2 (graphics SPURS command dispatcher, ELF entry 0x0177C200, taskset
+  0x45B4B300) ENTERs but NEVER RETURNs (image=7/Havok returns 12x; image=2 zero).
+  SPU_DISPATCH_LOG shows image=2 alternating handlers LS 0x0507C/0x04F74 over a
+  GARBAGE command queue (head/tail at LS 0x13400/0x13480 all 0x??B?A445, marching)
+  -> no terminator -> infinite dispatch -> no completion -> cond-2 stuck -> Core.Res
+  starved, MAIN cycles cond-13 w/o content, SLSession parked sema-3, no dialog.
+  NEXT BRICK: trace image=2's command-queue SOURCE EA (the DMA feeding LS 0x13400/
+  0x13480) + find/verify the PPU graphics producer that should fill it. Bare cond-2
+  force-signal = degenerate frames (docs/17 B) -> must feed a REAL command stream.
+  This is the project's core SPU producer/two-worlds wall, now pinned to one object.
 - **Piece 4+:** wire the identified producer to the specific SPU leaf completion
   (image=2 for HighGraphics per B; the Core.Res decompression leaf for the
   resource path); verify each via repro.sh distribution shift.

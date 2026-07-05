@@ -110,6 +110,17 @@ enqueue the "advance" message on SPU-task completion.
   Output routes: (2a) if a waiter is event-flag based → cellSpursEventFlagSet on
   leaf completion (A-R6.7); (2b) if it needs a message enqueued + DLEvent Set →
   produce that content on the mapped SPU-task completion.
+- **Piece 2 finding (2026-07-05):** RESOLVED — `0x01ADD640` is **heap-reused**.
+  WWATCH shows a clean phase split: pointer-writes (sorted-vector backing store,
+  0x01B39xxx node ptrs) at log lines 22–2208, then a DLEvent flag-cycle
+  (0x80000000/0x40000000, mutex 0x461/cond 0x1D) at lines 5410–5544, NO interleave.
+  So MAIN's cond-29 is a **DLEvent message-pump notifier, NOT the Core.Res sorted
+  queue** (the connection was a heap-reuse artifact — the func_00AE0BE8/generic-STL
+  caveat was correct). MAIN's main loop (func_00B498E8) waits on this DLEvent each
+  iteration for the next message; it cycles fine (reframe) but the "advance to
+  title" message is never produced. NEXT sub-step: find which func_009E0148 (Set)
+  call site Sets MAIN's cond-29 DLEvent + what message/state MAIN reads after the
+  wake (func_009DFC70/func_00B5D228 in the loop), to identify the content producer.
 - **Piece 3+:** wire the identified producer to the specific SPU leaf completion
   (image=2 for HighGraphics per B; the Core.Res decompression leaf for the
   resource path); verify each via repro.sh distribution shift.

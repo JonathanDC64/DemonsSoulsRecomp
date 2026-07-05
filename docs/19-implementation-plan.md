@@ -132,10 +132,21 @@ enqueue the "advance" message on SPU-task completion.
   Both cond-29 and cond-13 are live cycling loops (waits 104+) starving for content;
   MAIN walks through them as each phase's content is produced. `SPURS_RELEASE_COND=13`
   fires 0× (its pending-counter isn't set for cond-13 — wrong mechanism).
-- **Piece 3 (NEXT):** produce cond-13's content = the Havok (image=7) SPU-task
-  completion the func_01328BB8 barrier waits for. Find who signals cond-13 (obj
-  0x477E328C) on Havok completion + wire image=7 leaf completion to it. NOTE it's a
-  cycling loop, so this is per-frame Havok completion, not a one-shot signal.
+- **Piece 3 REVISED (2026-07-05): cond-13 is a red herring — do NOT wire it.**
+  cond-13/func_01328BB8 is a per-frame Havok sync (predicate = count at obj+0x1F0
+  drained by SPU completions). MAIN cycles it fine (waits=104). Cascade check with
+  SPURS_LV2THREADS: MAIN reaches the frame loop (cellPadGetData) but SLSession stays
+  dormant, cellSaveDataAutoLoad2 not reached, no new late threads, milestone still
+  13/14. So MAIN advanced *within* pre-title loading (loading loop -> frame loop)
+  but does NOT transition to title/dialog. cond-13 is NOT the dialog gate (matches
+  old work: releasing func_01328BB8 lets MAIN tick then re-wait, no advance).
+- **Piece 3 (real NEXT):** find what triggers MAIN's transition FROM the pre-title
+  frame loop TO the title/dialog sequence (which runs the DsSaveLoadMan submit ->
+  SLSession sema-3 -> cellSaveDataAutoLoad2). Prime suspect: a resource/asset load
+  completion (Core.Res, still starved) or a specific game-state flag the frame loop
+  polls. This is the deeper content chain; the milestone advanced MAIN one phase
+  but the dialog needs this transition trigger. Long incremental grind (per docs/19
+  honest scope): each pre-title phase produces content that advances the next.
 - **Piece 4+:** wire the identified producer to the specific SPU leaf completion
   (image=2 for HighGraphics per B; the Core.Res decompression leaf for the
   resource path); verify each via repro.sh distribution shift.

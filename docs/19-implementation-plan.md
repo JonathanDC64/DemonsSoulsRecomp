@@ -65,7 +65,18 @@ missing). Determine which:
 resource-pipeline barrier gated on the decompression leaf (→ Phase 2 + Phase 3).
 Files: instrument sys_cond.c (cond-29 probe exists), sys_event.c; analyze with spurs_trace.py.
 
-### Phase 2 — SPU task-completion → event-flag propagation (THE ROOT, ~2–4d)
+### Phase 1 RESULT (2026-07-05): STARVED, not stuck — refocus P2 on MAIN cond-29
+Ran 6× with SPURS_LV2THREADS=1 + the ef-wait probe: `cellSpursEventFlagWait` is
+**never reached** (0 calls) and Core.Res.Decompressor is dormant `lastHLE=-(#0)`
+on cond-5 in all 6 runs. So the Decompressor's event-flag is NOT the active
+gate — it's never dispatched a first request (pipeline STARVED, confirming the
+Core.Res-dormancy study). **The active root is MAIN's cond-29 producer**, upstream
+of the title/menu code that feeds Core.Res. So P2 targets **what signals MAIN's
+cond-29** (object 0x01ADD640) directly, NOT the Decompressor eventflag (that
+becomes relevant only after MAIN advances + the pipeline starts). The force-satisfy
+shim in cellSpursEventFlagWait is currently moot (unreached under SPURS_LV2THREADS).
+
+### Phase 2 — SPU task-completion → MAIN cond-29 signal (THE ROOT, ~2–4d) [refocused by P1]
 Make each SPU leaf's completion reproduce the **task-body completion signal** the PPU
 waiter expects (A-R4.1/R7.2), + the scheduler side-effects (A-R6).
 - **2a. Map each waiter → its event-flag** (A-R8): for Core.Res.Decompressor

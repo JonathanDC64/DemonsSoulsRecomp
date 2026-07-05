@@ -36,17 +36,24 @@ MS=(
 )
 
 echo "=== des_boot milestones (exit=$rc, $(wc -l < "$OUT") lines) ==="
-reached=0; frontier=""
+# reached = highest index whose pattern matched (monotonic: a missed intermediate
+# grep due to SPU-race noise no longer understates progress -- docs/18 domain D R3).
+reached=0
+for i in "${!MS[@]}"; do
+  pat="${MS[$i]#*|}"
+  if grep -aqE "$pat" "$OUT"; then reached=$((i+1)); fi
+done
 for i in "${!MS[@]}"; do
   label="${MS[$i]%%|*}"; pat="${MS[$i]#*|}"
-  if grep -aqE "$pat" "$OUT"; then
-    printf "  [x] %2d. %s\n" "$((i+1))" "$label"; reached=$((i+1))
-  else
-    printf "  [ ] %2d. %s\n" "$((i+1))" "$label"; [ -z "$frontier" ] && frontier="$label"
-  fi
+  if grep -aqE "$pat" "$OUT"; then printf "  [x] %2d. %s\n" "$((i+1))" "$label"
+  else printf "  [ ] %2d. %s\n" "$((i+1))" "$label"; fi
 done
+# next gate = first unmet milestone AFTER the highest reached (not the first noisy gap)
+frontier="<all met!>"
+if [ "$reached" -lt "${#MS[@]}" ]; then frontier="${MS[$reached]%%|*}"; fi
 crash=$(grep -acE '\[CRASH\]|panic|Runtime error' "$OUT")
-echo "--- reached $reached/${#MS[@]} milestones; first unmet = ${frontier:-<all met!>}; crash-markers=$crash"
+echo "--- reached $reached/${#MS[@]} milestones (monotonic); next gate = ${frontier}; crash-markers=$crash"
+echo "    NOTE: boot is nondeterministic -- use tools/des/repro.sh N for a reliable distribution."
 [ "$crash" -gt 0 ] && echo "    WARNING: crash/panic markers present (may be the non-fatal SPU race)"
 # Thread liveness summary -- CRUCIAL: thrdiag 'running/waiting' is STALE for EXITED
 # threads, so cross-check here before ever calling a thread "hung".

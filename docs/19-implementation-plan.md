@@ -121,7 +121,22 @@ enqueue the "advance" message on SPU-task completion.
   title" message is never produced. NEXT sub-step: find which func_009E0148 (Set)
   call site Sets MAIN's cond-29 DLEvent + what message/state MAIN reads after the
   wake (func_009DFC70/func_00B5D228 in the loop), to identify the content producer.
-- **Piece 3+:** wire the identified producer to the specific SPU leaf completion
+- **MILESTONE (2026-07-05, commit c89c298):** the substrate (event-helper P-A/P-B
+  + piece-1 taskset side-effects, SPURS_LV2THREADS) **reproducibly advances MAIN
+  from cond-29 → cond-13** — 3/3 runs each way (default=cond-29, substrate=cond-13),
+  deterministic (not crash-noise). MAIN's lastHLE is now `cellPadGetData` = it
+  reached the **frame/input loop** (past the earlier loading loop). cond-13's object
+  0x477E328C, wait chain `func_01328BB8` = the **Havok SPURS completion barrier**
+  (the project's long-known core gate, formerly cond-9). This is the first
+  measurable, reproducible forward advance of MAIN from the SPURS-runtime work.
+  Both cond-29 and cond-13 are live cycling loops (waits 104+) starving for content;
+  MAIN walks through them as each phase's content is produced. `SPURS_RELEASE_COND=13`
+  fires 0× (its pending-counter isn't set for cond-13 — wrong mechanism).
+- **Piece 3 (NEXT):** produce cond-13's content = the Havok (image=7) SPU-task
+  completion the func_01328BB8 barrier waits for. Find who signals cond-13 (obj
+  0x477E328C) on Havok completion + wire image=7 leaf completion to it. NOTE it's a
+  cycling loop, so this is per-frame Havok completion, not a one-shot signal.
+- **Piece 4+:** wire the identified producer to the specific SPU leaf completion
   (image=2 for HighGraphics per B; the Core.Res decompression leaf for the
   resource path); verify each via repro.sh distribution shift.
 

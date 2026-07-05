@@ -76,7 +76,25 @@ cond-29** (object 0x01ADD640) directly, NOT the Decompressor eventflag (that
 becomes relevant only after MAIN advances + the pipeline starts). The force-satisfy
 shim in cellSpursEventFlagWait is currently moot (unreached under SPURS_LV2THREADS).
 
-### Phase 2 — SPU task-completion → MAIN cond-29 signal (THE ROOT, ~2–4d) [refocused by P1]
+### Phase 2 PRE-FINDING (2026-07-05): the gates are LIVE loops starving for CONTENT, not dead barriers
+WWATCH of MAIN's cond-29 DLEvent (0x01ADD640, +0xC state word) shows it CYCLING
+correctly: WAITER(0x40000000) → SIGNALED+WAITER(0xC0000000) → SIGNALED(0x80000000)
+→ ZERO → repeat, driven by func_009E0148 (DLEvent::Set) — signaled + consumed ~132×.
+So MAIN's cond-29 is NOT a stuck barrier; it's a live message/event loop (like
+HighGraphics's cond-2 frame loop, B) that MAIN cycles through, but the *content*
+it needs (the "init/resources done → advance to title" message) is never enqueued.
+IMPLICATION: P2 is NOT "signal an unsignaled cond". Both cond-29 (MAIN) and cond-2
+(HighGraphics) are healthy loops; the missing thing is the CONTENT/message that an
+upstream SPU-task completion should produce and hand to the loop. FORCE_COND_DONE
+spins the loop with no new content → premature/degenerate advance (explains all
+prior force-advance crashes). So P2's real objective: produce the completion CONTENT
+— the SPU task finishes → its result/message is delivered → MAIN's loop dequeues a
+real "advance" item. The lever is the message PRODUCER tied to the SPU completion,
+not the cond signal itself. Next P2 step: find what MAIN's cond-29 loop DEQUEUES
+each cycle (the message object/queue at 0x01ADD640) and which producer should
+enqueue the "advance" message on SPU-task completion.
+
+### Phase 2 — SPU task-completion → MAIN's advance-message content (THE ROOT, ~2–4d) [refocused by P1 + the loop finding]
 Make each SPU leaf's completion reproduce the **task-body completion signal** the PPU
 waiter expects (A-R4.1/R7.2), + the scheduler side-effects (A-R6).
 - **2a. Map each waiter → its event-flag** (A-R8): for Core.Res.Decompressor

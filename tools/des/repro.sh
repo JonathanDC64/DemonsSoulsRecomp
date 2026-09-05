@@ -13,7 +13,8 @@ set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 N="${1:-5}"; shift || true
 TIMEOUT="${1:-20}"; shift || true
-SCRATCH="/c/Users/jonat/AppData/Local/Temp/claude/c--dev-projects-demons-souls-pc-port/e916f056-9f0d-434a-81ed-1ea83209d4b0/scratchpad"
+# Session-independent scratch: override with DES_SCRATCH, else repo-local work/tmp.
+SCRATCH="${DES_SCRATCH:-$PWD/work/tmp}"; mkdir -p "$SCRATCH"
 OUTDIR="$SCRATCH/repro_$$"
 mkdir -p "$OUTDIR"
 export PS3_VFS_ROOT="D:/Users/jonat/Documents/roms/ps3/Demon's Souls (USA)"

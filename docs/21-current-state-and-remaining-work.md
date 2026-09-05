@@ -322,3 +322,61 @@ known — task argument words `0x01CE7A80` (word 1) and `0x01CE7800` (word 3, th
 context `0x01CE9E00`, entry `0x01832680`, dispatched as image 12. Trace what it DMAs after
 waking (`SPU_QLOG`, `SPU_ARGWATCH`) and who on the PPU side should have filled that buffer
 before signalling.
+
+---
+
+## 10. What task 1 actually is — and the exact remaining question
+
+**Correction to §9's "starving for content".** It is not starving. Tracing its transfers
+(`LBP_MFC_TRACE=2`, filtered to `img=12`) shows a **complete round of real work** between the
+two waits — 36 MFC transfers:
+
+```
+#1   GET   16 B  <- 0x01CE7A80    (its work descriptor, task-arg word 1)
+#2   GET  144 B  <- 0x01CE6D80
+#3   GET  128 B  <- 0x01D27300
+#22-25 GET 3136 B each             (source data, 4 streams)
+#26-29 PUT 16384 B each
+#30-34 GET/PUT 16384 B
+#35  PUT 8192 B  -> 0x60000000     <-- CELL_AUDIO_GUEST_BASE
+#36  PUT 8192 B  -> 0x60002000
+```
+
+`0x60000000` is `CELL_AUDIO_GUEST_BASE` — upstream's audio ring (moved off `0x01000000` in
+this merge). **Task 1 is Demon's Souls's SPU audio mixer, and it successfully mixes and writes
+PCM output.** DeS's audio engine is MO / "Magic Orchestra" (`magicorchestra2.mgs`,
+`demonsmixer.momd`), with `MOMainThread` / `MOMixerThread` / `MOStreamingThread` on the PPU.
+
+So the working sequence is now:
+
+```
+PPU MOMixer  --_cellSpursSendSignal(taskset,1)-->  SPU task 1 wakes
+SPU task 1   --mixes a full round, PUTs PCM to the cellAudio ring-->  done
+SPU task 1   --WAIT_SIGNAL again-->  parked
+PPU MOMixer  --cellSpursEventFlagWait(0x01CE7800)-->  blocked forever
+```
+
+### The exact remaining question
+
+**Nothing ever sets event flag `0x01CE7800`.** Established, not assumed:
+
+- `SPU_ATOM_EA=01CE7800` — **zero** atomic operations on the flag, ever.
+- Image 12 issues **only** taskset syscall `num=2` (WAIT_SIGNAL), twice
+  (`args=0x0000000A`, `link/r0=0x0F2F8`) — no flag-set syscall.
+- No MFC transfer targets `0x01CE7800`.
+- The PPU waiter reports `bits=0x0000` every second — the flag's event word never changes.
+
+So the completion edge the PPU waits on is simply never produced. On real SPURS the SPU-side
+`cellSpursEventFlagSet` is a task-library call; our lifted image 12 does not appear to reach
+it. Candidate explanations, in order of cheapness to test:
+
+1. The set is issued through a channel we swallow (mailbox / `WrOutIntrMbox`) rather than an
+   atomic or an MFC transfer. `SPU_CHHIST=1` is meant to answer this but produced no output in
+   a `timeout`-killed run — find its flush point or add one.
+2. Our `WAIT_SIGNAL` returns `rc=0` unconditionally; if the real syscall returns state the task
+   branches on, it may be taking a path that skips the notify.
+3. The task-library flag-set lives in a part of image 12 our lift halts before reaching.
+
+`SPURS_EF_SPU_REPLY=1` exists upstream as a deliberate *diagnostic bisect* (it fakes the SPU
+reply); it did not advance the boot earlier, but re-testing it now that the signal actually
+gets delivered is a cheap A/B that would confirm hypothesis-class (1)/(3) vs something later.

@@ -214,3 +214,70 @@ SPURS completion (A/C)
   Most are read once and cached, so they are launch-time settings.
 - **`spu_lockstep.c`** — lockstep interpreter-vs-lifted comparison, for catching lifter
   miscompiles in SPU code.
+
+---
+
+## 8. UPDATE — the oracle is wired, and it produced results
+
+`scripts/gen_taskset_policy_blob.py` + `port/CMakeLists.txt` now supply
+`g_taskset_policy_bytes` (7744 bytes, libsre vaddr 0x23680 = LS 0xA00..0x2840, base
+verified against the lifted first instruction `ila $2,0x20DB8`) and build the lifted
+policy under image id 100. The probe's image gate was hardcoded to LBP's image 3;
+it is now `REAL_POLICY_IMG` (DeS's event-flag producer is **image 12**).
+
+Run it with: `LBP_REAL_POLICY=1 REAL_POLICY_IMG=12`
+
+### What the authentic Sony policy told us
+
+**Finding 1 — a real divergence, found and fixed.** Our `spurs_pm_build_context`
+was clobbering the task's lsPattern with all-ones:
+
+```
+LS 0x27A0:  build=FFFFFFFF   real=03FFFFFF
+```
+
+The TaskInfo DMA already placed the game's own pattern there and the next four
+stores overwrote it. DeS's `cellSpursCreateTask` logs
+`lsp=03FFFFFF FFFFFFFF FFFFFFFF FFFFFFFF`, so the "it reaches us mangled anyway"
+justification for the override does not hold here. Fixed (`SPURS_LSPATTERN_FORCE=1`
+restores the old behaviour); 0x27A0 no longer appears in the diff.
+
+**It did NOT fix the deadlock.** No `0x8041090F` / `0x80410909` errors were being
+raised either way. It is a faithfulness fix, not the cause.
+
+**Finding 2 — task 1 is the intended producer.** `CreateTask(id=1,
+entry=0x01832680, ctx=0x01CE9E00)` dispatches as **image 12**, and its task
+argument contains **`0x01CE7800`** — the exact event flag the PPU blocks on. So the
+task that parks in `WAIT_SIGNAL` is the one meant to set the flag the PPU waits for.
+
+**Finding 3 — even authentic Sony code does not dispatch.** The real policy runs and
+exits to kernel immediately: `END status=0x2 pc=0x009C0 polls=0 exited=1`, with
+
+```
+RUNNING=0000000001000000  READY=4000000000000000  ENABLED=4000000000000000
+SIGNALLED=0000000000000000  WAITING=0000000000000000
+```
+
+`SIGNALLED` and `WAITING` are **empty**. So the real scheduler, given this taskset
+state, also finds nothing to dispatch. That points the investigation **upstream of
+the policy**: the taskset's signalled/ready state is not being driven by whoever
+should drive it — it is not that our policy reimplementation picks wrongly.
+
+### Next leads (precise, from the diff)
+
+Three context fields our reimplementation zeroes and authentic Sony code sets:
+
+| LS | build | real |
+|---|---|---|
+| `0x2700` | `00000000` | `40000000` |
+| `0x2770` | `00000000` | `00000001` |
+| `0x27D0` | `00000000` | `00000008` |
+
+(The block at `0x2800`–`0x2838` is the policy module's own table region, present in
+the real run because the blob is loaded there and absent in ours — treat as expected,
+not as a divergence to chase.)
+
+Given Finding 3, the higher-value thread is **who sets `SIGNALLED` / the event-flag
+bits**, not further context-field matching: trace what on real hardware calls
+`cellSpursSendSignal` / `cellSpursEventFlagSet` for taskset `0x01CE8300`, and why
+nothing in our run does.

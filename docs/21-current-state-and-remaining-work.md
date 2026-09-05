@@ -281,3 +281,44 @@ Given Finding 3, the higher-value thread is **who sets `SIGNALLED` / the event-f
 bits**, not further context-field matching: trace what on real hardware calls
 `cellSpursSendSignal` / `cellSpursEventFlagSet` for taskset `0x01CE8300`, and why
 nothing in our run does.
+
+---
+
+## 9. ROOT CAUSE FOUND AND FIXED — the dropped signal
+
+Following §8's lead ("who drives SIGNALLED?") to its end produced a genuine root-cause bug.
+
+**The chain, verified end to end:**
+
+1. `cellSpursCreateTask` wrote the assigned task id through a translated host pointer:
+   `if (taskId_h) *taskId_h = s_tasks[i].id;` — a **host-endian store into guest memory**.
+2. The guest, being big-endian, read its taskId back as `bswap32(1)` = **`0x01000000`**.
+3. It handed exactly that to `_cellSpursSendSignal`. Confirmed, not inferred:
+   `PS3_HLE_ARGS=E0A6DBE4` showed the guest itself passing `r4=0x01000000` — it was echoing
+   back what we had written.
+4. `spu_taskset_signal_task` rejects anything `>= 128`, so the signal was **silently dropped**.
+5. The taskset's `SIGNALLED` bitset stayed empty — which is exactly what the authentic Sony
+   policy reported in §8 (`SIGNALLED=0 WAITING=0`).
+6. SPU task 1 parked in `WAIT_SIGNAL` forever, never set event flag `0x01CE7800`, and the PPU
+   blocked on it in `cellSpursEventFlagWait`. Each side waiting for the other.
+
+**Fixed** (`vm_write32` — the same bug class as upstream's `libs/` guest-pointer sweep: a
+scalar the guest reads back needs `vm_write*`, not a bare store). The log now reads
+`_SendSignal(taskset=0x01CE8300 id=1)`, and the signal is delivered **and consumed** — task 1
+reaches `WAIT_SIGNAL#2`, where it previously never got past `#1`.
+
+**The boot does not yet advance.** No regression either: still 13/14, 0 crashes, 18 threads,
+and `repro.sh 3 20` is fully deterministic. The gate moved rather than opened.
+
+### The next link (new, sharper)
+
+Task 1 now wakes on the signal and **immediately re-enters `WAIT_SIGNAL` with `ran=0ms`** —
+it does no work in between, and still never sets `0x01CE7800`. So the task is *alive and
+starving for content*, not dead on a dropped signal. This is the same shape as docs/19's
+"gates are LIVE loops starving for CONTENT" finding, now at a precisely located link.
+
+Next question: **what does task 1 read to find its work, and why is it empty?** Its inputs are
+known — task argument words `0x01CE7A80` (word 1) and `0x01CE7800` (word 3, the event flag),
+context `0x01CE9E00`, entry `0x01832680`, dispatched as image 12. Trace what it DMAs after
+waking (`SPU_QLOG`, `SPU_ARGWATCH`) and who on the PPU side should have filled that buffer
+before signalling.

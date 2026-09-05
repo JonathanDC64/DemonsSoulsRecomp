@@ -1,5 +1,14 @@
 # 19 — Full implementation plan (synthesized from the docs/18 requirements crunch)
 
+> **⚠ SUPERSEDED (2026-09-05) — read `docs/21-current-state-and-remaining-work.md` first.**
+> The pinned CRUX of this plan ("image=2 never completes → HighGraphics cond-2 stuck") is
+> RESOLVED: after the upstream v0.10.0 merge, image=2 runs and returns. The current gate is a
+> two-sided SPURS deadlock (PPU `cellSpursEventFlagWait` on 0x01CE7800 vs SPU task 1 parked in
+> `WAIT_SIGNAL`). Phase 2's MAIN cond-29 analysis predates the merge and must be re-derived
+> before acting on it. Findings here that rest on symbolised backtraces are also suspect —
+> upstream fixed a host-RVA→guest-function mapper that invented stack frames.
+
+
 *2026-07-05. Synthesizes the four crunched requirement specs (A task-completion
 contract, B HighGraphics cond-2, C SLSession→dialog, D nondeterminism/verification)
 + docs/16 (roadmap) + docs/17 (SPURS model). This is the ordered, dependency-aware,

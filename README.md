@@ -18,10 +18,14 @@ This is an **ambitious, multi-stage research effort**, not a weekend project. It
 - ✅ **M0–M1** — decrypted/analysed the EBOOT (106k+ functions, 12 SPU images), lifted all PPU code to C, and got it to compile, link, and execute.
 - ✅ **M2 — full PPU boot to the 60 fps main loop.** Cleared the C++ static-init cascade (root cause: a rotate-by-zero UB the lifter miscompiled), reached module load, RSX/GCM init, and the per-frame loop. Boot journey documented in [`docs/08-ppu-boot-complete.md`](docs/08-ppu-boot-complete.md).
 - ✅ **RSX/GCM bring-up started** — the GCM FIFO control register now lives in guest memory and drains, so the graphics-init thread proceeds and dispatches its first **SPU workload**.
-- 🔜 **M3 — SPU/SPURS execution (current frontier).** The boot now genuinely needs the SPUs to run: it dispatches a SPURS job and waits for completion. The SPU recompiler is DeS-complete (0 ISA gaps); the remaining work is the clean-room **HLE SPURS runtime** (scheduler + job-chain + completion events). Fully specced in [`docs/09`](docs/09-spu-spurs.md)–[`11`](docs/11-spurs-runtime-spec.md).
+- ✅ **M3a — full engine bring-up.** The boot reaches **13/14 milestones**: SPURS init, HighGraphics, the whole Core.Res subsystem, Havok, audio, NexusRevolution, DsSaveLoadMan, SLSession, and `cellGameDataCheckCreate2`. 18 guest threads. All 12 SPU images dispatch **and return**.
+- ✅ **Determinism (2026-09-05).** After merging upstream ps3recomp **v0.10.0**, six consecutive boots produce identical numbers on every observable (`repro.sh 6 25`, stdev 0.0), with **zero crash markers** (was 36). The long-standing boot non-determinism is gone.
+- 🔜 **M3b — one SPURS deadlock from the auto-save dialog (current frontier).** PPU blocks in `cellSpursEventFlagWait` on `0x01CE7800`; SPU **task 1** of the same taskset is parked in `WAIT_SIGNAL`. Each waits for the other. Current state + ordered plan: [`docs/21`](docs/21-current-state-and-remaining-work.md).
+
+  The strategy here **changed**: upstream now ships an **SPU interpreter**, a **policy-module runner**, real `WAIT_SIGNAL` semantics and a working `cellSpursSendSignal` — and documents the full **firmware-LLE** path (lifting the real Sony `libsre.prx` SPURS kernel) as *proven on another title*. So the job is no longer "write a clean-room HLE scheduler"; it is **wire and validate the real one**.
 - ⏳ **M4 (RSX shader translation) / M5 (playable)** — open-ended, not yet reached.
 
-The two long-known cruxes are **SPU code** (each SPURS job must run, via recompilation + an HLE scheduler) and **RSX graphics/shader translation**. The bet that makes this worth attempting: the remaining work is mostly **normal systems programming** (HLE completion, per-game boot debugging, SPU reimplementation, renderer glue) where AI assistance genuinely multiplies effort — and the original tool was built largely solo without it.
+The two long-known cruxes are **SPU code** (each SPURS job must run — now via recompilation plus the real, lifted Sony SPURS kernel rather than a hand-written scheduler) and **RSX graphics/shader translation**. The bet that makes this worth attempting: the remaining work is mostly **normal systems programming** (HLE completion, per-game boot debugging, SPU reimplementation, renderer glue) where AI assistance genuinely multiplies effort — and the original tool was built largely solo without it.
 
 > Reproduce: see [`docs/08-ppu-boot-complete.md`](docs/08-ppu-boot-complete.md) §6 (lift → patch → build → run recipe).
 
@@ -41,6 +45,16 @@ The two long-known cruxes are **SPU code** (each SPURS job must run, via recompi
 | [`docs/09-spu-spurs.md`](docs/09-spu-spurs.md) | SPU/SPURS phase: framework, DeS's 12 images, the gate, the plan |
 | [`docs/10-spurs-hle-blueprint.md`](docs/10-spurs-hle-blueprint.md) | SPURS HLE bring-up blueprint (from RPCS3 behaviour, clean-room) |
 | [`docs/11-spurs-runtime-spec.md`](docs/11-spurs-runtime-spec.md) | SPURS runtime spec + 20-function HLE checklist + prior-art survey |
+| [`docs/12-spurs-coordination-plan.md`](docs/12-spurs-coordination-plan.md) | SPU<->PPU coordination plan |
+| [`docs/13-spurs-task-scheduling-plan.md`](docs/13-spurs-task-scheduling-plan.md) | Deferred SPURS task scheduling |
+| [`docs/14-spu-ppu-event-delivery.md`](docs/14-spu-ppu-event-delivery.md) | SPU->PPU event delivery |
+| [`docs/15-lv2-spu-thread-substrate-design.md`](docs/15-lv2-spu-thread-substrate-design.md) | lv2 SPU-thread substrate design |
+| [`docs/16-remaining-work.md`](docs/16-remaining-work.md) | Remaining-work outline (⚠ superseded in part by docs/21) |
+| [`docs/17-spurs-runtime-design.md`](docs/17-spurs-runtime-design.md) | SPURS runtime design |
+| [`docs/18-requirements-crunch.md`](docs/18-requirements-crunch.md) | Requirements crunch (four-domain analysis) |
+| [`docs/19-implementation-plan.md`](docs/19-implementation-plan.md) | Implementation plan (⚠ superseded by docs/21) |
+| [`docs/20-upstream-merge-dropped-deltas.md`](docs/20-upstream-merge-dropped-deltas.md) | What the upstream v0.10.0 merge dropped, and why |
+| [`docs/21-current-state-and-remaining-work.md`](docs/21-current-state-and-remaining-work.md) | **START HERE** — true current state, upstream capabilities, ordered remaining work |
 
 ## Layout
 

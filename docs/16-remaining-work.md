@@ -1,5 +1,13 @@
 # 16 — Remaining Work: Full Outline
 
+> **⚠ SUPERSEDED IN PART (2026-09-05) — read `docs/21-current-state-and-remaining-work.md` first.**
+> Phase 1 ("Faithful SPURS SPU-kernel execution") is no longer speculative engineering we must
+> build: upstream ps3recomp v0.10.0 ships an SPU interpreter + policy-module runner, and its
+> `docs/FIRMWARE_LLE.md` reports the full libsre LLE path **proven on Yakuza: Dead Souls**.
+> This doc also assumes static SPU lifting precludes kernel-driven dispatch — the interpreter
+> removes that constraint.
+
+
 *Written 2026-07-04, after the render-gate investigation converged on the SPU
 completion root. This is the honest, end-to-end map of what's left to reach the
 title/auto-save dialog and, beyond it, playable gameplay.*

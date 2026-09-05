@@ -54,3 +54,7 @@ __pycache__/
 /ps3recomp/
 spu_profile.log
 spu_watchdog.log
+
+# Firmware-derived generated source (SPURS taskset policy blob) -- NEVER commit.
+# Regenerate with: python scripts/gen_taskset_policy_blob.py
+/port/gen/

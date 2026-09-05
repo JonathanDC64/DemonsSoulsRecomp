@@ -30,10 +30,38 @@ file(GLOB SPU_CHUNKS CONFIGURE_DEPENDS "${SPU_DIR}/*/spu_recomp.c")
 list(LENGTH SPU_CHUNKS N_SPU)
 message(STATUS "des_boot: ${N_SPU} lifted SPU images from ${SPU_DIR}")
 
+# --- Real SPURS taskset policy (A/B oracle, LBP_REAL_POLICY=1) --------------
+# ps3recomp/runtime/spu/spurs_policy.c can run the AUTHENTIC Sony taskset policy
+# module and diff the SpursTasksetContext it builds against our C reimplementation
+# (spurs_pm_build_context). It needs the module's raw bytes plus the lifted policy;
+# without them a zero-size weak stub links and the probe is inert.
+#
+# The blob is FIRMWARE-DERIVED, so it is generated into port/gen/ (gitignored) from
+# the user's own fw_spu/libsre.prx at configure time, never committed. If libsre.prx
+# is absent the generator no-ops and the weak stub still links.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(NOT Python3_EXECUTABLE)
+    set(Python3_EXECUTABLE "python")
+endif()
+set(TSP_LIFTED "${PS3RECOMP_DIR}/fw_spu/spu_libsre/taskset_policy_lifted/spu_recomp.c")
+set(TSP_BLOB   "${CMAKE_CURRENT_SOURCE_DIR}/gen/taskset_policy_blob.c")
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/gen_taskset_policy_blob.py"
+    RESULT_VARIABLE TSP_GEN_RC OUTPUT_VARIABLE TSP_GEN_OUT ERROR_VARIABLE TSP_GEN_OUT)
+message(STATUS "des_boot: taskset-policy blob: ${TSP_GEN_OUT}")
+set(TSP_SOURCES "")
+if(EXISTS "${TSP_BLOB}" AND EXISTS "${TSP_LIFTED}")
+    set(TSP_SOURCES "${TSP_BLOB}" "${TSP_LIFTED}")
+    message(STATUS "des_boot: real taskset policy WIRED (LBP_REAL_POLICY=1 to run the A/B oracle)")
+else()
+    message(STATUS "des_boot: real taskset policy NOT wired (weak stub; probe inert)")
+endif()
+
 # --- The boot executable ---------------------------------------------------
 add_executable(des_boot
     ${RECOMP_CHUNKS}
     ${SPU_CHUNKS}                                           # lifted SPU images
+    ${TSP_SOURCES}                                          # real SPURS taskset policy (blob + lifted, optional)
     "${SPU_DIR}/_gen/spu_workloads.cpp"                     # SPU workload registration (auto at startup)
     "${RECOMP_DIR}/hle_nid_table.cpp"                       # generated NID->handler table
     "${PS3RECOMP_DIR}/runtime/ppu/ppu_loader.cpp"           # image load, vm, registry, dispatch

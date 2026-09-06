@@ -676,3 +676,66 @@ image 2 no longer hangs, but it still does not complete its contract.
 Two instruments lied this session: a probe whose check could never fire (§14) and a log whose
 cap hid the hottest loop in the program (this section). Both produced confident, wrong pictures.
 Before trusting a null or a distribution, check that the instrument can actually see the thing.
+
+---
+
+## 16. The graphics gate is PERSISTENT-TASK RE-ENTRY
+
+§15 located the spin. This section names its cause.
+
+**The structure** (read live via the debug console):
+
+```
+desc = 0x01B50FC4   +0x00 = 0x45A4B320   end pointer
+                    +0x0C = 0x00000000   completion word  <- HighGraphics polls this
+
+queue = 0x01B51000  +0x00 = 45 A4 B3 20   +0x0C = 01 B5 10 00   <- self-pointer
+                    +0x10 = 45 A4 B2 80   +0x1C = 01 B5 10 10   <- self-pointer
+```
+
+`0x45A4B320 - 0x45A4B280 = 0xA0` — the command region HighGraphics fills.
+
+**Image 2 does see the work.** Its 7 MFC transfers: GET 256 B from `0x01B51000` (the
+descriptor), GET 128 B from `0x45A4B280` and 144 B from `0x45A4B290` (the commands), and 3×
+PUT 16 B back to `0x01B51000`. It reads the commands and updates the descriptor — it simply
+never writes the completion word.
+
+**The A/B that names the cause.** `SPU_DONE_WORD=<descEA>[:<img>]` publishes "consumed up to
+the end pointer" on task completion:
+
+| | without | with |
+|---|---|---|
+| HighGraphics spins (35 s) | 928,568 | 925,146 |
+| `done-word` fired | — | **1** |
+| **image 2 runs** | — | **1** |
+
+The word is written **once**; HighGraphics then clears it and waits again, and **image 2 never
+runs a second time**. Publishing the word is therefore not the fix — the missing thing is the
+second run.
+
+**This tree already names the gap** (`spu_workload.c:620`, `YDKJ_CRI_RESUME`):
+
+> *a real SPURS task is PERSISTENT — on yield the kernel re-enters it when work is signalled.
+> Our HLE runs it once, so it polls the (concurrently PPU-updated) eaContext, finds no work,
+> yields and exits before the PPU marks work-ready.*
+
+That is exactly the graphics case. Our HLE dispatches image 2 once at `cellSpursCreateTask`; it
+finds the queue empty (the self-pointers above are an empty list), exits, and nothing ever
+re-enters it. Upstream approximates re-entry for image 22 (cri) only.
+
+### So the two SPU gates are the same shape
+
+| path | task | what was missing |
+|---|---|---|
+| audio | image 12 | completion **notify** on round end — **fixed** (§12) |
+| graphics | image 2 | persistent **re-entry** when work is submitted — open |
+
+### Next
+
+1. Generalise persistent re-entry beyond image 22: re-dispatch a taskset task when the PPU
+   submits work to the queue it polls. `YDKJ_CRI_RESUME` is the existing shape to follow.
+2. Identify the kick: HighGraphics stores `0x9023` and calls `func_00011720` just before
+   waiting — whatever that does is the "work submitted" edge a re-entry would hang off.
+3. The durable answer remains the PPU-side libsre firmware LLE (§4C): the real SPURS kernel
+   does this re-entry natively, which is precisely why upstream reports it as the fix for this
+   whole class.

@@ -606,3 +606,73 @@ machine to the point of requesting content**, so nothing is ever queued for the 
 saver, or the renderer. The next move is to work forward from what HighGraphics polls
 (`func_009F7518+0xCC`, `func_00A31158+0x3A8`) — the only thread doing anything other than
 pacing — rather than backwards from the consumers, which are all correctly idle.
+
+---
+
+## 15. CORRECTION to §13, and the real hot loop
+
+**§13 was wrong, because the instrument was truncating.** The `timer_usleep` wait log was hard
+capped at 60 lines, so its picture of "who sleeps where" was really "who slept during early
+init". Every HighGraphics sample it showed sat in lines 107–177 of a 7802-line log. A thread
+that stops appearing then looks *idle* when it may be spinning hardest.
+
+Capped removed (`PS3_WAIT_LOG=<n>`, 0 = unlimited). The true distribution:
+
+| count | thread | site | sleep |
+|---|---|---|---|
+| **1,065,802** | **HighGraphics (tid 4)** | `func_00ACAFA8+0xF4` (`0x00ACB09C`) | 30 µs |
+| 5,344 | MOStreamingThread | `0x00D64EA0` | 5 ms |
+| 4,494 | NexusRevolution Main | `0x00B49574` | 8.3 ms (120 Hz) |
+| 2,286 / 2,284 / 2,278 | PPURuntimeService / HG_Watchdog / MOMainThread | — | 16.6 ms (60 Hz) |
+| 50 | HighGraphics | `func_009F7518+0xCC` | 100 µs |
+| 16 | HighGraphics | `func_00A31158+0x3A8` | 30 µs |
+
+The two sites §13 named are the **rare** ones. Everything except HighGraphics is normal pacing.
+
+### The real gate
+
+`func_00ACAFA8+0xF4` is a **completion-flag spin**:
+
+```c
+vm_write32(r26 + 0, 0);                    /* clear the flag        */
+... store 0x9023, call func_00011720 ...   /* submit the work       */
+loc_00ACB098:
+    usleep(30);
+    if (vm_read32(r26 + 0) == 0) goto loc_00ACB098;   /* wait for non-zero */
+```
+
+Live registers (`PS3_WAIT_OBJ=00ACB09C`, which now matches CIA since our lifted syscall path
+leaves `lr` at 0):
+
+```
+r26=0x01B50FD0  (the polled flag -- always 0)   r27=0x01B51000   r29=0x01B50FC4
+```
+
+**`r27 = 0x01B51000` is exactly the graphics SPURS task's argument** —
+`cellSpursCreateTask(id=0, entry=0x0177C200, arg=01B51000 …)`, dispatched as **image 2**. So
+HighGraphics kicks the SPU graphics task and blocks on its completion word.
+
+**Image 2 runs and returns `rc=0`** — 7 MFC transfers (GET 256 from `0x01B51000`, PUT 16 back
+×3, plus reads around `0x45A4B2xx`). But it only ever writes `0x01B51000`, and **never
+`0x01B50FD0`**, 0x30 bytes below. It completes without producing the completion edge its PPU
+waiter needs.
+
+This is the **same shape as the audio task before §12's fix** — a task that finishes without
+signalling — and it is the true successor to docs/19's old "image=2 is the CRUX" finding:
+image 2 no longer hangs, but it still does not complete its contract.
+
+### Next
+
+1. Establish what writes `0x01B50FD0` on real hardware: the SPU task itself (a path it never
+   reaches because its command queue is empty), or the taskset PM as part of completion — the
+   latter would make it the graphics-side analogue of §12 and might be fixable the same way.
+2. Only 7 transfers and 3×16-byte writes suggests image 2 finds an empty/unset command queue —
+   docs/19's original reading — so trace what fills `0x01B51000`'s queue on the PPU side.
+3. `0x9023` is stored into a command slot just before the wait; identifying that method would
+   name the operation being awaited.
+
+### Method note
+
+Two instruments lied this session: a probe whose check could never fire (§14) and a log whose
+cap hid the hottest loop in the program (this section). Both produced confident, wrong pictures.
+Before trusting a null or a distribution, check that the instrument can actually see the thing.

@@ -556,3 +556,53 @@ before it issues its first asset request?** Two concrete threads to pull:
    addresses and a reproducible, deterministic boot to observe them in).
 2. The `sem=2` / `sem=3` posters — identify who on the PPU side is supposed to post them, since
    that is the direct route to SLSession → `cellSaveDataAutoLoad2` → the dialog.
+
+---
+
+## 14. The semaphore is NOT the dialog gate (negative result, and a correction)
+
+§13 named the `sem=2` / `sem=3` gate as "the most direct remaining route to the dialog".
+Tested with a new `SEMA_RELEASE=<id>[:<secs>]` bisect. It is not.
+
+**Attribution first** (`SEMTID=1`):
+
+| tid | thread | waits on |
+|---|---|---|
+| 19 | **SLSession** | `sem=3` |
+| 13 | MOMixerThread | `sem=2` |
+
+with `[sem] create id=3 init=0 max=1` immediately before the SLSession thread, and **zero
+`sys_semaphore_post` in the entire run**.
+
+**Releasing `sem=3` does not produce the dialog.** SLSession wakes and *immediately re-waits on
+`sem=3`* — 15 times over the run — issuing no HLE call in between. So `sem=3` is SLSession's
+**work-queue signal**, not the dialog gate: the thread has no work queued, and posting the
+semaphore only spins its loop.
+
+This **corrects** the older reading carried in the project notes ("SLSession blocks on a
+semaphore whose poster is MAIN"), which implied that posting it would let the dialog through.
+It would not. Whoever posts that semaphore must also *enqueue a save/load request*, and the
+absence of the request — not the absence of the post — is the gate.
+
+### Method note worth keeping
+
+The first version of this probe put its elapsed test at function entry. `sys_semaphore_wait_impl`
+is entered once per wait and then blocks inside a loop, so the check could never fire — and a
+probe that never fires reads exactly like "the semaphore is not the gate", which is the wrong
+conclusion reached for the right-looking reason. The test has to live inside the wait loop.
+Generally: when a bisect produces a negative result, confirm the probe fired before believing it.
+
+### Where that leaves the search
+
+Every direct route has now been eliminated:
+
+- not the SPURS deadlock (fixed, §12)
+- not the GCM FIFO (`put == get`, static, §13)
+- not the SLSession semaphore (this section)
+- not the SPU task exit-code container (never registered by this title, §13)
+
+What remains is the thing all of them point at: **the engine never advances its own state
+machine to the point of requesting content**, so nothing is ever queued for the loader, the
+saver, or the renderer. The next move is to work forward from what HighGraphics polls
+(`func_009F7518+0xCC`, `func_00A31158+0x3A8`) — the only thread doing anything other than
+pacing — rather than backwards from the consumers, which are all correctly idle.

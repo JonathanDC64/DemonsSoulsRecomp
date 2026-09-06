@@ -380,3 +380,57 @@ it. Candidate explanations, in order of cheapness to test:
 `SPURS_EF_SPU_REPLY=1` exists upstream as a deliberate *diagnostic bisect* (it fakes the SPU
 reply); it did not advance the boot earlier, but re-testing it now that the signal actually
 gets delivered is a cheap A/B that would confirm hypothesis-class (1)/(3) vs something later.
+
+---
+
+## 11. DIAGNOSIS CONFIRMED — the missing piece is the taskset PM's completion notify
+
+§10 listed three hypotheses. Testing eliminated the first two and confirmed a fourth.
+
+**Ruled out by measurement:**
+
+- *Channel/mailbox*: `SPU_CHHIST` reported nothing because its print interval was a fixed
+  2000 channel ops and the mixer does a few dozen per round — fixed (`SPU_CHHIST=<n>`). With
+  it working: the only `WrOutMbox` / `WrOutIntrMbox` writes in the whole run happen **after**
+  task 1 parks, from image 7 — the mixer writes no mailbox at all.
+- *Atomics*: `SPU_ATOM_EA` shows **zero** atomics anywhere in the `0x01CE…` region — including
+  the taskset itself, which is consistent with our HLE'ing the taskset PM in C rather than
+  running its SPU code.
+- *Syscall*: image 12 issues **only** `num=2` (WAIT_SIGNAL), twice.
+- And our own HLE completion path contains **no** event-flag notify — grep finds only a comment.
+
+**The actual cause.** On real SPURS the taskset **policy module** performs the completion
+bookkeeping when a task finishes the round it was signalled for, including setting the event
+flag a PPU waiter is blocked on. We HLE that PM in C (`spurs_pm_build_context`) and never run
+its notify logic, so the edge the PPU waits on is never produced by anyone.
+
+**Confirmed by bisect.** `SPURS_ROUND_NOTIFY=<flagEA>[:<bits>]` (new, off by default) sets the
+named flag when a task enters WAIT_SIGNAL. With `SPURS_ROUND_NOTIFY=01CE7800:1`:
+
+| observable | before | after |
+|---|---|---|
+| `EventFlagWait BLOCKED` | 24 | **0** |
+| `EventFlagWait WAKE` | 0 | **40** |
+| `_cellSpursSendSignal` | 1 | **9148** |
+| WAIT_SIGNAL rounds | 2 | **218** |
+| log lines | 1404 | **10813** |
+
+The deadlock disappears and the MO audio pipeline cycles: PPU signals → SPU mixes → notify →
+PPU wakes → repeat. **This is the first time that loop has ever run.**
+
+**Honest limits.** The boot still does not reach the dialog, creates no new threads, and does
+no file I/O — the audio gate opened, the boot did not advance past it. And this is a *bisect*,
+not a fix: the real PM decides *which* flag and *which* bits from taskset state we do not
+model, whereas the knob applies what the env names. The ~9148 signals in 50 s also suggests
+the loop is now free-running rather than paced.
+
+### Turning the bisect into a fix
+
+1. Derive the flag EA from **taskset state** instead of the env. The task's own argument
+   already carries it — DeS's task 1 gets `arg = 00000000 01CE7A80 00000000 01CE7800`, i.e.
+   word 3 *is* `0x01CE7800`. Reading it from the TaskInfo/argument is a far better
+   approximation of what the PM does than a hardcoded value.
+2. Work out the correct **bits** (and pacing) the same way §8's oracle was used: run the real
+   policy and observe what it writes, rather than assuming `0x0001`.
+3. The durable answer remains the PPU-side firmware LLE of `libsre` (§4C), which replaces this
+   whole reimplementation with authentic Sony code.

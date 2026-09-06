@@ -789,3 +789,67 @@ submission*.
 3. This is the second gate in a row whose root is "our C HLE of the taskset PM does not do what
    the real one does". That is a strong argument for prioritising the PPU-side libsre firmware
    LLE (§4C) over continuing to reimplement PM behaviours one at a time.
+
+---
+
+## 18. CORRECTION to §16/§17 — the completion word *is* the mechanism
+
+§17 concluded "re-entry is not enough; image 2 never reads the descriptor HighGraphics writes".
+**That was wrong.** Watching the completion word itself (`YDKJ_AWATCH=01B50FD0`) shows the
+ordering, which the descriptor watch could not:
+
+```
+380: clear      func_00ACAFA8+0x2E1 <- func_009F94A8 <- ... (HighGraphics)
+384: [done-word] publishes 0x45A4B320        <-- AFTER the clear
+385: image 2 returns
+560: clear AGAIN, same site                  <-- HighGraphics ADVANCED and looped
+```
+
+HighGraphics saw the word, finished that iteration, and came back for a **second** submission —
+then blocked because image 2 had already exited. So one publish buys exactly one iteration: the
+waiter clears and re-submits each time round. `SPU_DONE_WORD` published once *after* the resume
+loop, which is why 800 re-entries appeared to change nothing.
+
+**Publishing after each re-entry:**
+
+| | baseline | publish once | publish per re-entry |
+|---|---|---|---|
+| HighGraphics iterations | 2 | 3 | **6** |
+| spin at `func_00ACAFA8+0xF4` | ~928,568 | ~925,146 | **151** |
+
+The graphics handshake now runs.
+
+### The gate moved to GCM label 255
+
+HighGraphics now spins at a **new** site, `func_009F94A8+0x15C` (`cia=0x009F9604`), and
+`PS3_WAIT_OBJ` names what it polls:
+
+```
+r27 = 0x20000FF0  =  VM_HLE_INJECT_BASE (0x20000000) + 0xFF0   =  GCM label 255
+r26 = 0x00000001  (expected value)      [r29+0x00] = 0x00000002
+```
+
+That is exactly the **label-255 wait** this project's older notes identified — reached for the
+first time. The label reads `0` and the FIFO is empty (`put = get = 0`), so nothing drives the
+RSX to write it. `func_009F94A8` was already visible in §17's submit chain; now we know why.
+
+### Where that leaves the graphics path
+
+```
+SPU graphics handshake   -- passes (with the bisect knobs)
+      v
+GCM label 255 wait       -- NEW gate: label never written, FIFO empty
+      v
+frames / content
+```
+
+**Both knobs are off by default; they are a bisect, not a fix.** The real fix is for image 2 to
+run per submission and write that word itself — the taskset PM behaviour our C HLE does not
+reproduce, which is the same root as §12 and reinforces §17's argument for the libsre LLE.
+
+### Method note (third instrument lesson this session)
+
+§17's conclusion came from watching the *submit descriptor* (`0x01B50FC4`) and reasoning about
+what image 2 read. Watching the *actual contended word* (`0x01B50FD0`) reversed it in one run.
+When two parties disagree about a handshake, instrument the word they share, not the inputs
+either side derives it from.

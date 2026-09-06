@@ -853,3 +853,58 @@ reproduce, which is the same root as §12 and reinforces §17's argument for the
 what image 2 read. Watching the *actual contended word* (`0x01B50FD0`) reversed it in one run.
 When two parties disagree about a handshake, instrument the word they share, not the inputs
 either side derives it from.
+
+---
+
+## 19. Following the graphics path to its end — everything is idle-but-healthy
+
+Past the label-255 gate the trail closes cleanly.
+
+**The game barely uses GCM HLE.** Only `cellGcmInitBody` is called (`cmdSize=0x5FF000,
+ioSize=0x700000, ioAddr=0x49E00000`) — `libgcm` is inlined, so the title writes FIFO commands
+straight to memory and bumps `put` itself.
+
+**And it submits an empty buffer.** `YDKJ_AWATCH=20002000` on the `put` field:
+
+```
+put = 0x00000100   func_01537EF0+0x36F <- func_009F7518   (init)
+put = 0x00000000   x4, func_01537EF0+0x36F <- func_00ACAFA8+0xA1D <- func_009F94A8
+```
+
+Every graphics iteration sets `put = 0` — the ring is rewound to its start with nothing in it.
+So the RSX has no commands to execute, never reaches a semaphore-release method, and never
+writes label 255 — which is exactly what HighGraphics is waiting for. The label wait is a
+*symptom*: the game has nothing to draw.
+
+**And it has nothing to draw because nothing is loaded.** With graphics flowing: still
+**0 `sys_fs_open`**, and the four `Core.Res` threads never even poll — they are parked on their
+work queues from creation, exactly like SLSession (§14).
+
+### The complete picture
+
+Every subsystem is now **healthy and idle**, each parked on a queue nobody fills:
+
+| subsystem | state |
+|---|---|
+| SPU audio (image 12) | runs, mixes, writes PCM — **fixed** (§12) |
+| SPU graphics (image 2) | handshake runs under bisect; gate moves to label 255 (§18) |
+| RSX / GCM | FIFO healthy, but the game submits an empty ring (`put = 0`) |
+| Core.Res ×4 | parked on their queues, 0 file opens |
+| SLSession | parked on `sem=3`, re-waits immediately when released (§14) |
+| MAIN / engine | two 60 Hz loops pacing frames normally |
+
+Nothing is deadlocked. **The engine never advances its state machine to request content**, so
+every consumer is correctly idle. That single fact now explains all of it.
+
+### The two ways forward
+
+1. **Continue tactically** — keep reimplementing taskset-PM behaviours one at a time. Three
+   gates so far have had this same root (§12 notify, §18 completion word, and whatever fills
+   the Core.Res queues). Each is tractable; there is no reason to think the list is short.
+2. **Switch to the PPU-side libsre firmware LLE** (§4C) — replace the hand-written SPURS/PM
+   layer with the real Sony kernel. Upstream documents it as **proven on Yakuza: Dead Souls**,
+   and the tooling (`lift_prx.py` → `ppu_lifter --raw --base` → NID binding) plus a decrypted
+   `libsre.prx` are already in the tree. It is the larger change, and it removes the whole class.
+
+Given three consecutive gates with one root, (2) now looks like the better investment — but it
+is a direction change and should be a deliberate decision, not a drift.

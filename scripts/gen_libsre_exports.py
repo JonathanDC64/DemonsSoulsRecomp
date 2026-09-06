@@ -65,6 +65,7 @@ def main():
 
     d = json.load(open(ej))
     base = int(str(d["base"]), 16)
+    toc  = int(str(d["toc"]), 16)
 
     exports = []
     for lib, fns in d["exports"].items():
@@ -104,6 +105,7 @@ def main():
     a('#include "../../ps3recomp/runtime/prx/prx_loader.h"')
     a("")
     a("#define LIBSRE_BASE 0x%08Xu" % base)
+    a("#define LIBSRE_TOC  0x%08Xu" % toc)
     a("")
     a("/* Binary-compatible with the lifter's func_entry (see prx_loader.h). */")
     a("extern const prx_func_entry libsre_function_table[];")
@@ -192,7 +194,14 @@ def main():
     a("    for (unsigned i = 0; i < LIBSRE_IMPORT_COUNT; i++) {")
     a("        uint32_t opd = LIBSRE_OPD(i), tr = LIBSRE_TRAMP(i);")
     a("        vm_write32(opd + 0, tr);   /* OPD.func */")
-    a("        vm_write32(opd + 4, 0);    /* OPD.toc  */")
+    a("        /* OPD.toc MUST be libsre's own TOC. The import stub does")
+    a("         *     std r2,0x28(r1) ; lwz r0,0(r12) ; lwz r2,4(r12) ; bctr")
+    a("         * so whatever sits here becomes r2 for the rest of libsre. A zero")
+    a("         * here left r2 = 0, and every TOC-relative load then read from a")
+    a("         * bogus address and returned 0 -- which is exactly how libsre came")
+    a("         * to pass entry=0 and prio=0 to sys_ppu_thread_create while its")
+    a("         * register-computed arguments (arg/stack/flags/name) were correct. */")
+    a("        vm_write32(opd + 4, LIBSRE_TOC);   /* OPD.toc */")
     a("        vm_write32(k_libsre_imports[i].entry, opd);")
     a("        ppu_register_function((uint64_t)tr, k_libsre_tramps[i]);")
     a("    }")

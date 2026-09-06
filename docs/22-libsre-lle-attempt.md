@@ -221,3 +221,58 @@ fields libsre's init did not write.
    libsre — check whether every NID on the init path actually resolved through
    `prx_resolve_export`, since a single HLE stub in the middle would leave exactly this kind of
    half-populated structure.
+
+---
+
+## THIRD CORRECTION — the symboliser was lying; libsre DOES create the threads
+
+The "caller chain is all game space" reading above was an **artifact of the backtrace
+resolver**, not a fact. `ppu_log_host_chain` resolved host addresses against `function_table[]`
+only — the game's lifted functions — so a frame inside libsre resolved to whichever *game*
+function sat below it in host memory. Plausible-looking, entirely wrong, and silent.
+
+Fixed (`g_extra_symtab`, ps3recomp `8d88b75`): a loader can register an additional symbol table
+and the resolver considers it. With libsre's table registered, the same chain reads:
+
+```
+3001FCA0 x6  3001D838 3000B8E8 300075DC 30008494 | 016B9F44 00B16418 ...
+^^^^^^^^^^^^^^^^ libsre frames (innermost)        ^^^^^^^^^^^ the game caller
+```
+
+**libsre is creating the threads** — the opposite of the previous section's conclusion. Retract
+it; the Dantelion-name reasoning was a coincidence (the game names its SPURS instance
+"DLSpursManager", and libsre names the handler threads after the instance).
+
+### What the corrected chain shows
+
+`0x3001D838` is one of the **import stub slots** the glue bridges. Brute-forcing the NID against
+an RPCS3-derived name corpus (`scripts/nid_name.py` extended over all Modules/lv2 sources)
+identifies it:
+
+| NID | name |
+|---|---|
+| `0x24A1EA07` | **`sys_ppu_thread_create`** (the sysPrxForUser wrapper) |
+| `0x1573DC3F` | `sys_lwmutex_lock` |
+| `0x63FF6FF9` | `cellSysmoduleInitialize` |
+| `0x05893E7C` | `cellUserTraceRegister` |
+
+So libsre creates its handler thread through the sysPrxForUser wrapper, which our runtime **does**
+register (`ps3_hle_register_ctx(ps3_compute_nid("sys_ppu_thread_create"), …)` in
+`ppu_sysprx.cpp`), routed to the raw syscall implementation.
+
+That narrows the question again: our handler reads `entry` from **r4**, and the game's own
+threads work this way (they pass an OPD address, e.g. `0x0196FAF8`, and the runtime resolves
+it later). libsre passes **0** — so libsre is reading a null function descriptor out of its own
+data.
+
+### Resume from here
+
+1. Disassemble libsre around `0x30008494` / `0x300075DC` / `0x3000B8E8` (now symbolisable) to
+   find where the handler OPD is loaded from.
+2. Dump that location after `cellSpursInitializeWithAttribute` — the ten NIDs that reach libsre
+   are listed by `YDKJ_SPURSTRACE=1`, and `cellSpursInitializeWithAttribute` (`0xAA6269A8`) is
+   among them, so init really does run. No SPURS call falls back to our HLE (verified: zero
+   `[cellSpurs]` lines under LLE), so a half-HLE/half-LLE mix is ruled out.
+3. Suspect the handler OPD is relocated by a type we mishandle, or lives in the part of
+   segment 1 beyond `p_filesz` (`0x3FE0..0x4340`) which is zero-filled rather than file-backed.
+   That range is small and easy to check.

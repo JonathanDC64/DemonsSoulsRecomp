@@ -501,3 +501,58 @@ audio pipeline, frame pacing, and a deterministic boot.
    symbolisation is sparse.
 3. `mutex=1092`/`1093` and the `cia` addresses above are concrete anchors for what the frame
    loops are gated on.
+
+---
+
+## 13. Post-fix survey: who is actually waiting, and on what
+
+With the deadlock gone, the boot RUNS. Added the guest tid to the `timer_usleep` wait log
+(cond_wait already had it), which immediately answers "which thread":
+
+| tid | thread | site | sleep |
+|---|---|---|---|
+| **4** | **HighGraphics** | `func_009F7518+0xCC` | 100 µs ×37 |
+| **4** | **HighGraphics** | `func_00A31158+0x3A8` | 30 µs ×20 |
+| 2 | (Dantelion2)PPURuntimeService | `0x00B49574` | 16666 µs (60 Hz) |
+| 5 | HG_Watchdog | `0x00D1E188` | 16666 µs (60 Hz) |
+
+So the two 60 Hz loops are normal frame pacing, and **HighGraphics is the only real spinner**.
+
+### The GCM FIFO is NOT the blocker
+
+`func_009F7518` is the "wait until the RSX drained the FIFO (get==put)" loop this project has
+suspected for months. Read the control register live via the new `PS3_DEBUG` console
+(`mem 20002000 16`; base is `ppu_hle_inject_base = 0x20000000`, control at +0x2000):
+
+```
+0x20002000  00 00 01 00 | 00 00 01 00 | 00 00 00 00
+             put=0x100     get=0x100     ref=0
+```
+
+**put == get**, and byte-identical 8 seconds later. The FIFO is fully drained and static — the
+game has submitted ~256 bytes of commands in the entire run and nothing since. HighGraphics is
+not blocked on the RSX; it has no work to submit. (2 draws total.)
+
+### Other facts established
+
+- **Zero `sys_semaphore_post` in the entire run.** `sem=2` and `sem=3` are waited on and never
+  posted — `sem 3` is created (`init=0 max=1`) immediately before the `SLSession` thread, and
+  SLSession is what calls `cellSaveDataAutoLoad2`, i.e. milestone 14. This is the same
+  semaphore gate recorded in the project's older notes, still unresolved.
+- **DeS never calls the exit-code setup NIDs** (`cellSpursTaskAttributeSetExitCodeContainer` /
+  `TaskExitCodeInitialize`) — 0 calls. So although `func_00A31158` was previously read as "the
+  task exit-code poll", that container is never registered by this title; whatever it polls
+  comes from somewhere else. Worth re-deriving rather than inheriting the old label.
+- Still zero `sys_fs_open` / `cellFsOpen` of any kind.
+
+### The shape of the remaining problem
+
+Everything is alive, paced and idle. Nothing is deadlocked; the engine is waiting for its own
+state machine to advance, which needs content, which needs file I/O that never starts. The
+question is unchanged in kind but much better posed than before: **what does the engine require
+before it issues its first asset request?** Two concrete threads to pull:
+
+1. `func_009F7518` and `func_00A31158` — what HighGraphics actually polls (both now have exact
+   addresses and a reproducible, deterministic boot to observe them in).
+2. The `sem=2` / `sem=3` posters — identify who on the PPU side is supposed to post them, since
+   that is the direct route to SLSession → `cellSaveDataAutoLoad2` → the dialog.

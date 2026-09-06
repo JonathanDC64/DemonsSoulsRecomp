@@ -276,3 +276,85 @@ data.
 3. Suspect the handler OPD is relocated by a type we mishandle, or lives in the part of
    segment 1 beyond `p_filesz` (`0x3FE0..0x4340`) which is zero-filled rather than file-backed.
    That range is small and easy to check.
+
+---
+
+# BREAKTHROUGH (2026-09-06) — the real Sony SPURS kernel runs
+
+## The blocker was one word in my own bridge
+
+Every import stub libsre calls is:
+
+```asm
+li r12,lo ; oris r12,r12,hi ; lwz r12,disp(r12)      ; pointer-table entry
+std r2,0x28(r1) ; lwz r0,0(r12) ; lwz r2,4(r12) ; mtctr r0 ; bctr
+```
+
+so **whatever sits in `OPD.toc` becomes `r2` for the rest of libsre**. My bridge wrote `0`.
+
+Measured (after extending `PS3_HLE_ARGS` to dump r2):
+
+```
+game's calls:   r2=0x019B5040  entry=0x0196FAF8    correct
+libsre's call:  r2=0x00000000  entry=0x00000000    broken
+```
+
+With `r2 = 0`, every TOC-relative load read a bogus address and returned 0 — which is exactly
+why libsre passed `entry=0` and `prio=0` while its **register-computed** arguments
+(`arg=0x01B92E00`, `stack=0x8000`, flags, name) were all correct. That asymmetry was the tell,
+and I had walked past it twice.
+
+Writing libsre's real TOC (`0x30039AB0`) into `OPD.toc` fixed it.
+
+## What now works
+
+```
+sys_ppu_thread_create name="DLSpursManagerSpursHdlr1" entry=0x300313A4
+sys_ppu_thread_create name="DLSpursManagerSpursHdlr0" entry=0x300312DC
+SPU group: "DLSpursManagerCellSpursKernelGroup" (0x1000), priority 250
+  SPU thread#0..#4 "DLSpursManagerCellSpursKernel0..4" (0x2000..0x2004)
+[SPU-INTERP] tid=0x2000 entry=0x00818 -> interpreting        (x5)
+```
+
+- Handler threads created with **real entries** and the **full concatenated names** RPCS3 logs.
+- A real 5-thread SPU thread group, with the **SPURS SPU kernel entry `0x818`** (was 0).
+- With `RD_SPU_INTERP=1 RD_SPU_INTERP_ASYNC=1`, **all five SPU threads execute the real Sony
+  SPURS kernel under upstream's SPU interpreter.**
+- **14 SPURS NIDs** now served by real Sony code (was 10), including the task path:
+  `cellSpursCreateTaskWithAttribute`, `_cellSpursTaskAttributeInitialize`,
+  `cellSpursTaskAttributeSetExitCodeContainer`, `cellSpursTaskExitCodeInitialize` — the exact
+  NIDs I had to hand-write for the HLE.
+
+## And it reports its own errors
+
+The kernel now emits authentic Sony diagnostics, which is worth more than any probe we could
+write:
+
+```
+PS3 SDK INTERNAL ASSERTION FAILURE: libspurs, version 486000, file "handler.c", line 198,
+function "spurs_handler_entry", unexpected value 0x0
+  Resources:
+    SPU thread group "DLSpursManagerCellSpursKernelGroup" (0x1000), priority 250
+      SPU thread#0..#4 "DLSpursManagerCellSpursKernel0..4"
+    EA of lwmutex  0x01b93bb0
+    event queue    0x00000003
+  SPURS Trace:  SPU#0 0x00000000 ...
+```
+
+Run it with: `LIBSRE_LLE=1 RD_SPU_INTERP=1 RD_SPU_INTERP_ASYNC=1`
+
+## Next
+
+The SPU kernel runs **70 instructions and stops** (`stop=0x0`, last pc ≈ 0x72C/0x7EC/0xA00), and
+the PPU handler (`spurs_handler_entry`, waiting in `event_queue_receive(q=3)`) then asserts on
+"unexpected value 0x0" — i.e. the SPU kernel has not yet done its job. A separate libsre
+diagnostic names the reason directly: **`policy module 0x00000000`, workload ID 32**.
+
+So the next question is concrete and Sony is asking it for us: **why does the interpreted SPURS
+kernel stop after ~70 instructions, and why is workload 32's policy module null?** Likely an
+unimplemented SPU channel in the interpreter, or a workload-registration step the game makes
+through a path we still serve.
+
+Note the boot is still behind the HLE path in absolute terms (5 PPU threads vs 18) — this is a
+fidelity milestone, not yet a progress one. But the whole class of "our PM does not publish what
+the real one does" disappears down this route, and it is now demonstrably reachable.

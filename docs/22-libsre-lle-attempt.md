@@ -123,3 +123,63 @@ re-running the lift.
 
 The one thing that should NOT stay on the branch is the `ppu_lifter.py` `override_syms` fix —
 it is a genuine bug on the main line and is cherry-picked across.
+
+---
+
+## CORRECTION (checked against the RPCS3 source) — the TOC is NOT the blocker
+
+The "TOC outside the extent" diagnosis above is **wrong**. Verified against RPCS3
+(`rpcs3/Emu/Cell/PPUModule.cpp`, clone updated to 2026-09-02):
+
+**1. PRX relocations are per-segment on both sides**, and `lift_prx.py` already implements this
+correctly (it documents the semantics from RPCS3):
+
+```c
+struct ppu_prx_relocation_info { u64 offset; u16 pad; u8 index_value; u8 index_addr;
+                                 u32 type;   u64 ptr; };
+raddr     = segs[index_addr].addr + offset      // where to patch
+data_base = index_value == 0xFF ? 0 : segs[index_value].addr
+```
+
+**2. The TOC's own relocation says exactly what gp is.** The entry patching the module-info
+`toc` field is:
+
+```
+offset=0x1DC6C  index_addr=0  index_value=1  type=1(ADDR32)  ptr=0xBAB0
+   =>  toc = segs[1].addr + 0xBAB0
+```
+
+which for a contiguous layout is `base + 0x2E000 + 0xBAB0 = base + 0x39AB0` — precisely what
+`lift_prx` produced. **It was right.**
+
+**3. And that address is correct PPC64.** On ELFv1 `r2` conventionally points **0x8000 past the
+start of `.toc`**, so the real TOC begins at `gp - 0x8000 = base + 0x31AB0` — comfortably inside
+the image (which ends at `base + 0x32340`). Dumping it confirms real, relocated content:
+
+```
+0x30031AB0: 3002E088 3001EE90 3001EE98 3001E6B8
+0x30031AC0: 3001EEA8 3001EEB8 3002E0E0 3001EEC0
+```
+
+All valid in-module pointers. **The TOC is well-formed and reachable.**
+
+### So what is the blocker?
+
+Still `entry=0x00000000` on the handler-thread creation, but the cause is unknown and the TOC
+explanation is retracted. The useful new datum is the **argument pattern**:
+
+```
+sys_ppu_thread_create  entry=0x00000000  arg=0x01B92E00  stack=0x8000  prio=0
+                        ^^^ zero          ^^^ correct     ^^^ correct   ^^^ zero
+```
+
+`arg` (the real SPURS instance EA) and `stack` are right, so the ABI alignment is fine — libsre
+genuinely computed a null entry *and* a zero priority while getting the neighbouring arguments
+right. That is a much narrower question than "the TOC is unmapped", and it is where a resuming
+session should start: find the libsre function that calls `sys_ppu_thread_create` and see where
+it sources the entry OPD and priority from.
+
+The other genuine difference from RPCS3 remains worth knowing: **RPCS3 allocates each PRX
+segment independently** (`vm::alloc(mem_size, vm::main)`, `p_vaddr` ignored) rather than
+contiguously at `base + p_vaddr`. That does not appear to matter for the TOC, but it may matter
+elsewhere, and it is the one structural difference between our loader and the reference.

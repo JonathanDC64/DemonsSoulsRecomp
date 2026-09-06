@@ -183,3 +183,41 @@ The other genuine difference from RPCS3 remains worth knowing: **RPCS3 allocates
 segment independently** (`vm::alloc(mem_size, vm::main)`, `p_vaddr` ignored) rather than
 contiguously at `base + p_vaddr`. That does not appear to matter for the TOC, but it may matter
 elsewhere, and it is the one structural difference between our loader and the reference.
+
+---
+
+## SECOND CORRECTION — the NULL entry comes from GAME code, not libsre
+
+Added a symbolised host-stack chain on any `sys_ppu_thread_create` with `entry == 0` (the
+lifted firmware does not stamp `ctx->cia`, so that field is stale game-space under LLE and says
+nothing; the host stack resolves through the same table libsre's 756 functions are in).
+
+```
+[thread] NULL entry for "DLSpursManager" -- caller chain:
+[CHAIN] 016B9F44 00B16418 00A9A3D0 00A9CD38 00C5F9C8 00015220 000125F0 000124C0
+```
+
+**Every frame is game space; none is in libsre's `0x30xxxxxx` range.** And "DLSpursManager" is a
+**Dantelion** name (DL = Dantelion), not a Sony one — RPCS3 logs this same title creating
+`DLSpursManagerSpursHdlr0/1`.
+
+So the picture is the reverse of what §"The blocker" assumed: **the game creates its own SPURS
+handler threads**, and sources the entry from state that libsre's initialisation should have
+populated. It passes `arg=0x01B92E00`, which is exactly the `CellSpurs` instance libsre was
+handed. The zero is **a field libsre did not fill in**, not a bad call from libsre.
+
+That also explains `prio=0` alongside a correct `arg` and `stack`: the game is reading a
+handler descriptor (entry + priority) out of the SPURS instance, and getting zeros for the two
+fields libsre's init did not write.
+
+### Resume from here
+
+1. Find what the game reads at `0x016B9F44` / `0x00B16418` — which offsets in the `CellSpurs`
+   instance at `0x01B92E00` supply the handler entry and priority.
+2. Dump those offsets after libsre's `cellSpursInitializeWithAttribute` returns, and compare
+   against a working HLE run (our HLE never created these threads at all, so compare against
+   RPCS3's documented `CellSpurs` layout in `rpcs3/Emu/Cell/Modules/cellSpurs.h` instead).
+3. The likely cause is that some part of init is still being served by our HLE rather than
+   libsre — check whether every NID on the init path actually resolved through
+   `prx_resolve_export`, since a single HLE stub in the middle would leave exactly this kind of
+   half-populated structure.

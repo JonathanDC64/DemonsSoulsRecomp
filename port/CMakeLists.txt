@@ -57,10 +57,33 @@ else()
     message(STATUS "des_boot: real taskset policy NOT wired (weak stub; probe inert)")
 endif()
 
+# --- Real lifted Sony SPURS kernel (libsre firmware LLE) --------------------
+# ps3recomp's dispatcher ALREADY prefers a loaded PRX over its own HLE stub
+# (ps3_hle_call -> prx_resolve_export); supplying the module is what makes that
+# bridge live. FIRMWARE-DERIVED and gitignored: work/libsre/ is produced locally
+# by scripts/build_libsre.sh from the user's own libsre.prx, port/gen/ from it.
+# Entirely GATED at runtime by LIBSRE_LLE=1 -- unset, nothing is registered and
+# every SPURS call takes the existing HLE path, so the default build is
+# behaviourally identical and reverting costs nothing.
+set(LIBSRE_LIFTED "${CMAKE_CURRENT_SOURCE_DIR}/../work/libsre/lifted/ppu_recomp.c")
+set(LIBSRE_GLUE   "${CMAKE_CURRENT_SOURCE_DIR}/gen/libsre_glue.c")
+set(LIBSRE_SOURCES "")
+if(EXISTS "${LIBSRE_LIFTED}" AND EXISTS "${LIBSRE_GLUE}")
+    set(LIBSRE_SOURCES "${LIBSRE_LIFTED}" "${LIBSRE_GLUE}"
+        "${PS3RECOMP_DIR}/runtime/prx/prx_loader.c")
+    # The lifter emits C++ (extern "C" blocks) regardless of the .c suffix, and
+    # the game's own chunks are .cpp for the same reason -- compile it as C++.
+    set_source_files_properties("${LIBSRE_LIFTED}" PROPERTIES LANGUAGE CXX)
+    message(STATUS "des_boot: libsre LLE available (run with LIBSRE_LLE=1)")
+else()
+    message(STATUS "des_boot: libsre LLE not built (HLE cellSpurs only)")
+endif()
+
 # --- The boot executable ---------------------------------------------------
 add_executable(des_boot
     ${RECOMP_CHUNKS}
     ${SPU_CHUNKS}                                           # lifted SPU images
+    ${LIBSRE_SOURCES}                                       # real lifted SPURS kernel (opt-in)
     ${TSP_SOURCES}                                          # real SPURS taskset policy (blob + lifted, optional)
     "${SPU_DIR}/_gen/spu_workloads.cpp"                     # SPU workload registration (auto at startup)
     "${RECOMP_DIR}/hle_nid_table.cpp"                       # generated NID->handler table

@@ -739,3 +739,53 @@ re-enters it. Upstream approximates re-entry for image 22 (cri) only.
 3. The durable answer remains the PPU-side libsre firmware LLE (§4C): the real SPURS kernel
    does this re-entry natively, which is precisely why upstream reports it as the fix for this
    whole class.
+
+---
+
+## 17. Re-entry is not enough — the gap is submission→queue linkage
+
+§16 concluded the graphics gate was persistent-task re-entry. Implemented it
+(`SPU_TASK_RESUME=<img>[:<n>[:<ms>]]`, generalising `YDKJ_CRI_RESUME` beyond image 22) and
+tested with 800 re-entries of image 2. **It does not unblock HighGraphics** — still ~1.2 M
+spins, completion word never written. The negative result localises the gap precisely.
+
+**Why**, from `YDKJ_AWATCH=01B50FC4`:
+
+```
+write 0x01B50FC4 = 0x45A4B320
+  func_00ACAFA8+0x68B <- func_009F94A8+0xC9A <- func_00D1DE40+0x5B4
+                      <- func_00D1DEE8+0x108B <- func_00C3A878+0x6C1   (HighGraphics)
+```
+
+Two facts fall out:
+
+1. **HighGraphics submits exactly once.** The descriptor is written twice in the whole run: `0`
+   at init, then the end pointer. It then spins forever waiting for a completion that never
+   comes — it never retries or re-submits.
+2. **Image 2 never reads that descriptor.** The submission goes to `0x01B50FC4`; image 2 only
+   ever GETs `0x01B51000..0x01B51100`. Its own queue entries remain self-pointers (an empty
+   list) no matter how many times it is re-entered — which is why re-running it changes nothing.
+
+So the missing step is **not** "run the task again". It is whatever turns a PPU-side submission
+at `0x01B50FC4` into task-visible work in the queue at `0x01B51000`. On hardware that is the
+taskset policy module / SPURS kernel — the same root as the audio round-notify (§12), one level
+further in: there we had to *publish a completion*, here we would have to *publish a
+submission*.
+
+### Corrected picture of the two SPU gates
+
+| path | task | missing kernel step |
+|---|---|---|
+| audio | image 12 | completion notify on round end — **fixed** (§12) |
+| graphics | image 2 | submission → queue linkage (task never sees the work) — open |
+
+### Next
+
+1. Determine the queue format at `0x01B51000` (two 16-byte entries, each ending in a
+   self-pointer) and what a linked entry looks like — then have the HLE link a submission in,
+   the mirror of §12's notify.
+2. `func_009F94A8` is in the submit chain and is the function the older notes associate with the
+   label-255 wait; worth re-reading now that the chain is known.
+3. This is the second gate in a row whose root is "our C HLE of the taskset PM does not do what
+   the real one does". That is a strong argument for prioritising the PPU-side libsre firmware
+   LLE (§4C) over continuing to reimplement PM behaviours one at a time.

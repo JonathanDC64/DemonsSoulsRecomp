@@ -908,3 +908,72 @@ every consumer is correctly idle. That single fact now explains all of it.
 
 Given three consecutive gates with one root, (2) now looks like the better investment — but it
 is a direction change and should be a deliberate decision, not a drift.
+
+---
+
+## 20. ROOT CAUSE OF THE STALLED BOOT — SPU completions never reached the PPU
+
+Returning to track (1) after the LLE attempt (docs/22), the first question was what MAIN is
+actually doing. It was blocked on `cond_wait(cond=13)` — **1 wait, 0 signals, forever.**
+
+Following that back:
+
+```
+4 Havok SPU tasks (image 7) COMPLETE
+   -> ZERO events posted to ANY queue    (event_port_send / post_user_event = 0 all run)
+   -> Havok PPU Thread (tid 11) blocked in sys_event_queue_receive(q=5) forever
+   -> never signals cond 13
+   -> MAIN blocked forever on cond 13
+   -> the engine never requests content
+   -> Core.Res x4, SLSession and the renderer all sit idle on empty queues
+```
+
+**One missing edge explained the entire idle picture from §19.**
+
+### The fix
+
+`spurs_notify_task_completion()` posts a completion event when an SPU task completes, to the
+queues attached via `cellSpursAttachLv2EventQueue` (DeS attaches eleven; upstream already kept
+the registry). It fires **only for queues with a blocked receiver** — the same rule the
+event-flag notify uses, so it cannot manufacture wakeups for paths the game is not blocked on.
+That needed a `waiters` count on `sys_event_queue_info`, maintained around the untimed receive,
+plus `sys_event_queue_waiters()` to read it.
+
+| | before | after |
+|---|---|---|
+| `cond 13` | 1 wait, **0 signals** | **signalled** |
+| MAIN | blocked forever on cond 13 | **cycles through cond 13 / 19 / 3 / 30** |
+| completion events posted | 0 | ~14 (all on queue 12, the one with a waiter) |
+
+No regression: `repro.sh 4 25` — milestone 13, 0 crashes, 18 threads, 3 exits, all stable.
+(`spu_ret` rises 5→9 because more SPU work now actually runs.) Clean A/B:
+`SPURS_NO_TASK_EVENT=1` restores 0 signals on cond 13.
+
+### Where it stands
+
+**Still 13/14, still 0 file opens.** MAIN now advances instead of being parked, but has not yet
+reached the point of requesting content — it currently blocks on the *second* `cond 30` wait
+(2 waits, 1 signal).
+
+### The pattern, now three for three
+
+Every gate this session has had the same root: **our C HLE of the taskset PM does not perform
+the completion bookkeeping the real one does.** Three different expressions of it:
+
+| path | waiter | missing publication | status |
+|---|---|---|---|
+| audio | PPU on `cellSpursEventFlagWait` | event-flag bits on round end | **fixed** (§12) |
+| graphics | PPU polling a raw word | completion word on task end | bisect only (§18) |
+| Havok / MAIN | PPU on `sys_event_queue_receive` | lv2 event on task end | **fixed** (this section) |
+
+Two of the three are now real fixes derived from guest state. The graphics one is still a knob
+because its descriptor address is not derivable from taskset state (it comes from a game global
+pair, `*(g-0x7FE0)` and `*(g-0x7FE4)`), so a principled version would be a DeS-specific bridge
+rather than a PM behaviour.
+
+### Next
+
+1. **`cond 30`** — MAIN's new gate (2 waits, 1 signal). Same question as cond 13: who publishes it?
+2. Re-check the asset pipeline once MAIN stops blocking; content requests should follow MAIN.
+3. The libsre LLE (docs/22) remains the durable answer to this whole class — it would have
+   supplied all three publications natively.

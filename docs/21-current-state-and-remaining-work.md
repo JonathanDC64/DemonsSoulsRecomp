@@ -434,3 +434,70 @@ the loop is now free-running rather than paced.
    policy and observe what it writes, rather than assuming `0x0001`.
 3. The durable answer remains the PPU-side firmware LLE of `libsre` (§4C), which replaces this
    whole reimplementation with authentic Sony code.
+
+---
+
+## 12. FIXED — the taskset PM's round-completion notify (no knobs required)
+
+The §11 bisect is now a real fix (`spurs_ef_notify_taskset_round`, ps3recomp `975fefd`) that
+derives everything from guest state instead of an env-supplied address:
+
+| what | source |
+|---|---|
+| which flags belong to this taskset | `EF_ADDR` (0x70) |
+| which of those are SPU→PPU | `EF_DIRECTION` (0x0E) |
+| which bits the waiter actually wants | the blocked waiter's own pattern |
+
+The last one comes from the **host-side** `EventFlagSync` table, not the guest's
+`EF_PPU_WAIT_MASK`: that guest field is deliberately left clear so the SPU-side lifted Set code
+stays on its "no PPU waiter" path, so it always reads 0. The pattern is recorded on entry to
+`cellSpursEventFlagWait` and cleared on wake, so a flag with no blocked waiter has mask 0 and is
+left alone. The notify fires only when a PPU thread is genuinely blocked on a flag owned by the
+taskset whose task just completed a round — the PM's own condition.
+
+With **no env knobs set**:
+
+```
+[round-notify] taskset 0x01CE8300 round done -> flag 0x01CE7800 bits=0x0001 (waiter mask)
+```
+
+| observable | before | after |
+|---|---|---|
+| `EventFlagWait BLOCKED` | 24 | **0** |
+| `EventFlagWait WAKE` | 0 | **40** |
+| `_cellSpursSendSignal` | 1 | **6743** |
+| log lines | 1404 | **8406** |
+
+Clean A/B: `SPURS_NO_ROUND_NOTIFY=1` restores exactly the 24 blocked waits. `repro.sh 4 20`
+remains fully deterministic, 0 crash markers, 18 threads.
+
+### The state has changed qualitatively
+
+There are now **no hard blocks left**. What the threads are doing:
+
+```
+21x  timer_usleep(100 us)     cia=0x009F75E4
+14x  timer_usleep(30 us)      cia=0x00A31500
+11x  mutex_lock(mutex=1092)
+ 8x  timer_usleep(16666 us)   cia=0x00B49574     <-- 60 Hz frame pacing
+ 6x  timer_usleep(16666 us)   cia=0x00D1E188     <-- 60 Hz frame pacing
+```
+
+Two independent 16666 µs (60 Hz) pacing loops plus ordinary mutex traffic — the engine is
+*running and pacing frames*, not parked. Previously the entire process sat on one event flag.
+
+**Still 13/14.** No auto-save dialog, no file I/O, no new threads, 2 draws. So the engine loops
+without advancing to content loading. The gate is no longer a deadlock; it is the pre-title →
+title transition — which is where docs/19 was before the merge, but now reached with a live
+audio pipeline, frame pacing, and a deterministic boot.
+
+### Next
+
+1. **Verify the asset pipeline** (still open from §5): zero `sys_fs_open` throughout. Find what
+   the engine is waiting for before it starts streaming — with the boot now deterministic and
+   the audio loop live, this is a much better environment to ask that in than before.
+2. The `PS3_DEBUG` console (`threads` on demand) is the right tool for a boot that now *runs*
+   rather than hangs — pair it with `tools/des/sym.py` to symbolise, since its own
+   symbolisation is sparse.
+3. `mutex=1092`/`1093` and the `cia` addresses above are concrete anchors for what the frame
+   loops are gated on.

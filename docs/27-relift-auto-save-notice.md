@@ -115,6 +115,22 @@ Later runs with a second press get past the trophy check to the Atlus logo, then
 
 **RPCS3 difference to keep in mind:** RPCS3's `RegisterContext` blocks while it delivers SETUP (0..3), PROGRESS (0..n), FINALIZE and COMPLETE, one per `cellSysutilCheckCallback`. Ours calls INSTALLED synchronously and queues one COMPLETE. The game's own code after `RegisterContext` sets status 8 (COMPLETE) itself when the call returns 0.
 
+## Logo phase: slow, not hung; CPU spin removed
+
+Runs vary a lot now that a save exists. Some reach the notice within a minute; others sit on the loading screen for minutes. The logos advance (Atlus → Sony → Japan Studio), but sometimes at well under 1 presented FPS. They also have no fade transitions; that is noted for later.
+
+`stat`'s flips count decoded FIFO flip words, not presents. In a slow run it drops from about 146/s to about 5/s.
+
+**What a slow run showed**
+- `COND_SHADOW`: MAIN blocked over 3 s at a time on the Havok barrier (cond 13, `func_01328BB8`, called from `0x001D1A80`).
+- `COND_TRACE=13,19` (now timestamped): per frame, MAIN waits on cond 13 and tid 11 (Havok) signals it; tid 11 waits on cond 19 and MAIN signals it.
+- In a fast run the MAIN side takes under 16 ms. The Havok side has occasional waits of 1–3 s.
+
+**CPU.** The 100% core was the img-2 HighGraphics ring consumer re-reading the ring's write pointer about 8M times/s with GETLLAR.
+- After 20k unchanged reads of the same line, the SPU runtime now naps 1 ms per read. That stands in for the lock-line-lost wait hardware would do. `SPU_LLAR_NAP=0` turns it off.
+- Since then no host thread is pinned.
+- An A/B run showed no slowdown from the nap; run-to-run variance is far larger.
+
 ## Next
 
-Find out what the Sony-logo stall waits on.
+Catch a slow logo run and find what the Havok thread (tid 11) waits on during its multi-second gaps. Expected suspects are SPU task completion delivery (image 7 tasks, evq 5) and the image-7 task spawning (one host thread per task).

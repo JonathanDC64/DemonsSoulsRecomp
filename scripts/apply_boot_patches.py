@@ -6,7 +6,9 @@ hand fixes don't survive a re-lift. This script re-injects the small, well-under
 fixes that get Demon's Souls past its C++ static-init memory bootstrap. Run it after
 every `ppu_lifter.py` invocation, before building.
 
-Fixes (both in chunk 005):
+Usage: python scripts/apply_boot_patches.py [lift dir, default work/recomp]
+
+Fixes:
 
 1) func_00AC8078 (the DL segregated-allocator bin search): when called with a NULL
    heap descriptor (r3==0) it would loop forever in its size-class doubling loop
@@ -24,7 +26,7 @@ Idempotent: running twice is a no-op. See docs/07-m2-boot-debug.md.
 """
 import sys, pathlib
 
-CHUNK = pathlib.Path(__file__).resolve().parent.parent / "work" / "recomp" / "ppu_recomp_005.cpp"
+LIFT = pathlib.Path(__file__).resolve().parent.parent / "work" / "recomp"
 
 # OBSOLETE (2026-06-29): Both patches below were workarounds for symptoms of a single
 # root cause -- a rotate-by-zero undefined-behavior bug in the lifter's ppc_rotl64/
@@ -80,12 +82,18 @@ _OBSOLETE_PATCHES = [
 ]
 
 def main():
-    if not CHUNK.exists():
-        print(f"ERROR: {CHUNK} not found (run the lifter first)", file=sys.stderr)
+    # Optional argument: the lift directory (default work/recomp). The patched
+    # function moves between chunks from one lift to the next, so find it.
+    lift = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else LIFT
+    chunks = sorted(lift.glob("ppu_recomp_*.cpp"))
+    if not chunks:
+        print(f"ERROR: no chunks in {lift} (run the lifter first)", file=sys.stderr)
         return 1
-    text = CHUNK.read_text(encoding="utf-8", errors="surrogateescape")
     applied = 0
     for desc, anchor, old, new in PATCHES:
+        CHUNK = next((c for c in chunks if anchor in
+                      c.read_text(encoding="utf-8", errors="surrogateescape")), chunks[0])
+        text = CHUNK.read_text(encoding="utf-8", errors="surrogateescape")
         if "boot-patch:" in text and new.split("boot-patch:")[1][:30] in text:
             print(f"  [skip] already applied: {desc}")
             continue
@@ -96,9 +104,9 @@ def main():
             print(f"  [WARN] pattern not found for: {desc} -- lifter output changed?", file=sys.stderr)
             continue
         text = text.replace(old, new, 1)
+        CHUNK.write_text(text, encoding="utf-8", errors="surrogateescape")
         applied += 1
-        print(f"  [ok]   applied: {desc}")
-    CHUNK.write_text(text, encoding="utf-8", errors="surrogateescape")
+        print(f"  [ok]   applied: {desc} ({CHUNK.name})")
     print(f"apply_boot_patches: {applied} patch(es) applied")
     return 0
 

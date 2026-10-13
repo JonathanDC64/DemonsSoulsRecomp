@@ -38,6 +38,9 @@ ghidra_*.txt
 # Build / generated
 # -------------------------------------------------------------------------
 build/
+build_*/
+# The runtime's /dev_hdd0 etc. (the game's own save data): never commit
+gamedata/
 *.obj
 *.o
 *.exe

@@ -5,6 +5,7 @@
 #
 # Usage: desrun.sh <timeout_sec> <outfile> [ENV=val ...]
 #   e.g. desrun.sh 60 boot.txt YDKJ_SYNCTRACE=1 GCM_FIFO_DBG=1
+# DES_EXE=<path> runs another build (default port/build/des_boot.exe).
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
@@ -21,7 +22,7 @@ export LIBSRE_LLE_ONLY=011EE38B,1656D49F,8A85674D,73E06F91,082BFB09,E5443BE7,039
 export SPURS_NO_ROUND_NOTIFY=1
 for kv in "$@"; do export "$kv"; done
 
-timeout "$TIMEOUT" ./port/build/des_boot.exe work/game/EBOOT.ELF > "$OUT" 2>&1
+timeout "$TIMEOUT" "${DES_EXE:-./port/build/des_boot.exe}" work/game/EBOOT.ELF > "$OUT" 2>&1
 rc=$?
 echo "exit=$rc lines=$(wc -l < "$OUT")  out=$OUT"
 echo "=== threads created ==="

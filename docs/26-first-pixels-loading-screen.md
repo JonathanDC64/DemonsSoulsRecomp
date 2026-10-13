@@ -36,7 +36,7 @@ The visible symptom was the boot-screen vertex shader's position matrix (c0–c3
 - adds saturation to `vctsxs`;
 - places `lvewx`/`stvewx` data at lane `EA & 15`.
 
-## 3. `vmrghw` lifted as `vmrghh` (also present in the current upstream lifter)
+## 3. `vmrghw` lifted as `vmrghh`
 
 `ppu_lifter.py` picks the element size with `"h" in mn[4:]`. That test is true for `vmrghw` (`mn[4:]` is `"hw"`), so every high-word merge was emitted as a halfword merge.
 
@@ -44,7 +44,7 @@ The visible symptom was the boot-screen vertex shader's position matrix (c0–c3
 - `vmrghw` is half of the matrix-transpose idiom, so transposed rows looked like `0x80003F80`: −0.0 and 1.0 interleaved by halfword.
 - `fix_vmx_byteorder.py` rewrites all 1,475 sites.
 
-**Upstream still has this bug.** The size should come from `mn[5]`.
+The current lifter already gets this right: upstream 2070f4d (2026-07-10) added a merge handler that reads the size from `mn[5]` and runs first. The old handler stayed in the file as dead code; it is removed on the `fix/lifter-dead-vmrg-handler` branch.
 
 ## 4. Unlifted vector ops
 
@@ -96,4 +96,4 @@ A temporary NaN-origin tracer was also used (not committed). It logged every vec
 
 - The loading screen fades out after about 60 s and the screen stays black. Find what the boot waits on next (the auto-save notice and title screen should follow).
 - The full VMX audit isn't done yet. Other lane ops that are byte-order sensitive but absent from DeS's template list aren't covered. Re-run the template census in `fix_vmx_byteorder.py`'s header comment if new symptoms appear.
-- Upstream the `vmrghw` lifter fix.
+- Upstream the dead `vmrg*` handler removal (`fix/lifter-dead-vmrg-handler`, not pushed).

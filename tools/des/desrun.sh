@@ -14,6 +14,11 @@ SCRATCH="${DES_SCRATCH:-$PWD/work/tmp}"; mkdir -p "$SCRATCH"
 case "$OUT" in /*|?:*) ;; *) OUT="$SCRATCH/$OUT" ;; esac
 
 export PS3_VFS_ROOT="D:/Users/jonat/Documents/roms/ps3/Demon's Souls (USA)"
+# Known-good boot config (docs/25): the LFQueue + SpursQueue families on real
+# libsre, and no round-notify heuristic. Any ENV=val argument overrides these.
+export LIBSRE_LLE=1
+export LIBSRE_LLE_ONLY=011EE38B,1656D49F,8A85674D,73E06F91,082BFB09,E5443BE7,039D70B7,91066667
+export SPURS_NO_ROUND_NOTIFY=1
 for kv in "$@"; do export "$kv"; done
 
 timeout "$TIMEOUT" ./port/build/des_boot.exe work/game/EBOOT.ELF > "$OUT" 2>&1

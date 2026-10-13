@@ -61,6 +61,12 @@ void ds_note_handlerB(unsigned r3, unsigned r4)
     }
 }
 
+extern "C" void ds_dump_shadow(void);
+extern "C" void (*g_shadow_stack_dump_hook)(void);
+static struct DsShadowHookInit {
+    DsShadowHookInit() { g_shadow_stack_dump_hook = ds_dump_shadow; }
+} s_ds_shadow_hook_init;
+
 extern "C" void ds_dump_shadow(void)
 {
     unsigned n = g_ds_sp; if (n > 8192u) n = 8192u;

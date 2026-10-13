@@ -6,6 +6,12 @@ Pipeline (run after extracting SPU images):
   2. each image -> ps3recomp/work_spu/<img>/spu_recomp.{c,h}   (spu_lifter.py --symbol-prefix <img>_)
   3. ps3recomp/work_spu/_gen/spu_workloads.cpp                 (registration, auto-registered at startup)
 
+SPURS job binaries (jobchain jobs) are raw PIC blobs, not ELFs: put each in
+work/spu_jobs/<name>.bin (e.g. from SPU_DUMP_MISS=<dir>, or cut from the EBOOT at the
+descriptor's eaBinary). Each is wrapped as an SPU ELF at LS 0 (where spu_run_spurs_job
+loads it), lifted the same way, and registered by the FNV of the RAW bytes -- the
+fingerprint spu_workload_dispatch_job computes.
+
 port/CMakeLists.txt globs ps3recomp/work_spu/*/spu_recomp.c + that _gen file into des_boot, so
 cellSpurs AddWorkload/CreateTask dispatch (spu_workload_dispatch) runs the recompiled SPU code.
 
@@ -20,6 +26,7 @@ import glob, os, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ELF_DIR = os.path.join(ROOT, "work", "spu_images")
+JOB_DIR = os.path.join(ROOT, "work", "spu_jobs")
 OUT_DIR = os.path.join(ROOT, "ps3recomp", "work_spu")
 LIFTER  = os.path.join(ROOT, "ps3recomp", "tools", "spu_lifter.py")
 
@@ -73,6 +80,26 @@ def main():
             os.makedirs(out, exist_ok=True)
             print(f"lifting {img} ...", flush=True)
             r = subprocess.run([sys.executable, LIFTER, "--auto-functions", f,
+                                "--symbol-prefix", img + "_", "-o", out],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                print(r.stdout[-2000:], r.stderr[-2000:], file=sys.stderr)
+                return 1
+
+    # Raw SPURS job binaries: wrap at LS 0 (entry 0), fingerprint the raw bytes.
+    sys.path.insert(0, os.path.join(ROOT, "ps3recomp", "tools"))
+    from wrap_spu_elf import wrap
+    for f in sorted(glob.glob(os.path.join(JOB_DIR, "*.bin"))):
+        img = os.path.splitext(os.path.basename(f))[0]
+        raw = open(f, "rb").read()
+        imgs.append((img, fnv(raw), 0))
+        if not gen_only:
+            out = os.path.join(OUT_DIR, img)
+            os.makedirs(out, exist_ok=True)
+            elf = os.path.join(out, img + ".elf")
+            open(elf, "wb").write(wrap(raw, base=0, entry=0))
+            print(f"lifting job {img} ...", flush=True)
+            r = subprocess.run([sys.executable, LIFTER, "--auto-functions", elf,
                                 "--symbol-prefix", img + "_", "-o", out],
                                capture_output=True, text=True)
             if r.returncode != 0:

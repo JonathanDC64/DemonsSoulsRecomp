@@ -17,6 +17,12 @@ public class dump_one extends GhidraScript {
         FunctionManager fm = currentProgram.getFunctionManager();
         Function f = fm.getFunctionAt(toAddr(a));
         if (f == null) f = fm.getFunctionContaining(toAddr(a));
+        if (f == null) {
+            /* Not discovered by auto-analysis (reached only through vtables /
+             * OPDs): disassemble from the address and define it here. */
+            disassemble(toAddr(a));
+            f = createFunction(toAddr(a), null);
+        }
         if (f == null) { out.println("no function at " + Long.toHexString(a)); out.close(); return; }
         DecompInterface dec = new DecompInterface(); dec.openProgram(currentProgram);
         DecompileResults r = dec.decompileFunction(f, 60, new ConsoleTaskMonitor());

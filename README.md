@@ -20,7 +20,9 @@ This is an **ambitious, multi-stage research effort**, not a weekend project. It
 - ✅ **RSX/GCM bring-up started** — the GCM FIFO control register now lives in guest memory and drains, so the graphics-init thread proceeds and dispatches its first **SPU workload**.
 - ✅ **M3a — full engine bring-up.** The boot reaches **13/14 milestones**: SPURS init, HighGraphics, the whole Core.Res subsystem, Havok, audio, NexusRevolution, DsSaveLoadMan, SLSession, and `cellGameDataCheckCreate2`. 18 guest threads. All 12 SPU images dispatch **and return**.
 - ✅ **Determinism (2026-09-05).** After merging upstream ps3recomp **v0.10.0**, six consecutive boots produce identical numbers on every observable (`repro.sh 6 25`, stdev 0.0), with **zero crash markers** (was 36). The long-standing boot non-determinism is gone.
-- 🔜 **M3b — one SPURS deadlock from the auto-save dialog (current frontier).** PPU blocks in `cellSpursEventFlagWait` on `0x01CE7800`; SPU **task 1** of the same taskset is parked in `WAIT_SIGNAL`. Each waits for the other. Current state + ordered plan: [`docs/21`](docs/21-current-state-and-remaining-work.md).
+- ✅ **Asset streaming (2026-10-13).** After merging upstream ps3recomp **v0.14.0** and serving the SPURS LFQueue family from the real, lifted Sony `libsre` (`LIBSRE_LLE_ONLY`), the `Core.Res` pipeline reads **all ten boot assets** (sound banks, system textures, five shader bundles) and decompresses them on SPU. 22 guest threads, deterministic, 0 crashes. See [`docs/23`](docs/23-v0140-merge-and-asset-streaming.md).
+- 🔜 **M3b — engine state machine → auto-save dialog (current frontier).** MAIN now waits on a new sync object; SLSession waits for a save/load request. *(The SPURS deadlock described next is fixed upstream.)*
+- ~~**M3b — one SPURS deadlock from the auto-save dialog.**~~ PPU blocks in `cellSpursEventFlagWait` on `0x01CE7800`; SPU **task 1** of the same taskset is parked in `WAIT_SIGNAL`. Each waits for the other. Current state + ordered plan: [`docs/21`](docs/21-current-state-and-remaining-work.md).
 
   The strategy here **changed**: upstream now ships an **SPU interpreter**, a **policy-module runner**, real `WAIT_SIGNAL` semantics and a working `cellSpursSendSignal` — and documents the full **firmware-LLE** path (lifting the real Sony `libsre.prx` SPURS kernel) as *proven on another title*. So the job is no longer "write a clean-room HLE scheduler"; it is **wire and validate the real one**.
 - ⏳ **M4 (RSX shader translation) / M5 (playable)** — open-ended, not yet reached.
@@ -54,7 +56,9 @@ The two long-known cruxes are **SPU code** (each SPURS job must run — now via 
 | [`docs/18-requirements-crunch.md`](docs/18-requirements-crunch.md) | Requirements crunch (four-domain analysis) |
 | [`docs/19-implementation-plan.md`](docs/19-implementation-plan.md) | Implementation plan (⚠ superseded by docs/21) |
 | [`docs/20-upstream-merge-dropped-deltas.md`](docs/20-upstream-merge-dropped-deltas.md) | What the upstream v0.10.0 merge dropped, and why |
-| [`docs/21-current-state-and-remaining-work.md`](docs/21-current-state-and-remaining-work.md) | **START HERE** — true current state, upstream capabilities, ordered remaining work |
+| [`docs/21-current-state-and-remaining-work.md`](docs/21-current-state-and-remaining-work.md) | True current state as of 2026-09, upstream capabilities, ordered remaining work |
+| [`docs/22-libsre-lle-attempt.md`](docs/22-libsre-lle-attempt.md) | libsre firmware LLE: the real Sony SPURS kernel loads and runs |
+| [`docs/23-v0140-merge-and-asset-streaming.md`](docs/23-v0140-merge-and-asset-streaming.md) | **START HERE** — v0.14.0 merge; LFQueue on real libsre; boot assets stream |
 
 ## Layout
 

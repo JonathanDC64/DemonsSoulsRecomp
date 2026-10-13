@@ -131,6 +131,18 @@ Runs vary a lot now that a save exists. Some reach the notice within a minute; o
 - Since then no host thread is pinned.
 - An A/B run showed no slowdown from the nap; run-to-run variance is far larger.
 
+**Follow-up (ps3recomp `83b74fd`): idle pollers sleep for real**
+- The GETLLAR back-off now blocks on the SPU context's channel cv until a write drops the reservation (`spu_coh_notify_write` → `spu_ch_wake`), with a 2 ms safety timeout.
+- `sys_timer_usleep`: after 64 back-to-back sub-ms sleeps, a thread sleeps on a high-resolution waitable timer instead of the QPC/`SwitchToThread` spin. `USLEEP_SPIN=1` restores the old behaviour.
+- `desrun.sh` (and so every debug script) kills any leftover `des_boot.exe` before a run. It also runs the game at BelowNormal priority on CPUs 0–7: `PS3_PRIORITY`/`PS3_AFFINITY`, read by `boot_main`.
+
+Measured with `tools/des/cpusample.sh` (total cores via perf counter, busiest threads mapped to guest tids):
+- In the logo phase the game now uses about 0.6 cores.
+- MOStreamingThread (tid 18) takes about 40%, mostly in ntdll wait/yield. Its loop at `0x00D64E58` does one streaming step and sleeps 5 ms.
+- One SPU thread takes about 18%. HighGraphics is near 0.
+
+**Logos and loading.** In one run the Atlus logo stayed up for more than 107 s, while the game streamed SDATs and wrote its decompressed HDD cache (`Ftruncate`s). The logos look held until a background load finishes. The debug scripts wipe that cache before every run, so each run pays the full decompression. Load throughput is latency-bound (little CPU in use), not compute-bound.
+
 ## Next
 
-Catch a slow logo run and find what the Havok thread (tid 11) waits on during its multi-second gaps. Expected suspects are SPU task completion delivery (image 7 tasks, evq 5) and the image-7 task spawning (one host thread per task).
+Find what the logo phase waits on to finish loading, and catch a slow logo run and find what the Havok thread (tid 11) waits on during its multi-second gaps. Expected suspects are SPU task completion delivery (image 7 tasks, evq 5) and the image-7 task spawning (one host thread per task).

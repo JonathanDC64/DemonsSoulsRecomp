@@ -20,8 +20,14 @@ export PS3_VFS_ROOT="D:/Users/jonat/Documents/roms/ps3/Demon's Souls (USA)"
 export LIBSRE_LLE=1
 export LIBSRE_LLE_ONLY=011EE38B,1656D49F,8A85674D,73E06F91,082BFB09,E5443BE7,039D70B7,91066667
 export SPURS_NO_ROUND_NOTIFY=1
+# Test runs must not starve the machine: below-normal priority on 8 of the
+# 16 logical CPUs (override with PS3_PRIORITY= / PS3_AFFINITY=, e.g. FFFF).
+export PS3_PRIORITY="${PS3_PRIORITY:-below}"
+export PS3_AFFINITY="${PS3_AFFINITY:-FF}"
 for kv in "$@"; do export "$kv"; done
 
+# A leftover game from an earlier run would keep a core pinned.
+taskkill //F //IM des_boot.exe > /dev/null 2>&1
 timeout "$TIMEOUT" "${DES_EXE:-./port/build/des_boot.exe}" work/game/EBOOT.ELF > "$OUT" 2>&1
 rc=$?
 echo "exit=$rc lines=$(wc -l < "$OUT")  out=$OUT"

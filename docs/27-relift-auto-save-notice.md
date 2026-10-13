@@ -22,7 +22,7 @@ void func_00010210(ppu_context* ctx) {      /* _init */
 
 The old lifter had no code window, so it promoted the `bl` target to `func_00010200`.
 
-**Fix** (ps3recomp `9610a37`, upstream branch `fix/lifter-code-window-segment`): the default window now starts at the executable PT_LOAD that holds the first function. The upper bound is unchanged; that is where data misread as code actually lives.
+**Fix** (ps3recomp `c99c082`, upstream branch `fix/lifter-code-window-segment`): the default window now starts at the executable PT_LOAD that holds the first function. The upper bound is unchanged; that is where data misread as code actually lives.
 
 ## What the re-lift fixes without patch scripts
 
@@ -131,7 +131,7 @@ Runs vary a lot now that a save exists. Some reach the notice within a minute; o
 - Since then no host thread is pinned.
 - An A/B run showed no slowdown from the nap; run-to-run variance is far larger.
 
-**Follow-up (ps3recomp `83b74fd`): idle pollers sleep for real**
+**Follow-up (ps3recomp `d9292c8`): idle pollers sleep for real**
 - The GETLLAR back-off now blocks on the SPU context's channel cv until a write drops the reservation (`spu_coh_notify_write` → `spu_ch_wake`), with a 2 ms safety timeout.
 - `sys_timer_usleep`: after 64 back-to-back sub-ms sleeps, a thread sleeps on a high-resolution waitable timer instead of the QPC/`SwitchToThread` spin. `USLEEP_SPIN=1` restores the old behaviour.
 - `desrun.sh` (and so every debug script) kills any leftover `des_boot.exe` before a run. It also runs the game at BelowNormal priority on CPUs 0–7: `PS3_PRIORITY`/`PS3_AFFINITY`, read by `boot_main`.

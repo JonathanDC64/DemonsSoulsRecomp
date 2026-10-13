@@ -5,7 +5,7 @@ boot to a new gate, `Core.Res.Decompressor`. Getting past it took real Sony libs
 API family. With that in place, **every boot asset streams and decompresses on SPU** for the first
 time.
 
-Fork branch: `ps3recomp` **`upstream-v0140`** (merge `81d66d5`, fixes `2c59c12`).
+Fork branch: `ps3recomp` **`upstream-v0140`** (merge `724fec1`, fixes `1882e91`).
 
 ---
 

@@ -8,7 +8,7 @@ docs/19**, whose framing is now obsolete in important ways (see §6).
 
 ## 1. Where the boot actually is
 
-Measured on the merged build (`ps3recomp` branch `upstream-merge`, commit `f057c52`):
+Measured on the merged build (`ps3recomp` branch `upstream-merge`, commit `a6ddac2`):
 
 | observable | pre-merge | post-merge |
 |---|---|---|
@@ -439,7 +439,7 @@ the loop is now free-running rather than paced.
 
 ## 12. FIXED — the taskset PM's round-completion notify (no knobs required)
 
-The §11 bisect is now a real fix (`spurs_ef_notify_taskset_round`, ps3recomp `975fefd`) that
+The §11 bisect is now a real fix (`spurs_ef_notify_taskset_round`, ps3recomp `640c9b1`) that
 derives everything from guest state instead of an env-supplied address:
 
 | what | source |

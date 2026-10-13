@@ -231,7 +231,7 @@ resolver**, not a fact. `ppu_log_host_chain` resolved host addresses against `fu
 only — the game's lifted functions — so a frame inside libsre resolved to whichever *game*
 function sat below it in host memory. Plausible-looking, entirely wrong, and silent.
 
-Fixed (`g_extra_symtab`, ps3recomp `8d88b75`): a loader can register an additional symbol table
+Fixed (`g_extra_symtab`, ps3recomp `2abf3a2`): a loader can register an additional symbol table
 and the resolver considers it. With libsre's table registered, the same chain reads:
 
 ```

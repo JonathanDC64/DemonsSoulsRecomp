@@ -50,6 +50,13 @@ All fixes were tested on Demon's Souls only. The other titles (VF5, Simpsons, To
 | port `2d6b3ab`, `72c3bd8` (tools) | Runs launch a staged copy of the exe; `regress.sh`, `shotdiff.py`, `recomp_index.py` (below). |
 | `b4821e0` | d3d12 + fragment decompiler: **depth read as colour**. An A8R8G8B8/D8R8G8B8 unit over a depth surface samples that depth and decodes it to the bytes RSX fetches; a draw that samples the depth it is bound to without writing it gets a read-only depth view. Light shafts and distance haze (below). |
 | port `91c3cfd` (tools) | `REGRESS_AB=KNOB=value`: an A/B of one knob at the last stop (below). |
+| port `f7ce830` (tools) | `des_kill_own` also finds staged copies started from any shell (below). |
+| `ad4b9b0`, port `ce22c2b` (tools) | `AUDIO_MUTE=1` (live) sends silence at the normal rate; test runs default to it (below). |
+| `b46dc86` (tools) | Console `waits [s] [rows]`; GCM_RATES counts present boundaries (below). |
+| `0c18b0b` | `sys_timer_usleep`: a long sub-ms usleep sleeps on the high-resolution timer and spins only the last `USLEEP_SPIN_TAIL_US` (500). MOStreamingThread 50% -> 13% of a core. |
+| `0861c1c` | Vblank ticker: the FIFO kick wait's ceiling is 1 ms, was 4 (`FIFO_KICK_MS`, live). About 13.7 -> 15.8 presents/s. |
+| `bab5001` | SPU `fma`/`fms`/`fnms` in double instead of the CRT software `fmaf` (no FMA target). |
+| port `2b3dda3` | The lifted SPU images build `/O2` with SSE4.1 (`DES_SPU_OPT`, default ON). |
 
 ## The in-game hang (fixed, `d5aeb3d`)
 
@@ -271,11 +278,43 @@ All of these keep game-derived output (screenshots, captures) in the scratch dir
 - **Regression shots** (`tools/des/regress.sh`, `shotdiff.py`): boots with `DES_SKIP_INTRO=1`, walks a fixed route with the live `PAD_STICK` (spawn, tunnel exit, camera turn, courtyard) and saves one shot per stop under `$DES_SCRATCH/regress/<set>`, then diffs against the accepted set (`regress.sh accept <set>`). Per shot: mean difference and the share of pixels that changed by more than 32 after a 4x downscale; REGRESSION above 25% or when a shot goes black. Two runs of one build differ by under 8%. The save directory is copied aside and restored, so autosaves cannot move the spawn. About 2.5 minutes. The walk does not land in the same place every run (an enemy, a few frames of drift), so two runs cannot show what one knob does. `REGRESS_AB="KNOB=value"` (port `91c3cfd`) sets the knob live at the last stop and saves `s5_ab`, then clears it and saves `s6_back`, from one position.
 - **Frame capture and replay** (`0d8c4f2`): `setenv RSX_REPLAY_CAP=<file>` in a running game records the next frame (from the clear the backend presents at to the next one): RSX state and GCM tables at its start, every method the FIFO walker dispatched, and the committed non-zero pages of VRAM and the IO-mapped memory at its end (DeS courtyard: 46k methods, 117 MB). `ps3recomp/build/rsx_replay.exe <file> [frames]` (`cmake --build build --target rsx_replay`) plays it through the same dispatch and D3D12 backend with no game: about 4 s for the first frame (pipeline compiles), then about 80 ms per frame. `CELLMARK_DUMP=<n> CELLMARK_DUMP_DIR=<dir>` dumps the presented frames, `RSX_CAP=<n> RSX_CAP_DIR=<dir>` the manifest and render targets. The exposure adaptation reads the previous frame, so the first replays are darker; by about 20 frames it matches the live frame. The capture and the replayer must come from the same build. Replay frames alternate between the whole frame and a near-empty present, so pick dumps that are not black (`CELLMARK_DUMP=6 CELLMARK_DUMP_SKIP=50`), and for manifests capture a few frames (`RSX_CAP=3:4`) and use the one with about 1,700-1,900 draws. `FP_PICK=<fp hex>` writes that program's HLSL to `duck_fp.hlsl` in the current directory (run it from the scratch directory).
 - **CPU per thread** (`e4aea1e`): console `cpu [s]` (default 5 s) prints each host thread's CPU (percent of one core), the split between the exe (`app`), ntdll/kernel32/KernelBase (`os`: yields, spin-waits, syscalls) and other DLLs (`dll`: driver, D3D12, audio), the guest thread name or the host start function, and the hottest exe function (for os/dll time, the exe function that called out). A blocked thread costs nothing, so a waiting thread with a large `os` share is spinning. First reading in the level (3.8 cores): an SPU executor thread 96% (`spu_shufb`), an SPU async thread 71%, HighGraphics 68%, `vblank_ticker` 49%, `MOStreamingThread` 28% inside `sys_timer_usleep` (99% os), `_sys_MixerChStrip` 18% in `sys_cond_wait` (84% os). The last three wait more than they work.
+- **Waits per thread** (`b46dc86`): console `waits [s] [rows]` (default 5 s) times every lv2 syscall and HLE call for s seconds, keyed by guest thread, call and r3 (usually the object waited on). It prints:
+  - each thread's share of wall time blocked in syscalls and in HLE;
+  - a view folded by thread and call, with the number of distinct objects;
+  - the top calls with their r3.
+
+  `cpu` says who burns a core; `waits` says what a thread that is not burning one is waiting for. Costs nothing unless armed.
+- **Killing only our runs** (port `f7ce830`): `des_stage_exe` drops a `.des_staged` marker beside the staged copy. `des_kill_own` kills the pids in the current pid file and every running `des_boot.exe` whose exe has the marker, so it works from a shell where `DES_SCRATCH` is unset or different. A copy the user starts from `port/build` has no marker and is left alone.
+- **Muted test runs** (`ad4b9b0`, port `ce22c2b`): `AUDIO_MUTE=1` (live) writes zeros to the WASAPI buffer at the normal rate, so the audio clock and the game's pacing do not change. `PS3_NO_AUDIO` is different: it makes the title take its no-audio path. `des_env_defaults` sets `AUDIO_MUTE=1`; `AUDIO_MUTE=0` makes a run audible.
 - **Lifted-code index** (`tools/des/recomp_index.py`): `def` / `src` / `at` / `callers` / `callees` / `path` over `work/recomp`, from a SQLite index (94k functions, 130k direct-call edges) that rebuilds in seconds when a lifted file changes. codebase-memory-mcp did not finish indexing the 450 MB of generated code in 30 minutes, so this replaces it for the lift; the hand-written code stays in the general index.
+
+## Frame rate (2026-10-14)
+
+The level shows about 14-16 frames a second, but the game runs at its normal tick rate, so the fault is not in game logic.
+
+- **28 ticks, 28 flips, 14 presents a second.** HighGraphics flips once per loop, but every other frame is a near-empty "skip" frame (1.5k-12k FIFO words, 1-2 draws) between full frames (~42k words, ~1,725 draws). GCM_RATES counts presents at display clears and folds the small batches into the next frame.
+- **The skip frames come from the game's own frame-rate pacer.** The pacer is the object at `0x45B643D0`, reached from HighGraphics's loop `FUN_00d1f188`. Its vtable `+0x3c` (`0x000CBB70`) times each frame in timebase/(freq/30) units:
+  - It enters slow mode when a frame takes more than 109% of 33.3 ms (about 36.3 ms).
+  - It leaves slow mode only when a render+skip pair takes under 211% (about 70.3 ms).
+  - In slow mode `+0x2c` (`0x000CB7E8`) returns 0 on alternate frames, which makes the skip frames.
+  - Fields: `+0x24` slow flag, `+0x25`/`+0x35` skip history, `+0x10` interval (2), `+0x18`..`+0x48` timestamps.
+  - Measured: skip frames ~33 ms, rendered frames 40-47 ms, pairs 71-80 ms. The game therefore stays in 15 fps mode, and the target is a rendered frame of 36 ms or less.
+- **What a rendered frame waits on.** The new `waits` tool shows HighGraphics blocked 73-75% of the time, almost all of it in the libsre LFQueue pop (`0x91066667`, semaphore 1 underneath). That queue is the command ring to the SPU command processor (image 2). HighGraphics waits for ring space about twice per flip, roughly 13.5 ms each time. Main waits on cond `0x2E`, which HighGraphics signals once per frame (about 26 ms per frame).
+- **Ruled out:**
+  - Presentation itself.
+  - The vblank rate: 8 ms ticks left flips at 28-30.
+  - The SPU idle nap: `SPU_LLAR_NAP=0` gave the same rate.
+- **What helped:**
+  - The FIFO walker's idle wait sits between the guest queuing commands and the labels the ring is gated on. At 1 ms (`0861c1c`), presents went from about 13.7 to 15.8 a second.
+  - CPU freed by `0c18b0b` (usleep) and `bab5001`/`2b3dda3` (SPU code) did not move the rate on its own, which matches a latency chain rather than a throughput limit. The chain runs from HighGraphics to the FIFO, then to RSX labels, then to SPU image 2, and back to ring space.
+- **Next:**
+  - Time the chain end to end: when HighGraphics queues a command, when the walker reaches it, when image 2 frees the slot.
+  - Per-block SPU trampoline overhead (`spu_task_launch_check` 4%, `spu_drain_call` 3%).
+  - The vblank tick is a flat 16 ms on `GetTickCount64` (62.5 Hz, not 59.94).
 
 ## Still open
 
-- **Graphics in the level**: lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Still: about 14 fps, and no side-by-side check against RPCS3 at the same spot yet.
+- **Graphics in the level**: lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Still: about 15 fps (the game's pacer holds 15 fps mode while a rendered frame takes over ~36 ms; see Frame rate), and no side-by-side check against RPCS3 at the same spot yet.
 - The SCREENTEX hack.
 - Logo fades and loading-screen seams.
 - Audio quality and coverage (it plays now; not yet listened to or compared with RPCS3), FMV decode, controller support.

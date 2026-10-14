@@ -31,6 +31,10 @@ All fixes were tested on Demon's Souls only. The other titles (VF5, Simpsons, To
 | `f593fcc` (diag) | `RSX_CENSUS=<n>`: per-frame count of draw methods in the FIFO, plus every method left unhandled. |
 | `ae13875` | **The frozen player and the missing map**: SPU user events go through ports bound to the thread (`sys_spu_thread_connect_event`) before the group's. MultiStream's replies were being dropped, so no sound ever started, the level-entry sequence waited for a voice line forever, and Havok was skipped every frame (below). |
 | `b2ec5eb` (diag) | Sync-history ring and console `synchist <id>`; console `ctx <tid>` (live registers; r11/r3 of a parked thread name the syscall and its object); console `spu` (runs per lifted image); `HLE_LR=<nid>`, `SEM_LR=1`. |
+| `f4dbfbd` (diag) | `GCM2D_WATCH=<hex>` logs inline (`NV3089`/`NV308A`) transfers that touch a guest range; console `find <addr> <len> <hexbytes>`. |
+| `a296b91` | d3d12: render targets replaced while a frame is recorded (same offset, new size or format) are released after that frame finishes, not at once. Releasing them early removed the device (`0x887A0005`) once write-back was on. |
+| `c403bd9` | d3d12: **colour write-back**. Offscreen render targets are copied back to guest memory after each frame (`RSX_WRITE_COLOR=0` turns it off). The surface's context DMA (`SET_CONTEXT_DMA_COLOR_A-D`) is now tracked. DeS's exposure constant went from 0 to the computed value (below). |
+| `7c94369` (diag) | `D3D12_DRED=1` (removal reason, breadcrumbs, page fault, without the debug layer); `RSX_WRITE_COLOR_LOG=<n>`. |
 
 ## The in-game hang (fixed, `d5aeb3d`)
 
@@ -179,9 +183,39 @@ SPU image ids (guest ELF EA = address in the file listing + 0x10000): 1 EDGE zli
 
 Method that found it: a temporary `fprintf` in the generated `func_001D1E30` and its callers (counting entries and steps, then the gate results), the page guard on the flag word (`guard 400E2DE4 rw` with `setenv PPU_GUARD_CHANGE=200`), then `ctx <tid>` on the sound threads. The generated files were restored afterwards.
 
+### Black shading: the exposure constant (2026-10-14)
+
+After `ae13875` the level geometry drew as black silhouettes. Every level fragment program ends with the same tail:
+
+```
+MUL r1 = h0 * c.x
+DIV h0 = r1 / c.y   (SAT)
+```
+
+with `c` = global parameter `0x87`, (exposure, 2, exposure, 1). The exposure was 0, so everything came out black.
+
+Where the exposure comes from: the engine's post chain (bloom and downsample `0x5110000`/`0x5210000` 640x360, `0x4D60000` 1280x720, `0x5310000` 320x180, `0x4CD2040`/`0x4D0A480` 320x180, `0x4D50A00`/`0x4D428C0` 160x90, a 64x64 F_X32 `0x4CCE000`) ends in four rotating 16x16 F_X32 luminance targets (`0x1392440`, `0x1392880`, `0x1377DC0`, `0x13AB840`). The game reads the first texel of the current one on the CPU and copies it into parameter `0x87` (with write-back on, the two hold the same value). Each of those offsets is first declared A8R8G8B8 and then F_X32 in the same frame.
+
+Our d3d12 backend never wrote render targets back to guest memory, so the CPU read stale heap bytes (fp16 NaN, old fragment-program words) and the constant was 0. RPCS3 has the same need; its DeS config turns on "Write Color Buffers".
+
+Fix (`c403bd9`): every render target a frame used is copied into a readback buffer before the command list closes; after the frame, it is converted to the guest layout (big-endian A8R8G8B8, fp16 or fp32 lanes; linear pitch or Morton swizzle) and stored at the surface's address, resolved through its context DMA. All DeS surfaces are in local memory. With it, the first texel of `0x13AB840` and parameter `0x87` hold 0.201796.
+
+The device removal it first caused (`0x887A0005`, in all 7 runs without DRED): `off_rt_get` released the old D3D12 resource when a luminance offset changed format, while the open command list still referenced it. Whether that crashed depended on whether the freed memory was reused. DRED hid it (2 runs with `D3D12_DRED=1`, no removal). Fixed in `a296b91` by deferring those releases until the frame finishes. Ruled out on the way: writes by something else into the stored ranges (none), main-memory surfaces (none), overlap with fragment-program ucode (none).
+
+**Still too dark.** The post chain runs only during the level-entry sequence (806 frames in our runs) and then stops; nothing writes parameter `0x87` (`0x45EE4420`) or the param block at `0x45EE33A8` afterwards. So the exposure stays at the entry value, 0.2018, while `ToneMapBank`'s limits put it at about 0.9-2.25. Why the chain stops is the next question: either the game turns it off once the entry sequence ends and expects something else to update the exposure, or another gate (like the `+0xDA` physics gate above) is still closed.
+
+### Using an existing renderer instead
+
+Considered and rejected for now:
+- RPCS3's RSX backends are the only renderer known to draw Demon's Souls correctly, but they are GPL and tied to RPCS3's emulator core (its memory manager, threads, shader decompiler and surface cache), so they cannot be dropped into ps3recomp.
+- Upstream ps3recomp's `rsx_live_draw` (`RSX_LIVE_DRAW=1`) has no write-back, turns F_X32 into RGBA8 and does not handle swizzled render targets, all three of which DeS needs.
+- Upstream's `rsx_draw_engine` does write back, but only for Vulkan and Metal, and its Vulkan path builds only on Linux.
+
+Upstream ps3recomp had nothing newer than `a2c2010`, which is already merged.
+
 ## Still open
 
-- **Graphics in the level**: the map and the player draw, but as flat black shapes on the grey clear colour (no lighting or textures visible).
+- **Graphics in the level**: the map and the player draw with the exposure the entry sequence computed (0.2018), which is too dark. The tone map does not update after the entry sequence (above).
 - The SCREENTEX hack.
 - Logo fades and loading-screen seams.
 - Audio quality and coverage (it plays now; not yet listened to or compared with RPCS3), FMV decode, controller support.

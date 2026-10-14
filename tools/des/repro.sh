@@ -17,7 +17,8 @@ TIMEOUT="${1:-20}"; shift || true
 SCRATCH="${DES_SCRATCH:-$PWD/work/tmp}"; mkdir -p "$SCRATCH"
 OUTDIR="$SCRATCH/repro_$$"
 mkdir -p "$OUTDIR"
-export PS3_VFS_ROOT="D:/Users/jonat/Documents/roms/ps3/Demon's Souls (USA)"
+des_vfs_fallback="D:/Users/jonat/Documents/roms/ps3/Demon's Souls (USA)"   # dev-box default only
+export PS3_VFS_ROOT="${PS3_VFS_ROOT:-$des_vfs_fallback}"
 for kv in "$@"; do export "$kv"; done
 echo "[repro] $N runs x ${TIMEOUT}s, env: $* -> $OUTDIR"
 for i in $(seq 1 "$N"); do

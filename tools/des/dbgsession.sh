@@ -4,17 +4,16 @@
 # <cmdfile> as a console command (a line "sleep N" pauses N seconds), prints
 # the replies, then kills the game (a hung boot pins the CPU).
 set -uo pipefail
-cd "$(dirname "$0")/../.." || exit 1
+. "$(dirname "$0")/deslib.sh"
+cd "$DES_ROOT" || exit 1
 WAIT="$1"; OUT="$2"; CMDS="$3"; shift 3
-D="$PWD/work/tmp/dbgcon.$$"; rm -f "$D" "$D.out"
-rm -rf "D:/Users/jonat/Documents/roms/ps3/Demon's Souls (USA)/cache"
+D="$DES_SCRATCH/dbgcon.$$"; rm -f "$D" "$D.out"
 tools/des/desrun.sh $((WAIT + 120)) "$OUT" PS3_DEBUG="$D" "$@" > /dev/null 2>&1 &
 sleep "$WAIT"
 while IFS= read -r c || [ -n "$c" ]; do
   [ -z "$c" ] && continue
   case "$c" in sleep\ *) sleep "${c#sleep }"; continue ;; esac
-  echo "$c" > "$D"; sleep 2
+  des_console "$D" "$c"
 done < "$CMDS"
-sleep 1; cat "$D.out" 2>/dev/null
-taskkill //F //IM des_boot.exe > /dev/null 2>&1
+des_kill_own
 rm -f "$D" "$D.out"

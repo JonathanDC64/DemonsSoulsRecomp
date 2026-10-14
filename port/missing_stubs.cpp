@@ -61,10 +61,37 @@ void ds_note_handlerB(unsigned r3, unsigned r4)
     }
 }
 
+/* Shadow stacks are thread-local, so another thread (the debug console) can
+ * only read one through pointers the owner published. Each guest thread
+ * registers its own at start; ds_print_all_shadows reads them unlocked, which
+ * is racy but good enough for "where is every thread parked". */
+#define DS_REG_MAX 64
+static struct { unsigned long long tid; unsigned* sp; unsigned* stk; } s_ds_reg[DS_REG_MAX];
+static volatile long s_ds_reg_n;
+extern "C" void ds_register_shadow(unsigned long long guest_tid)
+{
+    long i = _InterlockedIncrement(&s_ds_reg_n) - 1;
+    if (i >= DS_REG_MAX) return;
+    s_ds_reg[i].tid = guest_tid; s_ds_reg[i].stk = g_ds_stk; s_ds_reg[i].sp = &g_ds_sp;
+}
+extern "C" void ds_print_all_shadows(void (*out)(const char*, ...), unsigned depth)
+{
+    long n = s_ds_reg_n; if (n > DS_REG_MAX) n = DS_REG_MAX;
+    for (long i = 0; i < n; i++) {
+        unsigned sp = *s_ds_reg[i].sp; if (sp > 8192u) sp = 8192u;
+        char line[1024]; int p = snprintf(line, sizeof line, "  tid %2llu depth %3u:", s_ds_reg[i].tid, sp);
+        for (unsigned k = 0; k < sp && k < depth && p < (int)sizeof line - 16; k++)
+            p += snprintf(line + p, sizeof line - p, " %08X", s_ds_reg[i].stk[sp - 1 - k]);
+        out("%s%c", line, 10);
+    }
+}
+
 extern "C" void ds_dump_shadow(void);
 extern "C" void (*g_shadow_stack_dump_hook)(void);
+extern "C" void (*g_ds_register_shadow_hook)(unsigned long long);
 static struct DsShadowHookInit {
-    DsShadowHookInit() { g_shadow_stack_dump_hook = ds_dump_shadow; }
+    DsShadowHookInit() { g_shadow_stack_dump_hook = ds_dump_shadow;
+                         g_ds_register_shadow_hook = ds_register_shadow; }
 } s_ds_shadow_hook_init;
 
 extern "C" void ds_dump_shadow(void)

@@ -12,7 +12,8 @@ TIMEOUT="${1:-45}"; shift || true
 # Session-independent scratch: override with DES_SCRATCH, else repo-local work/tmp.
 SCRATCH="${DES_SCRATCH:-$PWD/work/tmp}"; mkdir -p "$SCRATCH"
 OUT="$SCRATCH/milestones_run.txt"
-export PS3_VFS_ROOT="D:/Users/jonat/Documents/roms/ps3/Demon's Souls (USA)"
+des_vfs_fallback="D:/Users/jonat/Documents/roms/ps3/Demon's Souls (USA)"   # dev-box default only
+export PS3_VFS_ROOT="${PS3_VFS_ROOT:-$des_vfs_fallback}"
 for kv in "$@"; do export "$kv"; done
 timeout "$TIMEOUT" ./port/build/des_boot.exe work/game/EBOOT.ELF > "$OUT" 2>&1
 rc=$?

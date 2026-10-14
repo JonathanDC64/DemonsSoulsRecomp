@@ -57,6 +57,7 @@ All fixes were tested on Demon's Souls only. The other titles (VF5, Simpsons, To
 | `0861c1c` | Vblank ticker: the FIFO kick wait's ceiling is 1 ms, was 4 (`FIFO_KICK_MS`, live). About 13.7 -> 15.8 presents/s. |
 | `bab5001` | SPU `fma`/`fms`/`fnms` in double instead of the CRT software `fmaf` (no FMA target). |
 | port `2b3dda3` | The lifted SPU images build `/O2` with SSE4.1 (`DES_SPU_OPT`, default ON). |
+| `a90fc9a` | cellAtrac **streaming** (GetStreamDataInfo/AddStreamData and the rest; host copy of each file). ATRAC decode errors per run: ~650 -> 0. Needs the NID table regenerated. |
 | `ba6305d` | d3d12: **per-draw vertex fetch plan** and vertex cache (`VP_FETCH_FAST`, live). About 15.5 -> 28 presents/s; the game's pacer leaves 15 fps mode (below). |
 
 ## The in-game hang (fixed, `d5aeb3d`)
@@ -319,10 +320,29 @@ The level shows about 14-16 frames a second, but the game runs at its normal tic
   - Per-block SPU trampoline overhead (`spu_task_launch_check` 4%, `spu_drain_call` 3%).
   - The vblank tick is a flat 16 ms on `GetTickCount64` (62.5 Hz, not 59.94).
 
+## Audio: ATRAC streaming (2026-10-14)
+
+- MagicOrchestra streams every ATRAC3+ track.
+  - It hands cellAtrac the first 20-100 KB of a ring (for example, 102,400 of 1,950,304 bytes for the level BGM).
+  - Each tick it calls GetStreamDataInfo, copies the next sequential bytes from its own stream memory to the returned write pointer, and calls AddStreamData (`FUN_00d78ff0`).
+  - It watches the returned read position only to detect a loop wrap.
+  - It takes the no-second-buffer path (`FUN_00d79370`).
+  - Those NIDs were unregistered and faked CELL_OK, so the decoder ran past the loaded part. That caused about 650 "Frame data doesn't match channel configuration" errors per run, plus "Invalid start bit" and MOPS3StreamLoader's "Stream Memory Free State Errror!!".
+- `a90fc9a` implements streaming. Every byte that arrives is also copied into a host image of the file, and the decoder reads only that. After the fix:
+  - 0 decoder errors and no stream-memory errors.
+  - The dumped mix (`AUDIO_WAV`) looks like music (zero-crossing rate ~650/s), with no NaN or clipping.
+  - Not listened to yet; test runs are muted.
+- **`PS3_DEV_FLASH` / `flashATRAC.pic` hangs the boot; do not default it.** MultiStream still logs "atrac failed to load", because `flashATRAC.pic` (firmware) is missing. With `PS3_DEV_FLASH` pointed at an RPCS3 `dev_flash`, MultiStream opens it, and the game then stays on the first loading screen (no level after 10 minutes). In that state:
+  - The MultiStream synth images 10/11 never run.
+  - `Core.Res.Decompressor` waits in `cellSpursEventFlagWait` (`0x48BBBD80`) with 1 s timeouts.
+  - `Core.Res.CacheDeviceHandler` spins at 99% of a core: about 2M lwmutex lock/unlock and semaphore trywait calls per 5 s.
+
+  So with the firmware module loaded, MultiStream's SPU side diverges and the resource pipeline never gets its SPU completion. Without the firmware the game boots normally (4 of 4 runs after `a90fc9a`).
+
 ## Still open
 
 - **Graphics in the level**: lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Still: no side-by-side check against RPCS3 at the same spot yet.
 - The SCREENTEX hack.
 - Logo fades and loading-screen seams.
 - Audio quality and coverage (it plays now; not yet listened to or compared with RPCS3), FMV decode, controller support.
-  Audio leads: unresolved imports `cellAtracGetStreamDataInfo` (0x2BFFF084), `cellAtracIsSecondBufferNeeded` (0x99EFE171), `cellAudioSetPortLevel` (0x56DFE179) are faked as CELL_OK, and MultiStream logs "atrac failed to load" after the `flashATRAC.pic` open fails.
+  Audio leads: ATRAC streaming is fixed (`a90fc9a`). `cellAudioSetPortLevel` (0x56DFE179) is still faked as CELL_OK. MultiStream's own ATRAC path needs `flashATRAC.pic`, and loading it hangs the boot (above).

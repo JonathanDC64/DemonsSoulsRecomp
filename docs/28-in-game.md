@@ -62,6 +62,11 @@ All fixes were tested on Demon's Souls only. The other titles (VF5, Simpsons, To
 | `e50e28c` (tools) | `AUDIO_WRITEPOS=1` (where the game's writes land relative to the published read index) and `AUDIO_GAPS=1` (blocks read before they were written; totals on the `AUDIO_RATE` line) (below). |
 | `1e4d419` | cellAudio: **one block per 5.33 ms by the clock**, not in WASAPI-period pairs; read lag 1 (`AUDIO_LAG_BLOCKS`), MMCSS mixer, 40 ms buffer, AUTOCONVERTPCM. Silent blocks inside sound 46.6% -> 0.0% (below). |
 | `4efcb5e` | cellPad: **DualSense / DualShock 4 over raw HID** (USB and Bluetooth); the keyboard merges into port 0 instead of switching off when a pad is plugged in (below). |
+| `6dee83f` | Vertex fetch: CMP (type 6) packed attributes, signed 11/11/10 bits (from robbe1912's fork). |
+| `27202ad` | Fragment decompiler: a predicated write is a per-component select, not a `lerp` (upstream PR 278). |
+| `ee40816` | d3d12: the frame copy is bound to a display-sized sampler only when the guest memory behind it is empty. The movie frames were replaced by last frame's backbuffer (below). |
+| `5a63029` | cellSail **plays PAMF movies**: MPEG-2 through the Windows Media Foundation decoder, LPCM, frames on the wall clock. The intro advert and the title movie play; START skips them. Needs the NID table regenerated (below). |
+| `017dd06` (diag) | `[cellSail] video GetFrame #N` / `sound GetFrame #N` / `[sail_movie] decoded N` counters (below). |
 
 ## The in-game hang (fixed, `d5aeb3d`)
 
@@ -365,10 +370,43 @@ XInput does not see Sony pads, so a DualSense was an empty slot unless Steam Inp
 - Checked against synthetic reports for every layout. Not yet tried with the live pad (the paired DualSense was off). Rumble is not sent to Sony pads yet.
 - soyjxck's fork does this with SDL2 (`46b12fec`), which this machine does not have; the HID reader avoids adding it.
 
+## Movies (FMV, `5a63029`, `ee40816`)
+
+Demon's Souls plays its movies through cellSail: `movie/ds_advertise.pam` (the intro advert after the logos, 130 s, 6-channel LPCM), `ds_title.pam` (behind the title screen, 10 s, stereo), and `ds_opening`, `ds_oldtale`, `ds_goodending`, `ds_badending`. All are PAMF: a header, then an MPEG program stream with MPEG-2 video at 1280x720, 29.97 fps (PES 0xE0) and 16-bit LPCM at 48 kHz (private stream 1, sub-stream 0x40). cellSail used to end every stream as soon as it started.
+
+How a frame gets to the screen:
+- The game calls `GraphicsAdapterGetFrame(adapter, &info)` once per game frame from its render thread and, when it returns a buffer, points a texture at `info.pBuffer` (A8R8G8B8 linear, remap 0xA993: it asked for RGBA bytes, so the remap rotates the channels and forces alpha to 1). It draws the movie quad (fp 0x0079FE81 = texture x vertex colour) only on a frame GetFrame filled.
+- The buffers are the game's own: the library calls the adapter's `pAlloc(pArg, size, num, ppFrame)`, and Demon's Souls allocates them in RSX local memory (0xC4C23500 ...). We ask for 4 per stream and give them back through `pFree` on close.
+- When no new frame is due, GetFrame hands the current one out again. Answering EMPTY flashed the screen black every time the game ran faster than the movie.
+- Sound: the game's mixer calls `SoundAdapterGetFrame(adapter, 256, &info)` and reads 256 frames of big-endian float PCM from `info.pBuffer` (our scratch page at 0x59800000), in the PAMF's channel order (stereo, or L C R Ls Rs LFE, reported as layout 8).
+- The end: once the last frame has been handed out, the frame fetch sends SOURCE_EOS, STOP_TRANSITION and OPENED, which is what the game waits for before closing the stream.
+
+Why it played black at first: the d3d12 backend gave every 1280x720 sampler with no render target at its offset a copy of the rendered frame (`19d4613`, meant for surfaces the GPU rendered, whose guest memory is never written). The movie frames are exactly display-sized, so the quad sampled last frame's backbuffer. `ee40816` keeps that substitution only when the guest memory there is empty. The DeS display pass (fp 0x181 sampling 0x7A0000) still gets it.
+
+Measured (`017dd06` counters): the game calls GetFrame about 31 times a second and gets 29.4 new frames a second during the advert (the movie is 29.97). Sound calls deliver about 48,000 frames a second. Screenshots (`SHOTS=` / `CELLMARK_DUMP`) stall the frame loop and make the movie look choppy; judge smoothness without them.
+
+Tools and knobs:
+- `PS3_SAIL_MOVIES=0`: never play; every stream ends at once (the old behaviour).
+- Log: `[sail_movie] <file>: video 1280x720 @ 30000/1001, LPCM 6 ch` on open; `[cellSail] 4 frame buffers of 0x384000 bytes from the title, first at 0x...`; `[cellSail] stream ended`.
+- `017dd06` (diag): `[cellSail] video GetFrame #N: <handed out>, playing=<0/1>, last 300 calls <n>/s, new frames <n>/s` every 300 calls; `[cellSail] sound GetFrame #N: <filled>` every 2,000; `[sail_movie] decoded N frames` every 300.
+- To watch a movie in a test run: `PRESS_UNTIL="PlayerStart" WHEN="stream ended" tools/des/desprobe.sh out.txt 260` (no `DES_SKIP_INTRO`; pressing stops once the advert starts, so it is not skipped).
+
+Not done: AVC video and ATRAC3+ or AC3 audio in PAMF (Demon's Souls has none); `UpdateAvSync` is ignored, so audio and video each follow the wall clock; non-Windows hosts keep the old path (no decoder).
+
+A bug found on the way (fixed before the commit): skipping a movie with START closed it on the main thread while the mixer was inside SoundAdapterGetFrame, a divide by zero on freed memory. The movie pointer is now read under a lock that no guest callback is made under.
+
+## Fork review (2026-10-14)
+
+Forks and open PRs of upstream ps3recomp, checked against this tree:
+- Taken: robbe1912's CMP vertex type (`6dee83f`), upstream PR 278 predicated select (`27202ad`). soyjxck's SDL2 pad was redone over HID (`4efcb5e`).
+- Not useful here: zdiemer's commits and PRs 279/280/282 target the opt-in live-draw engine (`RSX_LIVE_DRAW`), not the D3D12 path; PR 281 (AA surfaces) — Demon's Souls uses none (surface formats 0x148/0x14D/0x150, AA bits 0); `387d1faa` and `7db67309` are already covered; tekulvw's cellSail series is tied to Metal and FFmpeg.
+- andrebrumdev/gow2-recomp (God of War II, playable, same ps3recomp lineage, macOS/Metal, engine code private): ideas worth taking later are profile-guided devirtualisation of indirect calls, config-declared mid-function hooks, RPCS3 `patch.yml` support and clamping transform constants to 0-467.
+
 ## Still open
 
 - **Graphics in the level**: lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Still: no side-by-side check against RPCS3 at the same spot yet.
-- The SCREENTEX hack.
+- The SCREENTEX hack: narrowed to samplers over empty guest memory (`ee40816`).
+- An intermittent stall early in the boot, only without `DES_SKIP_INTRO`: about 1 run in 4 never creates `DsTrophyMan::AsyncUpdateThread` and never polls the pad. It was there before the movie work (a 14:44 probe on 2026-10-14). Not caught live yet; the next one gets `waits` and `gstacks` from the console.
 - Logo fades and loading-screen seams.
-- Audio: the block gaps are fixed (`1e4d419`); not yet compared with RPCS3 by ear. FMV decode. Controller: DualSense over HID (`4efcb5e`) not yet tried live; no rumble for Sony pads.
+- Audio: the block gaps are fixed (`1e4d419`); not yet compared with RPCS3 by ear. FMV plays (`5a63029`); its sound has not been checked by ear. Controller: DualSense over HID (`4efcb5e`) not yet tried live; no rumble for Sony pads.
   Audio leads: ATRAC streaming is fixed (`a90fc9a`). `cellAudioSetPortLevel` (0x56DFE179) is still faked as CELL_OK. MultiStream's own ATRAC path needs `flashATRAC.pic`, and loading it hangs the boot (above).

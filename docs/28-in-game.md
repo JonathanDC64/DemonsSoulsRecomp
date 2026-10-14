@@ -40,6 +40,14 @@ All fixes were tested on Demon's Souls only. The other titles (VF5, Simpsons, To
 | `1043fc1` | Fragment decompiler: per-source precision modifiers (fx12/fx9/saturate, bits 19-27), `abs` on source 2, the destination clamp for fx12/fx9 writes, and saturated `COL0`/`COL1` reads, in RPCS3's order. The fog factor `tc2.w` is saturated now, so the level colour stopped going negative. |
 | `8caa9c0` | d3d12: a draw that samples its own render target reads a copy taken just before the draw. DeS's exposure adaptation reads the previous exposure from the target it writes; in D3D12 that read was 0, so the exposure stayed one step from 0. |
 | `9d0c9c0` | d3d12: **the level is lit**. The vertex-program vertex buffer (393,216 vertices) filled partway through every level frame (about 1.06M asked for), and every later draw was dropped: the rest of the scene, the post chain and the final composite. It now grows when a frame overflows it (`VP_VB_MAX_VERTS` caps it, default 2M). |
+| `1975632` (diag) | `FP_IDCOLOR=h` colours only the half-precision (scene) fragment programs. |
+| `3470cbd` | RSX reset state: front face CCW and cull face BACK, as the hardware resets. With CW the floor and most walls were culled. |
+| `4e229b7` | d3d12: a depth surface per guest zeta offset (kept across draws and frames), the guest's depth test/write/function per pipeline, and depth/stencil clears to that surface. The floor stopped drawing over the player. |
+| `fb24382` | d3d12: **shadows**. Colour target 0 (the shadow cascades) binds no render target; depth-format texture units sample the depth surface at their offset with a comparison sampler (`SampleCmpLevelZero`), compare function reversed as on RSX. |
+| `e58297f`, `d613b7f` (tools/diag) | Live knobs (below); manifest lines carry colour target, zeta, depth state and cull. |
+| `e4aea1e` (tools) | Console `cpu [s]` (below). Guest main records its host thread id. PAD_STICK restarts only on a new value. |
+| `0d8c4f2` (tools) | Frame capture and offline replay (below). |
+| port `2d6b3ab`, `72c3bd8` (tools) | Runs launch a staged copy of the exe; `regress.sh`, `shotdiff.py`, `recomp_index.py` (below). |
 
 ## The in-game hang (fixed, `d5aeb3d`)
 
@@ -224,6 +232,12 @@ Two bugs in our backend:
 
 After both: the exposure converges to 2.22 and the first level is lit and textured. Still open there: the floor draws as the clear colour, no shadows (`DEPTH24_D8` textures are not sampled), about 14 fps.
 
+### Floor, depth and shadows (fixed, `3470cbd`, `4e229b7`, `fb24382`)
+
+- **Missing floor and walls**: our RSX state started with front face CW. The hardware resets to CCW (cull face BACK), and DeS never sets it, so its front faces were culled. `CULL_OFF=1` drew the floor and showed the next bug.
+- **Floor over the player**: there was one shared depth buffer, cleared per target and not tied to the guest's depth surface, and the guest's depth function and write mask were ignored. Each guest zeta offset now has its own depth surface that lasts across draws and frames, the depth state is part of the pipeline key, and depth/stencil clears go to that surface.
+- **Shadows**: the cascades draw with colour target 0 (none) into zeta `0x5360000`, and the scene samples it on t7 as `DEPTH24_D8` with a compare function. Depth-only draws now bind no render target; depth-format units read the zeta through an `R24_UNORM_X8` view with a comparison sampler. On the first try the whole courtyard was in shadow: the RSX compare function is stored reversed relative to the sampling compare (RPCS3's GL sampler swaps LESS/GREATER and LEQUAL/GEQUAL), and with that swapped the walls cast the right shadows.
+
 ### Using an existing renderer instead
 
 Considered and rejected for now:
@@ -233,9 +247,21 @@ Considered and rejected for now:
 
 Upstream ps3recomp had nothing newer than `a2c2010`, which is already merged.
 
+## Debug and test tools (2026-10-14)
+
+All of these keep game-derived output (screenshots, captures) in the scratch directory; none of it goes in the repo.
+
+- **Staged exe** (port `2d6b3ab`): `desrun.sh`, `repro.sh` and `milestones.sh` copy `des_boot.exe` (and its `.pdb`, `.map`, DLLs) to `$DES_SCRATCH/bin` and run the copy, so the build can relink while a run is alive. `sym.py` against a staged run: `--map "$DES_SCRATCH/bin/des_boot.map"`.
+- **Live knobs** (`e58297f`): the console's `setenv K=V` bumps `ps3_env_gen`, and knobs written as `PS3_KNOB(var, expr)` (`include/ps3emu/ps3_knob.h`) re-read on their next use (one load and compare otherwise). 272 sites were converted mechanically (`CULL_*`, `DEPTH_OFF`, `FP_*`, `FRAME_BUDGET`, `RT_OFFDBG`, `CELLMARK_DUMP_CHANGED`, ...). Pipeline-baked knobs (`CULL_*`, `DEPTH_OFF`, `FP_*`, `CMASK_FORCE`) rebuild the pipeline cache when their values change. `PAD_STICK=lx,ly,rx,ry,from,until` is live and its window counts from the setenv: `setenv PAD_STICK=128,0,128,128,0,10` walks forward for 10 s. Still read once (multi-statement parsers): `PAD_FILE`, `PAD_SWEEP`, `DBG_ZOOM`, `CELLMARK_DUMP` / `_SKIP` / `_EVERY` / `_DIR`, `D3D12_IQ`, `GCM2D_WATCH`, `TEX_NOCACHE`, `WATCHDOG_AT`, `GCM_FLIP_BT`, and most `SPU_*` / `PPU_*` / `PS3_*` trace knobs.
+- **Manifest fields** (`d613b7f`): `RSX_CAP` manifests show `ct=` (colour target), `z=` (zeta), `zf=`, `depth=` (packed depth key: bit 0 test, bit 1 write, bits 2-4 function), `cull=`, and on clears `mask=`, `z=`, `zeta=`. A small phase summariser (one line per run of ops with the same target/zeta/depth) made the DeS frame layout readable: display copy, Z clear, three shadow cascades into zeta `0x5360000` (2048x2048, colour target 0), scene into `0x7A0000` / zeta `0xB50000`, post chain, HUD.
+- **Regression shots** (`tools/des/regress.sh`, `shotdiff.py`): boots with `DES_SKIP_INTRO=1`, walks a fixed route with the live `PAD_STICK` (spawn, tunnel exit, camera turn, courtyard) and saves one shot per stop under `$DES_SCRATCH/regress/<set>`, then diffs against the accepted set (`regress.sh accept <set>`). Per shot: mean difference and the share of pixels that changed by more than 32 after a 4x downscale; REGRESSION above 25% or when a shot goes black. Two runs of one build differ by under 8%. The save directory is copied aside and restored, so autosaves cannot move the spawn. About 2.5 minutes.
+- **Frame capture and replay** (`0d8c4f2`): `setenv RSX_REPLAY_CAP=<file>` in a running game records the next frame (from the clear the backend presents at to the next one): RSX state and GCM tables at its start, every method the FIFO walker dispatched, and the committed non-zero pages of VRAM and the IO-mapped memory at its end (DeS courtyard: 46k methods, 117 MB). `ps3recomp/build/rsx_replay.exe <file> [frames]` (`cmake --build build --target rsx_replay`) plays it through the same dispatch and D3D12 backend with no game: about 4 s for the first frame (pipeline compiles), then about 80 ms per frame. `CELLMARK_DUMP=<n> CELLMARK_DUMP_DIR=<dir>` dumps the presented frames, `RSX_CAP=<n> RSX_CAP_DIR=<dir>` the manifest and render targets. The exposure adaptation reads the previous frame, so the first replays are darker; by about 20 frames it matches the live frame. The capture and the replayer must come from the same build.
+- **CPU per thread** (`e4aea1e`): console `cpu [s]` (default 5 s) prints each host thread's CPU (percent of one core), the split between the exe (`app`), ntdll/kernel32/KernelBase (`os`: yields, spin-waits, syscalls) and other DLLs (`dll`: driver, D3D12, audio), the guest thread name or the host start function, and the hottest exe function (for os/dll time, the exe function that called out). A blocked thread costs nothing, so a waiting thread with a large `os` share is spinning. First reading in the level (3.8 cores): an SPU executor thread 96% (`spu_shufb`), an SPU async thread 71%, HighGraphics 68%, `vblank_ticker` 49%, `MOStreamingThread` 28% inside `sys_timer_usleep` (99% os), `_sys_MixerChStrip` 18% in `sys_cond_wait` (84% os). The last three wait more than they work.
+- **Lifted-code index** (`tools/des/recomp_index.py`): `def` / `src` / `at` / `callers` / `callees` / `path` over `work/recomp`, from a SQLite index (94k functions, 130k direct-call edges) that rebuilds in seconds when a lifted file changes. codebase-memory-mcp did not finish indexing the 450 MB of generated code in 30 minutes, so this replaces it for the lift; the hand-written code stays in the general index.
+
 ## Still open
 
-- **Graphics in the level**: lit and textured since `9d0c9c0`. The floor draws as the clear colour; shadow maps (depth textures) are not sampled.
+- **Graphics in the level**: lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Still missing: the post chain samples the scene depth (zeta `0xB50000`) as an A8R8G8B8 texture on t1/t2 (depth read as colour), which the backend does not support yet; about 14 fps.
 - The SCREENTEX hack.
 - Logo fades and loading-screen seams.
 - Audio quality and coverage (it plays now; not yet listened to or compared with RPCS3), FMV decode, controller support.

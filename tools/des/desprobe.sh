@@ -36,13 +36,18 @@ RUN=$!
 PRESS_UNTIL="${PRESS_UNTIL-RegisterContext\(ctx=}"
 PRESS_EVERY="${PRESS_EVERY:-2}"; PRESS_MASK="${PRESS_MASK:-0x4000}"
 pressing=0; [ -n "$PRESS_UNTIL" ] && pressing=1
+# The first pad poll prints two lines; either one starts the pressing. Another
+# thread's log write can land in the middle of one of them (about 1 boot in
+# 10 lost "GetData polling begins" that way), and with no press the run sat at
+# the auto-save notice looking like a boot stall.
+POLL_MARK='GetData polling begins|\[cellPad\] PAD_FILE='
 fired=0; last_press=0; t0=$SECONDS
 while kill -0 "$RUN" 2>/dev/null; do
   sleep 0.5
   if [ $pressing = 1 ]; then
     if grep -aqE "$PRESS_UNTIL" "$OUT"; then
       pressing=0; echo "[probe] t=$((SECONDS - t0))s '$PRESS_UNTIL' seen, stopped pressing"
-    elif grep -aq 'GetData polling begins' "$OUT" && [ $((SECONDS - last_press)) -ge "$PRESS_EVERY" ]; then
+    elif grep -aqE "$POLL_MARK" "$OUT" && [ $((SECONDS - last_press)) -ge "$PRESS_EVERY" ]; then
       [ -s "$PAD" ] || echo "$PRESS_MASK" > "$PAD"; last_press=$SECONDS
     fi
   fi

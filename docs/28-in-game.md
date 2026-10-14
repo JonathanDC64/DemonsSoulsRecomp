@@ -61,6 +61,7 @@ All fixes were tested on Demon's Souls only. The other titles (VF5, Simpsons, To
 | `ba6305d` | d3d12: **per-draw vertex fetch plan** and vertex cache (`VP_FETCH_FAST`, live). About 15.5 -> 28 presents/s; the game's pacer leaves 15 fps mode (below). |
 | `e50e28c` (tools) | `AUDIO_WRITEPOS=1` (where the game's writes land relative to the published read index) and `AUDIO_GAPS=1` (blocks read before they were written; totals on the `AUDIO_RATE` line) (below). |
 | `1e4d419` | cellAudio: **one block per 5.33 ms by the clock**, not in WASAPI-period pairs; read lag 1 (`AUDIO_LAG_BLOCKS`), MMCSS mixer, 40 ms buffer, AUTOCONVERTPCM. Silent blocks inside sound 46.6% -> 0.0% (below). |
+| `4efcb5e` | cellPad: **DualSense / DualShock 4 over raw HID** (USB and Bluetooth); the keyboard merges into port 0 instead of switching off when a pad is plugged in (below). |
 
 ## The in-game hang (fixed, `d5aeb3d`)
 
@@ -353,10 +354,21 @@ The audio played but sounded terrible. The `AUDIO_WAV` dump showed why: 46.6% of
 - Also in that commit: the mixer thread is on MMCSS "Pro Audio" (`AUDIO_MMCSS=0` turns it off), the WASAPI buffer is `AUDIO_BUF_MS` (default 40, was 20) of headroom, and AUTOCONVERTPCM lets a device that is not 48 kHz stereo resample.
 - soyjxck's ps3recomp fork found the same pairing on Drakengard 3 (`be94e5a5`, `c42360b7`). This is a reimplementation of that idea, not a merge.
 
+## Controller: DualSense over HID (`4efcb5e`)
+
+XInput does not see Sony pads, so a DualSense was an empty slot unless Steam Input or DS4Windows stood in. `libs/input/pad_hid_sony.c` reads DualSense, DualSense Edge and DualShock 4 input reports through hid.dll / setupapi (in the OS; no SDL2 or other new dependency), over USB and Bluetooth, in both report formats each pad uses. Sony pads take the ports XInput left empty.
+
+- Mapping: face buttons, d-pad, L1/R1/L2/R2/L3/R3 as on a PS3 pad; Create/Share and a touchpad click are SELECT, Options is START; analog triggers and sticks pass through.
+- Hot-plug: a scanner thread rescans every 2 s; each pad's reader thread blocks in ReadFile, so it costs nothing when idle. The log says `[cellPad] DualSense connected (HID Bluetooth, PID 0CE6) as HID pad 0`.
+- `PAD_NO_HID=1` turns it off: if Steam Input already presents the pad as an XInput device, the game would otherwise see it twice (on port 1, which Demon's Souls ignores). `PAD_HID_DEADZONE` (default 10 of 128) centres a stick resting a few counts off 128.
+- The keyboard (arrows, Z/X/A/S, Q/W, 1/2, Enter, Tab) now merges into port 0 with a pad: keys OR into the buttons and the arrows drive the left stick while held. Before, a plugged-in pad switched the keyboard off.
+- Checked against synthetic reports for every layout. Not yet tried with the live pad (the paired DualSense was off). Rumble is not sent to Sony pads yet.
+- soyjxck's fork does this with SDL2 (`46b12fec`), which this machine does not have; the HID reader avoids adding it.
+
 ## Still open
 
 - **Graphics in the level**: lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Still: no side-by-side check against RPCS3 at the same spot yet.
 - The SCREENTEX hack.
 - Logo fades and loading-screen seams.
-- Audio: the block gaps are fixed (`1e4d419`); not yet compared with RPCS3 by ear. FMV decode, controller support.
+- Audio: the block gaps are fixed (`1e4d419`); not yet compared with RPCS3 by ear. FMV decode. Controller: DualSense over HID (`4efcb5e`) not yet tried live; no rumble for Sony pads.
   Audio leads: ATRAC streaming is fixed (`a90fc9a`). `cellAudioSetPortLevel` (0x56DFE179) is still faked as CELL_OK. MultiStream's own ATRAC path needs `flashATRAC.pic`, and loading it hangs the boot (above).

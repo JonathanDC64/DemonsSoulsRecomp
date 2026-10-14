@@ -129,8 +129,17 @@ if(MSVC)   # also true for clang-cl
     # (SPU_TAILCALL = clang __attribute__((musttail))), which iterate in O(1) host
     # stack at ANY optimization level -- so the SPU TUs do NOT need /O2 for
     # correctness (without the forced tail call, /Od nesting overflowed the stack
-    # and silently killed the process). They stay at the /Od baseline for fast
-    # builds; opt them later only if SPU compute throughput matters.
+    # and silently killed the process).
+    # In the first level one SPU thread runs the lifted images flat out (98% of
+    # a core, a third of it in spu_shufb), so the SPU TUs build /O2 with
+    # SSE4.1: the helpers in spu_helpers.h inline, and spu_shufb takes its
+    # pshufb path instead of the byte loop. SSE4.1 is safe on any PC that runs
+    # Windows 11 (24H2 requires SSE4.2). DES_SPU_OPT=OFF goes back to /Od.
+    option(DES_SPU_OPT "Build the lifted SPU images /O2 with SSE4.1" ON)
+    if(DES_SPU_OPT)
+        set_source_files_properties(${SPU_CHUNKS} PROPERTIES
+            COMPILE_OPTIONS "/O2;/Zi;/clang:-msse4.1")
+    endif()
 endif()
 
 target_link_libraries(des_boot PRIVATE

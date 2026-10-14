@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# regress.sh [set-name]: regression screenshots of the first level.
+#
+# Boots with DES_SKIP_INTRO=1, taps through to the level, then walks a fixed
+# route from the spawn point with the live PAD_STICK knob (debug console
+# setenv) and saves one screenshot per stop:
+#   s1_spawn   at the spawn point, after the level settles
+#   s2_walk    after walking forward
+#   s3_turn    after turning the camera right
+#   s4_on      after walking on
+# then compares the set with the last accepted one (shotdiff.py) and prints
+# the per-shot summary. Exit status: 0 all ok, 1 a shot regressed or is
+# missing, 2 the run never reached the level.
+#
+#   regress.sh                 new set named by date+time, diffed against "good"
+#   regress.sh accept <name>   make <name> the new "good" set
+#
+# Sets live in REGRESS_DIR (default $DES_SCRATCH/regress). Screenshots are
+# game-derived: point REGRESS_DIR outside the repository and never commit them.
+# The save directory is copied aside before the run and put back after it, so
+# an autosave cannot move the next run's spawn point.
+# Timings: REGRESS_SETTLE (s after the level's script archive opens, default
+# 75, so the arrival animation is over), REGRESS_WALK / REGRESS_TURN /
+# REGRESS_ON (stick-hold seconds, defaults 8 / 1.5 / 5). The game is not
+# frame-exact, so the diff allows some drift.
+set -uo pipefail
+. "$(dirname "$0")/deslib.sh"
+cd "$DES_ROOT" || exit 1
+REG="${REGRESS_DIR:-$DES_SCRATCH/regress}"; mkdir -p "$REG"
+
+if [ "${1:-}" = accept ]; then
+  [ -d "$REG/${2:?set name}" ] || { echo "no set $REG/$2"; exit 1; }
+  rm -rf "$REG/good"; cp -r "$REG/$2" "$REG/good"; echo "good = $2"; exit 0
+fi
+
+NAME="${1:-$(date +%Y%m%d_%H%M%S)}"; SET="$REG/$NAME"
+RUN="$DES_SCRATCH/regress_run"; rm -rf "$RUN" "$SET"; mkdir -p "$RUN/shots" "$SET"
+OUT="$RUN/run.txt"; PAD="$RUN/pad"; CON="$RUN/con"; : > "$PAD"; : > "$OUT"
+
+SAVE="gamedata/dev_hdd0/home/00000001/savedata"
+if [ -d "$SAVE" ]; then rm -rf "$RUN/save"; cp -r "$SAVE" "$RUN/save"; fi
+restore() {
+  des_kill_own
+  if [ -d "$RUN/save" ]; then rm -rf "$SAVE"; cp -r "$RUN/save" "$SAVE"; fi
+}
+trap restore EXIT
+
+tools/des/desrun.sh "${REGRESS_MAX:-600}" "$OUT" DES_SKIP_INTRO=1 \
+  PAD_FILE="$(cygpath -m "$PAD")" PS3_DEBUG="$(cygpath -m "$CON")" PS3_OSK_TEXT=Aldia HLE_FIRST=1 \
+  CELLMARK_DUMP=100000 CELLMARK_DUMP_EVERY=15 CELLMARK_DUMP_CHANGED=1 CELLMARK_DUMP_MINDRAWS=1 \
+  CELLMARK_DUMP_DIR="$(cygpath -m "$RUN/shots")" > "$RUN/summary.txt" 2>&1 &
+t0=$SECONDS
+say() { echo "[regress] t=$((SECONDS - t0))s $*"; }
+
+# CROSS until the level's script archive opens; START every third tap for the
+# title screen.
+k=0
+until grep -aq luabnd "$OUT"; do
+  des_running || [ $((SECONDS - t0)) -lt 20 ] || { say "run ended before the level"; exit 2; }
+  [ $((SECONDS - t0)) -lt 400 ] || { say "no level load"; exit 2; }
+  if grep -aq 'nid=0x8B72CDA1 cellPadGetData' "$OUT" && [ ! -s "$PAD" ]; then
+    k=$((k + 1)); if [ $((k % 3)) = 0 ]; then echo 0x0008 > "$PAD"; else echo 0x4000 > "$PAD"; fi
+  fi
+  sleep 2
+done
+say "level loading"
+sleep "${REGRESS_SETTLE:-75}"
+
+# shot <name>: the newest frame dumped after this call (waits up to 20 s).
+shot() {
+  local before; before=$(ls "$RUN/shots" | sort | tail -1)
+  local i
+  for i in $(seq 1 40); do
+    local now; now=$(ls "$RUN/shots" | sort | tail -1)
+    if [ -n "$now" ] && [ "$now" != "$before" ]; then
+      sleep 0.5; cp "$RUN/shots/$now" "$SET/$1.bmp"; say "$1 <- $now"; return 0
+    fi
+    sleep 0.5
+  done
+  say "$1: no new frame"; return 1
+}
+# hold <lx,ly,rx,ry> <seconds>: hold the sticks, then wait for the motion to stop.
+hold() {
+  des_console "$CON" "setenv PAD_STICK=$1,0,$2" > /dev/null
+  sleep "$2"; sleep 2
+}
+
+shot s1_spawn
+hold 128,0,128,128 "${REGRESS_WALK:-8}";    shot s2_walk
+hold 128,128,255,128 "${REGRESS_TURN:-1.5}"; shot s3_turn
+hold 128,0,128,128 "${REGRESS_ON:-5}";      shot s4_on
+des_console "$CON" "stat" | sed 's/^/  /'
+restore; trap - EXIT
+say "set $SET"
+
+if [ -d "$REG/good" ]; then
+  python "$DES_ROOT/tools/des/shotdiff.py" "$REG/good" "$SET" --out "$SET/diff"
+else
+  echo "no good set yet: look at $SET, then: regress.sh accept $NAME"
+fi

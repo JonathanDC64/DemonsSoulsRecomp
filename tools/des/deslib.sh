@@ -22,6 +22,9 @@ des_env_defaults() {
   # Per-event log lines go through one FILE lock and change the timing being
   # measured (ps3_log.h); runs are quiet unless asked. PS3_VERBOSE=1 restores.
   export PS3_VERBOSE="${PS3_VERBOSE:-0}"
+  # Test runs are silent: AUDIO_MUTE submits zeros to the device at the normal
+  # rate, so timing is unchanged. AUDIO_MUTE=0 to hear a run.
+  export AUDIO_MUTE="${AUDIO_MUTE:-1}"
   # Test runs must not starve the machine: below-normal priority, on half the
   # logical CPUs (derived, not assumed). PS3_AFFINITY=all lifts the limit.
   export PS3_PRIORITY="${PS3_PRIORITY:-below}"

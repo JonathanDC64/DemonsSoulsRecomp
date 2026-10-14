@@ -35,6 +35,11 @@ All fixes were tested on Demon's Souls only. The other titles (VF5, Simpsons, To
 | `a296b91` | d3d12: render targets replaced while a frame is recorded (same offset, new size or format) are released after that frame finishes, not at once. Releasing them early removed the device (`0x887A0005`) once write-back was on. |
 | `c403bd9` | d3d12: **colour write-back**. Offscreen render targets are copied back to guest memory after each frame (`RSX_WRITE_COLOR=0` turns it off). The surface's context DMA (`SET_CONTEXT_DMA_COLOR_A-D`) is now tracked. DeS's exposure constant went from 0 to the computed value (below). |
 | `7c94369` (diag) | `D3D12_DRED=1` (removal reason, breadcrumbs, page fault, without the debug layer); `RSX_WRITE_COLOR_LOG=<n>`. |
+| `00d9e68` (diag) | `TEXFMTDBG` logs every bound texture format, including the ones the backend then skips. |
+| `42d79ca` | d3d12: sample every texture format the layout code decodes (one shared format table for upload and view). The level's environment cube maps (`t11`) were skipped, so their lighting term was 0. Depth formats are still left out. |
+| `1043fc1` | Fragment decompiler: per-source precision modifiers (fx12/fx9/saturate, bits 19-27), `abs` on source 2, the destination clamp for fx12/fx9 writes, and saturated `COL0`/`COL1` reads, in RPCS3's order. The fog factor `tc2.w` is saturated now, so the level colour stopped going negative. |
+| `8caa9c0` | d3d12: a draw that samples its own render target reads a copy taken just before the draw. DeS's exposure adaptation reads the previous exposure from the target it writes; in D3D12 that read was 0, so the exposure stayed one step from 0. |
+| `9d0c9c0` | d3d12: **the level is lit**. The vertex-program vertex buffer (393,216 vertices) filled partway through every level frame (about 1.06M asked for), and every later draw was dropped: the rest of the scene, the post chain and the final composite. It now grows when a frame overflows it (`VP_VB_MAX_VERTS` caps it, default 2M). |
 
 ## The in-game hang (fixed, `d5aeb3d`)
 
@@ -202,7 +207,22 @@ Fix (`c403bd9`): every render target a frame used is copied into a readback buff
 
 The device removal it first caused (`0x887A0005`, in all 7 runs without DRED): `off_rt_get` released the old D3D12 resource when a luminance offset changed format, while the open command list still referenced it. Whether that crashed depended on whether the freed memory was reused. DRED hid it (2 runs with `D3D12_DRED=1`, no removal). Fixed in `a296b91` by deferring those releases until the frame finishes. Ruled out on the way: writes by something else into the stored ranges (none), main-memory surfaces (none), overlap with fragment-program ucode (none).
 
+After `42d79ca` and `1043fc1` the level's fragment programs compute a dim but correct colour before the tone-map tail (checked by saving `0x7A0000` with `FP_SHOW`). The level shader (`fp 0x1569101`) is: albedo `t0`, environment cube `t11` (by normal) times `c5`, lightmap `t6`, shadow map `t7` (a `DEPTH24_D8` texture, not supported yet, so it reads 0 = lit), ambient 0.05, then fog `h3 = h0 + sat(tc2.w)*0.3*(fogcol - h0)` and `h0 = h3*tc8 + tc9`, then the exposure tail. The first level's `FogBank` row 0 has colour alpha 0, so the fog colour is 0. `ToneMapBank` for the level: grey key 0.18, adapted luminance 0.08-0.2.
+
 **Still too dark.** The post chain runs only during the level-entry sequence (806 frames in our runs) and then stops; nothing writes parameter `0x87` (`0x45EE4420`) or the param block at `0x45EE33A8` afterwards. So the exposure stays at the entry value, 0.2018, while `ToneMapBank`'s limits put it at about 0.9-2.25. Why the chain stops is the next question: either the game turns it off once the entry sequence ends and expects something else to update the exposure, or another gate (like the `+0xDA` physics gate above) is still closed.
+
+### Why the tone map stopped: a full vertex buffer (fixed, `8caa9c0`, `9d0c9c0`)
+
+How the exposure gets to the shaders, traced with a read guard on the texel and temporary logs in the lift:
+- The main thread's per-frame scene submit (`func_0002B4F0`) posts, every frame, the post chain (scene object `+0x30`) and an exposure read (message `0x8041` for resource `+0x40`) to the HighGraphics queue.
+- HighGraphics dispatches `0x8041` (`func_00CD84E0` -> `func_00022908` -> `func_00022068`). The handler looks the resource up, locks it, and the reader callback `func_000216C8` copies the first texel (NaN -> default) into the parameter block at `+0x1A8` every frame.
+- The adaptation pass (`fp 0xB40B81`, unit 1 = luminance, unit 0 = the target itself): `cur = clamp(lum, 0.08, 0.2)`, `new = prev + (0.18/(cur+0.001) - prev) * (1 - 2^-k)`. So the exposure is 0.9-2.25 once converged.
+
+Two bugs in our backend:
+1. The adaptation reads its own target; D3D12 returned 0, so the exposure was always about 0.06 x the target. Fixed with a pre-draw copy.
+2. In the level, the frame's vertex-program vertices hit the buffer's 393,216 exactly (summed from `RTT_DUMP`), and everything after was dropped, including the post chain. The game kept reading a texel no pass wrote any more. `FRAME_BUDGET=1` showed the demand: 408k, then 1.06M. The buffer now grows (384 MB, then 768 MB of upload heap). Each VP vertex is 256 bytes (16 float4 slots); packing only the enabled attributes would cut that by about 4x and is the next step if memory matters.
+
+After both: the exposure converges to 2.22 and the first level is lit and textured. Still open there: the floor draws as the clear colour, no shadows (`DEPTH24_D8` textures are not sampled), about 14 fps.
 
 ### Using an existing renderer instead
 
@@ -215,7 +235,8 @@ Upstream ps3recomp had nothing newer than `a2c2010`, which is already merged.
 
 ## Still open
 
-- **Graphics in the level**: the map and the player draw with the exposure the entry sequence computed (0.2018), which is too dark. The tone map does not update after the entry sequence (above).
+- **Graphics in the level**: lit and textured since `9d0c9c0`. The floor draws as the clear colour; shadow maps (depth textures) are not sampled.
 - The SCREENTEX hack.
 - Logo fades and loading-screen seams.
 - Audio quality and coverage (it plays now; not yet listened to or compared with RPCS3), FMV decode, controller support.
+  Audio leads: unresolved imports `cellAtracGetStreamDataInfo` (0x2BFFF084), `cellAtracIsSecondBufferNeeded` (0x99EFE171), `cellAudioSetPortLevel` (0x56DFE179) are faked as CELL_OK, and MultiStream logs "atrac failed to load" after the `flashATRAC.pic` open fails.

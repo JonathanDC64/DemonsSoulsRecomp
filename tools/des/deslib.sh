@@ -37,7 +37,7 @@ des_env_defaults() {
 des_kill_own() {
   [ -f "$DES_PIDFILE" ] || return 0
   local pid
-  while read -r pid; do
+  while read -r pid; do pid="${pid//[!0-9]/}"   # boot_main writes CRLF
     [ -n "$pid" ] || continue
     if tasklist //FI "PID eq $pid" //FO CSV //NH 2>/dev/null | grep -qi 'des_boot'; then
       taskkill //F //PID "$pid" > /dev/null 2>&1
@@ -50,7 +50,7 @@ des_kill_own() {
 des_running() {
   [ -f "$DES_PIDFILE" ] || return 1
   local pid
-  while read -r pid; do
+  while read -r pid; do pid="${pid//[!0-9]/}"
     [ -n "$pid" ] && tasklist //FI "PID eq $pid" //FO CSV //NH 2>/dev/null | grep -qi 'des_boot' && return 0
   done < "$DES_PIDFILE"
   return 1

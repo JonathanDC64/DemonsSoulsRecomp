@@ -94,6 +94,7 @@ add_executable(des_boot
     "${PS3RECOMP_DIR}/runtime/ppu/tests/boot_main.cpp"      # entry/boot harness
     "${CMAKE_CURRENT_SOURCE_DIR}/missing_stubs.cpp"         # degenerate external targets
     "${CMAKE_CURRENT_SOURCE_DIR}/des_heap.cpp"              # clean guest allocator (malloc override)
+    "${CMAKE_CURRENT_SOURCE_DIR}/des_options.cpp"           # user options (DES_SKIP_INTRO, ...)
 )
 
 target_include_directories(des_boot PRIVATE

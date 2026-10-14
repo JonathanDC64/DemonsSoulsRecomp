@@ -26,6 +26,9 @@ All fixes were tested on Demon's Souls only. The other titles (VF5, Simpsons, To
 | `31b8f27` (diag) | `RTT_SAVERT=<hex>` saves that render target once per new value (`rt_save_<off>.bmp`). |
 | `513aca3` | d3d12: the vkcube projection fallback is opt-in (`VP_GUESSPROJ=1`). It replaced Demon's Souls's real projection (c00 = 300) and flattened the level. |
 | `62a073f` | d3d12: bind all 16 fragment texture units. The level shaders sample t4 and t7, which were outside the root signature, so their pipelines failed (`fp=0x014AD301` and one more). |
+| `f7a0674` | RSX level shading: per-draw fragment constants (buffered b1, so each draw keeps its own patched constants), TC8/TC9 vertex outputs, primitive restart (`0x1DAC/0x1DB0`) and strip winding in the indexed strip path. The cyan and the stretched triangles are gone. |
+| `5b4ce53` (diag) | `FPK_FP`, fragment-program knobs (`FP_KILL`, `FP_ONE`, ...) rebuild pipelines live from the console, `VP_ATTRS_FP=<hex>` dumps that vertex program as `vp_pick.hlsl`. |
+| `f593fcc` (diag) | `RSX_CENSUS=<n>`: per-frame count of draw methods in the FIFO, plus every method left unhandled. |
 
 ## The in-game hang (fixed, `d5aeb3d`)
 
@@ -134,11 +137,29 @@ Fixed so far:
 - `513aca3`: the projection fallback for vkcube (`VP_FIXPROJ`'s guess) fired whenever c00 was outside 0..8. Demon's Souls's projection has c00 = 300, so its real matrix was being replaced. Now it is opt-in.
 - `62a073f`: 16 texture units, so the two level pipelines build.
 
-Still wrong: the region that was black is now saturated cyan, with the same wedge outline over grey. The three scene meshes seem to project from almost on top of the camera.
+After `f7a0674` the frame is grey (clear colour plus smoke particles, `fp=0x1584081`) with a few blocky meshes. `FP_KILL=B40D01` (the final post pass) gives black.
+
+### Why the map is not drawn (2026-10-14)
+
+The map pieces are never sent to the RSX. Evidence:
+
+- `RSX_CENSUS=60`: about 117 batches a frame (9 triangle lists, 12 strips, 96 quads), all `DRAW_ARRAYS` or `DRAW_INDEX_ARRAY`. No draw method is unhandled. So the FIFO does not carry the map, and the backend is not dropping it.
+- Ruled out: FIFO resync, blocking `SEMAPHORE_ACQUIRE` (`GCM_SEMA_ACQUIRE=1` changes nothing), ZCULL reports used as visibility (DeS reads `GET_REPORT` types 2-5 at indices 2040-2043 only for adaptive ZCULL in `FUN_009f6ebc`), job-chain misses (`0x45B5DE00` only uploads textures), and the image 11 ray-cast lift.
+- Rendering is camera-relative. VS `c[0..3]` is the view-projection without translation, `c[7]` = (0,0,0,1) is the eye, and `c[8+a0]` holds bone matrices whose translation is (world − camera).
+- The camera is at world (204.6, 0.22, -97.9). The player start `c0000_0000` in the map's MSB is at (201.0, -1.1, -96.2). The meshes we see draw with `fp=0x1572C81`; one is `m7777B0`, at the origin with draw group `0x80000000`.
+- MSB parts near the player (`m1020B0`, collision `h1020B0` at (204.5, -0.9, -97.7)) have draw groups like `0x0F`/`0x7F`; `h1020B0` has display group `0x1`. The origin collision `h0010B0` has display group `0x80000000`.
+- So the active display mask is the fallback `0x80000000`: the game has not found the collision the player stands on, and only the parts in that fallback group draw.
+- The game is live: the right stick turns the camera. The left stick (`PAD_STICK=128,0,128,128,75,90`) does not move the player; the position at `0x0FEFE1E0` stays the same.
+
+Both point at the physics side: the character controller and the ground contact come from Havok (SPU image 8 simulate, image 11 queries).
+
+Scratchpad tools: `dcx.py` (unpacks EDGE DCX: `DCX`/`DCA`/`EgdT`, raw-deflate blocks), `msb2.py` (lists MSB parts by type with draw/display groups).
+
+Known but unfixed: `cellGcmGetReportDataAddress` returns a host pointer, and `GET_REPORT` writes into a host table, not guest memory. DeS does not call the former.
 
 ## Still open
 
-- **Graphics in the level**: the cyan wedge (above). About 260 draws a frame, about 13.6 fps. START/CROSS are read but show no visible change, so cutscene vs gameplay is unknown.
+- **Graphics in the level**: the map is not drawn because the player's ground collision is never found (above). The player does not move.
 - The SCREENTEX hack.
 - Logo fades and loading-screen seams.
 - Audio, FMV decode, controller support.

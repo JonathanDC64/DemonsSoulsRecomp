@@ -5,7 +5,9 @@
 #
 # Usage: desrun.sh <timeout_sec> <outfile> [ENV=val ...]
 #   e.g. desrun.sh 60 boot.txt YDKJ_SYNCTRACE=1 GCM_FIFO_DBG=1
-# DES_EXE=<path> runs another build (default port/build/des_boot.exe).
+# DES_EXE=<path> runs another build (default port/build/des_boot.exe). The run
+# launches a copy in $DES_SCRATCH/bin (des_stage_exe), so rebuilding never
+# fails on a locked exe while it runs.
 # COLD_CACHE=1 wipes the game's HDD cache first (the default keeps it).
 # Defaults (VFS root, quiet logs, priority, affinity) are in deslib.sh.
 set -uo pipefail
@@ -21,7 +23,8 @@ for kv in "$@"; do export "$kv"; done
 # A leftover game from an earlier run of ours would keep a core busy.
 des_kill_own
 if [ "${COLD_CACHE:-0}" = 1 ]; then rm -rf "$(des_cache_dir)"; fi
-timeout "$TIMEOUT" "${DES_EXE:-./port/build/des_boot.exe}" work/game/EBOOT.ELF > "$OUT" 2>&1
+EXE="$(des_stage_exe)" || { echo "desrun: could not stage the exe"; exit 1; }
+timeout "$TIMEOUT" "$EXE" work/game/EBOOT.ELF > "$OUT" 2>&1
 rc=$?
 des_kill_own
 echo "exit=$rc lines=$(wc -l < "$OUT")  out=$OUT"

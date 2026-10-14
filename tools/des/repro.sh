@@ -21,8 +21,10 @@ des_vfs_fallback="D:/Users/jonat/Documents/roms/ps3/Demon's Souls (USA)"   # dev
 export PS3_VFS_ROOT="${PS3_VFS_ROOT:-$des_vfs_fallback}"
 for kv in "$@"; do export "$kv"; done
 echo "[repro] $N runs x ${TIMEOUT}s, env: $* -> $OUTDIR"
+. "$(dirname "$0")/deslib.sh"
+EXE="$(des_stage_exe)" || exit 1
 for i in $(seq 1 "$N"); do
-  timeout "$TIMEOUT" ./port/build/des_boot.exe work/game/EBOOT.ELF > "$OUTDIR/run_$i.txt" 2>&1
+  timeout "$TIMEOUT" "$EXE" work/game/EBOOT.ELF > "$OUTDIR/run_$i.txt" 2>&1
   printf '.'
 done
 echo

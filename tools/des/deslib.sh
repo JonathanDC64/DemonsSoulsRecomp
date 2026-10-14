@@ -32,6 +32,27 @@ des_env_defaults() {
   export PS3_PIDFILE="$DES_PIDFILE"
 }
 
+# des_stage_exe: copy the game binary (DES_EXE, default port/build/des_boot.exe)
+# with its .pdb/.map and any DLLs beside it into $DES_SCRATCH/bin, and print
+# the copy's path. Runs launch the copy, so the build output is never locked
+# and the next fix can be linked while a test is still running. The copy keeps
+# the name des_boot.exe (des_kill_own and des_running match on it). For
+# sym.py against a staged run, pass --map "$DES_SCRATCH/bin/des_boot.map".
+des_stage_exe() {
+  local src="${DES_EXE:-$DES_ROOT/port/build/des_boot.exe}"
+  local dir; dir="$(dirname "$src")"
+  local bin="$DES_SCRATCH/bin"; mkdir -p "$bin"
+  cp -f "$src" "$bin/des_boot.exe" || return 1
+  local f
+  for f in "${src%.exe}.pdb" "${src%.exe}.map" "$dir"/*.dll; do
+    [ -f "$f" ] || continue
+    case "$f" in *.pdb) cp -f "$f" "$bin/des_boot.pdb" ;;
+                 *.map) cp -f "$f" "$bin/des_boot.map" ;;
+                 *)     cp -f "$f" "$bin/" ;; esac
+  done
+  echo "$bin/des_boot.exe"
+}
+
 # Kill only des_boot processes this tooling started (their ids are in the pid
 # file); a copy the user launched by hand is left alone.
 des_kill_own() {

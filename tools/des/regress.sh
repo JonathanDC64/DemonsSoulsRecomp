@@ -23,6 +23,10 @@
 # 75, so the arrival animation is over), REGRESS_WALK / REGRESS_TURN /
 # REGRESS_ON (stick-hold seconds, defaults 8 / 1.5 / 5). The game is not
 # frame-exact, so the diff allows some drift.
+# REGRESS_AB="KNOB=value": an A/B at one spot. After s4_on, set the knob live
+# and save s5_ab, then clear it and save s6_back. The walk does not end in
+# the same place every run, so this, not two runs, is how to see what one
+# knob changes. These two shots are not diffed against the good set.
 set -uo pipefail
 . "$(dirname "$0")/deslib.sh"
 cd "$DES_ROOT" || exit 1
@@ -89,6 +93,10 @@ shot s1_spawn
 hold 128,0,128,128 "${REGRESS_WALK:-8}";    shot s2_walk
 hold 128,128,255,128 "${REGRESS_TURN:-1.5}"; shot s3_turn
 hold 128,0,128,128 "${REGRESS_ON:-5}";      shot s4_on
+if [ -n "${REGRESS_AB:-}" ]; then
+  des_console "$CON" "setenv $REGRESS_AB" > /dev/null; sleep 2; shot s5_ab
+  des_console "$CON" "setenv ${REGRESS_AB%%=*}=" > /dev/null; sleep 2; shot s6_back
+fi
 des_console "$CON" "stat" | sed 's/^/  /'
 restore; trap - EXIT
 say "set $SET"

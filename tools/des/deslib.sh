@@ -9,6 +9,7 @@
 DES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DES_SCRATCH="${DES_SCRATCH:-$DES_ROOT/work/tmp}"; mkdir -p "$DES_SCRATCH"
 DES_PIDFILE="$(cygpath -m "$DES_SCRATCH" 2>/dev/null || echo "$DES_SCRATCH")/des_boot.pids"
+DES_STAGED_MARK=".des_staged"   # beside each staged des_boot.exe (des_stage_exe)
 
 des_env_defaults() {
   des_vfs_fallback="D:/Users/jonat/Documents/roms/ps3/Demon's Souls (USA)"   # dev-box default only
@@ -43,6 +44,7 @@ des_stage_exe() {
   local dir; dir="$(dirname "$src")"
   local bin="$DES_SCRATCH/bin"; mkdir -p "$bin"
   cp -f "$src" "$bin/des_boot.exe" || return 1
+  : > "$bin/$DES_STAGED_MARK"   # des_kill_own: this copy is ours
   local f
   for f in "${src%.exe}.pdb" "${src%.exe}.map" "$dir"/*.dll; do
     [ -f "$f" ] || continue
@@ -53,18 +55,28 @@ des_stage_exe() {
   echo "$bin/des_boot.exe"
 }
 
-# Kill only des_boot processes this tooling started (their ids are in the pid
-# file); a copy the user launched by hand is left alone.
+# Kill only des_boot processes this tooling started; a copy the user launched
+# by hand is left alone. Two sources, so it works from any shell: the pid file
+# of the current DES_SCRATCH, and every running des_boot.exe whose exe has the
+# staging marker beside it (any DES_SCRATCH, including runs started from an
+# earlier shell with a different one). The build output has no marker.
 des_kill_own() {
-  [ -f "$DES_PIDFILE" ] || return 0
-  local pid
-  while read -r pid; do pid="${pid//[!0-9]/}"   # boot_main writes CRLF
-    [ -n "$pid" ] || continue
-    if tasklist //FI "PID eq $pid" //FO CSV //NH 2>/dev/null | grep -qi 'des_boot'; then
-      taskkill //F //PID "$pid" > /dev/null 2>&1
-    fi
-  done < "$DES_PIDFILE"
-  : > "$DES_PIDFILE"
+  local pid exe
+  if [ -f "$DES_PIDFILE" ]; then
+    while read -r pid; do pid="${pid//[!0-9]/}"   # boot_main writes CRLF
+      [ -n "$pid" ] || continue
+      if tasklist //FI "PID eq $pid" //FO CSV //NH 2>/dev/null | grep -qi 'des_boot'; then
+        taskkill //F //PID "$pid" > /dev/null 2>&1
+      fi
+    done < "$DES_PIDFILE"
+    : > "$DES_PIDFILE"
+  fi
+  while IFS='|' read -r pid exe; do
+    pid="${pid//[!0-9]/}"; exe="$(printf %s "$exe" | tr -d '\015')"   # powershell writes CRLF
+    [ -n "$pid" ] && [ -n "$exe" ] || continue
+    [ -f "$(dirname "$(cygpath -u "$exe")")/$DES_STAGED_MARK" ] || continue
+    taskkill //F //PID "$pid" > /dev/null 2>&1
+  done < <(powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='des_boot.exe'\" | ForEach-Object { '{0}|{1}' -f \$_.ProcessId, \$_.ExecutablePath }" 2>/dev/null)
 }
 
 # Is a des_boot we started still running?

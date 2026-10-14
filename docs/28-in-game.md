@@ -57,6 +57,7 @@ All fixes were tested on Demon's Souls only. The other titles (VF5, Simpsons, To
 | `0861c1c` | Vblank ticker: the FIFO kick wait's ceiling is 1 ms, was 4 (`FIFO_KICK_MS`, live). About 13.7 -> 15.8 presents/s. |
 | `bab5001` | SPU `fma`/`fms`/`fnms` in double instead of the CRT software `fmaf` (no FMA target). |
 | port `2b3dda3` | The lifted SPU images build `/O2` with SSE4.1 (`DES_SPU_OPT`, default ON). |
+| `ba6305d` | d3d12: **per-draw vertex fetch plan** and vertex cache (`VP_FETCH_FAST`, live). About 15.5 -> 28 presents/s; the game's pacer leaves 15 fps mode (below). |
 
 ## The in-game hang (fixed, `d5aeb3d`)
 
@@ -307,14 +308,20 @@ The level shows about 14-16 frames a second, but the game runs at its normal tic
 - **What helped:**
   - The FIFO walker's idle wait sits between the guest queuing commands and the labels the ring is gated on. At 1 ms (`0861c1c`), presents went from about 13.7 to 15.8 a second.
   - CPU freed by `0c18b0b` (usleep) and `bab5001`/`2b3dda3` (SPU code) did not move the rate on its own, which matches a latency chain rather than a throughput limit. The chain runs from HighGraphics to the FIFO, then to RSX labels, then to SPU image 2, and back to ring space.
+- **The fix: vertex fetch** (`ba6305d`). A profile of the RSX thread (`prof` on `vblank_ticker`) put about 40% of its busy time in the CPU vertex fetch: `rsx_fetch_attrib` 28%, `read_vp_vertex` 5%, plus address resolves and getenv. A level frame fetches about a million vertices, 16 attributes each, and every attribute call re-derived its enable, type, divisor and context DMA.
+  - Each draw now builds a fetch plan once: the constant registers plus only the enabled arrays. Each vertex is built on the stack and copied once into the write-combined upload heap.
+  - Strip/fan expansions and indexed draws read through a per-draw vertex cache.
+  - Result: about 28 presents/s standing (the game's 30 fps cap) and 20-28 while walking. `VP_FETCH_FAST=0` restores the old path for A/B.
+  - Seen once: a regress run stopped flipping right after the spawn shot. The game was still running SPU work, but no flips came, and the process was killed before it could be inspected. Four runs since (one regress run, three 4-minute walks with `walkwatch.sh`, a scratch script that keeps a hung game alive) did not repeat it.
 - **Next:**
+  - If a stall shows up again: `waits` / `gstacks` on the live process. The faster frame rate may expose a race like the earlier lost wakeup (`d5aeb3d`).
   - Time the chain end to end: when HighGraphics queues a command, when the walker reaches it, when image 2 frees the slot.
   - Per-block SPU trampoline overhead (`spu_task_launch_check` 4%, `spu_drain_call` 3%).
   - The vblank tick is a flat 16 ms on `GetTickCount64` (62.5 Hz, not 59.94).
 
 ## Still open
 
-- **Graphics in the level**: lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Still: about 15 fps (the game's pacer holds 15 fps mode while a rendered frame takes over ~36 ms; see Frame rate), and no side-by-side check against RPCS3 at the same spot yet.
+- **Graphics in the level**: lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Still: no side-by-side check against RPCS3 at the same spot yet.
 - The SCREENTEX hack.
 - Logo fades and loading-screen seams.
 - Audio quality and coverage (it plays now; not yet listened to or compared with RPCS3), FMV decode, controller support.

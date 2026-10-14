@@ -59,6 +59,8 @@ All fixes were tested on Demon's Souls only. The other titles (VF5, Simpsons, To
 | port `2b3dda3` | The lifted SPU images build `/O2` with SSE4.1 (`DES_SPU_OPT`, default ON). |
 | `a90fc9a` | cellAtrac **streaming** (GetStreamDataInfo/AddStreamData and the rest; host copy of each file). ATRAC decode errors per run: ~650 -> 0. Needs the NID table regenerated. |
 | `ba6305d` | d3d12: **per-draw vertex fetch plan** and vertex cache (`VP_FETCH_FAST`, live). About 15.5 -> 28 presents/s; the game's pacer leaves 15 fps mode (below). |
+| `e50e28c` (tools) | `AUDIO_WRITEPOS=1` (where the game's writes land relative to the published read index) and `AUDIO_GAPS=1` (blocks read before they were written; totals on the `AUDIO_RATE` line) (below). |
+| `1e4d419` | cellAudio: **one block per 5.33 ms by the clock**, not in WASAPI-period pairs; read lag 1 (`AUDIO_LAG_BLOCKS`), MMCSS mixer, 40 ms buffer, AUTOCONVERTPCM. Silent blocks inside sound 46.6% -> 0.0% (below). |
 
 ## The in-game hang (fixed, `d5aeb3d`)
 
@@ -288,6 +290,7 @@ All of these keep game-derived output (screenshots, captures) in the scratch dir
   `cpu` says who burns a core; `waits` says what a thread that is not burning one is waiting for. Costs nothing unless armed.
 - **Killing only our runs** (port `f7ce830`): `des_stage_exe` drops a `.des_staged` marker beside the staged copy. `des_kill_own` kills the pids in the current pid file and every running `des_boot.exe` whose exe has the marker, so it works from a shell where `DES_SCRATCH` is unset or different. A copy the user starts from `port/build` has no marker and is left alone.
 - **Muted test runs** (`ad4b9b0`, port `ce22c2b`): `AUDIO_MUTE=1` (live) writes zeros to the WASAPI buffer at the normal rate, so the audio clock and the game's pacing do not change. `PS3_NO_AUDIO` is different: it makes the title take its no-audio path. `des_env_defaults` sets `AUDIO_MUTE=1`; `AUDIO_MUTE=0` makes a run audible.
+- **Audio block counters** (`e50e28c`): `AUDIO_WRITEPOS=1` prints, per port every 1000 writes, a histogram of where the game's writes land relative to the read index we publish (`published+0:N` means the block we read next). `AUDIO_GAPS=1` counts blocks that are still cleared when read with sound on both sides (a write that came too late), logs the first 50 with the ring (`R` read, `#` data, `.` cleared), and adds `gaps N (M blocks, x% of the window)` to the `AUDIO_RATE=1` line. With `AUDIO_WAV=<file>`, `audgaps`-style analysis of the dump (zero 256-frame blocks between sound blocks, jumps at block boundaries against mid-block) gives the same answer from the output side.
 - **Lifted-code index** (`tools/des/recomp_index.py`): `def` / `src` / `at` / `callers` / `callees` / `path` over `work/recomp`, from a SQLite index (94k functions, 130k direct-call edges) that rebuilds in seconds when a lifted file changes. codebase-memory-mcp did not finish indexing the 450 MB of generated code in 30 minutes, so this replaces it for the lift; the hand-written code stays in the general index.
 
 ## Frame rate (2026-10-14)
@@ -339,10 +342,21 @@ The level shows about 14-16 frames a second, but the game runs at its normal tic
 
   So with the firmware module loaded, MultiStream's SPU side diverges and the resource pipeline never gets its SPU completion. Without the firmware the game boots normally (4 of 4 runs after `a90fc9a`).
 
+## Audio: half the blocks were silence (fixed, `1e4d419`)
+
+The audio played but sounded terrible. The `AUDIO_WAV` dump showed why: 46.6% of the 256-frame blocks were all zero, mostly single blocks between sound blocks, so the sound was gated on and off every 5.33 ms. The rate was right (187.5 blocks/s, nothing dropped), and the game's mixer got every notify.
+
+- Demon's Souls has two 8-channel ports. Port 1 (8 blocks) carries the sound. Its libmixer writes one block per notify, at the index we publish (`AUDIO_WRITEPOS`: 99.9% at `published+0`), which is the next block we read.
+- The Windows mixer was paced on WASAPI room. WASAPI drains its buffer a 10 ms period at a time, so room for two blocks opened together and two blocks were mixed back to back. The second read of each pair came before the game had answered the first notify, found the block still cleared, and played silence. `AUDIO_GAPS` logged every gap as one block with the whole ring cleared.
+- `1e4d419` mixes one block every 5.33 ms by the performance counter (a high-resolution waitable timer, no spin). The device buffer only corrects drift: no room slips the schedule a block; under one block queued gains one. Silent blocks: 46.6% -> 0.1%.
+- The rest were writes a few ms late. `AUDIO_LAG_BLOCKS` (default 1, live) reads one block behind the published index, at 5.33 ms more latency: 0 silent blocks in the dump over 90 s of walking, and jumps at block boundaries no more frequent than at mid-block.
+- Also in that commit: the mixer thread is on MMCSS "Pro Audio" (`AUDIO_MMCSS=0` turns it off), the WASAPI buffer is `AUDIO_BUF_MS` (default 40, was 20) of headroom, and AUTOCONVERTPCM lets a device that is not 48 kHz stereo resample.
+- soyjxck's ps3recomp fork found the same pairing on Drakengard 3 (`be94e5a5`, `c42360b7`). This is a reimplementation of that idea, not a merge.
+
 ## Still open
 
 - **Graphics in the level**: lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Still: no side-by-side check against RPCS3 at the same spot yet.
 - The SCREENTEX hack.
 - Logo fades and loading-screen seams.
-- Audio quality and coverage (it plays now; not yet listened to or compared with RPCS3), FMV decode, controller support.
+- Audio: the block gaps are fixed (`1e4d419`); not yet compared with RPCS3 by ear. FMV decode, controller support.
   Audio leads: ATRAC streaming is fixed (`a90fc9a`). `cellAudioSetPortLevel` (0x56DFE179) is still faked as CELL_OK. MultiStream's own ATRAC path needs `flashATRAC.pic`, and loading it hangs the boot (above).

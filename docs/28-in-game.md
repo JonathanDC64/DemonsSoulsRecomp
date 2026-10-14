@@ -29,6 +29,8 @@ All fixes were tested on Demon's Souls only. The other titles (VF5, Simpsons, To
 | `f7a0674` | RSX level shading: per-draw fragment constants (buffered b1, so each draw keeps its own patched constants), TC8/TC9 vertex outputs, primitive restart (`0x1DAC/0x1DB0`) and strip winding in the indexed strip path. The cyan and the stretched triangles are gone. |
 | `5b4ce53` (diag) | `FPK_FP`, fragment-program knobs (`FP_KILL`, `FP_ONE`, ...) rebuild pipelines live from the console, `VP_ATTRS_FP=<hex>` dumps that vertex program as `vp_pick.hlsl`. |
 | `f593fcc` (diag) | `RSX_CENSUS=<n>`: per-frame count of draw methods in the FIFO, plus every method left unhandled. |
+| `ae13875` | **The frozen player and the missing map**: SPU user events go through ports bound to the thread (`sys_spu_thread_connect_event`) before the group's. MultiStream's replies were being dropped, so no sound ever started, the level-entry sequence waited for a voice line forever, and Havok was skipped every frame (below). |
+| `b2ec5eb` (diag) | Sync-history ring and console `synchist <id>`; console `ctx <tid>` (live registers; r11/r3 of a parked thread name the syscall and its object); console `spu` (runs per lifted image); `HLE_LR=<nid>`, `SEM_LR=1`. |
 
 ## The in-game hang (fixed, `d5aeb3d`)
 
@@ -144,22 +146,42 @@ After `f7a0674` the frame is grey (clear colour plus smoke particles, `fp=0x1584
 The map pieces are never sent to the RSX. Evidence:
 
 - `RSX_CENSUS=60`: about 117 batches a frame (9 triangle lists, 12 strips, 96 quads), all `DRAW_ARRAYS` or `DRAW_INDEX_ARRAY`. No draw method is unhandled. So the FIFO does not carry the map, and the backend is not dropping it.
-- Ruled out: FIFO resync, blocking `SEMAPHORE_ACQUIRE` (`GCM_SEMA_ACQUIRE=1` changes nothing), ZCULL reports used as visibility (DeS reads `GET_REPORT` types 2-5 at indices 2040-2043 only for adaptive ZCULL in `FUN_009f6ebc`), job-chain misses (`0x45B5DE00` only uploads textures), and the image 11 ray-cast lift.
+- Ruled out: FIFO resync, blocking `SEMAPHORE_ACQUIRE` (`GCM_SEMA_ACQUIRE=1` changes nothing), ZCULL reports used as visibility (DeS reads `GET_REPORT` types 2-5 at indices 2040-2043 only for adaptive ZCULL in `FUN_009f6ebc`), job-chain misses (`0x45B5DE00` only uploads textures), and the image 11 lift (image 11 is MultiStream's `_synth2`, not Havok; see the image list below).
 - Rendering is camera-relative. VS `c[0..3]` is the view-projection without translation, `c[7]` = (0,0,0,1) is the eye, and `c[8+a0]` holds bone matrices whose translation is (world − camera).
 - The camera is at world (204.6, 0.22, -97.9). The player start `c0000_0000` in the map's MSB is at (201.0, -1.1, -96.2). The meshes we see draw with `fp=0x1572C81`; one is `m7777B0`, at the origin with draw group `0x80000000`.
 - MSB parts near the player (`m1020B0`, collision `h1020B0` at (204.5, -0.9, -97.7)) have draw groups like `0x0F`/`0x7F`; `h1020B0` has display group `0x1`. The origin collision `h0010B0` has display group `0x80000000`.
 - So the active display mask is the fallback `0x80000000`: the game has not found the collision the player stands on, and only the parts in that fallback group draw.
 - The game is live: the right stick turns the camera. The left stick (`PAD_STICK=128,0,128,128,75,90`) does not move the player; the position at `0x0FEFE1E0` stays the same.
 
-Both point at the physics side: the character controller and the ground contact come from Havok (SPU image 8 simulate, image 11 queries).
+Both point at the physics side: the character controller and the ground contact come from Havok. The cause turned out to be audio (next section).
 
 Scratchpad tools: `dcx.py` (unpacks EDGE DCX: `DCX`/`DCA`/`EgdT`, raw-deflate blocks), `msb2.py` (lists MSB parts by type with draw/display groups).
 
 Known but unfixed: `cellGcmGetReportDataAddress` returns a host pointer, and `GET_REPORT` writes into a host table, not guest memory. DeS does not call the former.
 
+### Root cause: a dropped MultiStream reply (fixed, `ae13875`)
+
+The chain, from the symptom back:
+
+1. Havok never steps in the level. `func_001D1E30` (main frame slot 5, world object `0x400E2DD0`) calls the step request `func_00010310` -> `func_01328B10` only when byte `+0x14` is 0. That byte is set every frame by `func_001D0E60`, called from the in-game update `func_00144160` when its local r24 is 0, and cleared again by the frame loop (lr `0x0001BAF0`).
+2. r24 is 0 because a manager at TOC-0x7C20 -> -0x7F6C (`0x425F8160` in our runs) has `+0xD8 = 1` (a sequence is running) and `+0xDA = 0` (it does not allow physics). While `+0xD8` is set, physics runs only if `+0xDA` is set.
+3. That manager is a step machine (`+0x8` step, step table built in `func_001A3370`: `21D0, 2170, 22C8, 23D8, 26F8, 29D8, 2088, 25F0, 3AF8`). It sat in step 4 (`func_001A26F8`), waiting for its request object (`+0x28`) to reach status 3.
+4. The request's own step machine (`0x425F8FF0`, steps `1A7300, 1A5AE8, 1A59B8, 1A5908, 1A5870, 1A6DC0, 1A5D98, 1A5B28, 1A5FD0`) sat in step 6 (`func_001A5D98`): wait until the sound started in step 5 is invalid, started (status bit 8) or finished (bit 0x20). The sound is the voice line `v080000001` (name built in `func_003DC8F0` from id*1000+1); its object (vtable `0x187F418`, status at `+0x88`) stayed at 1, the constructor's value, with no definition at `+0x98`.
+5. The play request (`func_00DBAF90`) posts a `MOMS` command to the sound manager's queue. MOMainThread (tid 12) handles it, but it was parked in `sys_mutex_lock` on MultiStream's mutex `0x45E` (read with `ctx 12`: r11 = 0x66, r3 = 0x45E).
+6. MOMixerThread (tid 13) held that mutex. In `func_01541790` it locks it, sends command `0xFF6` to the synth SPU with `sys_event_port_send`, and waits on queue 13 for the reply (`func_01543448`).
+7. The SPU (`_synth2`, an lv2 SPU thread group, lifted image 11) did reply: `0x3A000FF6` on SPU port 0x3A. The game had bound that port with `sys_spu_thread_connect_event(tid, queue 13, USER, 0x3A)`, which is per thread. `spu_deliver_user_event` looked only at the group's port table, found nothing, and answered ENOTCONN (`[spu-evt] ... port=58 -> queue=0 ... result=0x80010016` with `SPU_EVT_TRACE=1`).
+
+So the first MultiStream command of the boot was never answered, and the whole sound engine had been deadlocked since boot. That is also why the game was silent.
+
+After the fix: sound plays (`AUDIO_RATE=1` reports about half the blocks non-silent in the level, 100% silent before), the entry sequence finishes (sub-steps 6 -> 7 -> 8, manager 5 -> 6 -> 1), Havok steps every frame, the map draws, and `PAD_STICK=128,0,128,128,120,140` walks the player forward and stops when released.
+
+SPU image ids (guest ELF EA = address in the file listing + 0x10000): 1 EDGE zlib, 2 SpursTaskCommandDispatcher, 3/4 FX movement, 5/6 FX ClusterDraw, 7 Havok solver (`0x017BE200`), 8 Havok narrowphase, 9 Havok queries, 10 Havok animation (`0x0181C600`), 11 MultiStream `_synth2`, 12 MultiStream DSP, 13/14 spujobs. The console `spu` verb counts only the spu_workload images; an lv2 SPU thread group such as `_synth2` is not counted there.
+
+Method that found it: a temporary `fprintf` in the generated `func_001D1E30` and its callers (counting entries and steps, then the gate results), the page guard on the flag word (`guard 400E2DE4 rw` with `setenv PPU_GUARD_CHANGE=200`), then `ctx <tid>` on the sound threads. The generated files were restored afterwards.
+
 ## Still open
 
-- **Graphics in the level**: the map is not drawn because the player's ground collision is never found (above). The player does not move.
+- **Graphics in the level**: the map and the player draw, but as flat black shapes on the grey clear colour (no lighting or textures visible).
 - The SCREENTEX hack.
 - Logo fades and loading-screen seams.
-- Audio, FMV decode, controller support.
+- Audio quality and coverage (it plays now; not yet listened to or compared with RPCS3), FMV decode, controller support.

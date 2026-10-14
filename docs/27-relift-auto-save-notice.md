@@ -134,15 +134,77 @@ Runs vary a lot now that a save exists. Some reach the notice within a minute; o
 **Follow-up (ps3recomp `d9292c8`): idle pollers sleep for real**
 - The GETLLAR back-off now blocks on the SPU context's channel cv until a write drops the reservation (`spu_coh_notify_write` → `spu_ch_wake`), with a 2 ms safety timeout.
 - `sys_timer_usleep`: after 64 back-to-back sub-ms sleeps, a thread sleeps on a high-resolution waitable timer instead of the QPC/`SwitchToThread` spin. `USLEEP_SPIN=1` restores the old behaviour.
-- `desrun.sh` (and so every debug script) kills any leftover `des_boot.exe` before a run. It also runs the game at BelowNormal priority on CPUs 0–7: `PS3_PRIORITY`/`PS3_AFFINITY`, read by `boot_main`.
+- `desrun.sh` (and so every debug script) kills its own leftover `des_boot.exe` runs (by pidfile) before a run. It also runs the game at BelowNormal priority on half the logical CPUs: `PS3_PRIORITY`/`PS3_AFFINITY`, read by `boot_main` and set only by the scripts (`tools/des/deslib.sh`), never by the runtime.
 
 Measured with `tools/des/cpusample.sh` (total cores via perf counter, busiest threads mapped to guest tids):
 - In the logo phase the game now uses about 0.6 cores.
 - MOStreamingThread (tid 18) takes about 40%, mostly in ntdll wait/yield. Its loop at `0x00D64E58` does one streaming step and sleeps 5 ms.
 - One SPU thread takes about 18%. HighGraphics is near 0.
 
-**Logos and loading.** In one run the Atlus logo stayed up for more than 107 s, while the game streamed SDATs and wrote its decompressed HDD cache (`Ftruncate`s). The logos look held until a background load finishes. The debug scripts wipe that cache before every run, so each run pays the full decompression. Load throughput is latency-bound (little CPU in use), not compute-bound.
+**Logos and loading.** In one run the Atlus logo stayed up for more than 107 s, while the game streamed SDATs and wrote its decompressed HDD cache (`Ftruncate`s). The logos look held until a background load finishes. The debug scripts used to wipe that cache before every run, so each run paid the full decompression; they now keep it (`COLD_CACHE=1` wipes). Load throughput is latency-bound (little CPU in use), not compute-bound.
+
+## Loading is not the gate
+
+`FS_TIME=1` (per-fd open/read/close timeline) shows the logo phase's file I/O finishing fast and in the same order as RPCS3. The last open before the logos is `facegen.fgbnd`, as in RPCS3. Slow logos are a rendering/frame-pacing problem, not a loading one.
+
+## Logos froze on Havok: the flip-time ring wrap (fixed)
+
+**Symptom.** The logos ran Atlus → Sony → Japan Studio → FromSoftware → Havok, then the Havok logo stayed up for good. The game kept presenting, but RSX label 255 stopped moving. HighGraphics paces every frame on that label.
+
+**Evidence** (`desprobe` with `EXIT_ON=gcm-wedge`):
+```
+[cellGcmSys] flip-wrap: JUMP->begin written at io=0x00009B4C (get=0x005FF6A4 end-cur=0x64A0)
+[gcm-wedge] label255=0x339 unchanged; get=0x00009B4C put=0x0000D804
+```
+
+**Cause.**
+- `gcm_flip_into_fifo` (ps3recomp `cellGcmSys.c`) wraps the title's ring at a flip: it writes JUMP->begin and sets `current = begin` once the walker is a margin past `begin`.
+- That test also held when the walker was in a different buffer. Demon's Souls' PPU ring is 32 KB (io `0x8000`–`0x10000`). Each frame continues into an SPU-built pushbuffer higher in IO space (`get` around `0x5FF6A4`).
+- The wrap rewound the PPU ring under the title. The walker then replayed `begin`..JUMP, and the label releases in the SPU pushbuffer never ran again.
+
+**Fix** (ps3recomp `5b6e6bb`): the flip-time wrap also requires the walker to be in this ring, at or behind the write position (`io_begin + margin <= get <= io(current)`). With the fix there is no flip-wrap, label 255 keeps advancing, and the game gets past the logos to cellSail.
+
+Only Demon's Souls was tested. VF5, The Simpsons Arcade Game, Tornado Outbreak and Tokyo Jungle, which the surrounding ring code was written for, were not re-run.
+
+**Still open.** The title-ring recycle still treats "past `end`, nothing moved for 100 ms" as a wedge. That is a timing rule. It doesn't fire for Demon's Souls since the flip exclusion (above). A guest-state replacement needs either the title's callback result (hooking a title-installed callback) or a walker-past-end test that also handles Demon's Souls' deliberate run past `end`, and VF5 to test it on.
+
+## After the logos: cellSail, and a full taskset
+
+The game loads the PAMF and SAIL modules and builds a cellSail player for `movie/ds_advertise.pam`. It calls `PlayerInitialize2`, the adapters, `PlayerBoot`, `CreateDescriptor`, `AddDescriptor`, then `PlayerOpenStream`. Ours fires the same completion events RPCS3 does (RPCS3's `OpenStream` is an empty stub). The game never calls `PlayerStart`. The screen goes black, and presents drop to about 1/s while label 255 keeps moving slowly. `gstacks` 20 s later: HighGraphics (tid 4) and MAIN (tid 1) are still in their usual per-frame waits.
+
+**Task ids ran out (fixed, ps3recomp `0320c58`).** In every run, `cellSpursCreateTask` failed with "no free task id (all 128 enabled)" on two tasksets: several hundred to about 2,000 times each. The one-time dump at the first failure (`efae23c`) told the two apart:
+```
+taskset 0x48194800 bits: running=0 ready=1 pending=127 enabled=128 ...
+  elf=0x0179CC00 holds 64 ids / elf=0x017ACD00 holds 63 ids
+taskset 0x477ED800 bits: ready=128 pending=0 enabled=128 ...
+  elf=0x017BE200 holds 128 ids; 1009 task threads alive, 0 parked
+```
+- **Tasks created by SPU code never started.** SPU images 3 and 4 add tasks themselves. `SPU_ATOM_EA` showed one PUTLLC setting the enabled bit (pc `0x079EC`/`0x0794C`) and a second setting pending_ready (pc `0x07C2C`/`0x07BB4`). That is what RPCS3's PPU-side create plus `task_start` do. On hardware the taskset policy module then schedules them. Ours only started pending tasks when another task of the same taskset exited. Now a committed SPU lock-line write to a known taskset's header starts its pending tasks.
+- **PPU-created tasks could start twice.** A task was marked running only once its thread started. An exit in between started it again, and under load this fed itself (Havok: 1009 threads for 128 ids, under 1 frame/s). It is now marked running at dispatch.
+
+With both fixes, no taskset runs out of IDs, and the game reaches cellSail after the logos at about 15 presents/s. One of two runs sat on the pre-notice loading screen for 6 minutes instead (it never reached `cellSaveDataAutoLoad2`). That variance existed before.
+
+After `PlayerOpenStream`, three threads were sampled once with `gstacks`. HighGraphics (tid 4) was in `00B0A5A8 ← 00B0A428 ← 00A164B8 ← 00ACA470 ← 009F81F0`, and tid 23 was in `00B0A5A8 ← 00B0A428 ← 00EC1090`. `00B0A5A8` calls a reporting routine (`func_00A9DD58`: prints, then writes `0xDEADBA` to address 0) only on its error path, so it is probably a lock wrapper. A single sample doesn't show whether it blocks there.
+
+## New tools (this round)
+
+| Knob / tool | What it does |
+|---|---|
+| `EXIT_ON=<tag,...\|any>` | Exit when a tagged report fires (`gcm-wedge`, `task-ids`). `EXIT_DELAY_MS` lets the console reply finish. |
+| `EXIT_ON_HLE=<nid>`, `EXIT_AFTER_MS=<ms>` | Exit on the first call of an import, or after a time. |
+| `HLE_FIRST=1` | Log the first call of each import (tid, lr). |
+| `[gcm-wedge]` | Label 255 frozen while flips keep coming (`GCM_WEDGE_FLIPS`, default 64). Prints the walker's last steps. |
+| `GCM_RATES=1` | Presents/s, FIFO flip words/s and label 255, once a second. |
+| `FS_TIME=1` | Per-fd file timeline. |
+| `CELLMARK_DUMP_CHANGED=1` | Keep a screenshot only when the image changed. |
+| console `gstacks [n]` | Shadow stacks of every guest thread. |
+| `PS3_VERBOSE=0` | Quiet per-call logs (the scripts' default; the logging lock perturbed timing). |
+| `tools/des/deslib.sh` | Shared script defaults. Paths come from env, with this machine's paths only as fallbacks. Affinity is half the logical CPUs. A pidfile means scripts kill only their own runs. |
+| `tools/des/desprobe.sh` | One event-driven run: presses CROSS until a pattern, runs console commands on `WHEN=<regex>`, keeps changed shots, and returns when the game exits. |
+| `COLD_CACHE=1` | Wipe the HDD cache first (the default now keeps it). |
 
 ## Next
 
-Find what the logo phase waits on to finish loading, and catch a slow logo run and find what the Havok thread (tid 11) waits on during its multi-second gaps. Expected suspects are SPU task completion delivery (image 7 tasks, evq 5) and the image-7 task spawning (one host thread per task).
+- What the game waits on after `PlayerOpenStream`: sample `gstacks` several times. It never calls `cellSailPlayerStart`, so check whether our OPENED event sequence matches what its callback (`0x0198A1C8`) expects.
+- The pre-notice loading-screen stall (boot variance).
+- A verbose RPCS3 log of the logos-to-title stretch would show what the game calls after `OpenStream` there. The current log stops about 30 s into boot.

@@ -71,6 +71,9 @@ All fixes were tested on Demon's Souls only. The other titles (VF5, Simpsons, To
 | `ad2d649` | d3d12: a stale frame-size max no longer merges light frames into one present (`RSX_STALE_FLIPS`, plus a halving rule). Movies went from 15 to 31 presents/s; the level is unchanged (below). |
 | `96757fc` (diag) | `SAIL_AUDIO_TONE=<peak>` (test tones instead of the movie's sound) and `PS3_SAIL_MOVIES=<text>` (play only the movies whose path contains it) (below). |
 | port `fde7885` (tools) | desprobe starts pressing on either first-poll log line. The "intro-path boot stall" was the harness: a garbled log line meant no button press (below). |
+| `0dc0854` | cellSail `Graphics/SoundAdapterPtsToTimePosition`: the opening movie's subtitles no longer freeze (below). Needs the NID table regenerated. |
+| `d57cea9` | sail_movie hands video frames out in order, half a frame early, instead of the newest due frame (below). |
+| `6dae2e5` | Vblank ticks on the performance counter at 59.94 Hz (`VBLANK_MHZ`); they were 62.5 Hz in ~15.6 ms steps. The game flips 30/s, not 31-32 (below). |
 
 ## The in-game hang (fixed, `d5aeb3d`)
 
@@ -410,6 +413,15 @@ Tools and knobs:
 - `SAIL_AUDIO_TONE=<peak>` (`96757fc`): replace the movie's sound with one sine per channel, 250 Hz x (channel + 1). Pair it with `AUDIO_WAV=<file>` and look at the spectrum per channel.
 - `SAIL_AUDIO_DOWNMIX=0` (`7f48932`): hand 5.1 out as 5.1 (default: stereo).
 - `RSX_STALE_FLIPS=<n>` (`ad2d649`): flips without a present before the frame-size max counts as stale (default 4; 0 = never).
+- `VBLANK_MHZ=<n>` (`6dae2e5`): the vblank rate in millihertz (default 59940; 60000 = 60 Hz).
+
+### Choppy movies and frozen subtitles (fixed, 2026-10-14)
+
+After `ad2d649` the user reported the movies at a steady 31 fps but slightly choppy, and the opening movie's subtitles frozen on one line.
+- **Subtitles** (`0dc0854`): the game times them with `cellSailGraphicsAdapterPtsToTimePosition(adapter, pts, &pos)` (NID `0x1872331B`, from `FUN_00fe0138`; `FUN_00fd8cc4` divides `pos` by 1e6, so the unit is microseconds). It was an unresolved import faked as CELL_OK, so `pos` was never written. It now returns `pts * 100 / 9`; our pts are 90 kHz from 0. Measured: called once per frame, frame 300 of the title movie gives 9.98 s. After adding it, regenerate the NID table: `python ps3recomp/tools/gen_hle_nids.py --all --out work/recomp/hle_nid_table.cpp` (the diff should be just the two new entries).
+- **Vblank rate** (`6dae2e5`): the ticker in `boot_main.cpp` scheduled vblanks with `GetTickCount64` + 16 ms, which is 62.5 Hz. `GetTickCount64` also moves in ~15.6 ms steps, so ticks came in bursts. The game flips on every other vblank, so it ran at 31.25/s against the movies' 29.97, and one movie frame a second was shown twice. It now runs on the performance counter at 59.94 Hz, and the game flips 30/s. The level regression walk is unchanged.
+- **Frame choice** (`d57cea9`): `sail_movie_video` handed out the newest frame due by the wall clock. With the game fetching at the movie's own rate, a millisecond of jitter at a frame boundary gave two frames in one call and none in the next. Frames now go out one per call, half a frame early, and are skipped only to catch up more than two behind. Title movie: 297 of 300 frames shown, 253 before.
+- The user confirmed the movies look right after these three.
 - Log: `[sail_movie] <file>: video 1280x720 @ 30000/1001, LPCM 6 ch (handed out as 2)` on open; `[cellSail] 4 frame buffers of 0x384000 bytes from the title, first at 0x...`; `[cellSail] stream ended`.
 - `017dd06` (diag): `[cellSail] video GetFrame #N: <handed out>, playing=<0/1>, last 300 calls <n>/s, new frames <n>/s` every 300 calls; `[cellSail] sound GetFrame #N: <filled>` every 2,000; `[sail_movie] decoded N frames` every 300.
 - To watch a movie in a test run: `PRESS_UNTIL="PlayerStart" WHEN="stream ended" tools/des/desprobe.sh out.txt 260` (no `DES_SKIP_INTRO`; pressing stops once the advert starts, so it is not skipped).
@@ -431,5 +443,5 @@ Forks and open PRs of upstream ps3recomp, checked against this tree:
 - The SCREENTEX hack: narrowed to samplers over empty guest memory (`ee40816`).
 - The "intermittent stall early in the boot" was the test harness (port `fde7885`). Caught live on try 11 of 11 (`waits`/`gstacks`): main was polling the pad at the auto-save notice and no button was ever pressed. Another thread's log write had landed inside the "GetData polling begins" line (`[cellPad] G[THREAD 22] unwound ...`), and desprobe waited for that exact line. It now also accepts `[cellPad] PAD_FILE=`.
 - Logo fades and loading-screen seams.
-- Audio: the block gaps are fixed (`1e4d419`); not yet compared with RPCS3 by ear. FMV plays (`5a63029`); its sound matches the source in captures (`7f48932`), but nobody has listened yet. The user also saw the title movie "play super fast"; it hands out 29 new frames a second over its 10 s, so that was probably the 15 fps present merging (`ad2d649`). Not yet re-checked by eye. Controller: DualSense over HID (`4efcb5e`) not yet tried live; no rumble for Sony pads.
+- Audio: the block gaps are fixed (`1e4d419`); not yet compared with RPCS3 by ear. FMV plays (`5a63029`) with correct sound, frame rate and subtitles (`7f48932`, `ad2d649`, `0dc0854`, `d57cea9`, `6dae2e5`); the user checked all three movies. Controller: DualSense over HID (`4efcb5e`) not yet tried live; no rumble for Sony pads.
   Audio leads: ATRAC streaming is fixed (`a90fc9a`). `cellAudioSetPortLevel` (0x56DFE179) is still faked as CELL_OK. MultiStream's own ATRAC path needs `flashATRAC.pic`, and loading it hangs the boot (above).

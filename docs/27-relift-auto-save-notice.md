@@ -186,6 +186,25 @@ With both fixes, no taskset runs out of IDs, and the game reaches cellSail after
 
 After `PlayerOpenStream`, three threads were sampled once with `gstacks`. HighGraphics (tid 4) was in `00B0A5A8 ← 00B0A428 ← 00A164B8 ← 00ACA470 ← 009F81F0`, and tid 23 was in `00B0A5A8 ← 00B0A428 ← 00EC1090`. `00B0A5A8` calls a reporting routine (`func_00A9DD58`: prints, then writes `0xDEADBA` to address 0) only on its error path, so it is probably a lock wrapper. A single sample doesn't show whether it blocks there.
 
+## The movies, and the title screen (fixed)
+
+The game drives its movies through cellSail, and our HLE answered a different protocol. Traced from the game's handlers (sail callback OPD `0x0198A1C8` -> `0x00FD9120`; after boot, `0x0198A170` -> `0x00FD8378`; both post each event to the game's own event port, drained one per frame by `0x00FDBB10`, jump table at `0x00FDBC54`):
+
+| Event (major) | What the game does |
+|---|---|
+| CALL_COMPLETED (2), minor BOOT | `cellSailFutureSet(arg1, arg0)`, then `ReplaceEventHandler`. arg1 must be the userParam (a CellSailFuture). |
+| STATE_CHANGED (3) | stores arg0 at player+0x718; Start is only called once it reads OPENED (4) |
+| STREAM_OPENED (4) | arg0 = descriptor: `GetStreamType`, `CreateDatabase` (a PAMF reader), `OpenEsVideo` |
+| STREAM_CLOSED (5) | destroys the descriptor, sets "closed"; the close loop also waits for CLOSED (2) |
+| SOURCE_EOS (8) | sets an "ended" flag |
+| ES_OPENED (9) | arg0 = ES type. VIDEO: pick the audio track with cellPamfReader calls, `OpenEsAudio`. AUDIO: movie ready |
+
+Our player sent only state changes with arg1 = 0, and the futures, `ReplaceEventHandler`, `OpenEsVideo/Audio` were unregistered (each silently returned CELL_OK; the "unresolved NID" log had a 40-line cap that one polled NP import used up, fixed in `b6a0d00`). The cellPamf reader also parsed an invented header layout. Fixes: cellPamf `ce105e6` (real PAMF layout, all 25 exports), cellSail `d149e20` (the event protocol above, real futures, ABI fixes).
+
+Result: `ds_advertise.pam` (M2V 1280x720 + 6-ch LPCM, 130 s) and then `ds_title.pam` (2-ch, 10 s) both go Boot -> Open -> ES open -> Start -> Close -> Finalize, and **the title screen renders**: the Demon's Souls logo and "PRESS START BUTTON", at about 28 presents/s. Nothing decodes yet, so each movie "ends" the moment it starts: the intro is skipped, and the title logo comes from the game's own fallback drawing after `ds_title.pam` ends.
+
+![title](../work/tmp/shots/f029.png) (local only, not committed)
+
 ## New tools (this round)
 
 | Knob / tool | What it does |
@@ -205,6 +224,6 @@ After `PlayerOpenStream`, three threads were sampled once with `gstacks`. HighGr
 
 ## Next
 
-- What the game waits on after `PlayerOpenStream`: sample `gstacks` several times. It never calls `cellSailPlayerStart`, so check whether our OPENED event sequence matches what its callback (`0x0198A1C8`) expects.
+- Press START on the title screen and follow what comes next (main menu, then the save load).
+- Real movie playback: demux the PAMF (M2V + LPCM) and decode on the host, deliver frames through the graphics adapter, and end the movie on real end of stream instead of at once.
 - The pre-notice loading-screen stall (boot variance).
-- A verbose RPCS3 log of the logos-to-title stretch would show what the game calls after `OpenStream` there. The current log stops about 30 s into boot.

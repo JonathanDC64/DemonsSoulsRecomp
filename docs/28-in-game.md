@@ -67,6 +67,10 @@ All fixes were tested on Demon's Souls only. The other titles (VF5, Simpsons, To
 | `ee40816` | d3d12: the frame copy is bound to a display-sized sampler only when the guest memory behind it is empty. The movie frames were replaced by last frame's backbuffer (below). |
 | `5a63029` | cellSail **plays PAMF movies**: MPEG-2 through the Windows Media Foundation decoder, LPCM, frames on the wall clock. The intro advert and the title movie play; START skips them. Needs the NID table regenerated (below). |
 | `017dd06` (diag) | `[cellSail] video GetFrame #N` / `sound GetFrame #N` / `[sail_movie] decoded N` counters (below). |
+| `7f48932` | cellSail movie **sound**: a 16-bit LPCM sample split across two PES packets is carried over. Decoding each packet on its own read everything after an odd-length one a byte off, which played as seconds of full-scale white noise. 5.1 tracks are folded to stereo, and the stream database reports 2 channels to match. The title movie is now bit-exact against the source (below). |
+| `ad2d649` | d3d12: a stale frame-size max no longer merges light frames into one present (`RSX_STALE_FLIPS`, plus a halving rule). Movies went from 15 to 31 presents/s; the level is unchanged (below). |
+| `96757fc` (diag) | `SAIL_AUDIO_TONE=<peak>` (test tones instead of the movie's sound) and `PS3_SAIL_MOVIES=<text>` (play only the movies whose path contains it) (below). |
+| port `fde7885` (tools) | desprobe starts pressing on either first-poll log line. The "intro-path boot stall" was the harness: a garbled log line meant no button press (below). |
 
 ## The in-game hang (fixed, `d5aeb3d`)
 
@@ -378,16 +382,35 @@ How a frame gets to the screen:
 - The game calls `GraphicsAdapterGetFrame(adapter, &info)` once per game frame from its render thread and, when it returns a buffer, points a texture at `info.pBuffer` (A8R8G8B8 linear, remap 0xA993: it asked for RGBA bytes, so the remap rotates the channels and forces alpha to 1). It draws the movie quad (fp 0x0079FE81 = texture x vertex colour) only on a frame GetFrame filled.
 - The buffers are the game's own: the library calls the adapter's `pAlloc(pArg, size, num, ppFrame)`, and Demon's Souls allocates them in RSX local memory (0xC4C23500 ...). We ask for 4 per stream and give them back through `pFree` on close.
 - When no new frame is due, GetFrame hands the current one out again. Answering EMPTY flashed the screen black every time the game ran faster than the movie.
-- Sound: the game's mixer calls `SoundAdapterGetFrame(adapter, 256, &info)` and reads 256 frames of big-endian float PCM from `info.pBuffer` (our scratch page at 0x59800000), in the PAMF's channel order (stereo, or L C R Ls Rs LFE, reported as layout 8).
+- Sound: the game's mixer calls `SoundAdapterGetFrame(adapter, 256, &info)` and reads 256 frames of big-endian float PCM from `info.pBuffer` (our scratch page at 0x59800000). It reads the format once per stream with `SoundAdapterGetFormat`. The channel count comes from the PAMF reader on the stream database (below). Movie sound is always handed out as stereo (`7f48932`).
 - The end: once the last frame has been handed out, the frame fetch sends SOURCE_EOS, STOP_TRANSITION and OPENED, which is what the game waits for before closing the stream.
 
 Why it played black at first: the d3d12 backend gave every 1280x720 sampler with no render target at its offset a copy of the rendered frame (`19d4613`, meant for surfaces the GPU rendered, whose guest memory is never written). The movie frames are exactly display-sized, so the quad sampled last frame's backbuffer. `ee40816` keeps that substitution only when the guest memory there is empty. The DeS display pass (fp 0x181 sampling 0x7A0000) still gets it.
+
+### Movie sound was noise (fixed, `7f48932`)
+
+The user heard broken sound in all three movies. Diagnosis from `AUDIO_WAV` captures of the final mix, compared with each movie's LPCM decoded offline from the `.pam` file (a short script; nothing game-derived is kept):
+- `ds_title.pam` (stereo): stretches that matched the source sample for sample (gain 1.000) alternated with seconds of uniform white noise in [-1, 1], plus stretches with left and right swapped. The noise was the source read one byte off. A PAMF LPCM payload can end in the middle of a sample, and the sample's other byte starts the next packet. `feed_lpcm` decoded each packet on its own and dropped the odd byte, so every sample after it was misread until another odd packet realigned the stream. The swaps came from the overflow path, which dropped one float instead of one frame. Both are fixed. The title movie is now bit-exact for its whole length.
+- `ds_advertise.pam` (5.1, L R C Ls Rs LFE in the file): the game reads the LPCM channel count with `cellPamfReaderGetStreamInfo` on the PAMF reader that `cellSailDescriptorCreateDatabase` builds, and sets up a stereo or a 5.1 mix from it (FUN_00fdad08: count 2 uses the object at +0x734, count 6 the one at +0x738). Through the 5.1 path, test tones (`SAIL_AUDIO_TONE`) came out mono, at the wrong pitch and about -45 dB. Stereo test tones handed out while the database still said 6 channels came out scrambled. So 5.1 is folded to stereo in `sail_movie` (ITU-R BS.775 weights, scaled so they cannot clip, LFE dropped), and the database's copy of the header reports 2 channels. 99.9% of the advert's 256-sample blocks then match the reference downmix bit for bit. The exception is one dropout block in 25 s with no lasting offset, a hitch while the guest runs at about 95% CPU. `SAIL_AUDIO_DOWNMIX=0` hands 5.1 out again, in the L C R Ls Rs LFE order that layout 8 promises, for a title whose 5.1 path works.
+- The game pulls sound at about real time: about 194 GetFrame calls of 256 frames a second, against 187.5 nominal, measured over 10 s.
+
+### Movies at 15 fps and 1 fps (fixed, `ad2d649`)
+
+During the advert the game flipped 32 times a second but the backend presented 14. `d3d12_clear_display` holds back a display batch smaller than a quarter of the largest frame seen, as an intermediate of a double-buffered title. That max covered the whole run. Movie frames are 5 draws: against a max of about 30, one frame was "small" and two were not, so frames went out merged in pairs (15 fps, and the first of each pair was never shown). After the 1,700-draw level frames, a movie frame would only be presented after a few hundred draws had piled up: the 1 fps the user saw in `ds_opening`, which plays after character creation.
+- `RSX_STALE_FLIPS` (default 4, 0 = off): if no present has happened for that many flips, the current batch becomes the new max.
+- If three presents in a row each merge two or more flips and are still under half the max, the max is halved.
+- Neither fires where a full frame arrives at least every other flip, which is the case the rule protects (the Demon's Souls level). A per-present decay was tried first: it let a G-buffer intermediate of the level through as a frame (regress.sh `s4_on` came out as a dark red buffer), so it was dropped.
+- Advert: 31 presents/s, 0 merges. Title movie: 31/s. Level walk: all shots ok, about 28 presents/s. The opening was not reached here.
 
 Measured (`017dd06` counters): the game calls GetFrame about 31 times a second and gets 29.4 new frames a second during the advert (the movie is 29.97). Sound calls deliver about 48,000 frames a second. Screenshots (`SHOTS=` / `CELLMARK_DUMP`) stall the frame loop and make the movie look choppy; judge smoothness without them.
 
 Tools and knobs:
 - `PS3_SAIL_MOVIES=0`: never play; every stream ends at once (the old behaviour).
-- Log: `[sail_movie] <file>: video 1280x720 @ 30000/1001, LPCM 6 ch` on open; `[cellSail] 4 frame buffers of 0x384000 bytes from the title, first at 0x...`; `[cellSail] stream ended`.
+- `PS3_SAIL_MOVIES=<text>` (`96757fc`): play only the movies whose path contains `<text>`; the rest end at once. `PS3_SAIL_MOVIES=title` reaches the title movie in about 50 s without sitting through the 130 s advert, which CROSS does not skip.
+- `SAIL_AUDIO_TONE=<peak>` (`96757fc`): replace the movie's sound with one sine per channel, 250 Hz x (channel + 1). Pair it with `AUDIO_WAV=<file>` and look at the spectrum per channel.
+- `SAIL_AUDIO_DOWNMIX=0` (`7f48932`): hand 5.1 out as 5.1 (default: stereo).
+- `RSX_STALE_FLIPS=<n>` (`ad2d649`): flips without a present before the frame-size max counts as stale (default 4; 0 = never).
+- Log: `[sail_movie] <file>: video 1280x720 @ 30000/1001, LPCM 6 ch (handed out as 2)` on open; `[cellSail] 4 frame buffers of 0x384000 bytes from the title, first at 0x...`; `[cellSail] stream ended`.
 - `017dd06` (diag): `[cellSail] video GetFrame #N: <handed out>, playing=<0/1>, last 300 calls <n>/s, new frames <n>/s` every 300 calls; `[cellSail] sound GetFrame #N: <filled>` every 2,000; `[sail_movie] decoded N frames` every 300.
 - To watch a movie in a test run: `PRESS_UNTIL="PlayerStart" WHEN="stream ended" tools/des/desprobe.sh out.txt 260` (no `DES_SKIP_INTRO`; pressing stops once the advert starts, so it is not skipped).
 
@@ -406,7 +429,7 @@ Forks and open PRs of upstream ps3recomp, checked against this tree:
 
 - **Graphics in the level**: lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Still: no side-by-side check against RPCS3 at the same spot yet.
 - The SCREENTEX hack: narrowed to samplers over empty guest memory (`ee40816`).
-- An intermittent stall early in the boot, only without `DES_SKIP_INTRO`: about 1 run in 4 never creates `DsTrophyMan::AsyncUpdateThread` and never polls the pad. It was there before the movie work (a 14:44 probe on 2026-10-14). Not caught live yet; the next one gets `waits` and `gstacks` from the console.
+- The "intermittent stall early in the boot" was the test harness (port `fde7885`). Caught live on try 11 of 11 (`waits`/`gstacks`): main was polling the pad at the auto-save notice and no button was ever pressed. Another thread's log write had landed inside the "GetData polling begins" line (`[cellPad] G[THREAD 22] unwound ...`), and desprobe waited for that exact line. It now also accepts `[cellPad] PAD_FILE=`.
 - Logo fades and loading-screen seams.
-- Audio: the block gaps are fixed (`1e4d419`); not yet compared with RPCS3 by ear. FMV plays (`5a63029`); its sound has not been checked by ear. Controller: DualSense over HID (`4efcb5e`) not yet tried live; no rumble for Sony pads.
+- Audio: the block gaps are fixed (`1e4d419`); not yet compared with RPCS3 by ear. FMV plays (`5a63029`); its sound matches the source in captures (`7f48932`), but nobody has listened yet. The user also saw the title movie "play super fast"; it hands out 29 new frames a second over its 10 s, so that was probably the 15 fps present merging (`ad2d649`). Not yet re-checked by eye. Controller: DualSense over HID (`4efcb5e`) not yet tried live; no rumble for Sony pads.
   Audio leads: ATRAC streaming is fixed (`a90fc9a`). `cellAudioSetPortLevel` (0x56DFE179) is still faked as CELL_OK. MultiStream's own ATRAC path needs `flashATRAC.pic`, and loading it hangs the boot (above).

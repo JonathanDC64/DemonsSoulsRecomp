@@ -35,6 +35,9 @@ des_env_defaults() {
     export PS3_AFFINITY="$(printf '%X' $(( (1 << half) - 1 )))"
   elif [ "$PS3_AFFINITY" = all ]; then unset PS3_AFFINITY; fi
   export PS3_PIDFILE="$DES_PIDFILE"
+  # Compiled shaders, kept across runs and staged copies of the exe, beside the
+  # saves; precompile_shaders.sh fills it from the game's shader archives.
+  export PS3_SHADER_CACHE="${PS3_SHADER_CACHE:-$(cygpath -m "$DES_ROOT/gamedata/shader_cache" 2>/dev/null || echo "$DES_ROOT/gamedata/shader_cache")}"
   # F9 in the game window captures the next frame for rsx_replay; keep those
   # (game-derived) captures in the scratch directory, never the repository.
   export RSX_HOTKEY_DIR="${RSX_HOTKEY_DIR:-$(cygpath -m "$DES_SCRATCH/rsx_hotkey" 2>/dev/null || echo "$DES_SCRATCH/rsx_hotkey")}"

@@ -499,6 +499,34 @@ Forks and open PRs of upstream ps3recomp, checked against this tree:
 - Not useful here: zdiemer's commits and PRs 279/280/282 target the opt-in live-draw engine (`RSX_LIVE_DRAW`), not the D3D12 path; PR 281 (AA surfaces) — Demon's Souls uses none (surface formats 0x148/0x14D/0x150, AA bits 0); `387d1faa` and `7db67309` are already covered; tekulvw's cellSail series is tied to Metal and FFmpeg.
 - andrebrumdev/gow2-recomp (God of War II, playable, same ps3recomp lineage, macOS/Metal, engine code private): ideas worth taking later are profile-guided devirtualisation of indirect calls, config-declared mid-function hooks, RPCS3 `patch.yml` support and clamping transform constants to 0-467.
 
+## Shader stutter: disk cache and precompile (ps3recomp `ee98227`, `c055090`, 2026-10-15)
+
+Every guest program was decompiled to HLSL and compiled with FXC the first time a draw used it, in every run. FXC takes about 40 ms for a fragment program and over 100 ms for the large vertex programs. With PERF=1, one boot to the first level compiled 139 programs and spent 5.9 s in FXC, in bursts as each new area or effect appeared.
+
+- **Disk cache** (`ee98227`):
+  - Compiled programs are kept as `<profile>_<hash>.dxbc`, keyed by the HLSL text, so a decompiler change simply misses.
+  - Location: `PS3_SHADER_CACHE`. `des_env_defaults` sets it to `gamedata/shader_cache`, next to the saves and outside the staged exe's directory. `=0` turns the cache off.
+  - Second boot to the same level: 0.03 s compiling.
+  - `CreateGraphicsPipelineState` then costs about 0.04 s per run, because the driver keeps its own cache, so there is no pipeline library.
+- **Unused texture units no longer change a program:**
+  - A fragment program's HLSL depends on what kind of texture each unit holds: cube, shadow (depth compare) or depth read as colour.
+  - It was declared from every bound unit, so a cube map left on a unit the program never samples gave another text and another pipeline.
+  - Only the sampled units count now (`rsx_fp_texture_units`): 92 texts became 52 in the same run.
+- **Precompile before the first boot** (`c055090`, port `tools/des/precompile_shaders.sh`):
+  - `play.sh` runs it before the game. It takes about 20 s once, then a few seconds.
+  - It unpacks `USRDIR/shader/*.shaderbnd` with `tools/des/shader_extract.py`. Each archive is a BND3 whose entries are a 0x20-byte FromSoftware header followed by a standard `CgBinaryProgram`; the extracted files go to scratch and are deleted afterwards.
+  - ps3recomp's `rsx_shader_precompile` then builds every program's HLSL through the backend's own code and compiles all of it on every core: 1421 programs, 3535 shaders.
+  - Vertex ucode is byte-swapped to the word order `rsx_state` keeps, and branch targets are made relative to the program's `instructionSlot`.
+  - The fragment binaries carry no parameter tables (FromSoftware's header holds the constants), so texture kinds come from the game's unit conventions:
+    - `--unit 7=shadow,8=cube,11=cube,...`: the shadow map is always on 7 and cube maps on 8 and 11;
+    - `--alt 1=d2c,2=d2c`: post effects that read depth on 1 or 2.
+  - The runtime appends each (program, kinds) pair it compiles to `fp_variants.txt` in the cache. The precompiler rebuilds all of them, so a cache emptied by a decompiler change refills before the next boot.
+  - Measured on a first boot to the level after the precompile: 4 programs compiled at draw time (0.04 s), against 139 (5.9 s). The four are vertex/fragment programs the game changes after loading them (a different `o[0]` write, a different texcoord input).
+- **Tools:**
+  - PERF=1 adds `[fxc <time> <n>, disk <hits> | create pso <time> <n> | misses <time>]`.
+  - `PS3_SHADER_CACHE_HLSL=1` writes each program's source beside its `.dxbc`, which is how the precompiled and runtime texts were compared.
+- **Still costly:** the pipeline lookup itself. `vp_get_fp_pso` is called about 4 million times in a two-minute run, for about 0.5 µs each (2 s), as a linear search with a `getenv` and a ucode hash per call.
+
 ## Still open
 
 - **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Still: no side-by-side check against RPCS3 at the same spot yet.

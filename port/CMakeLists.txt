@@ -114,15 +114,22 @@ if(MSVC)   # also true for clang-cl
         /wd4100 /wd4244 /wd4267 /wd4146 /wd4334
     )
     target_compile_definitions(des_boot PRIVATE _CRT_SECURE_NO_WARNINGS)
-    # Per-chunk optimization: the hot main-init data-structure loop lives in
-    # chunk 005 (func_00AE1408 + func_00ADCB28). Build it /O2 so the per-16-byte
-    # copy inlines — tests whether blocker #3 is just unoptimized-build slowness.
-    # (Full /O2 over all 36 chunks is impractical; opt the hot one.)
-    set(DES_O2_CHUNKS
-        "${RECOMP_DIR}/ppu_recomp_005.cpp"
-    )
+    # The lifted PPU chunks build /O2. They were /Od apart from chunk 005 (the
+    # boot's hot init loop), and in Boletarian Palace the game's own threads
+    # were then the limit: main and ChrInsManThread hand each frame back and
+    # forth, ~70 ms a frame between them, and the game stayed in its 15 fps
+    # mode. One chunk at /O2 takes ~2 minutes and ~3 GB with clang-cl.
+    # -fwrapv: signed overflow in lifted arithmetic (mulld, add on int64_t
+    # casts) wraps as the hardware does instead of being undefined to the
+    # optimizer. DES_PPU_OPT=OFF goes back to /Od (with chunk 005 /O2).
+    option(DES_PPU_OPT "Build the lifted PPU chunks /O2" ON)
+    if(DES_PPU_OPT)
+        set(DES_O2_CHUNKS ${RECOMP_CHUNKS})
+    else()
+        set(DES_O2_CHUNKS "${RECOMP_DIR}/ppu_recomp_005.cpp")
+    endif()
     foreach(_c ${DES_O2_CHUNKS})
-        set_source_files_properties("${_c}" PROPERTIES COMPILE_OPTIONS "/O2;/Zi")
+        set_source_files_properties("${_c}" PROPERTIES COMPILE_OPTIONS "/O2;/Zi;/clang:-fwrapv")
     endforeach()
     # NOTE: lifted SPU images host guest loops that branch to another lifted
     # function's entry. The lifter emits those as forced tail calls

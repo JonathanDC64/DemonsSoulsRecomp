@@ -531,6 +531,38 @@ Every guest program was decompiled to HLSL and compiled with FXC the first time 
   - `PS3_SHADER_CACHE_HLSL=1` writes each program's source beside its `.dxbc`, which is how the precompiled and runtime texts were compared.
 - **Still costly:** the pipeline lookup itself. `vp_get_fp_pso` is called about 4 million times in a two-minute run, for about 0.5 µs each (2 s), as a linear search with a `getenv` and a ucode hash per call.
 
+## Frame pacing and hitches (ps3recomp `b7e3a52`, `78d26a0`, `97aaeeb`, 2026-10-15)
+
+The user reported frame drops while the counter said 30, and stutter that was not shader compiles.
+
+**Measuring.**
+- `FRAME_LOG=<file>` writes one line per present. A full frame has hundreds of draws; a skip frame (the pacer's 15 fps mode, see Frame rate) has 1-2, so the draw column counts skip frames.
+- Runs of the same build differed by 3x in skip frames. The cause: `PS3_AFFINITY=all` passed as a run argument reached the exe, which parsed it as hex 0xA, so every such run was pinned to two logical CPUs. The console `trace` timeline showed it: `usleep(1000)` took 2 ms at the median and up to 32 ms, on the thread that posts the semaphore HighGraphics waits on, with only ~1.9 cores busy. `78d26a0` makes "all" mean no limit. `play.sh` sessions were never affected (they unset it).
+- With every CPU, walking the first level: 29.8 presents/s, skip frames 3-4%, frame-to-frame intervals 33.3 ms median and 35.5 ms p90. The pacer's limit is 36.3 ms, so there is little headroom.
+
+**Fixed.**
+- **A 100-400 ms hitch** when the busiest frames first appear (in the walk about 5 s after the spawn). The vertex upload buffer (256 bytes per vertex, double-buffered) started at 192 MB. The first frame needing more than 393k vertices created a 384 MB replacement on the render thread (114 ms), and a frame with 854k vertices then needed 768 MB (381 ms); the overflowing draws of that frame were dropped as well. `VP_VB_VERTS=<n>` (`b7e3a52`) sets the starting size, and `des_env_defaults` starts it at 1,572,864 vertices (768 MB), the size the level grows it to. Growing on a worker thread once a frame used three quarters of the buffer was tried and never fired: the vertex count jumps from under 3/4 to over the size in one frame.
+- **Write-back before Present.** Each frame waited for the GPU between submit and Present to copy render targets back to guest memory (the exposure value), on the thread that also drains the FIFO. The store now runs at the start of the next frame (`RSX_WRITE_COLOR_DEFER`, default 1; `0` restores the old order). Frame start to Present, p90: 14.0 -> 11.1 ms with all CPUs. `regress.sh`: ok, exposure looks right.
+
+**Tried, no effect.** Presenting only at vblank ticks (`FLIP_AT_VBLANK`, removed). Opting out of Windows power throttling (EcoQoS, timer resolution; not committed).
+
+**What RPCS3 does** (RPCS3 issues, PRs and source; their wiki was not reachable):
+- No Demon's Souls-specific pacing fix was found. Issue #17167 (stutter and unstable pacing, open) is the closest; users report that raising "PPU Threads" fixes it there.
+- The general work is precise vblank timing (#10496, #11070 for 59.94 Hz) and flip handling (#12045, #12052, #12108).
+- Its frame limiter spaces presents as `max(now, target) + period`, so a late frame catches up by one period.
+- It raises the Windows timer resolution to 0.5 ms (`NtSetTimerResolution`); we use `timeBeginPeriod(1)`.
+- The "Unlock FPS" patch in RPCS3's patch.yml sets the byte at pacer object + 0x6ED to 1 (BLUS30443 `0x25ED8`), which looks like the pacer's no-skip flag.
+
+**Still open.**
+- About one 50-60 ms frame when a new area comes into view: `RF_SLOW_MS=30 PERF=1` splits it into ~35 ms of texture uploads and ~11 ms creating ~22 pipelines first seen in that run.
+- Present spacing still ranges 30-40 ms. On a 143 Hz display without VRR a 30 fps frame is shown for 4 or 5 refreshes. A present limiter in the RPCS3 style would need the present off the FIFO thread, because holding the present there holds the drain.
+- The 256-byte vertex stride: only the enabled attributes need uploading.
+
+**Tools** (`97aaeeb`):
+- `FRAME_LOG=<file>`: per present, the time, interval, frame start -> Present, time in Present, flip word -> Present, flips and draws in the batch, DXGI statistics (compositor-dependent, not reliable), the GPU wait at frame start and the deferred store.
+- Console `trace [s] [file]`: every syscall and HLE call (start, duration, thread, call, r3), plus marks from the render side (flip word, semaphores, labels, kicks, render_frame, Present), as a text timeline. Read it with a script: who posts the object a thread wakes on, how long sleeps really take.
+- `RF_SLOW_MS=<ms>` (live): a render_frame over that prints its time per phase; with `PERF=1` also the pre-pass split (texture uploads, SRVs, pipeline lookups and creation, shader compiles).
+
 ## Still open
 
 - **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Still: no side-by-side check against RPCS3 at the same spot yet.

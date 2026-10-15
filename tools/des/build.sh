@@ -6,14 +6,18 @@
 #   build.sh all     -> rt then boot (default)
 set -uo pipefail
 target="${1:-all}"
-VCVARS="C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvars64.bat"
-export PATH="/c/Program Files/LLVM/bin:/c/Program Files/CMake/bin:/c/Users/jonat/AppData/Local/Microsoft/WinGet/Packages/Ninja-build.Ninja_Microsoft.Winget.Source_8wekyb3d8bbwe:$PATH"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+[ -f "$ROOT/tools/des/local.env" ] && . "$ROOT/tools/des/local.env"
+# VCVARS and NINJA_DIR can be set in tools/des/local.env.
+VCVARS="${VCVARS:-C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvars64.bat}"
+export PATH="/c/Program Files/LLVM/bin:/c/Program Files/CMake/bin${NINJA_DIR:+:$NINJA_DIR}:$PATH"
 
 build_one() {  # $1=build dir  $2=target
   # NOTE: `cmd //c "...&&..."` fails silently under Git bash (arg mangling), so drive
   # the vcvars+cmake build through powershell, which handles the nested quoting.
   powershell -NoProfile -Command "cmd /c '\"$VCVARS\" >nul 2>&1 && cmake --build \"$1\" --target $2'"
 }
-[ "$target" = rt ] || [ "$target" = all ] && build_one "C:/dev/projects/demons-souls-pc-port/ps3recomp/build" ps3recomp_runtime
-[ "$target" = boot ] || [ "$target" = all ] && build_one "C:/dev/projects/demons-souls-pc-port/port/build" des_boot
+W="$(cygpath -m "$ROOT" 2>/dev/null || echo "$ROOT")"
+[ "$target" = rt ] || [ "$target" = all ] && build_one "$W/ps3recomp/build" ps3recomp_runtime
+[ "$target" = boot ] || [ "$target" = all ] && build_one "$W/port/build" des_boot
 echo "build.sh done (target=$target)"

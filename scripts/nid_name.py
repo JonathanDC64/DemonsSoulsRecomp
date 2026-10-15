@@ -14,10 +14,11 @@ def nid(name): return int.from_bytes(hashlib.sha1(name.encode()+SUFFIX).digest()
 if len(sys.argv)>2 and sys.argv[1]=='--hash':
     for n in sys.argv[2:]: print(f"{n} = 0x{nid(n):08X}")
     sys.exit(0)
-# Built-in candidate corpus: harvest cellSpurs* names from the RPCS3 reference if present.
-import glob, re
+# Built-in candidate corpus: harvest cellSpurs* names from an RPCS3 source
+# checkout if present ($RPCS3_SRC, the repository root).
+import glob, os, re
 names=set()
-for f in glob.glob(r"C:/dev/rpcs3-reference/rpcs3/Emu/Cell/Modules/cellSpurs*.*"):
+for f in glob.glob(os.path.join(os.environ.get("RPCS3_SRC", "rpcs3-reference"), "rpcs3/Emu/Cell/Modules/cellSpurs*.*")):
     for m in re.findall(r'\b(_?cellSpurs[A-Za-z0-9_]+)\b', open(f,encoding='utf-8',errors='ignore').read()):
         names.add(m)
 table={nid(n):n for n in names}

@@ -61,3 +61,18 @@ spu_watchdog.log
 # Firmware-derived generated source (SPURS taskset policy blob) -- NEVER commit.
 # Regenerate with: python scripts/gen_taskset_policy_blob.py
 /port/gen/
+
+# Per-machine paths for the tools (see tools/des/local.env.example)
+tools/des/local.env
+
+# Debug output the backend writes into the working directory: FP_PICK /
+# VP_PICK shader dumps, frame captures, screenshots, logs
+/*.hlsl
+*.rcap
+*.bmp
+/shots/
+tools/ghidra/*.log
+tools/ghidra/ghidra_one.txt
+
+# Claude Code per-user settings
+.claude/settings.local.json

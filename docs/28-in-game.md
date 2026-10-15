@@ -606,6 +606,37 @@ Light areas (up to ~3,000 draws) now hold 30. The heaviest view still alternates
 - `SPU_DMA_RANGE=<lo>-<hi>` lines now carry the time (ms), the image and the first word moved (`15bac63`). `SPU_DMA_RANGE_MAX=<n>` (0 = all) and `SPU_DMA_RANGE_IMG=<id>` are new.
 - `SPU_LLAR_HIST=<image id>`: every 2 s, that image's busiest GETLLAR lines and its idle-nap count.
 
+## Palace choppiness and Tutorial micro-stutter (ps3recomp branch `perf/frame-time`, 2026-10-15)
+
+The user's F11 profiles: the Palace still felt choppy, and the Tutorial stuttered on camera turns. They also asked whether batching draws would help. The heaviest Palace view has ~6,000 draws, but neighbouring draws differ in shaders, textures or constants, so they cannot be merged; the per-draw cost was cut instead (SRV, VP and FP memos above).
+
+| Run | presents/s | presents over 36.3 ms | skip frames |
+|---|---|---|---|
+| Tutorial walk, before the write-back fix | ~30 | 36 of ~1100 | |
+| Tutorial walk, after (p99 35.5 ms) | ~30 | 5 of ~1100 | |
+| Palace walk, port `20940b9` | 29.5 | | 23% |
+| Palace walk, after (1% low ~18 fps, p99 ~53 ms) | 29.6 | ~330 of ~1090 | 11-12% |
+
+**Fixed.**
+- **Late vblanks** (`ca23b8b`): the render loop marked vblank ticks between drains, and the handlers ran at the next HLE call of any guest thread. The semaphore HighGraphics flips on came 7-25 ms apart instead of 16.7, and every late one pushed a frame past 36.3 ms, so the game's pacer dropped to 15 fps. A clock thread now ticks at 59.94 Hz and runs the handlers itself on a guest stack of its own. `GCM_VBLANK_THREAD=0` restores the old ticking; `VBLANK_MHZ` sets the rate in millihertz (default 59940).
+- **SPU per-step and channel overhead** (`6cba5d4`): image 2 (the HighGraphics ring consumer) makes ~12 M trampoline hops and ~20 M channel writes a second. The MFC parameter channels and the per-step check now skip the diagnostics unless one is set. Image 2's busy time per Palace frame: ~38 -> 31-33 ms.
+- **Event acknowledge without the lock** (`47468c7`): event bits are changed atomically, so `WrEventAck` (~2 M/s on image 2) no longer takes the lock-line lock, and the lock and the coherence flag have cache lines of their own. The unit test races acks against re-reserves and checks that no lost-reservation event is dropped.
+- **Texture creation on camera turns** (`a9ef735`): a Tutorial turn bringing ~67 textures into view took 58 ms, 30 ms of it in creating two committed resources per texture. Uploads now decode into one staging buffer per frame (`TEX_STAGE_MB`, default 32, grows up to `TEX_STAGE_MAX_MB`, default 512), and textures are placed in pooled 64 MB heaps (`TEX_PLACED=0` goes back to committed resources). That frame: 18-20 ms.
+- **Render-target write-back** (`1fa13f0`): ~25 MB a frame was converted a byte at a time with the format test inside the loop, 3.5-6 ms at the start of every render_frame. Now a word at a time with one loop per format: 3.8 -> 0.5 ms a frame. This was the common factor in the Tutorial frames just over 36.3 ms.
+
+**Tried, no gain (not committed; patches in the session scratchpad).**
+- **GETLLAR without the lock** (a sequence-number read): correct and unit-tested, but no change in image 2's rate. The lock line's cost is the cache traffic between the PPU thread writing the ring's write pointer and image 2 reading it, and that line moves either way.
+- **Guest memory accessor fast path**: `vm_read*`/`vm_write*` in `ppu_loader.cpp` run every diagnostic hook on each access, which is ~26% of HighGraphics' samples. A version that tests one "any diagnostic armed" flag first ran the Palace at the same 29.6 fps, because HighGraphics is not what limits it. One of the two Palace runs with it, and one of the user's, stayed on the loading screen. Reverted.
+
+**Still open.**
+- The Palace is limited by image 2 and HighGraphics together. HighGraphics builds a frame in ~25 ms, then waits for the vblank semaphore and image 2's reply before it flips. Image 2 naps ~36% of the time, so it is often waiting for work. The remaining skip frames are the heaviest views.
+- The Tutorial's worst camera-turn frames are 46-49 ms, mostly ~20 pipelines created on first use (~5.5 ms) plus texture decode.
+
+**Tools** (`4bf9e11`).
+- `SPU_RATE=<image id>`: every 2 s, that image's drain steps, slow-path channel writes, DMAs, GETLLARs, naps, nap share, and steps per busy ms. Steps per busy ms is the runtime's speed on that image's code. It varies by ~10% between sessions, so compare builds within one sitting.
+- `SPU_LOCKLINE_STATS=1`: per host thread, the time per 2^20 lock-line acquisitions and the share that found the lock held.
+- Console `trace`: SPU threads add `spu_nap`/`spu_wake` marks, and with `SPU_DMA_RANGE` set, `spu_put`/`spu_get` marks.
+
 ## Still open
 
 - **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Still: no side-by-side check against RPCS3 at the same spot yet.

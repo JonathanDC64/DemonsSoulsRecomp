@@ -23,6 +23,10 @@ des_env_defaults() {
   # Per-event log lines go through one FILE lock and change the timing being
   # measured (ps3_log.h); runs are quiet unless asked. PS3_VERBOSE=1 restores.
   export PS3_VERBOSE="${PS3_VERBOSE:-0}"
+  # The level's busiest frames need up to ~850k vertices, and growing the
+  # vertex upload buffer during play stalled one frame for 100-400 ms. Start it
+  # at the size the level grows it to (768 MB of upload memory).
+  export VP_VB_VERTS="${VP_VB_VERTS:-1572864}"
   # Test runs are silent: AUDIO_MUTE submits zeros to the device at the normal
   # rate, so timing is unchanged. AUDIO_MUTE=0 to hear a run.
   export AUDIO_MUTE="${AUDIO_MUTE:-1}"

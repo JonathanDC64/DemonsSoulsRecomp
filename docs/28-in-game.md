@@ -562,6 +562,12 @@ The user reported frame drops while the counter said 30, and stutter that was no
 - `FRAME_LOG=<file>`: per present, the time, interval, frame start -> Present, time in Present, flip word -> Present, flips and draws in the batch, DXGI statistics (compositor-dependent, not reliable), the GPU wait at frame start and the deferred store.
 - Console `trace [s] [file]`: every syscall and HLE call (start, duration, thread, call, r3), plus marks from the render side (flip word, semaphores, labels, kicks, render_frame, Present), as a text timeline. Read it with a script: who posts the object a thread wakes on, how long sleeps really take.
 - `RF_SLOW_MS=<ms>` (live): a render_frame over that prints its time per phase; with `PERF=1` also the pre-pass split (texture uploads, SRVs, pipeline lookups and creation, shader compiles).
+- **F11 profile sessions** (`686645c`): F11 in the game window (or the console's `profile`) starts a session and the next press stops it; the caption shows `[profiling #N]` meanwhile. Files go to `PROF_DIR` (`des_env_defaults`: `work/tmp/prof`) as `prof_NNN_*`:
+  - `_summary.txt`: average fps, 1% low, interval percentiles, presents over 36.3 ms, skip frames, render_frame percentiles and mean phases, and the 15 worst presents with where their time went.
+  - `_frames.txt`: the same per present.
+  - `_threads.txt`: CPU per thread every second and over the session, and the `waits` report.
+
+  An interval much longer than its render_frame means the game was late with the frame, and `_threads.txt` says on what. A long render_frame is the renderer. For the player to mark the stretch that felt bad. First session on the scripted walk (37 s): 29.9 fps, 1% low 21.3, 113 presents over 36.3 ms, one 81 ms present from new textures, and ~6 ms per frame in the deferred write-back store.
 
 ## Still open
 

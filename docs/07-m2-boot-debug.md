@@ -384,12 +384,10 @@ both correct keepers), the spin was **unchanged** → it is allocator-independen
 
 ### The spin mechanism (func_00AC8078)
 `func_00AC8078` is the game's segregated free-list allocator's free-block search.
-With a **NULL/0 heap descriptor**, its size-class bin loop never terminates:
-```
-loc_00AC80E8:  r9 = r9 << 1;   // r9 starts 0 (gran/shift from NULL desc) → stays 0
-               r11 += 8;
-               if (r7 > r9) goto loc_00AC80E8;   // needed_size > 0 always → INFINITE
-```
+With a **NULL/0 heap descriptor**, its size-class bin loop never terminates. The loop
+(at 0x00AC80E8) doubles a bin size until it exceeds the requested size, but the starting
+size comes from the descriptor, so with a NULL descriptor it starts at 0, doubling leaves
+it at 0, and any request larger than 0 loops forever.
 So the spin is a symptom: it received a NULL heap.
 
 ### Why the heap is NULL (the real bug)

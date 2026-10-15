@@ -2,7 +2,7 @@
 
 A native Windows port of *Demon's Souls* (PS3, 2009, BLUS30443 / USA), built by **static recompilation**: the game's PowerPC and SPU machine code is translated to C ahead of time, compiled with clang, and linked against a reimplementation of the PS3 system libraries. Rendering goes through Direct3D 12.
 
-It is built on [ps3recomp](https://github.com/sp00nznet/ps3recomp); our changes are in the fork [JonathanDC64/ps3recomp](https://github.com/JonathanDC64/ps3recomp) (branch `upstream-v0140`).
+It is built on [ps3recomp](https://github.com/sp00nznet/ps3recomp); our changes are in the fork [JonathanDC64/ps3recomp](https://github.com/JonathanDC64/ps3recomp).
 
 **This repository contains no game code or data.** You need your own copy of the game. See [Legal](#legal).
 
@@ -35,7 +35,12 @@ The full history, root causes and tools are in [`docs/`](docs/). Start with [`do
 
 The build is not yet a single command. The steps, in order:
 
-1. Clone this repository, and clone the fork into `ps3recomp/` inside it (branch `upstream-v0140`).
+1. Clone this repository, and clone the fork into `ps3recomp/` inside it:
+   ```
+   git clone https://github.com/JonathanDC64/DemonsSoulsRecomp.git
+   cd DemonsSoulsRecomp
+   git clone https://github.com/JonathanDC64/ps3recomp.git
+   ```
 2. Decrypt `PS3_GAME/USRDIR/EBOOT.BIN` with RPCS3 (Utilities > Decrypt PS3 Binaries) to `work/game/EBOOT.ELF`.
 3. Analyse the executable: `python ps3recomp/tools/ppu_loader.py work/game/EBOOT.ELF -o work/loader` writes `EBOOT.functions.json` and `EBOOT.imports.json`.
 4. Lift the PPU code and apply the boot shim. The commands are in [`docs/27`](docs/27-relift-auto-save-notice.md#re-lift-recipe):

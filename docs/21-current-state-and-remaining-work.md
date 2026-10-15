@@ -631,15 +631,9 @@ The two sites §13 named are the **rare** ones. Everything except HighGraphics i
 
 ### The real gate
 
-`func_00ACAFA8+0xF4` is a **completion-flag spin**:
-
-```c
-vm_write32(r26 + 0, 0);                    /* clear the flag        */
-... store 0x9023, call func_00011720 ...   /* submit the work       */
-loc_00ACB098:
-    usleep(30);
-    if (vm_read32(r26 + 0) == 0) goto loc_00ACB098;   /* wait for non-zero */
-```
+`func_00ACAFA8+0xF4` is a **completion-flag spin**. The function clears a flag word (the
+address in r26), submits work through `func_00011720`, then sleeps 30 µs at a time (the
+loop at 0x00ACB098) until something writes a non-zero value to that word.
 
 Live registers (`PS3_WAIT_OBJ=00ACB09C`, which now matches CIA since our lifted syscall path
 leaves `lr` at 0):

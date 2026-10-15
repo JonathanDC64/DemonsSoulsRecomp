@@ -5,7 +5,7 @@ Each blocker = the live "to-do list" the static-recomp boot produces.
 
 Run recipe:
 ```
-set PS3_VFS_ROOT=D:\Users\jonat\Documents\roms\ps3\Demon's Souls (USA)
+set PS3_VFS_ROOT=<disc root holding PS3_GAME>
 port\build\des_boot.exe work\game\EBOOT.ELF
 ```
 Diagnostic env toggles (in ps3recomp runtime): `YDKJ_SCTRACE=1` (all lv2 syscalls),

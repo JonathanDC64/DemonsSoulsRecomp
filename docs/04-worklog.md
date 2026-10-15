@@ -44,7 +44,7 @@ cond=3 wait).
 ## 2026-06-28 (cont.) — git set up; M2 boot debugging begun (allocator bad_alloc)
 
 **Did:**
-- Set up version control: main repo `git init` (email `jonathan_delcorpo@hotmail.com`), copyright-firewall `.gitignore` (fixed two bugs: inline comment disabled `work/`; unanchored `ps3recomp/` hid `patches/ps3recomp/`). Verified no game-derived files staged. **Initial commit `73715ce`.** ps3recomp fixes committed in the clone's own git + exported to `patches/ps3recomp/`.
+- Set up version control: main repo `git init`, copyright-firewall `.gitignore` (fixed two bugs: inline comment disabled `work/`; unanchored `ps3recomp/` hid `patches/ps3recomp/`). Verified no game-derived files staged. **Initial commit `73715ce`.** ps3recomp fixes committed in the clone's own git + exported to `patches/ps3recomp/`.
 - Added env-gated **HLE call trace** (`YDKJ_HLETRACE`) to ps3recomp for boot debugging.
 - **M2 blocker #1 diagnosed** (full detail in [`07-m2-boot-debug.md`](07-m2-boot-debug.md)): after CRT/TLS, game does `get_user_memory_size`(→192MB ok) + rwlock + 5× mutex_create, then `operator new` throws `bad_alloc` with **no memory syscall/HLE at all**. Ruled out: stub gaps, endianness, HLE-malloc-returns-0. Leading hypothesis: custom allocator computes a 0/invalid heap size (likely needs process-param/heap config) and bails before requesting memory. Error strings located at guest ~`0x1770150`.
 

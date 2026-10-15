@@ -6,13 +6,13 @@ Tracks prerequisites and procedures. Check items off as installed/verified.
 
 | Tool | Status | Notes |
 |---|---|---|
-| Python | ✅ 3.13.14 | `C:\Users\jonat\AppData\Local\Programs\Python\Python313` |
+| Python | ✅ 3.13.14 | on PATH |
 | git | ✅ | mingw64 |
 | Python tool deps | ✅ | pycryptodome/capstone/construct/tabulate/tqdm installed |
 | CMake | ✅ 4.3.3 | `C:\Program Files\CMake\bin\cmake.exe` |
 | MSVC + Windows SDK | ✅ | BuildTools 2022; MSVC **14.44.35207** (Hostx64/x64); Win SDK **10.0.26100.0** (has `d3d12.h`) |
 | Ninja | ✅ 1.13.2 | winget pkg dir; alias `ninja` after shell restart |
-| RPCS3 | ✅ | `D:\Users\jonat\Documents\roms\rpcs3` — used for decryption (M0 done) |
+| RPCS3 | ✅ | local install — used for decryption (M0 done) |
 
 **Build environment note:** `cl.exe` needs the VS developer environment on PATH. Before building, run from a "x64 Native Tools" shell or source:
 `"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"`

@@ -63,10 +63,10 @@ The build is not yet a single command. The steps, in order:
 Copy `tools/des/local.env.example` to `tools/des/local.env` and set `PS3_VFS_ROOT` to the folder that holds `PS3_GAME`. Then:
 
 ```
-tools/des/desrun.sh 3600 play.txt AUDIO_MUTE=0
+tools/des/play.sh
 ```
 
-This runs the game for up to an hour with sound and logs to `work/tmp/play.txt`. Saves go to `gamedata/dev_hdd0/home/00000001/savedata`. F9 captures a frame for `rsx_replay`, F10 saves screenshots. The debug and test tools are described in [`docs/28`](docs/28-in-game.md#debug-and-test-tools-2026-10-14).
+This runs the game for up to an hour (`play.sh 120` for two) with sound, at normal priority on every CPU, and logs to `work/tmp/play.txt`. Saves go to `gamedata/dev_hdd0/home/00000001/savedata`. F9 captures a frame for `rsx_replay`, F10 saves screenshots. The debug and test tools are described in [`docs/28`](docs/28-in-game.md#debug-and-test-tools-2026-10-14).
 
 ## Layout
 

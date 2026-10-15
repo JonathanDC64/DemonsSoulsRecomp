@@ -104,33 +104,36 @@ target_include_directories(des_boot PRIVATE
     "${PS3RECOMP_DIR}/runtime/ppu"
 )
 
-# Huge generated TUs need /bigobj (COFF >65k sections). Baseline is /Od (fast
-# compile) + /Zi (symbols for host backtraces). NOTE: configure with an empty
-# CMAKE_BUILD_TYPE so the Debug config's /RTC1 (runtime checks: big slowdown,
-# and incompatible with /O2) is NOT added.
+# Huge generated TUs need /bigobj (COFF >65k sections). /Zi keeps symbols for
+# host backtraces. NOTE: configure with an empty CMAKE_BUILD_TYPE so the Debug
+# config's /RTC1 (runtime checks: big slowdown, and incompatible with /O2) is
+# NOT added.
+#
+# Everything here builds /O2: the lifted PPU chunks, the lifted libsre, and the
+# runtime sources compiled into this target (ppu_loader.cpp holds the guest
+# memory accessors every lifted load and store calls). It was /Od apart from
+# chunk 005 (the boot's hot init loop), and in Boletarian Palace the game's
+# own threads were then the limit: main and ChrInsManThread hand each frame
+# back and forth, ~70 ms a frame between them, and HighGraphics spent most of
+# its running time in the (uninlined) accessor checks. One chunk at /O2 takes
+# ~2 minutes and ~3 GB with clang-cl. -fwrapv: signed overflow in lifted
+# arithmetic (mulld, add on int64_t casts) wraps as the hardware does instead
+# of being undefined to the optimizer. DES_PPU_OPT=OFF goes back to /Od (with
+# chunk 005 /O2).
+option(DES_PPU_OPT "Build des_boot (lifted PPU code and runtime sources) /O2" ON)
 if(MSVC)   # also true for clang-cl
+    if(DES_PPU_OPT)
+        set(DES_OPT_FLAGS /O2 /clang:-fwrapv)
+    else()
+        set(DES_OPT_FLAGS /Od)
+        set_source_files_properties("${RECOMP_DIR}/ppu_recomp_005.cpp"
+            PROPERTIES COMPILE_OPTIONS "/O2;/Zi")
+    endif()
     target_compile_options(des_boot PRIVATE
-        /bigobj /Od /Zi /EHsc /Zc:__cplusplus
+        /bigobj ${DES_OPT_FLAGS} /Zi /EHsc /Zc:__cplusplus
         /wd4100 /wd4244 /wd4267 /wd4146 /wd4334
     )
     target_compile_definitions(des_boot PRIVATE _CRT_SECURE_NO_WARNINGS)
-    # The lifted PPU chunks build /O2. They were /Od apart from chunk 005 (the
-    # boot's hot init loop), and in Boletarian Palace the game's own threads
-    # were then the limit: main and ChrInsManThread hand each frame back and
-    # forth, ~70 ms a frame between them, and the game stayed in its 15 fps
-    # mode. One chunk at /O2 takes ~2 minutes and ~3 GB with clang-cl.
-    # -fwrapv: signed overflow in lifted arithmetic (mulld, add on int64_t
-    # casts) wraps as the hardware does instead of being undefined to the
-    # optimizer. DES_PPU_OPT=OFF goes back to /Od (with chunk 005 /O2).
-    option(DES_PPU_OPT "Build the lifted PPU chunks /O2" ON)
-    if(DES_PPU_OPT)
-        set(DES_O2_CHUNKS ${RECOMP_CHUNKS})
-    else()
-        set(DES_O2_CHUNKS "${RECOMP_DIR}/ppu_recomp_005.cpp")
-    endif()
-    foreach(_c ${DES_O2_CHUNKS})
-        set_source_files_properties("${_c}" PROPERTIES COMPILE_OPTIONS "/O2;/Zi;/clang:-fwrapv")
-    endforeach()
     # NOTE: lifted SPU images host guest loops that branch to another lifted
     # function's entry. The lifter emits those as forced tail calls
     # (SPU_TAILCALL = clang __attribute__((musttail))), which iterate in O(1) host
@@ -141,7 +144,8 @@ if(MSVC)   # also true for clang-cl
     # a core, a third of it in spu_shufb), so the SPU TUs build /O2 with
     # SSE4.1: the helpers in spu_helpers.h inline, and spu_shufb takes its
     # pshufb path instead of the byte loop. SSE4.1 is safe on any PC that runs
-    # Windows 11 (24H2 requires SSE4.2). DES_SPU_OPT=OFF goes back to /Od.
+    # Windows 11 (24H2 requires SSE4.2). DES_SPU_OPT=OFF builds them with the
+    # target's flags above, without SSE4.1.
     option(DES_SPU_OPT "Build the lifted SPU images /O2 with SSE4.1" ON)
     if(DES_SPU_OPT)
         set_source_files_properties(${SPU_CHUNKS} PROPERTIES

@@ -637,6 +637,52 @@ The user's F11 profiles: the Palace still felt choppy, and the Tutorial stuttere
 - `SPU_LOCKLINE_STATS=1`: per host thread, the time per 2^20 lock-line acquisitions and the share that found the lock held.
 - Console `trace`: SPU threads add `spu_nap`/`spu_wake` marks, and with `SPU_DMA_RANGE` set, `spu_put`/`spu_get` marks.
 
+## Havok freeze: a lost task bit (ps3recomp `10e2690`, branch `perf/frame-time`, 2026-10-15)
+
+The user hit a freeze in the Tutorial: the HUD stayed up, the title bar read about 9.7 fps and 1 draw, and nothing moved. It also happened about once in 13 loads of the Palace save, which made it reproducible.
+
+**Signature.** MAIN waits on cond 13 (`ctx 1`: r3 = 0xD, lr 0x01328C0C). The Havok PPU Thread (tid 11) waits in `sys_event_queue_receive` on queue 5 (`ctx 11`: lr 0x013293DC, r31 = 0x477FD900).
+
+**The handshake.** Each physics step, the Havok PPU thread starts its SPU tasks in taskset 0x477ED800 and then waits N times on a semaphore at 0x477FD900. Image 7 (`spu_0006_at_017AE200`) runs as tasks 0-3. Image 8 (`spu_0007_at_017C5900`) runs as tasks 4-7, which image 7 creates itself.
+- The semaphore word: bits 24-31 are the event port (3), bits 16-23 the waiter count, bits 0-15 the count.
+- Wait (`func_010D43E8`): `lwarx`. If the count is non-zero, `stwcx.` it minus 1. If not, add a waiter and `sys_event_queue_receive(5)`, then retry.
+- The SPU's post (helper at LS 0x17638, many call sites) adds 1 with GETLLAR/PUTLLC. If there was a waiter, it removes it and sends one event on port 3.
+
+At the freeze the word is 0x03010000 (one waiter, count 0). One post of the step never came.
+
+**Why.** Image 7 starts an image-8 task by setting the task's bits in the taskset header with PUTLLC. The runtime clears an exited task's ready, pending and enabled bits on the host, and tasks 0-7 share one byte of each bitset. Those clears were plain read-then-write (`spu_taskset_task_exited`, `ts_start_task_locked`, `spurs_bitset_set/clear`), outside the lock-line lock. A PUTLLC that committed between the read and the write was erased, or the other way round.
+
+Caught live: the step before ran image-8 tasks 4-7, the last step only 4-6. The header showed task 7 enabled but not ready, pending or running, so it never started and its post never came.
+
+**Fix.** `spu_coh_rmw32` (`spu_coherency.c`) changes one big-endian guest word under the lock-line lock and fails any reservation on the line, as a store from another processor does. Every host-side bitset change goes through it. `test_spu_lockline_peer` races PUTLLC toggles of one bit against host set/clear of another. It fails with the old read-then-write (an SPU commit erased) and passes with the fix.
+
+Soak with the fix: 40 loads of the Palace save with no freeze and no other stall. Before it: 3 freezes in 37 loads over three catcher runs.
+
+**How it was found.** None of this showed in a log. Logging changes the timing enough that the freeze goes away.
+- A catcher script boots the Palace save over and over. A good load is ended as soon as the level draws. A load stuck for 60 s with tid 11 at lr 0x013293DC is dumped through the console and left running. Every other stall is dumped and skipped.
+- `spuhist` (`c7a621f`) showed the last step's four image-7 tasks ran to completion. So the post was missing, not lost in the event queue.
+- `SPU_HIST_LINE=477FD900` added every PUTLLC and `stwcx.` on the semaphore line. In a good step it showed posts from image 8 as well as image 7. The dump at the first catch had shown image 7 only.
+- Ruled out along the way: PPU `stwcx.` against SPU PUTLLC on the semaphore (both serialize on the lock-line lock), the event queue, WAIT_SIGNAL, and the 8-context coherency registry (its overflow warning appears in good runs too).
+
+**Tools** (`c7a621f`).
+- Console `spuhist [image] [n]`: the last n entries of an always-on ring of 64K SPU task events.
+  - Task events: D dispatched, N not started (taskset shut down), S started, R lifted entry returned, X thread done.
+  - Signals: G task signalled, W/w WAIT_SIGNAL park and resume.
+  - P: a user event a SPURS task sent to a PPU queue (raw SPU thread groups are left out).
+  - The `htid` ties the events of one task thread together. Filter by image after a hang: a busy image (12's WAIT_SIGNAL loop) fills the shared view in a second.
+- `SPU_HIST_LINE=<hex ea>`: adds that word's 128-byte line to the ring.
+  - L/F: SPU PUTLLC committed or failed.
+  - l: PPU `stwcx.` commit.
+  - s: plain PPU store, once an SPU has reserved the line.
+
+  Each entry has the caller's lr and the word before and after.
+
+**Still open.** Two older stalls, seen on builds from before this branch:
+- Boot: MAIN on cond 0x23, black screen at 30 fps with 2 draws.
+- Level loading screen: MAIN on cond 0x2E, about 186 draws.
+
+The catcher logs them as "other stall" and keeps going.
+
 ## Still open
 
 - **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Still: no side-by-side check against RPCS3 at the same spot yet.

@@ -9,8 +9,9 @@ the two marks, and lines them up with the replay's.
 
 Each record line carries the inputs the draw rendered from: emitted vertices
 (vb), VP constants (cb), the program's inline FP constants (fcb), pipeline
-keys, and per texture unit what it resolved to (T<raw>:<checksum of the bytes
-uploaded>, R<offset> for an offscreen target, Z<offset> for a depth surface).
+keys, and per texture unit what it resolved to (T<raw>:<checksum of the guest
+bytes>/<hash of the decoded bytes uploaded>, R<offset> for an offscreen
+target, Z<offset> for a depth surface).
 Records that differ in structure (a draw missing or added) are listed first,
 then the hash fields that differ on records that otherwise match.
 
@@ -30,6 +31,7 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 REPLAY = os.path.join(ROOT, "ps3recomp", "build", "rsx_replay.exe")
 HASHES = re.compile(r" (vb|cb|fcb)=([0-9A-F]+)")
+TEXSUMS = re.compile(r" (t\d+)=T[0-9A-F]+:([0-9A-F]+)(?:/([0-9A-F]+))?")
 
 
 def body(line):
@@ -81,7 +83,8 @@ def main():
     cap = args[0]
     L, R = live_records(cap), replay_records(cap)
     # The K detail (RSX_DRAWPRINT_K) is in the hashes already; one side may lack it.
-    strip = lambda l: HASHES.sub("", l.split(" at=(")[0])
+    strip = lambda l: re.sub(r"(=T[0-9A-F]+):[0-9A-F/]+", r"\1",
+                             HASHES.sub("", l.split(" at=(")[0]))
     sm = difflib.SequenceMatcher(None, [strip(x) for x in L], [strip(x) for x in R],
                                  autojunk=False)
     print("live %d records, replay %d" % (len(L), len(R)))
@@ -103,6 +106,15 @@ def main():
             continue
         for i, j in zip(range(a0, a1), range(b0, b1)):
             a, b = dict(HASHES.findall(" " + L[i])), dict(HASHES.findall(" " + R[j]))
+            # Per unit: the guest-bytes checksum and the uploaded-bytes hash
+            # (captures from before the hash have none; the checksum's
+            # sampling changed with it, so older ones differ there).
+            for x, y in ((a, L[i]), (b, R[j])):
+                for u, cs, uh in TEXSUMS.findall(" " + y):
+                    x["sum " + u] = cs
+                    if uh: x["up " + u] = uh
+            for k in [k for k in a if k.startswith("up ") and k not in b]:
+                del a[k]
             for k in a:
                 if a[k] != b.get(k):
                     cnt[k] += 1

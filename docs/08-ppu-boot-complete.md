@@ -69,7 +69,7 @@ Pragmatic shims still in `scripts/apply_boot_patches.py` (re-applied after every
 - **YDKJ_* env gates**: `YDKJ_HLETRACE` (all HLE calls), `YDKJ_ICTRACE` (indirect-call targets),
   `YDKJ_SYNCTRACE` (EVF/EVQ/mutex sync), `YDKJ_WWATCH=<addr>`, `YDKJ_HOTREAD*`.
 - **RPCS3 differential**: run the same EBOOT under RPCS3 (interpreter decoder for breakpoints) and
-  diff state at the first divergence. RPCS3 source reference clone at `C:\dev\rpcs3-reference`
+  diff state at the first divergence. RPCS3 source reference clone (github.com/RPCS3/rpcs3) at `<rpcs3-src>`
   (sparse: `Emu/Cell/Modules`, `Emu/Cell/lv2`) — cross-ref its lv2.cpp/Modules for syscall numbers,
   NIDs, struct layouts, error codes. **Always reimplement clean (RPCS3 is GPLv2; this port is clean-room).**
 - **Probe discipline**: probes go into the gitignored `work/recomp/*.cpp` (wiped on re-lift). When

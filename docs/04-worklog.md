@@ -146,7 +146,7 @@ Reached the **same first-boot milestone (`sys_initialize_tls`)** the docs cite f
 ## 2026-06-28 — Project kickoff, tool acquisition & analysis
 
 **Did:**
-- Inspected the disc at `D:\…\Demon's Souls (USA)`. Confirmed: `PS3_GAME/USRDIR/EBOOT.BIN` = 28 MB encrypted SELF (magic `SCE\0`); 7.9 GB assets in FromSoftware formats (3604 .dcx, 2190 .hkx, 1776 .flver, 356 .tpf, 272 .lua, .esd, .param).
+- Inspected the game folder (the one holding `PS3_GAME`). Confirmed: `PS3_GAME/USRDIR/EBOOT.BIN` = 28 MB encrypted SELF (magic `SCE\0`); 7.9 GB assets in FromSoftware formats (3604 .dcx, 2190 .hkx, 1776 .flver, 356 .tpf, 272 .lua, .esd, .param).
 - Researched the recompilation/decompilation field (N64Recomp, XenonRecomp, decomp, RPCS3) and the PS3's specific blockers (Cell SPE, RSX, encryption).
 - Cloned **ps3recomp** to `./ps3recomp/` (commit `fa2d2da`, v0.6.3) and read its source + docs.
 

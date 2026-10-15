@@ -96,7 +96,7 @@ are `.word` data embedded in `.text`). This session added the only 3 DeS used th
   entry `0xA00`, syscall `0xA70`; tasks live LS `0x3000..0x40000`. RPCS3 runs the SPURS kernel as
   REAL SPU code on its SPU threads (it does not fully HLE SPURS) and HLE-stubs the cellSpurs PPU API.
   RPCS3 SPU core files (`SPUThread.cpp`, recompiler) are NOT in our sparse checkout — add them when
-  needed: `git -C C:\dev\rpcs3-reference sparse-checkout add rpcs3/Emu/Cell` (then SPUThread.cpp,
+  needed: `git -C <rpcs3-src> sparse-checkout add rpcs3/Emu/Cell` (then SPUThread.cpp,
   SPUInterpreter, SPURecompiler).
 
 ---
@@ -155,7 +155,7 @@ Instrument the SPURS/`sys_spu_thread_*` path to log every SPU image the game loa
 completion event delivered to queue 1. That single loop closing is the SPU-side equivalent of the
 PPU "reaches main loop" milestone.
 
-Reference clone: `C:\dev\rpcs3-reference`. Memory: `demons-souls-frontier-rsx-gcm`,
+Reference clone: `<rpcs3-src>`. Memory: `demons-souls-frontier-rsx-gcm`,
 `demons-souls-rpcs3-differential`, `demons-souls-rpcs3-crossref`.
 
 ---
@@ -287,7 +287,7 @@ Decision for our port: **HLE the SPURS kernel (Option B confirmed).** Rationale:
 Reference contract (RPCS3 cellSpursSpu.cpp): kernel entry 0x818(k1)/0x848(k2); sys-service workload
 embedded at LS 0x100; taskset PM entry 0xA00 / syscall 0xA70; tasks LS 0x3000+; PPU notify =
 `sys_event_port_send` with bit `(1u<<31)>>wid` per workload id. To add RPCS3 SPU core / cellSpursSpu
-to the reference clone: `git -C C:\dev\rpcs3-reference sparse-checkout add rpcs3/Emu/Cell` (already
+to the reference clone: `git -C <rpcs3-src> sparse-checkout add rpcs3/Emu/Cell` (already
 has Modules; cellSpursSpu.cpp is under Modules).
 
 ---

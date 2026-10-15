@@ -5,7 +5,7 @@ Goal: produce the work the DLSpursManager job submits so the result pointer
 `func_00A31158` boot wait — then advance past the SPURS gate (the scout showed input
 init + more downstream). This is the one large remaining piece of the SPU phase.
 
-Cross-references: RPCS3 `/c/dev/rpcs3-reference/.../Modules/cellSpurs.cpp`,
+Cross-references: RPCS3 `<rpcs3-src>/.../Modules/cellSpurs.cpp`,
 `cellSpursSpu.cpp` (SPU kernel; **contracts only — reimplement clean, no GPL copy**),
 the public cellSpurs/cellSync SDK names, and our `docs/09 §15a–§15n`.
 

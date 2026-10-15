@@ -94,7 +94,7 @@ per-segment relocation bases, which is real work, not a tweak.
 
 ## How to resume
 
-1. Read RPCS3's `ppu_load_prx` (`C:/dev/rpcs3-reference`) for segment placement and the
+1. Read RPCS3's `ppu_load_prx` (`<rpcs3-src>`) for segment placement and the
    segment-relative meaning of the `0x700000A4` relocation entries, then make `lift_prx.py`
    reproduce that layout (most likely: independent segment bases + per-segment reloc bases,
    with the TOC landing inside the allocated data segment).

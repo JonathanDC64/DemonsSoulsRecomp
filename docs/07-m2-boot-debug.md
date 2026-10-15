@@ -826,4 +826,4 @@ sys_event_queue_receive(q=1) (the SPU-completion queue) forever, and the PPU sid
 the SPU would clear. For DeS this is fundamental (SPURS tasks do real work: zlib inflate, render
 command processing) — advancing requires actual SPU execution (recompile SPU + SPURS runtime),
 the large banked effort. Cross-referencing RPCS3's Cell/SPU + lv2 implementations
-(C:\dev\rpcs3-reference) is the way in. See memory: demons-souls-frontier-rsx-gcm, ...-rpcs3-differential.
+(a clone of RPCS3's source) is the way in. See memory: demons-souls-frontier-rsx-gcm, ...-rpcs3-differential.

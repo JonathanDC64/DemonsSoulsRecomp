@@ -17,8 +17,9 @@
 #
 # Sets live in REGRESS_DIR (default $DES_SCRATCH/regress). Screenshots are
 # game-derived: point REGRESS_DIR outside the repository and never commit them.
-# The save directory is copied aside before the run and put back after it, so
-# an autosave cannot move the next run's spawn point.
+# The run plays from a pinned save ($REG/save, `regress.sh pin-save [dir]`);
+# the player's save is copied aside before the run and put back after it, so
+# neither their progress nor an autosave moves the spawn point.
 # Timings: REGRESS_SETTLE (s after the level's script archive opens, default
 # 75, so the arrival animation is over), REGRESS_WALK / REGRESS_TURN /
 # REGRESS_ON (stick-hold seconds, defaults 8 / 1.5 / 5). The game is not
@@ -32,6 +33,16 @@ set -uo pipefail
 cd "$DES_ROOT" || exit 1
 REG="${REGRESS_DIR:-$DES_SCRATCH/regress}"; mkdir -p "$REG"
 
+SAVE="gamedata/dev_hdd0/home/00000001/savedata"
+# The route starts wherever the save puts the character, so the run plays
+# from a pinned copy ($REG/save) and the player's own save is put back after.
+# `regress.sh pin-save [dir]` pins the current save (or dir); re-accept a set
+# after pinning a different one.
+if [ "${1:-}" = pin-save ]; then
+  src="${2:-$SAVE}"; [ -d "$src" ] || { echo "no save at $src"; exit 1; }
+  rm -rf "$REG/save"; cp -r "$src" "$REG/save"; echo "pinned $src"; exit 0
+fi
+
 if [ "${1:-}" = accept ]; then
   [ -d "$REG/${2:?set name}" ] || { echo "no set $REG/$2"; exit 1; }
   rm -rf "$REG/good"; cp -r "$REG/$2" "$REG/good"; echo "good = $2"; exit 0
@@ -41,8 +52,9 @@ NAME="${1:-$(date +%Y%m%d_%H%M%S)}"; SET="$REG/$NAME"
 RUN="$DES_SCRATCH/regress_run"; rm -rf "$RUN" "$SET"; mkdir -p "$RUN/shots" "$SET"
 OUT="$RUN/run.txt"; PAD="$RUN/pad"; CON="$RUN/con"; : > "$PAD"; : > "$OUT"
 
-SAVE="gamedata/dev_hdd0/home/00000001/savedata"
 if [ -d "$SAVE" ]; then rm -rf "$RUN/save"; cp -r "$SAVE" "$RUN/save"; fi
+if [ -d "$REG/save" ]; then rm -rf "$SAVE"; mkdir -p "$(dirname "$SAVE")"; cp -r "$REG/save" "$SAVE"
+else echo "[regress] no pinned save ($REG/save): using the current one; see pin-save"; fi
 restore() {
   des_kill_own
   if [ -d "$RUN/save" ]; then rm -rf "$SAVE"; cp -r "$RUN/save" "$SAVE"; fi

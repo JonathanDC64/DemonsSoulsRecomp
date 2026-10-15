@@ -71,7 +71,7 @@ Copy `tools/des/local.env.example` to `tools/des/local.env` and set `PS3_VFS_ROO
 tools/des/play.sh
 ```
 
-It first compiles the game's shaders into `gamedata/shader_cache` (about 20 s the first time, a few seconds after), so the game never stops to compile one. This runs the game for up to an hour (`play.sh 120` for two) with sound, at normal priority on every CPU, and logs to `work/tmp/play.txt`. Saves go to `gamedata/dev_hdd0/home/00000001/savedata`. F9 captures a frame for `rsx_replay`, F10 saves screenshots. The debug and test tools are described in [`docs/28`](docs/28-in-game.md#debug-and-test-tools-2026-10-14).
+It first compiles the game's shaders into `gamedata/shader_cache` (about 20 s the first time, a few seconds after), so the game never stops to compile one. This runs the game for up to an hour (`play.sh 120` for two) with sound, at normal priority on every CPU, and logs to `work/tmp/play.txt`. Saves go to `gamedata/dev_hdd0/home/00000001/savedata`. F9 captures a frame for `rsx_replay`, F10 saves screenshots, and F11 starts and stops a profile session (frame times and the worst frames, in `work/tmp/prof`). The debug and test tools are described in [`docs/28`](docs/28-in-game.md#debug-and-test-tools-2026-10-14).
 
 ## Layout
 

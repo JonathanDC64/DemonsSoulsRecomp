@@ -562,6 +562,49 @@ The user reported frame drops while the counter said 30, and stutter that was no
 - `FRAME_LOG=<file>`: per present, the time, interval, frame start -> Present, time in Present, flip word -> Present, flips and draws in the batch, DXGI statistics (compositor-dependent, not reliable), the GPU wait at frame start and the deferred store.
 - Console `trace [s] [file]`: every syscall and HLE call (start, duration, thread, call, r3), plus marks from the render side (flip word, semaphores, labels, kicks, render_frame, Present), as a text timeline. Read it with a script: who posts the object a thread wakes on, how long sleeps really take.
 - `RF_SLOW_MS=<ms>` (live): a render_frame over that prints its time per phase; with `PERF=1` also the pre-pass split (texture uploads, SRVs, pipeline lookups and creation, shader compiles).
+- **F11 profile sessions** (`686645c`): F11 in the game window (or the console's `profile`) starts a session and the next press stops it; the caption shows `[profiling #N]` meanwhile. Files go to `PROF_DIR` (`des_env_defaults`: `work/tmp/prof`) as `prof_NNN_*`:
+  - `_summary.txt`: average fps, 1% low, interval percentiles, presents over 36.3 ms, skip frames, render_frame percentiles and mean phases, and the 15 worst presents with where their time went.
+  - `_frames.txt`: the same per present.
+  - `_threads.txt`: CPU per thread every second and over the session, and the `waits` report.
+
+  An interval much longer than its render_frame means the game was late with the frame, and `_threads.txt` says on what. A long render_frame is the renderer. For the player to mark the stretch that felt bad. First session on the scripted walk (37 s): 29.9 fps, 1% low 21.3, 113 presents over 36.3 ms, one 81 ms present from new textures, and ~6 ms per frame in the deferred write-back store.
+
+## Boletarian Palace: frame rate and freezes (2026-10-15)
+
+The user's save is in Boletarian Palace, which performed much worse than the first level, and the Tutorial and Nexus still had micro-stutters. Measured on the user's save with a scripted walk (F11 profile session, `PS3_AFFINITY=all`).
+
+| Build | presents/s | skip frames | notes |
+|---|---|---|---|
+| start | 24.2 | 50% | heavy view (~6,400 draws): render_frame ~21 ms |
+| SRV memo (ps3recomp `a0833f7`) | 24.3 | 50% | render_frame mean 19.0 -> 13.7 ms |
+| lifted chunks /O2 (port `a4bfc8f`) | 27.7 | 26% | main <-> ChrInsManThread hand-off was ~70 ms a frame |
+| FP pipeline lookup (`f6c8517`) | 29.6 | 25% | heavy view render_frame 21 -> 10.5 ms; PSO lookup 2.85 -> 0.25 ms |
+| VP lookup memo (`990b1dc`) + freeze fix (`a8b18af`) | 29.8 | 25% | longest frame 66 ms |
+| all of des_boot /O2 (port `20940b9`) | 29.5 | 23% | HighGraphics 43 -> 31% of a core, main 33 -> 24% |
+
+Light areas (up to ~3,000 draws) now hold 30. The heaviest view still alternates render and skip frames (pairs of ~66 ms).
+
+**Fixed.**
+- **Per-draw SRVs** (`a0833f7`): every draw re-created its texture views. A memo per slot keeps a view while its resource, format and mapping are unchanged. `RSX_SRV_MEMO=0` disables it.
+- **Fragment-program pipeline lookup** (`f6c8517`): every draw hashed its fragment program and scanned a list for the pipeline. Now the hash is memoized per program address (checked against the bytes; `RSX_FP_HASH_MEMO=0` disables it) and pipelines are found through a hash bucket.
+- **Vertex-program lookup** (`990b1dc`): sizing, hashing and scanning per draw. Memoized per program start until the program store is written (`RSX_VP_MEMO=0` disables it). Three `getenv` calls per draw became knobs.
+- **/O2** (port `a4bfc8f`, `20940b9`): the lifted chunks, then the runtime sources in des_boot (`ppu_loader.cpp` holds the guest memory accessors). `DES_PPU_OPT=OFF` goes back to /Od.
+- **Multi-second freezes** (`a8b18af`): once or twice a minute while walking, no presents for 6-9 s (7-20 s with heavy logging). How it was found:
+  - The console's `stat` (flip count) polled twice a second caught the freeze. `ctx 4` then showed HighGraphics in `usleep(30)` polls returning to 0x00ACB0A0.
+  - That is `func_00ACAFA8`: it posts command 0x23 (`0x9023` = 0x90 payload bytes) into a 1 MB ring at 0x45A4B280 (control block at 0x01B51000: read pointer +0, write pointer +0x80) and waits for a reply word at 0x01B50FD0.
+  - `PPU_WWATCH` showed no PPU store sets the reply. `SPU_DMA_RANGE` showed SPU image 2 (`spu_0001_at_0176C200`, the HighGraphics ring consumer) PUTting it from pc 0x0C408. The reply is a buffer from a ~6 MB circular pool (0x49E0xxxx-0x4A40xxxx). Image 2 also writes the RSX put register and reads GCM label 0x81.
+  - During a freeze the consumer still worked through the ring 16 bytes at a time, at a fifth of its normal rate. `SPU_LLAR_HIST=2` showed why: every GETLLAR of the write-pointer line became a 2 ms nap (955 GETLLARs, 955 naps per 2 s).
+  - The idle back-off naps after 20,000 GETLLARs of an unchanged line, and the consumer reads the write pointer once per entry. With HighGraphics blocked on the reply, that pointer never moves, so a full ring took ~9 s to drain.
+  - Now any DMA since the previous GETLLAR restarts the count. Five walks had no freeze (three timed by reply, at most 234 ms between replies; two by frame time, longest frame 66 ms), and the consumer still naps ~400 times a second when idle. A smaller backlog would have cost hundreds of ms the same way, so this may also be the Tutorial and Nexus micro-stutters (not yet re-checked there).
+
+**Still open.**
+- Heavy view: the render thread is at ~60% (FIFO drain: `rsx_fetch_vertex`, `upload_strip_vp_indexed`; `rt_writeback_store`), the SPU threads at ~45% each.
+- The deferred write-back store, present pacing, texture-upload hitches and the 256-byte vertex stride (see Frame pacing).
+
+**Tools.**
+- Stall watch (scratch script; the console commands are general): poll `stat` for the flip count; when it stops, take `ctx <tid>`, `mem <addr> 64` on the registers, `cpu 1` and `prof <host tid> 2`.
+- `SPU_DMA_RANGE=<lo>-<hi>` lines now carry the time (ms), the image and the first word moved (`15bac63`). `SPU_DMA_RANGE_MAX=<n>` (0 = all) and `SPU_DMA_RANGE_IMG=<id>` are new.
+- `SPU_LLAR_HIST=<image id>`: every 2 s, that image's busiest GETLLAR lines and its idle-nap count.
 
 ## Still open
 

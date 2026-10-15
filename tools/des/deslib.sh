@@ -45,6 +45,8 @@ des_env_defaults() {
   # F9 in the game window captures the next frame for rsx_replay; keep those
   # (game-derived) captures in the scratch directory, never the repository.
   export RSX_HOTKEY_DIR="${RSX_HOTKEY_DIR:-$(cygpath -m "$DES_SCRATCH/rsx_hotkey" 2>/dev/null || echo "$DES_SCRATCH/rsx_hotkey")}"
+  # F11 starts and stops a profile session (prof_NNN_summary.txt and friends).
+  export PROF_DIR="${PROF_DIR:-$(cygpath -m "$DES_SCRATCH/prof" 2>/dev/null || echo "$DES_SCRATCH/prof")}"
 }
 
 # des_stage_exe: copy the game binary (DES_EXE, default port/build/des_boot.exe)

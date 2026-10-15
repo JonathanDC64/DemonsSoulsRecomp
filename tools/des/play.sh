@@ -4,7 +4,8 @@
 # (below-normal priority on half the logical CPUs, muted) are for test runs
 # that must not starve the machine; a play session got them too. Shaders are
 # precompiled first (precompile_shaders.sh), so the game never waits on them.
-# Log: work/tmp/play.txt (default 60 minutes).
+# Log: work/tmp/play.txt (default 60 minutes). F11 starts and stops a profile
+# session, written to work/tmp/prof/prof_NNN_*.txt.
 #   tools/des/play.sh            tools/des/play.sh 120 RSX_HOTKEY_FRAMES=4
 MIN=60
 case "${1:-}" in ""|*[!0-9]*) ;; *) MIN="$1"; shift ;; esac

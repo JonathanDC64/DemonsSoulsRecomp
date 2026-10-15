@@ -58,7 +58,7 @@ The build is not yet a single command. The steps, in order:
    cmake -S ps3recomp -B ps3recomp/build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release
    cmake -S port -B port/build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl \
      -DCMAKE_BUILD_TYPE= -DCMAKE_CXX_FLAGS_DEBUG= -DCMAKE_C_FLAGS_DEBUG=
-   cmake --build ps3recomp/build --target ps3recomp_runtime
+   cmake --build ps3recomp/build --target ps3recomp_runtime rsx_shader_precompile
    cmake --build port/build --target des_boot --parallel 4
    ```
    Recompiling the 14 lifted chunks takes about 15 minutes.
@@ -71,7 +71,7 @@ Copy `tools/des/local.env.example` to `tools/des/local.env` and set `PS3_VFS_ROO
 tools/des/play.sh
 ```
 
-This runs the game for up to an hour (`play.sh 120` for two) with sound, at normal priority on every CPU, and logs to `work/tmp/play.txt`. Saves go to `gamedata/dev_hdd0/home/00000001/savedata`. F9 captures a frame for `rsx_replay`, F10 saves screenshots. The debug and test tools are described in [`docs/28`](docs/28-in-game.md#debug-and-test-tools-2026-10-14).
+It first compiles the game's shaders into `gamedata/shader_cache` (about 20 s the first time, a few seconds after), so the game never stops to compile one. This runs the game for up to an hour (`play.sh 120` for two) with sound, at normal priority on every CPU, and logs to `work/tmp/play.txt`. Saves go to `gamedata/dev_hdd0/home/00000001/savedata`. F9 captures a frame for `rsx_replay`, F10 saves screenshots. The debug and test tools are described in [`docs/28`](docs/28-in-game.md#debug-and-test-tools-2026-10-14).
 
 ## Layout
 

@@ -5,7 +5,7 @@ Each blocker = the live "to-do list" the static-recomp boot produces.
 
 Run recipe:
 ```
-set PS3_VFS_ROOT=D:\Users\jonat\Documents\roms\ps3\Demon's Souls (USA)
+set PS3_VFS_ROOT=<disc root holding PS3_GAME>
 port\build\des_boot.exe work\game\EBOOT.ELF
 ```
 Diagnostic env toggles (in ps3recomp runtime): `YDKJ_SCTRACE=1` (all lv2 syscalls),
@@ -826,4 +826,4 @@ sys_event_queue_receive(q=1) (the SPU-completion queue) forever, and the PPU sid
 the SPU would clear. For DeS this is fundamental (SPURS tasks do real work: zlib inflate, render
 command processing) — advancing requires actual SPU execution (recompile SPU + SPURS runtime),
 the large banked effort. Cross-referencing RPCS3's Cell/SPU + lv2 implementations
-(C:\dev\rpcs3-reference) is the way in. See memory: demons-souls-frontier-rsx-gcm, ...-rpcs3-differential.
+(a clone of RPCS3's source) is the way in. See memory: demons-souls-frontier-rsx-gcm, ...-rpcs3-differential.

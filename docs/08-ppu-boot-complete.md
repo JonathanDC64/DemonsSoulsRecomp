@@ -69,7 +69,7 @@ Pragmatic shims still in `scripts/apply_boot_patches.py` (re-applied after every
 - **YDKJ_* env gates**: `YDKJ_HLETRACE` (all HLE calls), `YDKJ_ICTRACE` (indirect-call targets),
   `YDKJ_SYNCTRACE` (EVF/EVQ/mutex sync), `YDKJ_WWATCH=<addr>`, `YDKJ_HOTREAD*`.
 - **RPCS3 differential**: run the same EBOOT under RPCS3 (interpreter decoder for breakpoints) and
-  diff state at the first divergence. RPCS3 source reference clone at `C:\dev\rpcs3-reference`
+  diff state at the first divergence. RPCS3 source reference clone (github.com/RPCS3/rpcs3) at `<rpcs3-src>`
   (sparse: `Emu/Cell/Modules`, `Emu/Cell/lv2`) — cross-ref its lv2.cpp/Modules for syscall numbers,
   NIDs, struct layouts, error codes. **Always reimplement clean (RPCS3 is GPLv2; this port is clean-room).**
 - **Probe discipline**: probes go into the gitignored `work/recomp/*.cpp` (wiped on re-lift). When
@@ -140,7 +140,7 @@ python scripts/apply_boot_patches.py
 cmd /c "scripts\vsenv.bat cmake --build ps3recomp\build -j 14"
 cmd /c "scripts\vsenv.bat cmake --build port\build -j 14"
 # 4. run (PS3_VFS_ROOT points at the user's extracted disc)
-PS3_VFS_ROOT="D:\Users\jonat\Documents\roms\ps3\Demon's Souls (USA)" ./port/build/des_boot.exe work/game/EBOOT.ELF
+PS3_VFS_ROOT="<disc root holding PS3_GAME>" ./port/build/des_boot.exe work/game/EBOOT.ELF
 ```
 Expected: no crash, no spin; threads created; repeating `timer_usleep(16666)` + `cellSysutilCheckCallback`;
 `[SPU] initialize(nspu=6)`; `event_queue_receive(q=1)` (the SPU gate).

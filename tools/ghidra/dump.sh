@@ -8,9 +8,12 @@
 # Uses -process (reuses analysis) + -noanalysis + dump_one.java (writes
 # ghidra_one.txt in the cwd), then cats it.
 set -u
-G='/c/dev/tools/ghidra_12.1.2_PUBLIC/support/analyzeHeadless.bat'
-PROJ='C:\dev\projects\demons-souls-pc-port\work\ghidra'
-SCRIPTS='C:\dev\projects\demons-souls-pc-port\tools\ghidra'
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+[ -f "$ROOT/tools/des/local.env" ] && . "$ROOT/tools/des/local.env"
+# GHIDRA_DIR: the Ghidra install (tools/des/local.env).
+G="${GHIDRA_DIR:?set GHIDRA_DIR to the Ghidra install}/support/analyzeHeadless.bat"
+PROJ="$(cygpath -w "$ROOT/work/ghidra" 2>/dev/null || echo "$ROOT/work/ghidra")"
+SCRIPTS="$(cygpath -w "$ROOT/tools/ghidra" 2>/dev/null || echo "$ROOT/tools/ghidra")"
 cd "$(dirname "$0")"
 for addr in "$@"; do
   rm -f ghidra_one.txt

@@ -15,7 +15,8 @@
 # LOG defaults to $RLOG or the standard RPCS3 log path.
 set -euo pipefail
 
-DEFAULT_LOG="/d/Users/jonat/Documents/roms/rpcs3/log/RPCS3.log"
+[ -f "$(dirname "$0")/local.env" ] && . "$(dirname "$0")/local.env"
+DEFAULT_LOG="${RPCS3_DIR:-.}/log/RPCS3.log"   # RPCS3_DIR: the RPCS3 install (local.env)
 trim() { sed -E 's/\{PPU[^}]*\[([0-9a-fx:]+)\]\} /@\1 /; s/·[A-Z] //'; }
 
 mode="${1:-profile}"; shift || true

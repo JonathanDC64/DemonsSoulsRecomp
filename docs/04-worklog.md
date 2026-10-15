@@ -44,7 +44,7 @@ cond=3 wait).
 ## 2026-06-28 (cont.) — git set up; M2 boot debugging begun (allocator bad_alloc)
 
 **Did:**
-- Set up version control: main repo `git init` (email `jonathan_delcorpo@hotmail.com`), copyright-firewall `.gitignore` (fixed two bugs: inline comment disabled `work/`; unanchored `ps3recomp/` hid `patches/ps3recomp/`). Verified no game-derived files staged. **Initial commit `73715ce`.** ps3recomp fixes committed in the clone's own git + exported to `patches/ps3recomp/`.
+- Set up version control: main repo `git init`, copyright-firewall `.gitignore` (fixed two bugs: inline comment disabled `work/`; unanchored `ps3recomp/` hid `patches/ps3recomp/`). Verified no game-derived files staged. **Initial commit `73715ce`.** ps3recomp fixes committed in the clone's own git + exported to `patches/ps3recomp/`.
 - Added env-gated **HLE call trace** (`YDKJ_HLETRACE`) to ps3recomp for boot debugging.
 - **M2 blocker #1 diagnosed** (full detail in [`07-m2-boot-debug.md`](07-m2-boot-debug.md)): after CRT/TLS, game does `get_user_memory_size`(→192MB ok) + rwlock + 5× mutex_create, then `operator new` throws `bad_alloc` with **no memory syscall/HLE at all**. Ruled out: stub gaps, endianness, HLE-malloc-returns-0. Leading hypothesis: custom allocator computes a 0/invalid heap size (likely needs process-param/heap config) and bails before requesting memory. Error strings located at guest ~`0x1770150`.
 
@@ -146,7 +146,7 @@ Reached the **same first-boot milestone (`sys_initialize_tls`)** the docs cite f
 ## 2026-06-28 — Project kickoff, tool acquisition & analysis
 
 **Did:**
-- Inspected the disc at `D:\…\Demon's Souls (USA)`. Confirmed: `PS3_GAME/USRDIR/EBOOT.BIN` = 28 MB encrypted SELF (magic `SCE\0`); 7.9 GB assets in FromSoftware formats (3604 .dcx, 2190 .hkx, 1776 .flver, 356 .tpf, 272 .lua, .esd, .param).
+- Inspected the game folder (the one holding `PS3_GAME`). Confirmed: `PS3_GAME/USRDIR/EBOOT.BIN` = 28 MB encrypted SELF (magic `SCE\0`); 7.9 GB assets in FromSoftware formats (3604 .dcx, 2190 .hkx, 1776 .flver, 356 .tpf, 272 .lua, .esd, .param).
 - Researched the recompilation/decompilation field (N64Recomp, XenonRecomp, decomp, RPCS3) and the PS3's specific blockers (Cell SPE, RSX, encryption).
 - Cloned **ps3recomp** to `./ps3recomp/` (commit `fa2d2da`, v0.6.3) and read its source + docs.
 

@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # deslib.sh -- shared helpers for the des_boot test scripts. Source it.
 #
-# Machine-specific values come from the environment; the fallbacks below are
-# only defaults for the original dev box, never requirements:
-#   PS3_VFS_ROOT   disc root holding PS3_GAME (and the /dev_hdd1 cache dir)
+# Machine-specific values come from the environment, or from
+# tools/des/local.env (gitignored; copy local.env.example):
+#   PS3_VFS_ROOT   disc root holding PS3_GAME (and the /dev_hdd1 cache dir;
+#                  default work/disc)
 #   DES_SCRATCH    where logs and the pid/console files go (default work/tmp)
 
 DES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[ -f "$DES_ROOT/tools/des/local.env" ] && . "$DES_ROOT/tools/des/local.env"
 DES_SCRATCH="${DES_SCRATCH:-$DES_ROOT/work/tmp}"; mkdir -p "$DES_SCRATCH"
 DES_PIDFILE="$(cygpath -m "$DES_SCRATCH" 2>/dev/null || echo "$DES_SCRATCH")/des_boot.pids"
 DES_STAGED_MARK=".des_staged"   # beside each staged des_boot.exe (des_stage_exe)
 
 des_env_defaults() {
-  des_vfs_fallback="D:/Users/jonat/Documents/roms/ps3/Demon's Souls (USA)"   # dev-box default only
-  export PS3_VFS_ROOT="${PS3_VFS_ROOT:-$des_vfs_fallback}"
+  export PS3_VFS_ROOT="${PS3_VFS_ROOT:-$DES_ROOT/work/disc}"
   # Known-good boot config (docs/25): the LFQueue + SpursQueue families on
   # real libsre, and no round-notify heuristic.
   export LIBSRE_LLE="${LIBSRE_LLE:-1}"

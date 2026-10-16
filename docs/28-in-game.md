@@ -734,6 +734,33 @@ The level-load start moves with the harness's menu presses (one every 2 s; the g
 
 **Tried, no gain.** The resource cache thread (Core.Res.CacheDeviceHandler) polls an lwmutex in a loop (~370k lock/unlock pairs during a load). Replacing the lwmutex's kernel semaphore with a WaitOnAddress lock word cut that cost, but the load was not faster (9.9 s with it, 9.0 and 9.6 s without); the thread is not on the load's critical path.
 
+## Palace frame rate: runtime overhead (ps3recomp branch `perf/spu-regions`, 2026-10-15)
+
+The user's profile deeper into the Palace (`prof_005`, 96 s) averaged 29.9 fps with 7.8% skip frames and a 1% low of 13.7 fps. Its slow frames have 8,000-10,000 draws and come in at 65-95 ms while the renderer's own share (`render_frame`) is 14-27 ms, so the game side was late. No thread is saturated in those seconds: 4.4-5.3 cores busy, the audio mixer's SPU thread ~75%, image 2 (the HighGraphics ring consumer) 50-80%, the render thread 50-65%, HighGraphics 40-70%. The limit is latency along the HighGraphics -> image 2 -> FIFO walker chain rather than any one thread's CPU, so these changes cut per-operation cost on that chain.
+
+**Fixed.**
+- **PPU memory watches** (`c477483`): `barrier_watch_hit` (PPU_WVAL, PPU_WWATCH), `ppu_rwatch_hit` (PPU_RWATCH) and `vm_hotmap` (PPU_HOTMAP) ran as real calls on every guest load and store. They are now an inlined flag test with the body out of line. They were 7.5% of HighGraphics' samples in the heavy view and are gone from its profile.
+- **Debug knobs on the draw and FIFO paths** (`8fa3ee5`): seven getenv calls per draw, bind or command (~200k a second, ~3% of the render thread) are cached `PS3_KNOB`s.
+- **Parked-task wake** (`9ad2466`): a PPU store-conditional on a signalled line woke every task parked there. Now only a task whose own bit is set gets woken.
+- **SPU regions** (`bc329d6`, port `scripts/build_spu.py` `REGIONS`): the function detector seeds a function at every branch target, so a lifted image was one C function per basic block and every branch was a trampoline hop: ~20 million a second on image 2. `spu_lifter.py --regions` lifts the functions between two call targets as one C body, and a direct branch inside it becomes a goto (`SPU_RGOTO`). Every function keeps its exported entry, so the function table is unchanged. A goto takes the trampoline whenever the drain loop has per-hop work: a pending interrupt, lockstep, step tracing and similar. `SPU_GOTO_OFF=1` (live) sends every branch through the trampoline, for A/B. Enabled for image 2 (`spu_0001_at_0176C200`) and the audio mixer (`spu_0010_at_01818080`). After pulling, run `python scripts/build_spu.py` to re-lift (those two images change).
+
+Same binary, the user's current save, two runs each:
+
+| | regions on | `SPU_GOTO_OFF=1` |
+|---|---|---|
+| audio mixer SPU thread | 48-50% | 64-65% |
+| image 2 | 82-83% | 86-89% |
+
+Compared with the previous lift (one function per block), the mixer is ~6% lower and image 2 ~4% lower. Entering a region body costs more than entering a small function (its prologue saves eight registers and xmm6-15), which is why `SPU_GOTO_OFF` comes out slower than the old lift. Every Demon's Souls image lifts with `--regions` to the same function table, but only these two have been run. `regress.sh`: ok.
+
+**Measured along the way.**
+- Image 2 (`SPU_RATE=2`): 2.6M DMAs, 2.3M GETLLARs and 12M slow-path channel writes a second, but only ~0.66M ring commands. Most of its busy time is polling an empty ring, so it waits on HighGraphics more than it holds it up.
+- The lock-line lock (`SPU_LOCKLINE_STATS=1`): image 2 takes it ~3.2M times a second (18% contended), HighGraphics ~1.2M (13%). Every PPU store to a line any SPU has ever reserved goes through it.
+- HighGraphics' usleep(30) polls (`PS3_POLLTOP=4`) come from one site, lr 0x00ACB0A0 (FUN_00acafa8): it writes command 0x9023 into the ring and spins until image 2 writes a reply back, a full round trip per call. About 1,100 polls a second, too few to trip the usleep streak timer, so these are precise spins.
+- At the user's current save point the game holds 30 fps (90 presents in 3 s), so the slow spots in `prof_005` are elsewhere along their route.
+
+**Next.** Regions for the other images (Havok, the decompressor) once they have been run. A cheaper region entry. Fewer lock-line acquisitions on image 2's ring line, without repeating the seqlock dead end (no gain).
+
 ## Still open
 
 - **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Heaviest Palace view: 13-14% skip frames since `099343f` (was 29%). Still: no side-by-side check against RPCS3 at the same spot yet.

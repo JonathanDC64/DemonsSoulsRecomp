@@ -761,6 +761,26 @@ Compared with the previous lift (one function per block), the mixer is ~6% lower
 
 **Next.** Regions for the other images (Havok, the decompressor) once they have been run. A cheaper region entry. Fewer lock-line acquisitions on image 2's ring line, without repeating the seqlock dead end (no gain).
 
+## Frame-rate unlock: DES_FPS (ps3recomp `afb30e6`, port, 2026-10-16)
+
+RPCS3's "Unlock FPS" patch for BLUS30443 (Gibbed, Whatcookie; `patches/patch.yml` in an RPCS3 install) changes two things, and both turn out to be game settings rather than code:
+
+- `stb r29,0x6ed(r31)` at 0x00025ED8 becomes `stb r0` (r0 = 1). That is the constructor (0x00025DD8) of an engine object whose pointer lives at 0x01AD6298. Bytes +0x6EC and +0x6ED are a flip mode; the game's debug menu prints it (0x000290A8) as `FlipMode【30FPS】` (+0x6ED 0, the default), `FlipMode【30FPS(NO SKIP)】` (+0x6ED 1, +0x6EC 0) and `FlipMode【60FPS(NO SKIP)】` (both 1). The default mode is where the skip frames come from: a late frame is replaced with a near-empty one (the "under 50 draws" frames in the profile summary). 0x000265F8 is the menu's setter.
+- `lfs f31,-0x7f78(r30)` at 0x0001B964, in the frame update 0x0001B8D0 that main calls once a loop, loads the frame's time step: a float at 0x018C8DB4 holding 1/30. The patch replaces it with a branch to code that measures the time since the last frame (mftb), capped at 50 ms. `PPU_RWATCH=018C8DB4,4` shows 0x0001B8D0 is its only reader (`00461f1` makes the watch print every reader function once, not just the first 24 hits).
+
+`DES_FPS=60` (port `port/des_options.cpp`) sets 60FPS(NO SKIP) once the object exists and rewrites the float every frame with the time since the previous flip request, capped at 50 ms. `DES_FPS=30` sets 30FPS(NO SKIP) the same way, with the same real frame time. The time is taken on the guest thread that asks for the flip, through a new runtime hook (`g_gcm_flip_request_hook`, `afb30e6`); HighGraphics calls `_cellGcmSetFlipCommand` once a frame, and main ran 336 updates for 334 presents, so the game advances by real time. The frame limit is the vblank, so `VBLANK_MHZ=120000` would let 60 mode run up to 120 (not tried; RPCS3 warns of physics trouble above 60).
+
+Unattended, 10 s profiles, `RSX_PRESENT=0`:
+
+| save | default | FlipMode 60 poked live | `DES_FPS=60` |
+|---|---|---|---|
+| Palace spawn (heaviest view) | 30.0 fps, 1.3% skip | 32.9 fps, 0 skip | |
+| the user's current save | 30.0 fps, 0.3% skip | 34.7 fps, 0 skip | 33.8 fps, 0 skip |
+
+So the unlock works, and the skip frames are gone, but in these views the game manages 33-35, not 60. The limit is throughput along HighGraphics -> image 2 -> FIFO walker: with 60 mode on, image 2's thread runs at 90% of a core, the render thread 81% (its `render_frame` share is only ~10 ms a frame; the rest is walking the FIFO) and HighGraphics 66%, and every other thread mostly waits.
+
+**Unattended runs and the lock screen.** With the Windows session locked, every run fell to 4 fps (50% skip frames): the render thread spent 96% of its time in `wait_for_gpu`, because DWM holds each back buffer 250-500 ms behind the lock screen and Present still returns S_OK, not DXGI_STATUS_OCCLUDED. `RSX_PRESENT=0` (`db6c18a`, live) renders every frame without presenting it; the same run then measures 30.0 fps again. Use it for any profile taken while nobody is at the machine.
+
 ## Still open
 
 - **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Heaviest Palace view: 13-14% skip frames since `099343f` (was 29%). Still: no side-by-side check against RPCS3 at the same spot yet.

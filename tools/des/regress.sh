@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # regress.sh [set-name]: regression screenshots of the first level.
 #
-# Boots with DES_SKIP_INTRO=1, taps through to the level, then walks a fixed
+# Boots with DES_SKIP_INTRO=1 DES_AUTO_CONTINUE=1 into the pinned save, then walks a fixed
 # route from the spawn point with the live PAD_STICK knob (debug console
 # setenv) and saves one screenshot per stop:
 #   s1_spawn   at the spawn point, after the level settles
@@ -61,23 +61,19 @@ restore() {
 }
 trap restore EXIT
 
-tools/des/desrun.sh "${REGRESS_MAX:-600}" "$OUT" DES_SKIP_INTRO=1 \
+tools/des/desrun.sh "${REGRESS_MAX:-600}" "$OUT" DES_SKIP_INTRO=1 DES_AUTO_CONTINUE=1 \
   PAD_FILE="$(cygpath -m "$PAD")" PS3_DEBUG="$(cygpath -m "$CON")" PS3_OSK_TEXT=Aldia HLE_FIRST=1 \
   CELLMARK_DUMP=100000 CELLMARK_DUMP_EVERY=15 CELLMARK_DUMP_CHANGED=1 CELLMARK_DUMP_MINDRAWS=1 \
   CELLMARK_DUMP_DIR="$(cygpath -m "$RUN/shots")" > "$RUN/summary.txt" 2>&1 &
 t0=$SECONDS
 say() { echo "[regress] t=$((SECONDS - t0))s $*"; }
 
-# CROSS until the level's script archive opens; START every third tap for the
-# title screen.
-k=0
+# DES_AUTO_CONTINUE presses through the menus in-process until the level's
+# script archive opens.
 until grep -aq luabnd "$OUT"; do
   des_running || [ $((SECONDS - t0)) -lt 20 ] || { say "run ended before the level"; exit 2; }
   [ $((SECONDS - t0)) -lt 400 ] || { say "no level load"; exit 2; }
-  if grep -aq 'nid=0x8B72CDA1 cellPadGetData' "$OUT" && [ ! -s "$PAD" ]; then
-    k=$((k + 1)); if [ $((k % 3)) = 0 ]; then echo 0x0008 > "$PAD"; else echo 0x4000 > "$PAD"; fi
-  fi
-  sleep 2
+  sleep 0.5
 done
 say "level loading"
 sleep "${REGRESS_SETTLE:-75}"

@@ -33,6 +33,13 @@
  *   RPCS3's "Unlock FPS" patch (Gibbed, Whatcookie) changes the same two
  *   things in the code; here the code is left alone. Above 60 the frame limit
  *   is the vblank: VBLANK_MHZ=120000 lets 60 mode run up to 120.
+ *
+ * DES_AUTO_CONTINUE=1 — press through the boot menus into the last save.
+ *   From the first pad poll it taps CROSS, CROSS, START in a 600 ms cycle:
+ *   that clears the notices, the title's "press start", "load game" and the
+ *   first save in the list. It never presses CIRCLE or the d-pad, so it only
+ *   goes forwards and never moves a cursor off its default. It lets go for
+ *   good when the level's script archive (script/m*.luabnd) opens.
  */
 #include "ppu_recomp.h"
 #include <chrono>
@@ -43,6 +50,8 @@
 
 extern "C" void ppu_register_function(uint64_t addr, void (*fn)(ppu_context*));
 extern "C" void (*g_gcm_flip_request_hook)(void);
+extern "C" unsigned (*g_pad_title_hook)(void);
+extern "C" void (*g_fs_open_hook)(const char* guest_path);
 
 namespace {
 
@@ -116,6 +125,29 @@ void fps_on_flip_request()
     last = now;
 }
 
+constexpr unsigned kPadCross = 0x4000u, kPadStart = 0x0008u;
+volatile bool s_auto_done = false;
+
+unsigned auto_continue_buttons()
+{
+    if (s_auto_done) return 0;
+    using clock = std::chrono::steady_clock;
+    static const clock::time_point t0 = clock::now();
+    const long long ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - t0).count() % 600;
+    if (ms < 100 || (ms >= 200 && ms < 300)) return kPadCross;
+    if (ms >= 400 && ms < 500) return kPadStart;
+    return 0;
+}
+
+void auto_continue_on_open(const char* path)
+{
+    if (!s_auto_done && strstr(path, "/script/m") && strstr(path, ".luabnd")) {
+        s_auto_done = true;
+        fprintf(stderr, "[des] DES_AUTO_CONTINUE: level loading (%s), pad released\n", path);
+    }
+}
+
 } // namespace
 
 extern "C" void ps3_title_options_init(void)
@@ -133,5 +165,10 @@ extern "C" void ps3_title_options_init(void)
         } else if (*f) {
             fprintf(stderr, "[des] DES_FPS=%s ignored (60 or 30)\n", f);
         }
+    }
+    if (env_on("DES_AUTO_CONTINUE")) {
+        g_pad_title_hook = auto_continue_buttons;
+        g_fs_open_hook = auto_continue_on_open;
+        fprintf(stderr, "[des] DES_AUTO_CONTINUE: pressing through the menus to the last save\n");
     }
 }

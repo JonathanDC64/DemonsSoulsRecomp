@@ -31,6 +31,17 @@ OUT_DIR = os.path.join(ROOT, "ps3recomp", "work_spu")
 LIFTER  = os.path.join(ROOT, "ps3recomp", "tools", "spu_lifter.py")
 
 
+# Lifted functions replaced by a host call (spu_lifter.py --native-hook): image ->
+# (image fingerprint, [ADDR=SYMBOL]). A hook is applied only to the exact image it
+# was written for; with another build of the game the image lifts without it.
+NATIVE_HOOKS = {
+    # Core.Res.Decompressor's SPU task (Edge zlib): its inflate wrapper, run on
+    # every 64 KB block of a DCX file. Lifted it is ~3.5 ms a block, most of a
+    # level load; the host inflate is ~0.2 ms. SPU_NATIVE_INFLATE=0 turns it off.
+    "spu_0000_at_01760280": (0x4F421747C0F7966A, ["0x8700=spu_hook_inflate_ls"]),
+}
+
+
 def be16(b, o): return (b[o] << 8) | b[o + 1]
 def be32(b, o): return (b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]
 
@@ -79,8 +90,16 @@ def main():
             out = os.path.join(OUT_DIR, img)
             os.makedirs(out, exist_ok=True)
             print(f"lifting {img} ...", flush=True)
+            hooks = []
+            if img in NATIVE_HOOKS:
+                want, hooks = NATIVE_HOOKS[img]
+                if want is not None and want != imgs[-1][1]:
+                    print(f"  {img}: fingerprint 0x{imgs[-1][1]:016X} is not the one its "
+                          f"native hooks were written for; lifting without them")
+                    hooks = []
             r = subprocess.run([sys.executable, LIFTER, "--auto-functions", f,
-                                "--symbol-prefix", img + "_", "-o", out],
+                                "--symbol-prefix", img + "_", "-o", out] +
+                               [a for h in hooks for a in ("--native-hook", h)],
                                capture_output=True, text=True)
             if r.returncode != 0:
                 print(r.stdout[-2000:], r.stderr[-2000:], file=sys.stderr)

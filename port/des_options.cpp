@@ -65,6 +65,7 @@ extern "C" void (*g_gcm_flip_request_hook)(void);
 extern "C" unsigned (*g_pad_title_hook)(void);
 extern "C" void (*g_fs_open_hook)(const char* guest_path);
 extern "C" void ps3_vblank_set_mhz(int mhz);   /* boot_main.cpp; 0 = VBLANK_MHZ */
+extern "C" volatile unsigned g_pad0_reads, g_pad0_empty_reads, g_pad0_buttons, g_pad0_lstick;   /* cellPad.c */
 extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vkey);   /* user32 */
 constexpr int VK_F8 = 0x77;
 
@@ -180,10 +181,15 @@ void fps_on_flip_request()
 constexpr uint32_t kChrMan       = 0x01B3D6E0u;
 bool guest_ptr_ok(uint32_t a) { return a >= 0x00010000u && a < 0x50000000u && !(a & 3u); }
 
-bool player_pos(float* x, float* y, float* z)
+/* The character also holds its stamina (int, +0x3D4) and the move speed it
+ * asks for (float m/s, +0xCCC): found by dumping it while dashing. */
+bool player_pos(float* x, float* y, float* z, int* stamina, float* speed)
 {
     uint32_t p = vm_read32(kChrMan);
     if (!guest_ptr_ok(p) || !guest_ptr_ok(p = vm_read32(p + 0x1BC))) return false;
+    const uint32_t chr = p, sp = vm_read32(chr + 0xCCC);
+    *stamina = (int)vm_read32(chr + 0x3D4);
+    memcpy(speed, &sp, 4);
     if (!guest_ptr_ok(p = vm_read32(p + 0x20)) || !guest_ptr_ok(p = vm_read32(p + 0x10))) return false;
     uint32_t v[3] = {vm_read32(p + 0x10), vm_read32(p + 0x14), vm_read32(p + 0x18)};
     memcpy(x, &v[0], 4); memcpy(y, &v[1], 4); memcpy(z, &v[2], 4);
@@ -207,11 +213,17 @@ void frame_log()
     const double ms = std::chrono::duration<double, std::milli>(clock::now() - t0).count();
     uint32_t bits = vm_read32(kFrameDt);
     float dt; memcpy(&dt, &bits, 4);
-    float x = 0, y = 0, z = 0;
-    const bool pos = player_pos(&x, &y, &z);
+    float x = 0, y = 0, z = 0, want = 0;
+    int stamina = 0;
+    const bool pos = player_pos(&x, &y, &z, &stamina, &want);
     const bool cut = cutscene_playing();
     fprintf(s_framelog, "%.1f %.2f %.2f %d", ms, ms - last_ms, dt * 1000.0f, cut ? 1 : 0);
-    if (pos) fprintf(s_framelog, " %.3f %.3f %.3f", x, y, z);
+    static unsigned last_reads, last_empty;
+    const unsigned reads = g_pad0_reads, empty = g_pad0_empty_reads;
+    fprintf(s_framelog, " pad %04X %04X %u %u", g_pad0_buttons, g_pad0_lstick,
+            reads - last_reads, empty - last_empty);
+    last_reads = reads; last_empty = empty;
+    if (pos) fprintf(s_framelog, " %.3f %.3f %.3f %d %.2f", x, y, z, stamina, want);
     fputc('\n', s_framelog);
     if (pos && have_pos) {
         const float d = std::sqrt((x - px) * (x - px) + (z - pz) * (z - pz));
@@ -294,7 +306,7 @@ extern "C" void ps3_title_options_init(void)
     }
     if (const char* f = getenv("DES_FRAMELOG")) {
         if (*f && (s_framelog = fopen(f, "w")) != nullptr) {
-            fprintf(s_framelog, "# t_ms interval_ms step_ms cutscene [x y z]; SUM t fps speed m/s game/real; MARK t (F8)\n");
+            fprintf(s_framelog, "# t_ms interval_ms step_ms cutscene pad buttons lstick reads empty [x y z stamina want_m/s]; SUM t fps speed m/s game/real; MARK t (F8)\n");
             g_gcm_flip_request_hook = on_flip_request;
             fprintf(stderr, "[des] DES_FRAMELOG: %s (F8 marks)\n", f);
         } else if (*f) {

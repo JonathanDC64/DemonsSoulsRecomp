@@ -43,6 +43,16 @@
  *   (a 2-frame back-and-forth at 60, a 4-frame sawtooth at 120). While a
  *   RemoMan slot holds a cutscene the game is put back in 30 mode with the
  *   1/30 step and the PS3's vblank, and unlocked again when it ends.
+ *   One movement test counts in 30 Hz steps too. After physics, 0x002EC2B8
+ *   asks whether a character that wants to move fast (its animation asks
+ *   for more than 5 m/s) moved less than 1/30 m this step, i.e. under 1 m/s
+ *   at 30 fps. If so it is held by something, and the factor its root
+ *   motion is scaled by (movement object +0x128) goes down 0.8x a step to
+ *   0.5; if not, it goes back up 1.2x a step to 1. At 120 fps a step is a
+ *   quarter as long, so the test fires under 4 m/s: a dash that starts from
+ *   a slow run (stamina still coming back) drops to half speed, 3.2 m/s,
+ *   and stays there. des_move_post redoes the test with the step's real
+ *   length and makes the rates per 30 Hz step as well.
  *
  * DES_AUTO_CONTINUE=1 — press through the boot menus into the last save.
  *   From the first pad poll it taps CROSS, CROSS, START in a 600 ms cycle:
@@ -193,7 +203,79 @@ void auto_continue_on_open(const char* path)
     }
 }
 
+/* The movement object's speed factor and its physics proxy (positions this
+ * step and last, x y z). See des_move_post. */
+constexpr uint32_t kMoveSpeedFactor = 0x128u;   /* float, scales root motion */
+constexpr uint32_t kMoveProxy       = 0x10u;
+constexpr uint32_t kProxyPos        = 0x10u, kProxyPrevPos = 0x20u;
+constexpr float    kStuckSpeed      = 1.0f;     /* m/s */
+constexpr float    kStuckFloor      = 0.5f, kStuckRate = 0.8f, kFreeRate = 1.2f;
+bool s_move_real_time = false;
+
+float vm_readf(uint32_t ea)
+{
+    const uint32_t bits = vm_read32(ea);
+    float f;
+    memcpy(&f, &bits, 4);
+    return f;
+}
+
+void vm_writef(uint32_t ea, float f)
+{
+    uint32_t bits;
+    memcpy(&bits, &f, 4);
+    vm_write32(ea, bits);
+}
+
+/* Redo the game's stuck test with the step's real length. f0 is the factor
+ * before 0x002EC2B8 ran; the factor it left tells which branch it took. */
+void move_stuck_real_time(uint32_t mv, float f0, float dt)
+{
+    const float f1 = vm_readf(mv + kMoveSpeedFactor);
+    const bool took_stuck = f0 > kStuckFloor ? f1 == f0 * kStuckRate : f1 == kStuckFloor;
+    const bool took_free  = f0 < 1.0f && f1 == f0 * kFreeRate;
+    if (!(took_stuck || took_free) || !(dt > 0.0f)) return;
+    const uint32_t proxy = vm_read32(mv + kMoveProxy);
+    if (!proxy) return;
+    float d2 = 0.0f;
+    for (uint32_t i = 0; i < 3; i++) {
+        const float c = vm_readf(proxy + kProxyPos + 4 * i) - vm_readf(proxy + kProxyPrevPos + 4 * i);
+        d2 += c * c;
+    }
+    const float d = std::sqrt(d2);
+    if (took_stuck && d * 30.0f >= 1.0f) return;   /* not the game's stuck test after all */
+    const bool stuck = took_stuck && d < kStuckSpeed * dt;
+    const float k = dt * 30.0f;   /* the rates are per 30 Hz step */
+    float f;
+    if (stuck) f = f0 > kStuckFloor ? f0 * std::pow(kStuckRate, k) : kStuckFloor;
+    else       f = f0 < 1.0f ? f0 * std::pow(kFreeRate, k) : 1.0f;
+    vm_writef(mv + kMoveSpeedFactor, f);
+}
+
 } // namespace
+
+extern "C" PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);
+
+/* Lifted in place of 0x00273D38 (--override-funcs), which is only
+ * `0x002EC2B8(*(r3 + 0x20), f1 = step)`: the movement object's step after
+ * physics. Called from the movement worker (0x002A8408) and 0x00296970. */
+extern "C" void des_move_post(ppu_context* ctx)
+{
+    const uint64_t lr = ctx->lr;
+    const uint32_t mv = vm_read32((uint32_t)ctx->gpr[3] + 0x20);
+    const float dt = (float)ctx->fpr[1];
+    const float f0 = vm_readf(mv + kMoveSpeedFactor);
+    ctx->gpr[3] = mv;
+    ctx->lr = 0x00273D4Cu;
+    func_002EC2B8(ctx);
+    while (g_trampoline_fn) {
+        void (*tf)(void*) = g_trampoline_fn;
+        g_trampoline_fn = nullptr;
+        tf(ctx);
+    }
+    ctx->lr = lr;
+    if (s_move_real_time) move_stuck_real_time(mv, f0, dt);
+}
 
 extern "C" void ps3_title_options_init(void)
 {
@@ -205,6 +287,7 @@ extern "C" void ps3_title_options_init(void)
         const int fps = atoi(f);
         if (fps == 60 || fps == 30 || (fps > 60 && fps <= 240)) {
             s_fps60 = fps >= 60;
+            s_move_real_time = true;
             g_gcm_flip_request_hook = fps_on_flip_request;
             /* Before the vblank clock starts: boot_main reads the rate once.
              * Presents stop waiting for the display's refresh too (RSX_VSYNC),

@@ -783,7 +783,24 @@ So the unlock works, and the skip frames are gone, but in these views the game m
 
 **Above 60** (port, ps3recomp `b67dbd9`, `d824c73`): `DES_FPS=<n>` with n from 61 to 240 sets 60 mode and a vblank of n Hz (the frame cap; `VBLANK_MHZ` wins if set) and `RSX_VSYNC=0`, presents that do not wait for the display's refresh, or a 60 Hz desktop holds the game to 60. The option sets them through `ps3_setenv`: the runtime's getenv cache had already cached the miss, and `_putenv_s` alone did nothing. At the deep Palace save, `DES_FPS=120` runs ~67 fps with real presents. Movies keep their speed (cellSail hands out the frame due by the clock), and the regress walk ends in the same place as at 30.
 
-**Cutscenes judder above 30.** The user saw the character vibrating in the tutorial arrival cutscene at 120. `cut.sh`-style captures (8 consecutive presents dumped with `CELLMARK_DUMP_NOW`, the shift between frames measured by phase correlation) show it: in the default mode the scene moves a steady 7-8 px a frame; at `DES_FPS=60` it goes back and forth every other frame (-4, +3, -4, +3); at 120 it creeps forward three frames and snaps back on the fourth (+4, +4, +4, -18; frame 4 matches frame 0). The cutscene manager (RemoMan, `remo/scnNNNNNN.remobnd`) moves things at 30 Hz while the animation follows the frame time. RPCS3's patch notes warn against vblank above 60 as well. A fix would run cutscenes at 30: that needs the play state of RemoMan (its step objects are built by the static initializer `0x001A3370`, `0x001A6650` for a Remo), not found yet.
+**Cutscenes judder above 30.** The user saw the character vibrating in the tutorial arrival cutscene at 120. `cut.sh`-style captures (8 consecutive presents dumped with `CELLMARK_DUMP_NOW`, the shift between frames measured by phase correlation) show it: in the default mode the scene moves a steady 7-8 px a frame; at `DES_FPS=60` it goes back and forth every other frame (-4, +3, -4, +3); at 120 it creeps forward three frames and snaps back on the fourth (+4, +4, +4, -18; frame 4 matches frame 0). The cutscene manager (RemoMan, `remo/scnNNNNNN.remobnd`) moves things at 30 Hz while the animation follows the frame time. RPCS3's patch notes warn against vblank above 60 as well.
+
+**Cutscenes at 30** (port, ps3recomp `155b97e`). The game now plays its cutscenes as shipped, and unlocks again when they end.
+- **Detecting a cutscene.** The Lua `RequestRemo` (binding 0x00445B08) goes through 0x00425D80 and 0x001A1EC0 to RemoMan's request, 0x001A1AF0. RemoMan's object is at `*0x01B3A28C`. The request takes the first free of four slots at +0x28, +0x40, +0x58 and +0x70 (0x18 bytes each), and stores the cutscene object in the slot's first word.
+  - Polled live through the arrival cutscene: slot +0x28 holds the object from the level load (the cutscene is requested during the load) until the cutscene ends, about 40 s after the level's script opens. It is 0 in gameplay.
+- **The switch.** While any slot is non-zero, `DES_FPS` above 30 sets:
+  - 30 mode (+0x6EC = 0);
+  - the fixed 1/30 step;
+  - the PS3's 59.94 Hz vblank, through `ps3_vblank_set_mhz`, so 30 mode flips every other vblank exactly as shipped.
+
+  When the slots clear, it puts back 60 mode, real frame time, and the vblank `DES_FPS` asked for. The log shows each switch (`[des] DES_FPS: cutscene, 30 fps` / `cutscene over, unlocked again`, and `[vblank] clock now at ...`).
+- **Why not a sleep.** Holding each frame to 33 ms with a sleep in the flip hook was the first idea. At a 120 Hz vblank a flip can only land every 8.3 ms, so a little oversleep turns 33.3 ms into 41.7 and the judder comes back.
+- **Measured** at `DES_FPS=120`, the same bursts:
+  - before: +2, +2, +2, -9 and +4, +4, +4, -18;
+  - after: steady shifts (-5, -5, -6, -8, -10, -10, -10 and 5, 5, 4, 4, 3, 2, 4).
+
+  The bursts at 44 s and 52 s are gameplay again, unlocked.
+- Regress is ok at the default and at `DES_FPS=120`.
 
 ## Faster launches: DES_AUTO_CONTINUE (ps3recomp `322ce60`, port, 2026-10-16)
 

@@ -38,10 +38,11 @@
  *   refresh (RSX_VSYNC=0, unless set). Movies keep their speed (cellSail
  *   hands out the frame that is due by the clock), and the game advances by
  *   real time: the regress walk ends in the same place at ~66 fps as at 30.
- *   Not the in-engine cutscenes (RemoMan): their positions step at 30 Hz
- *   while animation follows the frame time, so above 30 a cutscene judders,
- *   a 2-frame back-and-forth at 60 and a 4-frame sawtooth at 120 (the
- *   tutorial arrival; the default mode is smooth).
+ *   The in-engine cutscenes (RemoMan) stay at 30: their positions step at
+ *   30 Hz while animation follows the frame time, so unlocked they judder
+ *   (a 2-frame back-and-forth at 60, a 4-frame sawtooth at 120). While a
+ *   RemoMan slot holds a cutscene the game is put back in 30 mode with the
+ *   1/30 step and the PS3's vblank, and unlocked again when it ends.
  *
  * DES_AUTO_CONTINUE=1 — press through the boot menus into the last save.
  *   From the first pad poll it taps CROSS, CROSS, START in a 600 ms cycle:
@@ -62,6 +63,7 @@ extern "C" void ppu_register_function(uint64_t addr, void (*fn)(ppu_context*));
 extern "C" void (*g_gcm_flip_request_hook)(void);
 extern "C" unsigned (*g_pad_title_hook)(void);
 extern "C" void (*g_fs_open_hook)(const char* guest_path);
+extern "C" void ps3_vblank_set_mhz(int mhz);   /* boot_main.cpp; 0 = VBLANK_MHZ */
 
 namespace {
 
@@ -106,32 +108,65 @@ constexpr uint32_t kFlipMode60   = 0x6ECu;
 constexpr uint32_t kFlipNoSkip   = 0x6EDu;
 constexpr uint32_t kFrameDt      = 0x018C8DB4u;   /* float, seconds */
 constexpr float    kMaxFrameDt   = 0.05f;
+constexpr float    kCutsceneDt   = 1.0f / 30.0f;
+constexpr int      kPs3VblankMhz = 59940;
+
+/* RemoMan, the in-engine cutscene player: *0x01B3A28C. Its request
+ * (0x001A1AF0, reached from the Lua RequestRemo) takes the first free of four
+ * slots at +0x28, +0x40, +0x58 and +0x70 (0x18 bytes each) and stores the
+ * cutscene object in the slot's first word; the word is cleared when the
+ * cutscene ends. A cutscene requested during a level load holds its slot
+ * from the load on. */
+constexpr uint32_t kRemoMan      = 0x01B3A28Cu;
+constexpr uint32_t kRemoSlots[]  = {0x28u, 0x40u, 0x58u, 0x70u};
 
 bool s_fps60 = false;
 
+bool cutscene_playing()
+{
+    const uint32_t man = vm_read32(kRemoMan);
+    if (!man) return false;
+    for (uint32_t off : kRemoSlots)
+        if (vm_read32(man + off)) return true;
+    return false;
+}
+
 void fps_on_flip_request()
 {
-    static bool mode_set = false;
-    if (!mode_set) {
-        const uint32_t obj = vm_read32(kFlipModeObj);
-        if (obj) {
-            vm_write8(obj + kFlipMode60, s_fps60 ? 1 : 0);
-            vm_write8(obj + kFlipNoSkip, 1);
-            mode_set = true;
-            fprintf(stderr, "[des] DES_FPS: FlipMode %s set on 0x%08X\n",
-                    s_fps60 ? "60FPS(NO SKIP)" : "30FPS(NO SKIP)", obj);
-        }
-    }
     using clock = std::chrono::steady_clock;
+    static bool mode_set = false;
+    static bool in_cutscene = false;
+    const uint32_t obj = vm_read32(kFlipModeObj);
+    if (!mode_set && obj) {
+        vm_write8(obj + kFlipMode60, s_fps60 ? 1 : 0);
+        vm_write8(obj + kFlipNoSkip, 1);
+        mode_set = true;
+        fprintf(stderr, "[des] DES_FPS: FlipMode %s set on 0x%08X\n",
+                s_fps60 ? "60FPS(NO SKIP)" : "30FPS(NO SKIP)", obj);
+    }
+    /* A cutscene plays as the game ships it: 30 mode on the PS3's vblank, so
+     * it flips every other vblank, and a fixed 1/30 step. RemoMan steps its
+     * positions at 30 Hz while animation follows the frame step, so any
+     * faster and a cutscene judders. The vblank goes back to VBLANK_MHZ
+     * (DES_FPS above 60 raises it) when the cutscene ends. */
+    const bool cut = s_fps60 && mode_set && cutscene_playing();
+    if (cut != in_cutscene) {
+        in_cutscene = cut;
+        vm_write8(obj + kFlipMode60, cut ? 0 : 1);
+        ps3_vblank_set_mhz(cut ? kPs3VblankMhz : 0);
+        fprintf(stderr, "[des] DES_FPS: %s\n",
+                cut ? "cutscene, 30 fps" : "cutscene over, unlocked again");
+    }
     static clock::time_point last;
     const clock::time_point now = clock::now();
-    if (last != clock::time_point()) {
-        float dt = std::chrono::duration<float>(now - last).count();
+    float dt = kCutsceneDt;
+    if (!cut && last != clock::time_point()) {
+        dt = std::chrono::duration<float>(now - last).count();
         if (dt > kMaxFrameDt) dt = kMaxFrameDt;
-        uint32_t bits;
-        memcpy(&bits, &dt, 4);
-        vm_write32(kFrameDt, bits);
     }
+    uint32_t bits;
+    memcpy(&bits, &dt, 4);
+    vm_write32(kFrameDt, bits);
     last = now;
 }
 

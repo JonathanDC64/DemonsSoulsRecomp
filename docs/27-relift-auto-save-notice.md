@@ -47,7 +47,7 @@ It also makes `addi` a full 64-bit add, sets `ctx->lr` at call sites, and adds r
 ```
 python ps3recomp/tools/ppu_lifter.py work/game/EBOOT.ELF \
   --functions work/loader/EBOOT.functions.json --hle-stubs work/loader/EBOOT.imports.json \
-  --override-funcs "0x167AC88=ds_malloc,0x167AC58=ds_free" --shadow-stack \
+  --override-funcs "0x167AC88=ds_malloc,0x167AC58=ds_free,0x273D38=des_move_post" --shadow-stack \
   --output work/recomp -j 16
 cp <previous lift>/hle_nid_table.cpp* work/recomp/     # the generated NID table
 python scripts/apply_boot_patches.py work/recomp

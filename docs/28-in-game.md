@@ -791,6 +791,49 @@ The same save's level now starts loading at 15.2 s instead of 32.5 s, and runs n
 
 RPCS3's "Skip Intro Videos" patch for BLUS30443 (GalCiv) writes `li r0,3; stw r0,0x100(r28)` at 0x008EEF78: every logo's `m_animState` goes straight to 3 (wait for the fade-out). `DES_SKIP_INTRO` jumps to the last logo and skips its hold instead, so one fade-in and fade-out still play, about 2 s more.
 
+## 60 fps mode: runtime cost on the HighGraphics ring (ps3recomp branch `perf/spu-regions`, 2026-10-16)
+
+All numbers are from `DES_FPS=60` at the user's deep Palace save, unattended (`RSX_PRESENT=0`). A/Bs toggle a live knob in one run in ABBAAB order, 8 s windows. Builds are compared by alternating runs of two exes (`DES_EXE`). Run-to-run spread is about 0.1 fps when alternated, and up to 2 fps between unrelated runs, so only same-run or alternated comparisons count.
+
+**Fixed.**
+- **Guest loads** (`881a716`): `vm_read8/16/32/64` ran every read diagnostic on every guest load (13% of HighGraphics). They now take a gated fast path and fall back to `*_full` only for special addresses or while a read diagnostic is set. 33.9 -> 35.2 fps. `VM_READ_FULL=1` forces the full path; `PPU_HOTREAD=1` brings back the `[HOTREAD]` detector.
+- **Plain DMA and frequent channel writes** (`131e636`): plain GET/PUT skip `mfc_submit`'s diagnostics, and `spu_wrch` answers the command, tag-update, event-mask and event-ack writes itself. 34.1 -> 37.7 fps. `SPU_MFC_FULL=1` takes the full path. The 256-identical-transfers halt (`SPU_DMA_REPEAT_LIMIT`) is one counter shared by both paths. Kept apart, the lean path's leftovers looked like 256 in a row and halted image 2.
+- **No-op PUTLLCs** (`ab974d5`): image 2 snapshots the ring's put line with GETLLAR and then commits it back unchanged with PUTLLC, ~1.3M times a second (89% of its PUTLLCs). A PUTLLC that would succeed and writes the bytes already there is now answered under the lock-line lock alone: no store, no PPU reservation slot or break, no notify. The runtime's commit hooks (`spu_taskset_line_committed`, the event-flag hook) still run. A first version that skipped them froze the game within seconds: they stand in for the SPURS kernel, and a task left pending by an earlier commit is started on the next one. 35.6 -> 37.2 fps (every B window above every A window), and again 36.6 -> 38.2 on the final build. `SPU_PUTLLC_SAME=0` (live) stores every time. regress ok; a 2.5-minute soak held 37.7-38.1 with no freeze.
+- **Async job threads** (`cfae5d2`): each async SPU job (~650 a second: Havok image 7, image 10, images 3-6) used to get its own CreateThread. Finished workers now park and take the next job. A dispatch with no idle worker still creates a thread, so no job waits for another. In the idle view the frame rate is unchanged. It is aimed at bursts like breaking objects, which have not been measured. `SPU_ASYNC_POOL=0` (live) goes back to a thread per job.
+
+**The ring.** HighGraphics writes 16-byte commands into a ring, and image 2 (`spu_0001_at_0176C200`) turns them into RSX commands:
+- HighGraphics stores the put pointer (0x01B51080) once per command, about 1.45M plain stores a second (FUN_00acafa8 and its siblings; `SPU_HIST_LINE=01B51080` plus `spuhist` shows them: `s img=4 ... c=0x45A8AB00, AB10, AB20...`).
+- The get pointer is on the line before it (0x01B51000).
+- Every put store goes through the lock-line lock and kills image 2's reservation, so many of image 2's PUTLLCs fail (`F` in `spuhist`) and retry.
+- Image 2 runs 2.3M GETLLARs, 3.1M DMAs and 5M slow-path channel writes a second, all its atomics from one site (pc 0x4818, `SPU_LLAR_HIST=2`), and is 90-95% busy.
+- HighGraphics waits 41% of its time in `usleep(30)` polls, about 3,100 a second (averaging 134 us), for the reply to command 0x9023.
+
+**Where the frame goes.**
+- Present intervals are continuous from 23 to 32 ms (median ~26.5), not stepped at 16.7/33.3, so the vblank is not what limits it.
+- Causal test (`SPU_SLOW_GETLLAR=2:100`, 100 ns more per image-2 GETLLAR, about 20% more of its time): 36.5 -> 32.6 fps. Image 2 is on the critical path, but only about half of its extra time shows up in the frame.
+- Per ring command image 2 spends ~0.65 us. 60 fps would need ~0.43 us, and the lifted guest code alone is about 55% of its time (the rest: lock-line lock ~15%, channel and MFC code, the PPU reservation hooks, the taskset commit check).
+
+**Tried, no gain** (same-run or alternated A/B):
+- Per-line PUT locking: a PUT over a reserved line copied each line under its own hold, instead of the whole span under one. fps unchanged; image 2's lock waits unchanged.
+- Notify filter: a compact per-slot tag of each context's reserved line, so a notify only reads the matching context. Image 2's lock waits fell from 14% to 11% of its time; fps unchanged.
+- HighGraphics and image 2 pinned to one core's two SMT threads (console `affin`): 32.7 fps, against 35.7 on two cores and 36.5 unpinned.
+- `usleep` spinning on `pause` instead of `SwitchToThread`, and never switching to the timer after 64 back-to-back polls: unchanged. HighGraphics' wake-up latency after the reply is not what limits the frame.
+- Skipping PPU stores of the bytes already in a reserved line: none of HighGraphics' ring stores are identical.
+- `/GS-` for the lifted SPU code (no stack cookie in the region prologues): 38.4 against 38.7.
+- From the session before: `USLEEP_SPIN=1`, padding `spu_context`'s cross-thread fields, gating the MFC atomic diagnostics behind one flag, moving the WWS LS probe behind a knob, a seqlock GETLLAR, a lock-free `vm_write` fast path (it froze one load).
+
+**Tools** (`1cb2346`, `da7030d`):
+- `SPU_LOCKLINE_STATS=1` also names the holders a thread waited behind and for how long.
+- `PPU_COH_HIST=1` lists the lines whose PPU stores took the lock-line lock, with the thread and lr.
+- `SPU_RATE=<img>` gains `polling=N%` (re-reading an unchanged line) and `putllc=N (same N)`.
+- `SPU_SLOW_GETLLAR=<img>:<ns>` is the causal test above.
+- Console: `profrip <tid> [s]` adds the hottest instruction addresses to `prof`; `affin <tid> <hexmask>` pins a host thread (0 = back to the process mask).
+
+**Next.**
+- Faster lifted SPU code for image 2 (keeping SPU registers in host registers within a region, cheaper LS access).
+- Fewer runtime calls per command: the PPU reservation enter/break/leave hooks and `spu_taskset_line_committed` run on every image-2 commit, and each walks a list.
+- If image 2 gets much faster, the render thread (77% busy in the FIFO walker and vertex uploads) is next in line.
+
 ## Still open
 
 - **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Heaviest Palace view: 13-14% skip frames since `099343f` (was 29%). Still: no side-by-side check against RPCS3 at the same spot yet.

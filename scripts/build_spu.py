@@ -42,6 +42,17 @@ NATIVE_HOOKS = {
 }
 
 
+# Images lifted with spu_lifter.py --regions: the functions between two call
+# targets become one C body, so a direct branch among them is a goto rather than
+# a trampoline hop. Same entries and semantics; much less per-branch overhead.
+REGIONS = {
+    # HighGraphics' ring consumer (SPURS image 2): ~20 million hops a second.
+    "spu_0001_at_0176C200",
+    # The audio mixer's raw SPU thread: its resampling loops.
+    "spu_0010_at_01818080",
+}
+
+
 def be16(b, o): return (b[o] << 8) | b[o + 1]
 def be32(b, o): return (b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]
 
@@ -99,6 +110,7 @@ def main():
                     hooks = []
             r = subprocess.run([sys.executable, LIFTER, "--auto-functions", f,
                                 "--symbol-prefix", img + "_", "-o", out] +
+                               (["--regions"] if img in REGIONS else []) +
                                [a for h in hooks for a in ("--native-hook", h)],
                                capture_output=True, text=True)
             if r.returncode != 0:

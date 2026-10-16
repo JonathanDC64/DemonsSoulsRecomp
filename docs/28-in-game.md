@@ -714,6 +714,26 @@ Repeat runs of the final build: 13.1% and 14.3% skip frames, 1% low ~18-19 fps. 
 **Tried, no gain.**
 - **Polling `put` before the FIFO walker's idle wait** (`FIFO_SPIN_US`, not committed): image 2 writes the RSX `put` by DMA and never kicks the walker, so each idle wait (1 ms) looked like latency in the chain. Spinning 500 us first made it worse: 22-23% skip frames against 13-14% (two runs each). The walker's wake-up latency is not the gate, and a spinning thread costs the others.
 
+## Level loading (ps3recomp branch `perf/palace-fps`, 2026-10-15)
+
+Loading the Palace save took ~20.5 s from the level load starting (the first `luabnd` read) to the level being drawn. Each DCX file is inflated by an SPU task (image 1, `spu_0000_at_01760280`, Edge zlib) that Core.Res.Decompressor feeds one 64 KB block at a time through libsre's `cellSpursQueuePush` (8A85674D, lifted).
+
+**Fixed.**
+- **Signals from the PPU** (`cb9de16`, `SPU_PPU_SIGNAL_WAKE`, live, default 1): the lifted `cellSpursQueuePush` signals the task with an lwarx/stwcx. on the taskset's signalled bitset, not through our `cellSpursSendSignal`. Nothing woke the task parked in WAIT_SIGNAL, so it saw each block only when another signal broadcast the condition variable: the audio mixer's, about every 10 ms. `ppu_stwcx32`/`ppu_stdcx64` now check a 256-way filter of the lines holding a parked task's bitset and wake the parked tasks on a hit.
+- **Host inflate** (`35dca92`, `SPU_NATIVE_INFLATE`, live, default 1): the lifted inflate took ~3.5 ms a block. `spu_lifter.py --native-hook ADDR=SYMBOL` makes a lifted function call a host function first, and `scripts/build_spu.py` (`NATIVE_HOOKS`) hooks image 1's inflate wrapper at 0x8700 to `spu_hook_inflate_ls` (runtime/spu/spu_inflate.c, ~0.19 ms a block). It handles only a stream that ends with exactly the requested size and hands anything else to the lifted code. The hook is applied only to the image fingerprint it was written for. Every compressed segment in the game's DCX files (47,210, 3.0 GB out) decodes to zlib's bytes. After pulling this, run `python scripts/build_spu.py` to re-lift (only image 1 changes).
+
+Palace save, wall seconds from launch (`loadtime.sh`-style runs: window, level load starts, level drawn with 200+ draws):
+
+| Build | level load starts | level drawn | load |
+|---|---|---|---|
+| before | 38.8 | 59.3 | ~20.5 s |
+| + PPU signal wake | 32.1 | 41.2 | ~9-10 s |
+| + host inflate (`SPU_NATIVE_INFLATE=0` -> 1) | 34.6 -> 33.2 | 44.7 -> 37.3 | 10.1 -> 4.1 s |
+
+The level-load start moves with the harness's menu presses (one every 2 s; the game sits at ~0.8 core in the menus), not with loading. With both fixes the level's file reads finish ~1.9 s after the load starts; the rest is the renderer ramping up. `regress.sh` shots match in content; the camera in `s3_turn` differs from the Oct 14 good set because the scripted turn now lands at a different moment.
+
+**Tried, no gain.** The resource cache thread (Core.Res.CacheDeviceHandler) polls an lwmutex in a loop (~370k lock/unlock pairs during a load). Replacing the lwmutex's kernel semaphore with a WaitOnAddress lock word cut that cost, but the load was not faster (9.9 s with it, 9.0 and 9.6 s without); the thread is not on the load's critical path.
+
 ## Still open
 
 - **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Heaviest Palace view: 13-14% skip frames since `099343f` (was 29%). Still: no side-by-side check against RPCS3 at the same spot yet.

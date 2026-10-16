@@ -201,6 +201,59 @@ bool player_pos(float* x, float* y, float* z, int* stamina, float* speed)
  * of the player's ground speed and the sum of steps against real time. F8
  * writes a MARK line, so a player can tag the moment something looks wrong. */
 FILE* s_framelog = nullptr;
+char s_framelog_path[260];
+
+/* Snapshot the player's movement state for a frame log: the movement object
+ * (*(chr + 0x20)), its animator (*(mv + 8): a count, then an array of 0x58-byte
+ * animation controls), and one level of heap pointers out of each. Records are
+ * [u32 guest address][u32 length][bytes], big-endian as in guest memory. */
+void movement_dump(const char* kind, double ms)
+{
+    static int n = 0;
+    if (n >= 40) return;
+    uint32_t chr = vm_read32(kChrMan);
+    if (!guest_ptr_ok(chr) || !guest_ptr_ok(chr = vm_read32(chr + 0x1BC))) return;
+    const uint32_t mv = vm_read32(chr + 0x20);
+    if (!guest_ptr_ok(mv)) return;
+    const uint32_t anim = vm_read32(mv + 8);
+    uint32_t regions[96][2]; int nr = 0;
+    auto add = [&](uint32_t a, uint32_t len) {
+        if (!guest_ptr_ok(a) || nr >= 96) return;
+        for (int i = 0; i < nr; i++) if (regions[i][0] == a) return;
+        regions[nr][0] = a; regions[nr][1] = len; nr++;
+    };
+    add(chr, 0x1000); add(mv, 0x400);
+    uint32_t count = 0, ctrls = 0;
+    if (guest_ptr_ok(anim)) {
+        add(anim, 0x100);
+        count = vm_read32(anim); ctrls = vm_read32(anim + 4);
+        if (count > 32) count = 32;
+        if (count) add(ctrls, count * 0x58);
+    }
+    const int first = nr;   /* follow pointers out of mv, the animator and the controls */
+    for (int r = 1; r < first; r++)
+        for (uint32_t o = 0; o < regions[r][1]; o += 4) {
+            const uint32_t q = vm_read32(regions[r][0] + o);
+            if (q >= 0x30000000u) add(q & ~0xFu, 0x100);
+        }
+    char path[300];
+    snprintf(path, sizeof path, "%s.dump%02d_%s.bin", s_framelog_path, n, kind);
+    FILE* f = fopen(path, "wb");
+    if (!f) return;
+    auto put = [&](uint32_t v) {
+        const unsigned char b[4] = {(unsigned char)(v >> 24), (unsigned char)(v >> 16),
+                                    (unsigned char)(v >> 8), (unsigned char)v};
+        fwrite(b, 1, 4, f);
+    };
+    for (int i = 0; i < nr; i++) {
+        put(regions[i][0]); put(regions[i][1]);
+        for (uint32_t o = 0; o < regions[i][1]; o += 4) put(vm_read32(regions[i][0] + o));
+    }
+    fclose(f);
+    fprintf(s_framelog, "DUMP %d %s %.1f chr %08X mv %08X anim %08X controls %u at %08X\n",
+            n, kind, ms, chr, mv, anim, count, ctrls);
+    n++;
+}
 
 void frame_log()
 {
@@ -229,10 +282,25 @@ void frame_log()
         const float d = std::sqrt((x - px) * (x - px) + (z - pz) * (z - pz));
         if (d < 5.0f) win_dist += d;   /* a warp or respawn is not running */
     }
+    /* A dash that covers half the ground the game asks for (the 120 fps run
+     * speed bug) and one that covers all of it: snapshot each once per dash. */
+    static int slow_run = 0, full_run = 0;
+    static bool slow_done = false, full_done = false;
+    if (pos && have_pos && want > 5.0f && dt > 0.0f) {
+        const float d = std::sqrt((x - px) * (x - px) + (z - pz) * (z - pz));
+        const float r = d / (want * dt);
+        slow_run = (r > 0.4f && r < 0.6f) ? slow_run + 1 : 0;
+        full_run = (r > 0.9f && r < 1.1f) ? full_run + 1 : 0;
+        if (slow_run == 60 && !slow_done) { slow_done = true; movement_dump("slow", ms); }
+        static int full_dumps = 0;   /* leave room for the slow ones */
+        if (full_run == 60 && !full_done && full_dumps < 8) { full_done = true; full_dumps++; movement_dump("full", ms); }
+    } else if (want < 4.0f) {
+        slow_run = full_run = 0; slow_done = full_done = false;
+    }
     have_pos = pos; px = x; pz = z;
     win_dt += dt; win_n++;
     const bool f8 = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
-    if (f8 && !f8_down) fprintf(s_framelog, "MARK %.1f\n", ms);
+    if (f8 && !f8_down) { fprintf(s_framelog, "MARK %.1f\n", ms); movement_dump("mark", ms); }
     f8_down = f8;
     if (ms - win_ms >= 500.0) {
         const double s = (ms - win_ms) / 1000.0;
@@ -306,6 +374,7 @@ extern "C" void ps3_title_options_init(void)
     }
     if (const char* f = getenv("DES_FRAMELOG")) {
         if (*f && (s_framelog = fopen(f, "w")) != nullptr) {
+            snprintf(s_framelog_path, sizeof s_framelog_path, "%s", f);
             fprintf(s_framelog, "# t_ms interval_ms step_ms cutscene pad buttons lstick reads empty [x y z stamina want_m/s]; SUM t fps speed m/s game/real; MARK t (F8)\n");
             g_gcm_flip_request_hook = on_flip_request;
             fprintf(stderr, "[des] DES_FRAMELOG: %s (F8 marks)\n", f);

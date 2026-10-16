@@ -683,9 +683,40 @@ Soak with the fix: 40 loads of the Palace save with no freeze and no other stall
 
 The catcher logs them as "other stall" and keeps going.
 
+## Palace frame rate: the render thread's vertex uploads (ps3recomp branch `perf/palace-fps`, 2026-10-15)
+
+The heaviest Palace view (the save's spawn point, ~6,470 draws) presented every ~43 ms (median), and 29% of presents were skip frames (the game's 15 fps mode). A profile of the FIFO/render thread had it ~94% busy, nearly all of it writing VP vertex uploads: a frame fetched ~565k vertices and, with strips expanded to lists, wrote ~1.43M vertices of 256 bytes (~350 MB) to the upload heap. HighGraphics polls a label that thread writes before every flip, so its speed was on the frame's critical path.
+
+**Fixed.**
+- **Indexed strips** (`89ceb2c`, `VP_INDEXED`, live, default 1): strips and fans write each vertex once plus a u32 index list into a double-buffered index buffer, and draw with `DrawIndexedInstanced`. ~350 -> ~150 MB a frame. A draw that would not fit takes the old list path.
+- **Shared vertex-constant banks** (`89ceb2c`, `VP_CB_REUSE`, live, default 1): a draw whose vertex constants and viewport z match the last 8 KB bank written this frame binds that bank instead of copying its own. `rsx_state.vertex_constants_gen` counts constant writes.
+- **Constant template**: each vertex writes only the components its arrays supply on top of the draw's constants (`rsx_fetch_vertex_arrays`), instead of copying 256 bytes first.
+- **Fetch threads** (`099343f`, `VP_FETCH_THREADS=<n>`, read once; default a quarter of the logical CPUs, at most 4; 0 = off): the FIFO thread walks a strip's indices and queues the vertices; worker threads fetch and convert them. Draws with an array type the plan does not convert itself, and the debug knobs `RSX_LATE_CHECK`, `RSX_DBG_VTX` and `VTX_POS`, keep the inline path. A queued vertex is read from guest memory later than the FIFO reached its draw, so the queue is drained (the FIFO thread helps) before anything the title can see: labels and reports (`g_rsx_sync_hook`, called from `rsx_process_method`), NV406E semaphores, the reference, user commands, flips, the 2D engine, `get`, and the frame's render.
+
+Palace spawn view, same save, 15 s profile sessions:
+
+| Build | median interval | skip frames | over 36.3 ms | render thread busy |
+|---|---|---|---|---|
+| master (`VP_INDEXED=0`) | 43.1 ms | 29.3% | | ~94% |
+| indexed | 38.5 ms | 18.5% | | |
+| + shared banks + template | 35.6 ms | 16.7% | | ~81% |
+| + fetch threads (`VP_FETCH_THREADS=0` -> 4) | 35.5 -> 34.0 ms | 14.5% -> 13.3% | 190 -> 119 | 78% -> 47% |
+
+Repeat runs of the final build: 13.1% and 14.3% skip frames, 1% low ~18-19 fps. The first run after a rebuild came out at 49% once, so one run is not enough for an A/B. `regress.sh`: no visual change.
+
+**Tools.**
+- `VP_VSTAT=<N>` (live, `de5aa7a`): every N frames, the vertices fetched from guest memory, the vertices written to the upload heap (and MB), the mean enabled-attribute count per fetch, and the indexed uploads by primitive.
+
+**What limits it now.** The render thread waits ~40% of the time. HighGraphics waits ~47% (35% in the ring-space semaphore, 12% in usleep), and its busy time is about half guest-memory accessor hooks. Image 2 (the HighGraphics ring consumer) is ~80% busy:
+- All of its atomics are on the ring's one 128-byte line (0x01B51080): ~660k GETLLAR+PUTLLC pops a second (pc 0x04618/0x04694) and ~770k empty polls (pc 0x05120, followed by the idle wait).
+- Its busy time is spread across the runtime's channel, MFC and lock-line code (`spu_wrch_full` ~51% inclusive, `spu_lockline_lock` 9.5%, `spu_step_check` 4.4%, `mfc_do_transfer` 4.1%), with no single hot spot.
+
+**Tried, no gain.**
+- **Polling `put` before the FIFO walker's idle wait** (`FIFO_SPIN_US`, not committed): image 2 writes the RSX `put` by DMA and never kicks the walker, so each idle wait (1 ms) looked like latency in the chain. Spinning 500 us first made it worse: 22-23% skip frames against 13-14% (two runs each). The walker's wake-up latency is not the gate, and a spinning thread costs the others.
+
 ## Still open
 
-- **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Still: no side-by-side check against RPCS3 at the same spot yet.
+- **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Heaviest Palace view: 13-14% skip frames since `099343f` (was 29%). Still: no side-by-side check against RPCS3 at the same spot yet.
 - The SCREENTEX hack: narrowed to samplers over empty guest memory (`ee40816`).
 - The "intermittent stall early in the boot" was the test harness (port `fde7885`). Caught live on try 11 of 11 (`waits`/`gstacks`): main was polling the pad at the auto-save notice and no button was ever pressed. Another thread's log write had landed inside the "GetData polling begins" line (`[cellPad] G[THREAD 22] unwound ...`), and desprobe waited for that exact line. It now also accepts `[cellPad] PAD_FILE=`.
 - Logo fades and loading-screen seams.

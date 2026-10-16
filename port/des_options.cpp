@@ -20,7 +20,7 @@
  *   game still plays the last logo's fade-in and fade-out and takes its own exit
  *   path, so nothing downstream sees a state it would not see on hardware.
  *
- * DES_FPS=60 | 30 — the game's own frame-rate mode, with real frame time.
+ * DES_FPS=30 | 60 | 61..240 — the game's own frame-rate mode, with real frame time.
  *   The engine object at *0x01AD6298 (built by 0x00025DD8) holds a flip mode
  *   its debug menu shows as text (0x000290A8): +0x6ED 0 is "FlipMode 30FPS"
  *   (the default: when a frame runs late it draws a near-empty one, the skip
@@ -31,8 +31,17 @@
  *   is rewritten every frame with the time since the previous flip request,
  *   capped at 50 ms so a long frame slows the game instead of jumping it.
  *   RPCS3's "Unlock FPS" patch (Gibbed, Whatcookie) changes the same two
- *   things in the code; here the code is left alone. Above 60 the frame limit
- *   is the vblank: VBLANK_MHZ=120000 lets 60 mode run up to 120.
+ *   things in the code; here the code is left alone. 60 mode flips at most
+ *   once a vblank, so the vblank is the frame limit: DES_FPS=<n> above 60
+ *   sets 60 mode and a vblank of n Hz (VBLANK_MHZ, unless that is set
+ *   already), a cap of n, and presents that do not wait for the display's
+ *   refresh (RSX_VSYNC=0, unless set). Movies keep their speed (cellSail
+ *   hands out the frame that is due by the clock), and the game advances by
+ *   real time: the regress walk ends in the same place at ~66 fps as at 30.
+ *   Not the in-engine cutscenes (RemoMan): their positions step at 30 Hz
+ *   while animation follows the frame time, so above 30 a cutscene judders,
+ *   a 2-frame back-and-forth at 60 and a 4-frame sawtooth at 120 (the
+ *   tutorial arrival; the default mode is smooth).
  *
  * DES_AUTO_CONTINUE=1 — press through the boot menus into the last save.
  *   From the first pad poll it taps CROSS, CROSS, START in a 600 ms cycle:
@@ -42,6 +51,7 @@
  *   good when the level's script archive (script/m*.luabnd) opens.
  */
 #include "ppu_recomp.h"
+#include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -158,12 +168,22 @@ extern "C" void ps3_title_options_init(void)
     }
     if (const char* f = getenv("DES_FPS")) {
         const int fps = atoi(f);
-        if (fps == 60 || fps == 30) {
-            s_fps60 = fps == 60;
+        if (fps == 60 || fps == 30 || (fps > 60 && fps <= 240)) {
+            s_fps60 = fps >= 60;
             g_gcm_flip_request_hook = fps_on_flip_request;
-            fprintf(stderr, "[des] DES_FPS=%d: real frame time, no skip frames\n", fps);
+            /* Before the vblank clock starts: boot_main reads the rate once.
+             * Presents stop waiting for the display's refresh too (RSX_VSYNC),
+             * or a 60 Hz desktop holds the game to 60 whatever the vblank. */
+            if (fps > 60) {
+                char v[16];
+                snprintf(v, sizeof v, "%d", fps * 1000);
+                if (!getenv("VBLANK_MHZ")) ps3_setenv("VBLANK_MHZ", v);
+                if (!getenv("RSX_VSYNC"))  ps3_setenv("RSX_VSYNC", "0");
+            }
+            fprintf(stderr, "[des] DES_FPS=%d: real frame time, no skip frames%s\n", fps,
+                    fps > 60 ? ", vblank at the cap" : "");
         } else if (*f) {
-            fprintf(stderr, "[des] DES_FPS=%s ignored (60 or 30)\n", f);
+            fprintf(stderr, "[des] DES_FPS=%s ignored (30, 60, or 61-240)\n", f);
         }
     }
     if (env_on("DES_AUTO_CONTINUE")) {

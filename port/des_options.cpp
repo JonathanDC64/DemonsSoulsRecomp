@@ -19,14 +19,30 @@
  *   made the last one, and the hold of state 2 is treated as already over. The
  *   game still plays the last logo's fade-in and fade-out and takes its own exit
  *   path, so nothing downstream sees a state it would not see on hardware.
+ *
+ * DES_FPS=60 | 30 — the game's own frame-rate mode, with real frame time.
+ *   The engine object at *0x01AD6298 (built by 0x00025DD8) holds a flip mode
+ *   its debug menu shows as text (0x000290A8): +0x6ED 0 is "FlipMode 30FPS"
+ *   (the default: when a frame runs late it draws a near-empty one, the skip
+ *   frames), +0x6ED 1 with +0x6EC 0 is "30FPS(NO SKIP)", and both 1 is
+ *   "60FPS(NO SKIP)". The frame update 0x0001B8D0 advances the game by the
+ *   float at 0x018C8DB4, a constant 1/30, and nothing else reads it.
+ *   With the option on, the mode is set once the object exists and that float
+ *   is rewritten every frame with the time since the previous flip request,
+ *   capped at 50 ms so a long frame slows the game instead of jumping it.
+ *   RPCS3's "Unlock FPS" patch (Gibbed, Whatcookie) changes the same two
+ *   things in the code; here the code is left alone. Above 60 the frame limit
+ *   is the vblank: VBLANK_MHZ=120000 lets 60 mode run up to 120.
  */
 #include "ppu_recomp.h"
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 extern "C" void ppu_register_function(uint64_t addr, void (*fn)(ppu_context*));
+extern "C" void (*g_gcm_flip_request_hook)(void);
 
 namespace {
 
@@ -66,6 +82,40 @@ void logo_update_skip(ppu_context* ctx)
     func_008EF430(ctx);   /* the game's own update does the rest */
 }
 
+constexpr uint32_t kFlipModeObj  = 0x01AD6298u;   /* -> engine object */
+constexpr uint32_t kFlipMode60   = 0x6ECu;
+constexpr uint32_t kFlipNoSkip   = 0x6EDu;
+constexpr uint32_t kFrameDt      = 0x018C8DB4u;   /* float, seconds */
+constexpr float    kMaxFrameDt   = 0.05f;
+
+bool s_fps60 = false;
+
+void fps_on_flip_request()
+{
+    static bool mode_set = false;
+    if (!mode_set) {
+        const uint32_t obj = vm_read32(kFlipModeObj);
+        if (obj) {
+            vm_write8(obj + kFlipMode60, s_fps60 ? 1 : 0);
+            vm_write8(obj + kFlipNoSkip, 1);
+            mode_set = true;
+            fprintf(stderr, "[des] DES_FPS: FlipMode %s set on 0x%08X\n",
+                    s_fps60 ? "60FPS(NO SKIP)" : "30FPS(NO SKIP)", obj);
+        }
+    }
+    using clock = std::chrono::steady_clock;
+    static clock::time_point last;
+    const clock::time_point now = clock::now();
+    if (last != clock::time_point()) {
+        float dt = std::chrono::duration<float>(now - last).count();
+        if (dt > kMaxFrameDt) dt = kMaxFrameDt;
+        uint32_t bits;
+        memcpy(&bits, &dt, 4);
+        vm_write32(kFrameDt, bits);
+    }
+    last = now;
+}
+
 } // namespace
 
 extern "C" void ps3_title_options_init(void)
@@ -73,5 +123,15 @@ extern "C" void ps3_title_options_init(void)
     if (env_on("DES_SKIP_INTRO")) {
         ppu_register_function(kLogoUpdate, logo_update_skip);
         fprintf(stderr, "[des] DES_SKIP_INTRO: boot logos shortened\n");
+    }
+    if (const char* f = getenv("DES_FPS")) {
+        const int fps = atoi(f);
+        if (fps == 60 || fps == 30) {
+            s_fps60 = fps == 60;
+            g_gcm_flip_request_hook = fps_on_flip_request;
+            fprintf(stderr, "[des] DES_FPS=%d: real frame time, no skip frames\n", fps);
+        } else if (*f) {
+            fprintf(stderr, "[des] DES_FPS=%s ignored (60 or 30)\n", f);
+        }
     }
 }

@@ -10,8 +10,18 @@
 DES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [ -f "$DES_ROOT/tools/des/local.env" ] && . "$DES_ROOT/tools/des/local.env"
 DES_SCRATCH="${DES_SCRATCH:-$DES_ROOT/work/tmp}"; mkdir -p "$DES_SCRATCH"
-DES_PIDFILE="$(cygpath -m "$DES_SCRATCH" 2>/dev/null || echo "$DES_SCRATCH")/des_boot.pids"
-DES_STAGED_MARK=".des_staged"   # beside each staged des_boot.exe (des_stage_exe)
+# A play session (play.sh sets DES_KIND=play) stages into its own directory
+# with its own pid file and marker, so a test run's des_kill_own never takes
+# down the game the user is playing. A play session still clears leftover test
+# runs and its own previous session.
+if [ "${DES_KIND:-test}" = play ]; then
+  DES_PIDFILE="$(cygpath -m "$DES_SCRATCH" 2>/dev/null || echo "$DES_SCRATCH")/des_boot_play.pids"
+  DES_BIN="$DES_SCRATCH/play_bin"; DES_OWN_MARK=".des_play"
+else
+  DES_PIDFILE="$(cygpath -m "$DES_SCRATCH" 2>/dev/null || echo "$DES_SCRATCH")/des_boot.pids"
+  DES_BIN="$DES_SCRATCH/bin"; DES_OWN_MARK=".des_staged"
+fi
+DES_STAGED_MARK=".des_staged"   # beside each test run's staged des_boot.exe
 
 des_env_defaults() {
   export PS3_VFS_ROOT="${PS3_VFS_ROOT:-$DES_ROOT/work/disc}"
@@ -50,17 +60,18 @@ des_env_defaults() {
 }
 
 # des_stage_exe: copy the game binary (DES_EXE, default port/build/des_boot.exe)
-# with its .pdb/.map and any DLLs beside it into $DES_SCRATCH/bin, and print
-# the copy's path. Runs launch the copy, so the build output is never locked
-# and the next fix can be linked while a test is still running. The copy keeps
+# with its .pdb/.map and any DLLs beside it into $DES_BIN ($DES_SCRATCH/bin, or
+# play_bin for a play session), and print the copy's path. Runs launch the
+# copy, so the build output is never locked and the next fix can be linked
+# while a test is still running. The copy keeps
 # the name des_boot.exe (des_kill_own and des_running match on it). For
-# sym.py against a staged run, pass --map "$DES_SCRATCH/bin/des_boot.map".
+# sym.py against a staged run, pass --map "$DES_BIN/des_boot.map".
 des_stage_exe() {
   local src="${DES_EXE:-$DES_ROOT/port/build/des_boot.exe}"
   local dir; dir="$(dirname "$src")"
-  local bin="$DES_SCRATCH/bin"; mkdir -p "$bin"
+  local bin="$DES_BIN"; mkdir -p "$bin"
   cp -f "$src" "$bin/des_boot.exe" || return 1
-  : > "$bin/$DES_STAGED_MARK"   # des_kill_own: this copy is ours
+  : > "$bin/$DES_OWN_MARK"   # des_kill_own: this copy is ours
   local f
   for f in "${src%.exe}.pdb" "${src%.exe}.map" "$dir"/*.dll; do
     [ -f "$f" ] || continue
@@ -73,9 +84,10 @@ des_stage_exe() {
 
 # Kill only des_boot processes this tooling started; a copy the user launched
 # by hand is left alone. Two sources, so it works from any shell: the pid file
-# of the current DES_SCRATCH, and every running des_boot.exe whose exe has the
-# staging marker beside it (any DES_SCRATCH, including runs started from an
-# earlier shell with a different one). The build output has no marker.
+# of the current DES_SCRATCH and kind, and every running des_boot.exe whose exe
+# has the test-run staging marker beside it (any DES_SCRATCH, including runs
+# started from an earlier shell with a different one). The build output and a
+# play session's copy have no test-run marker.
 des_kill_own() {
   local pid exe
   if [ -f "$DES_PIDFILE" ]; then

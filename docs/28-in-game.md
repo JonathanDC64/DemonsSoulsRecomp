@@ -869,6 +869,49 @@ All numbers are from `DES_FPS=60` at the user's deep Palace save, unattended (`R
 - Fewer runtime calls per command: the PPU reservation enter/break/leave hooks and `spu_taskset_line_committed` run on every image-2 commit, and each walks a list.
 - If image 2 gets much faster, the render thread (77% busy in the FIFO walker and vertex uploads) is next in line.
 
+## Nexus freeze: a lifted lwarx took its reservation late (ps3recomp `a72bac3`, 2026-10-16)
+
+The user hit a freeze in the Nexus at `DES_FPS=120`: the picture stopped, the music played on, and the title bar still read 120 fps and 385 draws.
+
+**Signature** (read from the live process; nothing in the log):
+- HighGraphics (tid 4, lr 0x014C3CB8) was asleep in libsre's `cellSpursQueuePopBody` (NID 0x91066667, `libsre_func_30016CFC`) on event queue 18.
+- The queue at 0x47FC5080 held 0xFFFFFE17 in its pop word (488, marked waiting) and 0x1ED in its push word (493). Five records were waiting.
+- Event queue 18 had one waiter and no event. The SPU that pushed them had seen no waiter and sent nothing.
+- MAIN waited on a cond behind HighGraphics. Audio runs in its own taskset, so the music kept going.
+
+**The pop.**
+1. `lwarx` the pop word.
+2. `lwsync`.
+3. Read the push word.
+4. If they are equal, `stwcx.` the complement (waiting) and sleep on the queue.
+
+The SPU push commits the push word with PUTLLC, and sends an event only if the pop word it read was negative. This works on Cell because the push's store to the line kills the PPU's reservation, so step 4 fails and retries. The runtime emulates that: an SPU commit stores the line, fences, then clears the `reserve_addr` of every PPU context reserved on it (`ppu_resv_line_break`).
+
+**Why it failed.** The lifted `lwarx` loaded the word first and stored `reserve_addr` after it, with no fence. Both sides were therefore store-then-load:
+- the PPU stores `reserve_addr`, then reads the push word;
+- the SPU stores the push word, then reads `reserve_addr`.
+
+x86 lets each load pass the store before it, so both could read the old value. The commit found no reservation to break, the PPU read the push word from before the commit, and `stwcx.` succeeded. The guest's `lwsync` does not order a store before a later load. The September libsre lift printed it as `/* sync: no-op */`, which made it look like a full `sync`.
+
+**Fix.**
+- `ppu_lifter.py`: `lwarx`/`ldarx` now store `reserve_addr`, then `PPU_FENCE(seq_cst)`, then load. Hardware takes the reservation and the load as one operation, so the guest's own barriers can't be relied on to cover the gap. `test_ppu_lift.py` checks the order, and fails on the old lifter.
+- libsre re-lifted (`scripts/build_libsre.sh` steps; the old lift is kept beside it as `work/libsre/lifted_sep05_backup`). Besides the fix, the new lift has:
+  - 222 `lwsync` and 93 `eieio` fences that were no-ops;
+  - `lvewx`/`stvewx` aligned and placed in the right lane;
+  - `vpkuhus` and `vmsumshs`, which had been TODO no-ops.
+- EBOOT: only the 31 `lwarx` sites change (chunks 004, 005, 008 and 009). Copy those four from a fresh lift and run `apply_boot_patches.py`.
+
+**Checked.**
+- Regress: all four shots ok.
+- Frame rate: old and new builds alternating, Palace save, `DES_FPS=60 VBLANK_MHZ=120000`, two 8 s windows a run, four runs. Old 61.1 fps, new 62.7: the fence costs nothing measurable.
+- The freeze itself is rare and was not reproduced. The live state above is the case for the fix.
+
+**After pulling.** Re-lift both:
+- libsre: `bash scripts/build_libsre.sh`.
+- EBOOT: the recipe in docs/27.
+
+Then rebuild `des_boot`.
+
 ## Still open
 
 - **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Heaviest Palace view: 13-14% skip frames since `099343f` (was 29%). Still: no side-by-side check against RPCS3 at the same spot yet.

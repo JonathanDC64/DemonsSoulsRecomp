@@ -23,6 +23,11 @@ else
 fi
 DES_STAGED_MARK=".des_staged"   # beside each test run's staged des_boot.exe
 
+# True while the Windows session is at the lock screen (LogonUI is running).
+des_session_locked() {
+  tasklist //FI "IMAGENAME eq LogonUI.exe" //NH 2>/dev/null | grep -qi logonui
+}
+
 des_env_defaults() {
   export PS3_VFS_ROOT="${PS3_VFS_ROOT:-$DES_ROOT/work/disc}"
   # Known-good boot config (docs/25): the LFQueue + SpursQueue families on
@@ -30,6 +35,12 @@ des_env_defaults() {
   export LIBSRE_LLE="${LIBSRE_LLE:-1}"
   export LIBSRE_LLE_ONLY="${LIBSRE_LLE_ONLY:-011EE38B,1656D49F,8A85674D,73E06F91,082BFB09,E5443BE7,039D70B7,91066667}"
   export SPURS_NO_ROUND_NOTIFY="${SPURS_NO_ROUND_NOTIFY:-1}"
+  # Behind the lock screen DWM holds the back buffers and every frame waits on
+  # the GPU (docs/28, unattended runs). A test run checks the lock at launch
+  # and renders without presenting there; set RSX_PRESENT to pin it instead.
+  if [ "${DES_KIND:-test}" != play ] && [ -z "${RSX_PRESENT:-}" ]; then
+    export RSX_PRESENT=$(des_session_locked && echo 0 || echo 1)
+  fi
   # Per-event log lines go through one FILE lock and change the timing being
   # measured (ps3_log.h); runs are quiet unless asked. PS3_VERBOSE=1 restores.
   export PS3_VERBOSE="${PS3_VERBOSE:-0}"

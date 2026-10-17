@@ -14,7 +14,7 @@ The first level is playable, from boot to Boletaria (2026-10):
 - Title screen, character creation, the tutorial, the Nexus and Boletarian Palace 1-1.
 - Lit and textured scenes with shadows, the HUD, particles, light shafts and haze.
 - Saving and loading, ATRAC audio and music, keyboard and DualSense (USB or Bluetooth, over HID).
-- Frame rate: the game's own 30 fps cap by default, and 60 or more with `DES_FPS` (see [Running](#running)). Boletarian Palace runs at about 97-100 fps with the 60 fps mode uncapped (measured with `DES_FPS=60 VBLANK_MHZ=120000`). Shaders are precompiled, so the game never stops to compile one.
+- Frame rate: the game's own 30 fps cap by default, and 60 or more with `DES_FPS` (see [Running](#running)). Boletarian Palace runs at about 105 fps with the 60 fps mode uncapped (measured with `DES_FPS=60 VBLANK_MHZ=120000`). Shaders are precompiled, so the game never stops to compile one.
 
 Known issues:
 
@@ -62,7 +62,7 @@ The build is not yet a single command. The steps, in order:
    cmake --build ps3recomp/build --target ps3recomp_runtime rsx_shader_precompile
    cmake --build port/build --target des_boot --parallel 4
    ```
-   Recompiling the 14 lifted chunks takes about 15 minutes.
+   Recompiling the 14 lifted chunks takes about 15 minutes. The lift keeps a guest call stack for backtraces (`--shadow-stack`), but the build compiles it out, which is about 2% faster; configure the port with `-DDES_SHADOW_STACK=ON` to keep it for `ds_dump_shadow`.
 
 ## Running
 

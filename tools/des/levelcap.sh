@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# levelcap.sh <name> <cmdfile> [ENV...]: boot to the level like regress.sh,
+# settle, then run debug-console commands from <cmdfile>, one per line.
+# "sleep N" and "stick <lx> <ly> <secs>" (hold the left stick there, 0-255
+# with 128 centred, for that long, then wait 2 s) are handled here; every
+# other line goes to the console. Output goes to
+# $DES_SCRATCH/lc_<name>: run.txt (des_boot's log), summary.txt, con(.out).
+#
+#   LC_SAVE     save to play from; default the pinned regression save
+#               (work/tmp/regress/save, see `regress.sh pin-save`). Set it
+#               empty to play from the current save. The current save is
+#               copied aside first and put back when the script exits.
+#   LC_SETTLE   seconds to wait after the level starts loading (default 75)
+#   LC_MAX      run cap in seconds (default 600)
+#   LC_NOPRESS  set to skip pressing through the title and load screens
+#               (DES_AUTO_CONTINUE=1 does that job)
+#   LC_DUMP     CELLMARK screenshot count (default 100000; 0 for none)
+#   LC_EVERY    frames between screenshots (default 30)
+#   DES_EXE     exe to run (desrun.sh; default port/build/des_boot.exe)
+set -uo pipefail
+. "$(dirname "$0")/deslib.sh"
+cd "$DES_ROOT" || exit 1
+NAME=$1; CMDS=$2; shift 2
+RUN="$DES_SCRATCH/lc_$NAME"; rm -rf "$RUN"; mkdir -p "$RUN/shots"; SHOTS="$RUN/shots"
+OUT="$RUN/run.txt"; PAD="$RUN/pad"; CON="$RUN/con"; : > "$PAD"; : > "$OUT"
+SAVE="gamedata/dev_hdd0/home/00000001/savedata"
+LC_SAVE="${LC_SAVE-work/tmp/regress/save}"
+[ -d "$SAVE" ] && cp -r "$SAVE" "$RUN/save"
+if [ -n "$LC_SAVE" ]; then
+  [ -d "$LC_SAVE" ] || { echo "[lc] no save at $LC_SAVE"; exit 2; }
+  rm -rf "$SAVE"; mkdir -p "$(dirname "$SAVE")"; cp -r "$LC_SAVE" "$SAVE"
+fi
+restore() { des_kill_own; if [ -d "$RUN/save" ]; then rm -rf "$SAVE"; cp -r "$RUN/save" "$SAVE"; fi; }
+trap restore EXIT
+tools/des/desrun.sh "${LC_MAX:-600}" "$OUT" DES_SKIP_INTRO=1 \
+  PAD_FILE="$(cygpath -m "$PAD")" PS3_DEBUG="$(cygpath -m "$CON")" PS3_OSK_TEXT=Aldia HLE_FIRST=1 CELLMARK_DUMP=${LC_DUMP:-100000} CELLMARK_DUMP_EVERY=${LC_EVERY:-30} CELLMARK_DUMP_CHANGED=1 CELLMARK_DUMP_MINDRAWS=1 CELLMARK_DUMP_DIR="$(cygpath -m "$SHOTS")" "$@" > "$RUN/summary.txt" 2>&1 &
+t0=$SECONDS; say() { echo "[lc] t=$((SECONDS - t0))s $*"; }
+k=0
+until grep -aq luabnd "$OUT"; do
+  des_running || [ $((SECONDS - t0)) -lt 20 ] || { say "run ended before the level"; exit 2; }
+  [ $((SECONDS - t0)) -lt 400 ] || { say "no level load"; exit 2; }
+  if [ -z "${LC_NOPRESS:-}" ] && grep -aq 'nid=0x8B72CDA1 cellPadGetData' "$OUT" && [ ! -s "$PAD" ]; then
+    k=$((k + 1)); if [ $((k % 3)) = 0 ]; then echo 0x0008 > "$PAD"; else echo 0x4000 > "$PAD"; fi
+  fi
+  sleep 2
+done
+say "level loading"; sleep "${LC_SETTLE:-75}"
+while IFS= read -r c; do
+  c="${c%$'\r'}"; [ -z "$c" ] && continue
+  case "$c" in
+    sleep\ *) sleep "${c#sleep }";;
+    stick\ *) set -- ${c#stick }; des_console "$CON" "setenv PAD_STICK=$1,$2,128,128,0,$3" >/dev/null; sleep "$3"; sleep 2;;
+    *) say "$c"; des_console "$CON" "$c";;
+  esac
+done < "$CMDS"
+say done

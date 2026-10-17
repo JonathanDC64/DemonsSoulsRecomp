@@ -128,12 +128,13 @@ des_running() {
   return 1
 }
 
-# des_console <cmdfile-base> <command>: send one debug-console command and
-# print the reply once it has been written (no fixed sleep; 15 s cap).
+# des_console <cmdfile-base> <command> [cap-secs]: send one debug-console
+# command and print the reply once it has been written (no fixed sleep; the
+# cap defaults to 15 s, longer for commands like `prof <tid> <secs>`).
 des_console() {
   local d="$1" c="$2" i
   rm -f "$d.out"; echo "$c" > "$d"
-  for i in $(seq 1 150); do
+  for i in $(seq 1 $(( ${3:-15} * 10 ))); do
     grep -aq '^\[dbg\] done' "$d.out" 2>/dev/null && break
     sleep 0.1
   done

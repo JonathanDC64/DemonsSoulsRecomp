@@ -39,6 +39,9 @@ NATIVE_HOOKS = {
     # every 64 KB block of a DCX file. Lifted it is ~3.5 ms a block, most of a
     # level load; the host inflate is ~0.2 ms. SPU_NATIVE_INFLATE=0 turns it off.
     "spu_0000_at_01760280": (0x4F421747C0F7966A, ["0x8700=spu_hook_inflate_ls"]),
+    # HighGraphics' ring consumer (image 2): the PUT-and-wait helper it calls
+    # after every ring command to store its state. SPU_NATIVE_PUT=0 turns it off.
+    "spu_0001_at_0176C200": (0x4FBCAB40231BF72B, ["0xC358=spu_hook_put_wait"]),
 }
 
 

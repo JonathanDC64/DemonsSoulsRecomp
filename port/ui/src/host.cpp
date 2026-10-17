@@ -107,6 +107,7 @@ struct State {
     std::unique_ptr<RenderInterface_DX11> renderer;
     Rml::Context* rml = nullptr;
     float ui_scale = 0.0f;
+    HWND hwnd = nullptr;
     bool initialised = false;
 };
 State s;
@@ -241,6 +242,7 @@ bool init(void* d3d12_device, void* d3d12_queue, void* hwnd, int width, int heig
     s.renderer = std::make_unique<RenderInterface_DX11>(s.device);
     s.system = std::make_unique<System>();
     s.system->SetWindow(static_cast<HWND>(hwnd));
+    s.hwnd = static_cast<HWND>(hwnd);
     Rml::SetFileInterface(&s.files);
     Rml::SetSystemInterface(s.system.get());
     Rml::SetRenderInterface(s.renderer.get());
@@ -296,8 +298,14 @@ void set_ui_scale(float scale) { s.ui_scale = std::clamp(scale, 0.0f, 4.0f); }
 void render(void* back_buffer, unsigned index, int width, int height, const char* shot_path) {
     if (!s.initialised) return;
     if (s.rml->GetDimensions() != Rml::Vector2i{width, height}) s.rml->SetDimensions({width, height});
-    // 1 dp = 1 px at 720p (the back buffer is the PS3's 1280x720), times the UI scale setting.
-    s.rml->SetDensityIndependentPixelRatio((s.ui_scale > 0.0f ? s.ui_scale : 1.0f) * float(height) / 720.0f);
+    // Dusklight's (and FFCCEOT-Recomp's) rule: the display's scale (its DPI), times the UI scale setting. The
+    // window's size does not scale the UI: a larger window gives the documents more room, as for any program.
+    using DpiFn = UINT(WINAPI*)(HWND);  // (Windows 10 1607; by name, as the build targets older headers)
+    static const auto get_dpi =
+        reinterpret_cast<DpiFn>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow")));
+    const UINT dpi = s.hwnd && get_dpi ? get_dpi(s.hwnd) : 0;
+    const float display = dpi ? float(dpi) / 96.0f : 1.0f;
+    s.rml->SetDensityIndependentPixelRatio((s.ui_scale > 0.0f ? s.ui_scale : 1.0f) * display);
     s.rml->Update();
     Wrapped* w = wrap(back_buffer, index);
     if (!w) return;

@@ -128,12 +128,17 @@ endif()
 # its running time in the (uninlined) accessor checks. One chunk at /O2 takes
 # ~2 minutes and ~3 GB with clang-cl. -fwrapv: signed overflow in lifted
 # arithmetic (mulld, add on int64_t casts) wraps as the hardware does instead
-# of being undefined to the optimizer. DES_PPU_OPT=OFF goes back to /Od (with
-# chunk 005 /O2).
+# of being undefined to the optimizer. SSE4.1, as for the SPU images below:
+# the lifted VMX code keeps vectors in guest byte order and swaps every lane on
+# each load and store, ~8 SSE2 shuffles per 16 bytes and one pshufb with SSSE3
+# (HighGraphics' VMX culling function: 1,798 -> 1,105 instructions). +1.9% in
+# Boletarian Palace at ~117 fps, where HighGraphics is on the frame's path; at
+# ~67 fps, with HighGraphics waiting 40% of the time, it measured nothing.
+# DES_PPU_OPT=OFF goes back to /Od (with chunk 005 /O2).
 option(DES_PPU_OPT "Build des_boot (lifted PPU code and runtime sources) /O2" ON)
 if(MSVC)   # also true for clang-cl
     if(DES_PPU_OPT)
-        set(DES_OPT_FLAGS /O2 /clang:-fwrapv)
+        set(DES_OPT_FLAGS /O2 /clang:-fwrapv /clang:-msse4.1)
     else()
         set(DES_OPT_FLAGS /Od)
         set_source_files_properties("${RECOMP_DIR}/ppu_recomp_005.cpp"

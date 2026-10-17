@@ -96,6 +96,7 @@ add_executable(des_boot
     "${CMAKE_CURRENT_SOURCE_DIR}/des_heap.cpp"              # clean guest allocator (malloc override)
     "${CMAKE_CURRENT_SOURCE_DIR}/des_options.cpp"           # user options (DES_SKIP_INTRO, ...)
     "${CMAKE_CURRENT_SOURCE_DIR}/des_menu_sfx.cpp"          # UI sounds via the game's menu SE (0x724E40 hook)
+    "${CMAKE_CURRENT_SOURCE_DIR}/des_prework.cpp"           # startup work: the shader cache, behind a progress bar
 )
 
 target_include_directories(des_boot PRIVATE
@@ -103,6 +104,7 @@ target_include_directories(des_boot PRIVATE
     "${RECOMP_DIR}"
     "${PS3RECOMP_DIR}/include"
     "${PS3RECOMP_DIR}/runtime/ppu"
+    "${PS3RECOMP_DIR}/libs/video"          # rsx_shader_precompile.h
 )
 
 # A lift made with --shadow-stack keeps a guest call stack in every lifted

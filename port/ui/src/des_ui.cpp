@@ -15,11 +15,14 @@
 #include "RmlUi_Platform_Win32.h"
 
 #include "app.hpp"
+#include "crash_report.hpp"
 #include "host.hpp"
 #include "input.hpp"
 #include "menu_bar.hpp"
 #include "overlay.hpp"
 #include "prelaunch.hpp"
+#include "prework_modal.hpp"
+#include "report.hpp"
 #include "settings.hpp"
 #include "settings_window.hpp"
 #include "ui.hpp"
@@ -44,6 +47,7 @@ typedef struct rsx_d3d12_overlay {
     void* user;
     int (*wndproc)(void* user, void* hwnd, unsigned msg, unsigned long long wp, long long lp, long long* result);
     void (*frame)(void* user, void* back_buffer, unsigned index, unsigned width, unsigned height);
+    void (*release)(void* user);
 } rsx_d3d12_overlay;
 void rsx_d3d12_set_overlay(const rsx_d3d12_overlay* overlay);
 void* rsx_d3d12_device(void);
@@ -95,6 +99,7 @@ bool sHold = false;
 bool sChordWasDown = false;
 clock_type::time_point sLastVisible{};
 unsigned long long sFrame = 0;
+int sReportCountdown = 0;     // "Report an issue": frames until the game's picture is taken (report.cpp)
 bool sInitFailed = false;
 bool sOpenPending = false;     // DES_UI_OPEN, until the documents exist
 unsigned sChordMask = kL3 | kR3;  // the menu chord, refreshed while the UI is awake
@@ -361,6 +366,7 @@ void script_keys_for_frame(unsigned long long frame) {
 
 void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned height) {
     ++sFrame;
+    if (ui::report::frame_hook(sFrame)) sReportCountdown = 4;  // DES_REPORT_AT_FRAME (and the crash test knobs)
     const bool script = !sScriptKeys.empty();
     const char* shot = sShots.empty() ? nullptr : shot_for_frame(sFrame);
     if (script) script_keys_for_frame(sFrame);
@@ -370,8 +376,11 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     const bool chordDown = (g_pad0_buttons & mask) == mask;
     const bool chordEdge = chordDown && !sChordWasDown;
     sChordWasDown = chordDown;
+    // The startup work (des_prework.cpp) runs before the game, with its window over the blank frames.
+    static bool sPreworkShown = false;
+    const bool prework = ui::prework_running();
     if (!sActive && !sStartScreen && !chordEdge && !shot && !sQueued.load(std::memory_order_acquire) &&
-        !sOpenPending) {
+        !sOpenPending && !sReportCountdown && !(prework && !sPreworkShown)) {
         return;
     }
 
@@ -397,6 +406,10 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         if (chordEdge) open_menu_bar();
     }
 
+    if (prework && !sPreworkShown) {
+        sPreworkShown = true;
+        ui::push_document(std::make_unique<ui::PreworkModal>());
+    }
     process_queue();
     bool padNeutral = true;
     const ui::input::PadState pad = read_pads(padNeutral);
@@ -416,11 +429,13 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         cellPad_set_host_hold(0);
     }
 
+    if (sReportCountdown > 0 && !visible && --sReportCountdown == 0)  // (the game's picture, before the UI is drawn)
+        ui::report::send_issue_report(back_buffer, index, int(width), int(height), sFrame);
     ui::host::render(back_buffer, index, int(width), int(height), shot);
 
     auto* overlay = static_cast<ui::Overlay*>(ui::find_document(ui::DocumentScope::Overlay));
     const bool busy = overlay && overlay->busy();
-    if (!visible && !sHold && !busy && now - sLastVisible > kGrace) {
+    if (!visible && !sHold && !busy && !sReportCountdown && now - sLastVisible > kGrace) {
         // Asleep until F1 / Esc or the chord. The chord may still read as held from before: only a new press counts.
         sActive = false;
         ui::input::reset_input_state();
@@ -490,6 +505,7 @@ App& app() {
 }  // namespace ui
 
 extern "C" void des_ui_early_init(void) {
+    ui::crash_report::install();  // (with DES_UI=0 too; nothing in a test run)
     if (const char* v = std::getenv("DES_UI"); v && !std::strcmp(v, "0")) {
         return;
     }
@@ -504,7 +520,8 @@ extern "C" void des_ui_early_init(void) {
     ui::app().quit = [] {
         if (HWND hwnd = static_cast<HWND>(rsx_d3d12_hwnd())) PostMessageW(hwnd, WM_CLOSE, 0, 0);
     };
+    ui::app().report_issue = [] { sReportCountdown = 4; };  // (the render thread: the menu's callbacks run in frame)
 
-    static const rsx_d3d12_overlay kOverlay = {nullptr, wndproc, frame};
+    static const rsx_d3d12_overlay kOverlay = {nullptr, wndproc, frame, [](void*) { ui::host::release_buffers(); }};
     rsx_d3d12_set_overlay(&kOverlay);
 }

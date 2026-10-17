@@ -76,7 +76,6 @@ window > close {
 }
 
 window.image-header > close {
-    backdrop-filter: blur(2dp);
 }
 
 tab-bar[closable] close:hover,

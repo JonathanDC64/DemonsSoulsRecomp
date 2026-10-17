@@ -9,6 +9,7 @@
 #include "bool_button.hpp"
 #include "input.hpp"
 #include "pane.hpp"
+#include "report.hpp"
 #include "settings.hpp"
 #include "ui.hpp"
 #include "version.hpp"
@@ -163,7 +164,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "The game's own frame rate mode. The original 30 fps mode draws a near-empty frame when one runs late. "
             "The others give the game the real time of each frame; 60 uses the game's 60 fps mode, and above that "
             "the frame cap is raised to the number chosen. In-engine cutscenes stay at 30 fps, as on the PS3. Above "
-            "60 fps the game is less tested.<br/><br/>(DES_FPS)");
+            "60 fps the game is less tested. Applies at once.<br/><br/>(DES_FPS)");
         bool_row(leftPane, rightPane, "V-sync", "DES_VSYNC",
             "Presents wait for the display's refresh. Off shows each frame as soon as it is drawn, with tearing: "
             "needed to see a frame rate above the display's refresh rate. Applies at once.<br/><br/>(DES_VSYNC)");
@@ -252,7 +253,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             [](Pane& pane) {
                 pane.add_button("Open the project page").on_pressed([] {
                     play_sound(kSoundClick);
-                    open_url("https://github.com/JonathanDC64/DemonsSoulsPC");
+                    open_url("https://github.com/JonathanDC64/DemonsSoulsRecomp");
                 });
             });
         info_row(leftPane, rightPane, "Licence", "MIT",
@@ -264,7 +265,11 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             settings::path().empty()
                 ? Rml::String("This run does not keep its settings (a test script started it).")
                 : "The settings are kept in<br/>" + escape(settings::path()) +
-                      "<br/><br/>An environment variable of the same name (DES_FPS=60 ...) wins over the file.");
+                      "<br/><br/>An environment variable of the same name (DES_FPS=60 ...) wins over the file." +
+                      (report::data_dir().empty()
+                           ? Rml::String()
+                           : "<br/><br/>The same folder holds the game's log (logs), crash reports (crashes) and "
+                             "issue reports (reports). Your saves are in the game's own folders, not here."));
 
         leftPane.add_section("Made with");
         for (const Credit& credit : kCredits) {

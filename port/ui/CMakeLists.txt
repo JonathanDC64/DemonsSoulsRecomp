@@ -82,7 +82,8 @@ if(MSVC)
 endif()
 # PRIVATE: nothing of RmlUi's (include paths, definitions) reaches des_boot's
 # compile lines, only its link line.
-target_link_libraries(des_ui PRIVATE des_rmlui_backend RmlUi::RmlUi d3d11 d3d12 dxgi dxguid xinput shell32 ole32 user32)
+target_link_libraries(des_ui PRIVATE des_rmlui_backend RmlUi::RmlUi d3d11 d3d12 dxgi dxguid xinput shell32 ole32 user32
+  dbghelp windowscodecs uuid)   # crash reports (minidump, stack), report screenshots (PNG through WIC)
 
 # The version shown on the start screen and in About (the git commit at configure time).
 find_package(Git QUIET)
@@ -96,4 +97,5 @@ if(GIT_EXECUTABLE)
   endif()
 endif()
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/prelaunch.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/settings_window.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/report.cpp
   PROPERTIES COMPILE_DEFINITIONS "DES_VERSION=\"${DES_VERSION}\"")

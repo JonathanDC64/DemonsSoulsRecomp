@@ -24,7 +24,6 @@ popup {
     background-color: rgba(var(--color-surface-rgb), 80%);
     border-bottom-width: 1dp;
     border-bottom-color: var(--color-border);
-    backdrop-filter: blur(5dp);
     transform: translateY(var(--toolbar-hidden-offset));
     transition: transform 0.2s cubic-in-out;
 }

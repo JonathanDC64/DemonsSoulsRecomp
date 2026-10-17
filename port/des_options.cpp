@@ -33,8 +33,10 @@
  *   RPCS3's "Unlock FPS" patch (Gibbed, Whatcookie) changes the same two
  *   things in the code; here the code is left alone. 60 mode flips at most
  *   once a vblank, so the vblank is the frame limit: DES_FPS=<n> above 60
- *   sets 60 mode and a vblank of n Hz (VBLANK_MHZ, unless that is set
- *   already) and so a cap of n. Presents still wait for the display's
+ *   sets 60 mode and a vblank of n Hz (unless VBLANK_MHZ was set at start)
+ *   and so a cap of n. DES_FPS is read at every flip request, so a change
+ *   (the settings window's, or the console's setenv) applies at once, and
+ *   an empty value or 0 puts back the game's own mode. Presents still wait for the display's
  *   refresh unless DES_VSYNC=0, so with vsync a 144 Hz display shows at most
  *   144 of them a second. Movies keep their speed (cellSail
  *   hands out the frame that is due by the clock), and the game advances by
@@ -143,7 +145,34 @@ constexpr int      kPs3VblankMhz = 59940;
 constexpr uint32_t kRemoMan      = 0x01B3A28Cu;
 constexpr uint32_t kRemoSlots[]  = {0x28u, 0x40u, 0x58u, 0x70u};
 
-bool s_fps60 = false;
+/* DES_FPS as applied: -1 before the engine object exists, 0 the game's own
+ * mode, else the frame rate. Render thread only (the flip request hook). */
+int s_fps = -1;
+bool s_vblank_pinned = false;   /* VBLANK_MHZ set at start: it wins over the cap */
+
+int fps_parse(const char* f)
+{
+    const int fps = f ? atoi(f) : 0;
+    if (fps == 60 || fps == 30 || (fps > 60 && fps <= 240)) return fps;
+    if (f && *f && strcmp(f, "0") != 0)
+        fprintf(stderr, "[des] DES_FPS=%s ignored (30, 60, or 61-240)\n", f);
+    return 0;
+}
+
+/* Read live: the settings window sets it with ps3_setenv. */
+int fps_wanted()
+{
+    static int fps = 0;
+    PS3_KNOB(fps, fps_parse(getenv("DES_FPS")));
+    return fps;
+}
+
+/* The vblank while unlocked: above 60 the cap, else the PS3's (0 hands the
+ * clock back to VBLANK_MHZ, which a user setting it at start keeps). */
+int fps_vblank_mhz(int fps)
+{
+    return fps > 60 && !s_vblank_pinned ? fps * 1000 : 0;
+}
 
 bool cutscene_playing()
 {
@@ -157,30 +186,54 @@ bool cutscene_playing()
 void fps_on_flip_request()
 {
     using clock = std::chrono::steady_clock;
-    static bool mode_set = false;
+    static uint8_t orig60, orig_noskip;
+    static uint32_t orig_dt;
     static bool in_cutscene = false;
+    static clock::time_point last;
     const uint32_t obj = vm_read32(kFlipModeObj);
-    if (!mode_set && obj) {
-        vm_write8(obj + kFlipMode60, s_fps60 ? 1 : 0);
-        vm_write8(obj + kFlipNoSkip, 1);
-        mode_set = true;
-        fprintf(stderr, "[des] DES_FPS: FlipMode %s set on 0x%08X\n",
-                s_fps60 ? "60FPS(NO SKIP)" : "30FPS(NO SKIP)", obj);
+    if (!obj) return;
+    /* A change of DES_FPS takes effect at the next flip request: the mode
+     * bytes, the step and the vblank are set as at the start, and the game's
+     * own mode puts back what it found. */
+    const int want = fps_wanted();
+    if (want != s_fps) {
+        if (s_fps < 0) {
+            orig60 = vm_read8(obj + kFlipMode60);
+            orig_noskip = vm_read8(obj + kFlipNoSkip);
+            orig_dt = vm_read32(kFrameDt);
+        }
+        if (want) {
+            vm_write8(obj + kFlipMode60, want >= 60 ? 1 : 0);
+            vm_write8(obj + kFlipNoSkip, 1);
+            ps3_vblank_set_mhz(fps_vblank_mhz(want));
+            fprintf(stderr, "[des] DES_FPS=%d: FlipMode %s on 0x%08X, real frame time%s\n", want,
+                    want >= 60 ? "60FPS(NO SKIP)" : "30FPS(NO SKIP)", obj,
+                    fps_vblank_mhz(want) ? ", vblank at the cap" : "");
+        } else if (s_fps > 0) {
+            vm_write8(obj + kFlipMode60, orig60);
+            vm_write8(obj + kFlipNoSkip, orig_noskip);
+            vm_write32(kFrameDt, orig_dt);
+            ps3_vblank_set_mhz(0);
+            fprintf(stderr, "[des] DES_FPS off: the game's own 30 fps mode\n");
+        }
+        s_fps = want;
+        in_cutscene = false;
+        last = clock::time_point();
     }
+    if (!s_fps) return;
     /* A cutscene plays as the game ships it: 30 mode on the PS3's vblank, so
      * it flips every other vblank, and a fixed 1/30 step. RemoMan steps its
      * positions at 30 Hz while animation follows the frame step, so any
-     * faster and a cutscene judders. The vblank goes back to VBLANK_MHZ
-     * (DES_FPS above 60 raises it) when the cutscene ends. */
-    const bool cut = s_fps60 && mode_set && cutscene_playing();
+     * faster and a cutscene judders. The vblank goes back to the unlocked
+     * rate when the cutscene ends. */
+    const bool cut = s_fps >= 60 && cutscene_playing();
     if (cut != in_cutscene) {
         in_cutscene = cut;
         vm_write8(obj + kFlipMode60, cut ? 0 : 1);
-        ps3_vblank_set_mhz(cut ? kPs3VblankMhz : 0);
+        ps3_vblank_set_mhz(cut ? kPs3VblankMhz : fps_vblank_mhz(s_fps));
         fprintf(stderr, "[des] DES_FPS: %s\n",
                 cut ? "cutscene, 30 fps" : "cutscene over, unlocked again");
     }
-    static clock::time_point last;
     const clock::time_point now = clock::now();
     float dt = kCutsceneDt;
     if (!cut && last != clock::time_point()) {
@@ -331,11 +384,9 @@ void frame_log()
     last_ms = ms;
 }
 
-bool s_fps_on = false;
-
 void on_flip_request()
 {
-    if (s_fps_on) fps_on_flip_request();
+    fps_on_flip_request();
     if (s_framelog) frame_log();
 }
 
@@ -369,7 +420,6 @@ constexpr uint32_t kMoveProxy       = 0x10u;
 constexpr uint32_t kProxyPos        = 0x10u, kProxyPrevPos = 0x20u;
 constexpr float    kStuckSpeed      = 1.0f;     /* m/s */
 constexpr float    kStuckFloor      = 0.5f, kStuckRate = 0.8f, kFreeRate = 1.2f;
-bool s_move_real_time = false;
 
 float vm_readf(uint32_t ea)
 {
@@ -433,7 +483,7 @@ extern "C" void des_move_post(ppu_context* ctx)
         tf(ctx);
     }
     ctx->lr = lr;
-    if (s_move_real_time) move_stuck_real_time(mv, f0, dt);
+    if (s_fps > 0) move_stuck_real_time(mv, f0, dt);
 }
 
 extern "C" void des_menu_sfx_init(void);   /* des_menu_sfx.cpp */
@@ -447,26 +497,14 @@ extern "C" void ps3_title_options_init(void)
         ppu_register_function(kLogoUpdate, logo_update_skip);
         fprintf(stderr, "[des] DES_SKIP_INTRO: boot logos shortened\n");
     }
-    if (const char* f = getenv("DES_FPS")) {
-        const int fps = atoi(f);
-        if (fps == 60 || fps == 30 || (fps > 60 && fps <= 240)) {
-            s_fps60 = fps >= 60;
-            s_fps_on = true;
-            s_move_real_time = true;
-            g_gcm_flip_request_hook = on_flip_request;
-            /* Before the vblank clock starts: boot_main reads the rate once.
-             * Whether presents wait for the display is DES_VSYNC's. */
-            if (fps > 60) {
-                char v[16];
-                snprintf(v, sizeof v, "%d", fps * 1000);
-                if (!getenv("VBLANK_MHZ")) ps3_setenv("VBLANK_MHZ", v);
-            }
-            fprintf(stderr, "[des] DES_FPS=%d: real frame time, no skip frames%s\n", fps,
-                    fps > 60 ? ", vblank at the cap" : "");
-        } else if (*f) {
-            fprintf(stderr, "[des] DES_FPS=%s ignored (30, 60, or 61-240)\n", f);
-        }
-    }
+    /* DES_FPS is read at each flip request, so the settings window changes it
+     * live; the hook is always on. A VBLANK_MHZ given at start wins over the
+     * cap. */
+    s_vblank_pinned = getenv("VBLANK_MHZ") != nullptr;
+    g_gcm_flip_request_hook = on_flip_request;
+    if (const int fps = fps_wanted())
+        fprintf(stderr, "[des] DES_FPS=%d: real frame time, no skip frames%s\n", fps,
+                fps_vblank_mhz(fps) ? ", vblank at the cap" : "");
     if (const char* v = getenv("DES_VSYNC")) {
         if (*v && !getenv("RSX_VSYNC")) {
             const bool on = atoi(v) != 0;

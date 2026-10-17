@@ -5,6 +5,8 @@
 
 #include <RmlUi/Core.h>
 
+#include <vector>
+
 namespace ui::host {
 
 // On the render thread, inside the overlay frame hook (the device and the queue exist by then).
@@ -21,8 +23,16 @@ void set_ui_scale(float scale);
 // shot_path, also writes the result (game frame and UI) to that BMP file.
 void render(void* back_buffer, unsigned index, int width, int height, const char* shot_path);
 
+// Before the window's buffers are resized: drops the wrapped views of them and finishes the work using them. The next
+// render wraps the new buffers.
+void release_buffers();
+
 // Writes the back buffer as it is (no UI drawn) to a BMP file.
 void screenshot(void* back_buffer, unsigned index, int width, int height, const char* shot_path);
+
+// Reads the back buffer as it is (no UI drawn) into `rgba` (width * height * 4 bytes, rows top down): the picture of
+// a report (report.cpp). Waits for the GPU. False if it could not be read.
+bool capture(void* back_buffer, unsigned index, int width, int height, std::vector<unsigned char>& rgba);
 
 // What the on-screen keyboard offers (unused on a desktop).
 enum class InputType { Text, Number };

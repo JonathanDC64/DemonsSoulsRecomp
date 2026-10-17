@@ -7,7 +7,8 @@
 namespace ui {
 
 struct App {
-    std::function<void()> quit;  // close the game (the window's close message)
+    std::function<void()> quit;          // close the game (the window's close message)
+    std::function<void()> report_issue;  // "Report an issue": a few frames after the menu closed (report.cpp)
 };
 
 App& app();

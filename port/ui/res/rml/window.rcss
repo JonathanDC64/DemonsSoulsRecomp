@@ -24,7 +24,6 @@ window {
     overflow: hidden;
     border-width: 1dp;
     border-color: var(--color-border);
-    backdrop-filter: blur(5dp);
     box-shadow: 0 0 25dp 5dp;
     background-color: rgba(var(--color-surface-rgb), 90%);
     filter: opacity(0);

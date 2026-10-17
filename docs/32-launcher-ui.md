@@ -13,7 +13,8 @@ licences in `port/ui/NOTICE.md`.
   until Play. Esc or Circle on the start screen asks to quit.
 - **In-game menu**: F1 or Esc on the keyboard, or **L3 + R3** on a gamepad
   (Settings > Interface can switch this to Select + Start). It is a bar at
-  the top with **Settings** and **Quit**. Esc, Circle, F1 or Start close it.
+  the top with **Settings**, **Report an issue** and **Quit**. Esc, Circle,
+  F1 or Start close it.
 - **Quit** asks first ("Return to the desktop? Progress since the game last
   saved will be lost.") in a blood-red window, then posts WM_CLOSE to the
   game window.
@@ -31,9 +32,7 @@ rest, so the press that closed the menu never reaches the game.
 
 ## Settings
 
-`settings.ini` (`key = value`) lives in
-`%APPDATA%\DemonsSoulsRecomp\DemonsSouls\` (where SDL_GetPrefPath would put
-it), or next to the exe if a `portable.txt` is there, or wherever
+`settings.ini` (`key = value`) lives in the data folder (below), or wherever
 `DES_SETTINGS` points. Keys are the run options' own environment variable
 names. At startup, before the game reads its options, each value becomes its
 environment variable unless that variable is already set: **explicit
@@ -42,7 +41,7 @@ and on every change.
 
 | Row (tab) | Key | Values | Applies |
 |---|---|---|---|
-| Frame rate (Display) | `DES_FPS` | "" = 30 fps original, 30, 60, 120, 144, 165, 240 | next start |
+| Frame rate (Display) | `DES_FPS` | "" = 30 fps original, 30, 60, 120, 144, 165, 240 | at once (read at each flip request) |
 | V-sync (Display) | `DES_VSYNC` (sets `RSX_VSYNC`) | 1 / 0 | at once (live knob) |
 | Short boot logos (Game) | `DES_SKIP_INTRO` | 0 / 1 | next start |
 | Intro movies (Game) | `PS3_SAIL_MOVIES` | 1 / 0 | from the next movie |
@@ -62,6 +61,165 @@ configure time), the licence, the settings file's path and the credits.
 row shows as set from outside. Launching the exe directly, it is a normal
 setting.
 
+### Frame rate, live
+
+des_options.cpp reads `DES_FPS` (a PS3_KNOB) at every flip request, so the
+row, or the debug console's `setenv DES_FPS=60`, takes effect on the next
+frame. A change sets the game's FlipMode bytes, the real frame step and the
+vblank (61-240: the vblank at that rate, so it is the cap) as the startup
+path did; the empty value or 0 puts back the bytes and step the game had
+before the first change and hands the vblank back to the PS3's 59.94 Hz. A
+`VBLANK_MHZ` given at start still wins over the cap. Cutscenes still drop to
+30 while they play.
+
+## The window
+
+- **Its own thread.** The window and its message loop run on a thread of
+  their own (`RSX_WINDOW_THREAD=1`, the default). The vblank thread used to
+  pump the messages, so while Windows ran its modal loop for a drag or a
+  resize the vblank stopped and the game froze: 0 flips during a 4 s move
+  before, 128 after.
+- **Any size.** The window can be resized (a drag stops at a 640x360 client area).
+  The game still draws at 1280x720; each frame is scaled with a linear
+  filter into a swap chain the size of the window, letterboxed to 16:9.
+  The UI draws over that at the window's size, so it stays sharp and, with
+  UI scale on auto, scales with the window.
+- **Alt+Enter** switches to borderless fullscreen on the window's monitor
+  and back.
+- A resize happens between frames: the backend waits for the GPU, calls the
+  overlay's `release` hook (the UI drops its wrapped buffers and flushes
+  D3D11On12), then ResizeBuffers.
+
+## Startup work: the shader cache
+
+The window opens as soon as the program starts (about 0.1-0.2 s), and the
+vblank thread presents before the game's first flip, so the UI can draw
+while nothing else does. The work the game needs before it runs happens
+there, behind a progress bar: `port/des_prework.cpp`, called through
+boot_main's `ps3_title_prework` hook (weak, empty for other titles) just
+before the game's entry point.
+
+Today that work is the shader cache. It reads the game's shader archives
+(`USRDIR/shader/*.shaderbnd`, BND3) and hands every Cg program to
+ps3recomp's `rsx_shader_precompile` (one decompile thread feeding a compile
+thread per logical processor but one), which fills `gamedata/shader_cache`
+as `tools/des/precompile_shaders.sh` did before the game started. The
+**Preparing the shaders** window (`prework_modal.cpp`) shows the bar, the
+count compiled and already prepared, and **Skip** (Esc or Circle too):
+what is left then compiles as the game draws it.
+
+`precompile.stamp` in the cache records what a full pass saw: the
+executable (its PE link time and image size, since tools/des copies the exe
+each run), the texture-unit kinds, each archive's size and time, and
+`fp_variants.txt`. When nothing changed the pass is skipped and no window
+shows; the game adds to fp_variants.txt as it draws, so the next start
+builds the new variants. A skipped or failed pass writes no stamp.
+
+| Knob | Effect |
+|---|---|
+| `DES_PRECOMPILE=0` | No startup work. |
+| `DES_PRECOMPILE=force` | Run the pass whatever the stamp says. |
+
+play.sh no longer runs precompile_shaders.sh; the script still fills a
+cache from a shell.
+
+## Data folder, log and reports
+
+One folder holds everything the port keeps for the player, as in
+FFCCEOT-Recomp (`report::data_dir()`, report.cpp):
+
+- normally `%APPDATA%\DemonsSoulsRecomp\DemonsSouls\` (where
+  SDL_GetPrefPath would put it);
+- with a `portable.txt` next to `des_boot.exe`: `<exe folder>\data\`;
+- `DES_DATA_DIR=<folder>` overrides both (tests).
+
+| In the data folder | What |
+|---|---|
+| `settings.ini` | the settings (unless `DES_SETTINGS` names another file) |
+| `logs\des.log`, `logs\des.prev.log` | this run's output and the previous run's |
+| `crashes\crash-<time>.txt/.dmp/.log/.cmdline` | a crash: what happened and the stack, a minidump, the end of the log, the command line (for Restart) |
+| `reports\crash-<time>.zip`, `reports\issue-<time>.zip` | what a GitHub issue gets attached |
+
+The game's saves are not in it: they stay in the PS3 file system the runtime
+maps (`gamedata/dev_hdd0/home/00000001/savedata`), as before.
+
+A tools/des test run (`PS3_PIDFILE` set and `DES_KIND` not `play`) has no
+data folder unless `DES_DATA_DIR` is given: no settings.ini, no log, no
+crash handler, no reports, exactly as before. play.sh sessions and a
+directly started exe have one.
+
+### The log
+
+Started before `main()` (the startup hook in crash_report.cpp, see below):
+stdout and stderr go into pipes; a thread per pipe writes what comes out to
+where the output was going before (the console, or play.sh's
+`work/tmp/play.txt`, unchanged, still CRLF) and to `logs\des.log`. One pipe
+for both when they went to the same place, so the log keeps their order.
+The log file is buffered (64 KB) and flushed whenever its pipe is empty; the
+pipes hold 1 MB, so a burst of messages doesn't wait on the console. The
+previous run's log is kept as `des.prev.log`; a second copy of the game
+running at the same time writes `des.<pid>.log`. Past 128 MB the log keeps
+its first 2 MB and goes on from there.
+
+The runtime turns its per-event messages on when stderr is not a console
+(ps3_log.h). Since stderr is now a pipe, the tee sets `PS3_VERBOSE=0` when
+it was a console and `PS3_VERBOSE` is unset, which keeps the old behaviour.
+
+### Crash reports
+
+`crash_report::install()` (first thing in `des_ui_early_init`, also with
+`DES_UI=0`) chains a top-level exception filter and a SIGABRT handler after
+boot_main's own. No vectored handler: the runtime commits guest memory and
+runs its guard pages through access violations that its vectored handlers
+resolve, and those never reach the filter. Only an exception nothing
+handled does. On one:
+
+1. boot_main's filter (or abort handler) runs first, as before: `[CRASH]`
+   lines with the guest state go to the log.
+2. `crashes\crash-<time>.txt`: what happened, the last HLE call, registers
+   and the stack (dbghelp; function names only from a matching .pdb,
+   otherwise `des_boot.exe+<rva>`, which `des_boot.map` resolves); `.dmp` (a
+   small minidump: threads, stacks, referenced memory; not the 4 GB guest
+   space), `.log` (the head and last 256 KB of des.log), `.cmdline`.
+3. The crash dialog: `des_boot.exe --crash-dialog <txt> <pid> <data folder>`
+   is started (no console window, with the environment the game started
+   with), and the game ends as it did before (boot_main's filter's result;
+   `_exit(3)` after an abort).
+
+The dialog process never starts the game: a startup hook in the C runtime's
+initializer table (`.CRT$XCV`, after every ordinary static initializer,
+before `main()`) sees `--crash-dialog`, shows the dialog and exits. The same
+hook in a normal run saves the environment block and starts the log. The
+dialog is the menu's own modal ("The game has crashed", the error, Restart
+game / Report on GitHub / Show details / Close) drawn by the same host
+(host.cpp) on a D3D12 device and swap chain of its own, with the mouse, the
+keyboard or an XInput pad. **Report on GitHub** zips `crash.txt`,
+`system.txt`, `settings.ini` and `des.log` (all redacted) into
+`reports\crash-<time>.zip`, opens a new issue on
+https://github.com/JonathanDC64/DemonsSoulsRecomp with the title, the error,
+the top of the stack and the system filled in, and shows the zip in
+Explorer. **Restart game** waits for the crashed process to end and starts
+the saved command line again.
+
+### Report an issue
+
+The menu bar's **Report an issue** asks first (what is sent, and that
+nothing is sent until the issue is submitted). **Report** closes the menu;
+4 presented frames later, inside the frame hook and before the UI is drawn,
+the back buffer is read (`host::capture`), so the picture is the game's, not
+the menu's. A thread then writes the PNG (Windows Imaging Component, part of
+Windows), zips `screenshot.png`, `system.txt`, `game.txt` (frames, picture
+size), `settings.ini` (the settings in use, with the values the environment
+set noted) and the head and last 192 KB of `des.log` into
+`reports\issue-<time>.zip`, opens the issue form filled in and shows the
+zip. Without a data folder (a test run) there is no report.
+
+What goes into a zip or a link is redacted (`report::redact`): the profile
+folder, user name, computer name, the PSN name given with `--username`,
+e-mail addresses, and every absolute path (drive, UNC, `%USERPROFILE%` and
+Git Bash `/c/...` forms) down to its last name (`<path>\EBOOT.ELF`). The
+issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
+
 ## Run options (knobs)
 
 | Knob | Effect |
@@ -70,17 +228,43 @@ setting.
 | `DES_SKIP_UI=1` | No start screen this run (the menu is still on F1). |
 | `DES_UI_START=1` | Start screen even on a scripted or test run. |
 | `DES_SETTINGS=<path>` | Use this settings.ini (also makes test runs read and write one). |
+| `DES_DATA_DIR=<folder>` | The data folder (settings.ini, log, crashes, reports); also gives a test run one. |
+| `DES_NO_CRASH_DIALOG=1` | A crash writes its report but shows no dialog. |
+| `DES_CRASH_AT_FRAME=<n>` / `DES_ABORT_AT_FRAME=<n>` | Crash (access violation) / abort at presented frame n (tests). |
+| `DES_REPORT_AT_FRAME=<n>` | Start an issue report at presented frame n, as the menu's Report does. |
+| `DES_REPORT_NO_OPEN=1` | Reports open neither the browser nor Explorer; the issue link goes to `<zip>.url.txt`. |
+| `DES_CRASH_DIALOG_REPORT=1` | The crash dialog presses Report on GitHub by itself (its frame 10). |
+| `DES_CRASH_DIALOG_SHOT=<file.bmp>` | The crash dialog writes its picture (its frame 40). |
+| `DES_CRASH_DIALOG_EXIT_MS=<ms>` | The crash dialog closes itself after that long. |
 | `DES_UI_OPEN=menu` / `settings` | Open the menu bar or the settings window at startup. |
 | `DES_UI_SHOT=<a.bmp>[,frame][;<b.bmp>,frame...]` | Write the back buffer, UI included, at that presented frame (default 300). |
 | `DES_UI_KEYS=<frame>:<KEY>[,...]` | Press keys at presented frames: F1 ESC UP DOWN LEFT RIGHT ENTER PGUP PGDN TAB SPACE. With DES_UI_SHOT, a test can walk the menus. |
 | `DES_UI_NO_ANIM=1` | No transitions. |
 | `DES_UI_SOUND=0` | No UI sounds. |
+| `DES_PRECOMPILE=0` / `force` | No startup shader pass / one whatever the stamp says (above). |
 
 No start screen when the run is scripted: a tools/des test run
 (`PS3_PIDFILE` set and `DES_KIND` not `play`), `DES_AUTO_CONTINUE`,
 `PAD_FILE` or `EXIT_AFTER_MS`. Test runs also neither read nor write
-settings.ini unless `DES_SETTINGS` is given, so regress, levelcap, exeab and
-friends see exactly the options they pass.
+settings.ini unless `DES_SETTINGS` (or `DES_DATA_DIR`) is given, so regress,
+levelcap, exeab and friends see exactly the options they pass; they also
+keep no log and install no crash handler.
+
+A crash test that leaves nothing open (the dialog child is a des_boot.exe
+too: run the game from a copy outside the tools/des staging folders, or
+des_kill_own takes the dialog down with the game):
+
+```
+DES_DATA_DIR=<scratch>/data DES_CRASH_AT_FRAME=300 DES_CRASH_DIALOG_REPORT=1 DES_REPORT_NO_OPEN=1 \
+  DES_CRASH_DIALOG_SHOT=<scratch>/dialog.bmp DES_CRASH_DIALOG_EXIT_MS=10000
+```
+
+and a report through the menu (no transitions, so the keys land in time):
+
+```
+DES_DATA_DIR=<scratch>/data DES_UI_NO_ANIM=1 DES_REPORT_NO_OPEN=1 \
+  "DES_UI_KEYS=300:F1,320:RIGHT,340:ENTER,380:RIGHT,400:ENTER"
+```
 
 Example, the screenshots used while building it (desrun, locked session):
 
@@ -97,10 +281,11 @@ DES_SCRATCH=<scratch> RSX_PRESENT=0 bash tools/des/desrun.sh 75 <scratch>/run.tx
 |---|---|
 | GL3 renderer in the game's GL context | RmlUi's stock D3D11 renderer (`Backends/RmlUi_Renderer_DX11`) on a D3D11On12 device made from the game's D3D12 device and queue. Each swap-chain buffer is wrapped (`CreateWrappedResource`, PRESENT in and out) with an RTV; per frame: Acquire, BeginFrame, Render, EndFrame(rtv), Release, Flush. Composited premultiplied. |
 | SDL3 window events and gamepads | **No SDL.** The window procedure hook queues keyboard and mouse messages (RmlUi's Win32 helpers convert the keys); the gamepads are XInput plus the runtime's `pad_hid_sony_poll`, the same readers and mapping the game's pad uses. |
-| `Presenter::present` callback | `rsx_d3d12_set_overlay` (ps3recomp): `wndproc` and `frame` hooks, both on the vblank thread here. |
-| settings.ini next to the exe | the pref dir (or portable.txt), mapped onto the DES_* / PS3_* options; env wins |
+| `Presenter::present` callback | `rsx_d3d12_set_overlay` (ps3recomp): `wndproc` (on the window thread), `frame` (on the vblank thread, with the window-sized back buffer) and `release` (before a resize) hooks. |
+| data folder: the pref dir, or `data\` beside the exe with portable.txt; settings.ini, logs, crashes, reports | the same; `DES_DATA_DIR` in place of `--data-dir`; settings mapped onto the DES_* / PS3_* options, env wins; saves stay in the PS3 file system |
+| `report::start_log` (tee), `crash_report` (filter, SIGABRT, minidump, `--crash-dialog` second process), report zip, redaction, issue link | the same, chained after boot_main's filter and abort handler and started from a `.CRT$XCV` hook (boot_main is ps3recomp's); the dialog on D3D12 + D3D11On12 instead of SDL + GL; the PNG through WIC |
 | start screen over generated art | over the game itself, booting behind it; gradient and vignette in RCSS, no images |
-| ROM setup, Wii setup, presets, spell ring, update check, report, ui_script | not taken |
+| ROM setup, Wii setup, presets, spell ring, update check, ui_script | not taken |
 | game SFX through `cfie::queue_sound` | `g_des_ui_sound(int id)` (des_ui.h): des_menu_sfx.cpp queues the game's menu sound for the main thread (docs/33) |
 
 Files:
@@ -112,8 +297,13 @@ Files:
   embedded files), fonts, scale, the BMP screenshot.
 - `settings.cpp`: settings.ini, the option table, pinned (env) detection,
   harness detection.
-- `settings_window.cpp`, `prelaunch.cpp`, `menu_bar.cpp`, `overlay.cpp`:
-  the documents. `input.cpp`: pad state to UI keys with repeat. The rest is
+- `report.cpp`: the data folder, the log tee, system facts, redaction, the
+  zip writer, the issue link, the PNG, "Report an issue" and the test knobs.
+- `crash_report.cpp`: the startup hook, the filter and abort handler, the
+  report and minidump, the dialog process. `crash_dialog.cpp`: its window,
+  D3D12 swap chain and modal.
+- `settings_window.cpp`, `prelaunch.cpp`, `menu_bar.cpp`, `overlay.cpp`,
+  `prework_modal.cpp`: the documents. `input.cpp`: pad state to UI keys with repeat. The rest is
   Dusklight's framework (document stack, windows, panes, buttons, modals,
   tabs), unchanged apart from its headers.
 - `des_ui` is its own static library linked into des_boot: des_boot's
@@ -147,7 +337,9 @@ showing, Start also toggles the menu.
 (11, 11, 12) at 80-96 %, focus soul-white (200, 215, 225) at low alpha,
 danger blood red (#6E1A17 border, #A8241D heading). Borders 1 dp, corners
 2-4 dp. Cinzel for headings and the title, Alegreya Sans for body text,
-Material Symbols for icons. `prelaunch.rcss` is rewritten (no picture, no
+Material Symbols for icons. No `backdrop-filter`: with it, the F1 bar and
+the other translucent panels flickered over the game, so panels are plain
+translucent fills. `prelaunch.rcss` is rewritten (no picture, no
 golds): menu buttons in bone that light up white with a soul-white left
 edge and a fading band.
 
@@ -156,8 +348,9 @@ edge and a fading band.
 - Sounds are the game's own menu sounds (docs/33, `port/des_menu_sfx.cpp`),
   played on the game's main thread; they need the `0x724E40=des_menu_tick`
   override in the lift. Not yet checked by ear.
-- Rebinding, display options (window size, fullscreen, AA), the other items
-  of the future-features list.
+- Rebinding; display rows in the settings (Alt+Enter gives borderless
+  fullscreen, but there is no row for it, nor for the render resolution or
+  AA); the other items of the future-features list.
 - The gamepad path is untested on hardware here (no pad on the test
   machine); keyboard, scripted keys and the hold are tested.
 - The fetched sources need network access at configure time; the future
@@ -190,3 +383,70 @@ scripted keys and DES_UI_SHOT:
 Not tested: a real gamepad (the chord, the stick and button mapping in the
 menus, the hold release), the mouse, a visible window (RSX_PRESENT=1), and
 window sizes other than 1280x720.
+
+### Data folder, log, crash and issue reports (2026-10-17)
+
+Same setup (locked session, pinned regression save, the exe run from a copy
+outside the tools/des staging folders, `DES_DATA_DIR` in the scratch dir):
+
+- Crash: `DES_CRASH_AT_FRAME=300 DES_CRASH_DIALOG_REPORT=1
+  DES_REPORT_NO_OPEN=1 DES_CRASH_DIALOG_SHOT=... DES_CRASH_DIALOG_EXIT_MS=10000`.
+  boot_main's `[CRASH]` lines print as before and the exit code is the same
+  (139 from bash); `crashes\` gets the .txt, .dmp (3-5 MB), .log and
+  .cmdline; the dialog's picture shows the modal after it pressed Report on
+  GitHub; `reports\crash-<time>.zip` and its `.url.txt` are written; the
+  dialog closes itself and no process is left. The stack's
+  `des_boot.exe+<rva>` frames resolve through `tools/des/sym.py --map
+  port/build/des_boot.map` to `ui::report::frame_hook` and `frame`.
+- Abort: `DES_ABORT_AT_FRAME=300 DES_NO_CRASH_DIALOG=1`: exit 3, boot_main's
+  `[ABORT]` backtrace still printed, the crash files written, no dialog.
+- Report through the menu: `DES_UI_NO_ANIM=1 DES_REPORT_NO_OPEN=1
+  "DES_UI_KEYS=300:F1,320:RIGHT,340:ENTER,380:RIGHT,400:ENTER"`:
+  `reports\issue-<time>.zip` with screenshot.png (1280x720, the game's
+  picture without the menu), system.txt, game.txt, settings.ini (pinned rows
+  noted) and des.log. `DES_REPORT_AT_FRAME=400` gives the same zip.
+- Redaction: every file of both zips and both links scanned for the user
+  name, computer name, profile folder, e-mail and drive or `/c/` paths;
+  nothing found but the repository's own name in the link. Paths read
+  `<path>\Demon's Souls (USA)`.
+- Log: the redirected output (play.sh's way) and `des.log` of the same run
+  are byte-identical (CRLF, 8309 lines). Portable mode (`portable.txt` next
+  to the exe, no `DES_DATA_DIR`) writes `<exe folder>\data\logs\des.log`.
+  Test runs without `DES_DATA_DIR` left `%APPDATA%\DemonsSoulsRecomp`
+  untouched.
+- Cost of the log, exeab-style A/B, Palace, uncapped (vblank 2000 Hz,
+  RSX_PRESENT=0, RSX_VSYNC=0), 4 windows of 8 s: no log 362.8 fps, log
+  367.7 fps (noise). Capped at 240: 239.77 / 239.80.
+
+Not tested: Restart game, the dialog with a pad, a crash through
+`__fastfail` or an invalid CRT parameter (those end the process without
+reaching the filter).
+
+### Window, live frame rate, startup work (2026-10-17)
+
+- Window, at the title screen (32 flips a second), a PowerShell script
+  driving the window with messages, flips counted over each step, the old
+  build against the new:
+
+  | Step | Old | New |
+  |---|---|---|
+  | inside the modal move loop (SC_MOVE), 4 s | 0 | 128 |
+  | inside the modal size loop (SC_SIZE), 4 s | 16 | 128 |
+  | resized to 1684x761, 404x291, 684x961 (portrait), 20 quick resizes | flips go on, picture stretched | flips go on, letterboxed |
+  | Alt+Enter, and back | - | 2560x1440 borderless, then 1684x761 |
+
+  The screenshots (DES_UI_SHOT) show the game letterboxed and the UI at the
+  window's size. SetWindowPos is not held to the 640x360 floor; a drag is (WM_GETMINMAXINFO).
+  regress.sh 4/4 ok.
+- Frame rate: `setenv DES_FPS=` 60, 120, 30, 0, 144, 60 in the debug
+  console at the title screen: each prints its `[des] DES_FPS=...` line at
+  the next flip ("vblank at the cap" for 120 and 144, "the game's own 30
+  fps mode" for 0) and the flip rate follows.
+- Startup: the window ~90-160 ms after the process starts. Empty cache:
+  3535 shaders in 28 s on 15 threads with the window and its bar up, then
+  the game. Skip after 352: the game went on at once. Next start: `cache up
+  to date`, no window, first flip at 955 ms.
+- F1 bar: no flicker without backdrop-filter.
+
+Not tested: a person dragging the window (the script drives the move and
+size loops with messages), Restart game after a resize.

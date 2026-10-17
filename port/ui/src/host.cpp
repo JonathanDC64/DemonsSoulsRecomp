@@ -276,6 +276,18 @@ void shutdown() {
     s.initialised = false;
 }
 
+void release_buffers() {
+    if (!s.initialised) return;
+    for (Wrapped& w : s.buffers) {
+        release(w.rtv);
+        release(w.resource);
+        w.source = nullptr;
+    }
+    // D3D11On12 holds the D3D12 resources until the context lets go of them: unbind everything and submit.
+    s.context->ClearState();
+    s.context->Flush();
+}
+
 bool is_initialized() { return s.initialised; }
 Rml::Context* context() { return s.rml; }
 
@@ -309,6 +321,29 @@ void screenshot(void* back_buffer, unsigned index, int width, int height, const 
     s.on12->ReleaseWrappedResources(&w->resource, 1);
     s.context->Flush();
     read_staging(staging, width, height, shot_path);
+}
+
+bool capture(void* back_buffer, unsigned index, int width, int height, std::vector<unsigned char>& rgba) {
+    if (!s.initialised || width <= 0 || height <= 0) return false;
+    Wrapped* w = wrap(back_buffer, index);
+    if (!w) return false;
+    s.on12->AcquireWrappedResources(&w->resource, 1);
+    ID3D11Texture2D* staging = copy_to_staging(*w, width, height);
+    s.on12->ReleaseWrappedResources(&w->resource, 1);
+    s.context->Flush();
+    if (!staging) return false;
+    bool ok = false;
+    D3D11_MAPPED_SUBRESOURCE map{};
+    if (SUCCEEDED(s.context->Map(staging, 0, D3D11_MAP_READ, 0, &map))) {
+        const size_t row = size_t(width) * 4;
+        rgba.resize(row * size_t(height));
+        for (int y = 0; y < height; y++)
+            std::memcpy(rgba.data() + row * size_t(y), static_cast<const unsigned char*>(map.pData) + size_t(y) * map.RowPitch, row);
+        s.context->Unmap(staging, 0);
+        ok = true;
+    }
+    staging->Release();
+    return ok;
 }
 
 void set_input_type(InputType) {}

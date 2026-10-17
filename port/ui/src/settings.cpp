@@ -1,12 +1,14 @@
 // The port's settings (see settings.hpp). Adapted for Demon's Souls from FFCCEOT-Recomp's settings.ini handling.
 #include "settings.hpp"
 
+#include "report.hpp"
+
 #include <windows.h>
-#include <shlobj.h>
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <string>
@@ -17,7 +19,7 @@ namespace ui::settings {
 namespace {
 
 constexpr Def kDefs[] = {
-    {"DES_FPS", "", Apply::Restart},           // "" = the game's own 30 fps mode
+    {"DES_FPS", "", Apply::Live},              // "" = the game's own 30 fps mode; read at each flip
     {"DES_VSYNC", "1", Apply::Live},           // RSX_VSYNC, live
     {"DES_SKIP_INTRO", "0", Apply::Restart},
     {"PS3_SAIL_MOVIES", "1", Apply::Live},     // read as each movie opens
@@ -47,43 +49,15 @@ std::string trim(const std::string& s) {
     return s.substr(a, b - a + 1);
 }
 
-std::string exe_dir() {
-    char buf[MAX_PATH * 2];
-    const DWORD n = GetModuleFileNameA(nullptr, buf, DWORD(sizeof buf));
-    if (n == 0 || n >= sizeof buf) return {};
-    std::string p(buf, n);
-    const size_t slash = p.find_last_of("\\/");
-    return slash == std::string::npos ? std::string() : p.substr(0, slash);
-}
-
-bool file_exists(const std::string& p) {
-    const DWORD a = GetFileAttributesA(p.c_str());
-    return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
-}
-
-// %APPDATA%\DemonsSoulsRecomp\DemonsSouls (what SDL_GetPrefPath("DemonsSoulsRecomp", "DemonsSouls") gives).
-std::string pref_dir() {
-    PWSTR roaming = nullptr;
-    std::string out;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &roaming))) {
-        char buf[MAX_PATH * 3];
-        const int n = WideCharToMultiByte(CP_UTF8, 0, roaming, -1, buf, int(sizeof buf), nullptr, nullptr);
-        if (n > 0) out = std::string(buf) + "\\DemonsSoulsRecomp\\DemonsSouls";
-    }
-    CoTaskMemFree(roaming);
-    return out;
-}
-
 void make_dirs(const std::string& file) {
-    for (size_t i = 3; i < file.size(); i++) {
-        if (file[i] == '\\' || file[i] == '/') CreateDirectoryA(file.substr(0, i).c_str(), nullptr);
-    }
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(report::widen(file)).parent_path(), ec);
 }
 
 // The environment variables a setting drives (DES_VSYNC also sets RSX_VSYNC, which the D3D12 backend reads live).
 void apply_env(std::string_view key, const std::string& value) {
     const std::string k(key);
-    if (value.empty()) return;  // (an unset option stays unset)
+    if (value.empty() && key != "DES_FPS") return;  // (an unset option stays unset; DES_FPS "" is the game's mode)
     ps3_setenv(k.c_str(), value.c_str());
     if (key == "DES_VSYNC") ps3_setenv("RSX_VSYNC", value == "0" ? "0" : "1");
 }
@@ -113,14 +87,20 @@ const std::string& path() {
     sPathResolved = true;
     if (const char* p = std::getenv("DES_SETTINGS"); p && *p) {
         sPath = p;
-    } else if (harness_run()) {
-        sPath.clear();  // test runs keep their options to themselves
-    } else if (const std::string dir = exe_dir(); !dir.empty() && file_exists(dir + "\\portable.txt")) {
-        sPath = dir + "\\settings.ini";
-    } else if (const std::string dir = pref_dir(); !dir.empty()) {
-        sPath = dir + "\\settings.ini";
+    } else if (const auto& dir = report::data_dir(); !dir.empty()) {
+        sPath = report::narrow((dir / L"settings.ini").wstring());  // (empty in a test run: no settings kept)
     }
     return sPath;
+}
+
+std::string describe() {
+    std::string out;
+    for (const Def& d : kDefs) {
+        out += std::string(d.key) + " = " + get(d.key);
+        if (pinned(d.key)) out += "    # set in the environment: " + pinned_value(d.key);
+        out += '\n';
+    }
+    return out;
 }
 
 void load_and_apply_env() {
@@ -135,7 +115,7 @@ void load_and_apply_env() {
     }
     const std::string& file = path();
     if (file.empty()) return;
-    FILE* f = std::fopen(file.c_str(), "r");
+    FILE* f = _wfopen(report::widen(file).c_str(), L"r");
     if (!f) return;
     char line[512];
     int applied = 0;
@@ -194,7 +174,7 @@ void save() {
     if (file.empty()) return;
     make_dirs(file);
     const std::string tmp = file + ".tmp";
-    FILE* f = std::fopen(tmp.c_str(), "w");
+    FILE* f = _wfopen(report::widen(tmp).c_str(), L"w");
     if (!f) return;
     std::fprintf(f,
                  "# Demon's Souls PC port settings (key = value), written by the in-game menu.\n"
@@ -202,7 +182,7 @@ void save() {
                  "# environment wins over this file.\n");
     for (const Def& d : kDefs) std::fprintf(f, "%s = %s\n", d.key, get(d.key).c_str());
     std::fclose(f);
-    MoveFileExA(tmp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING);
+    MoveFileExW(report::widen(tmp).c_str(), report::widen(file).c_str(), MOVEFILE_REPLACE_EXISTING);
 }
 
 }  // namespace ui::settings

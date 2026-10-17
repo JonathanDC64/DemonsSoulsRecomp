@@ -25,9 +25,13 @@ struct Def {
     Apply apply;
 };
 
-// The file's location: DES_SETTINGS, else beside the exe when portable.txt is there, else
-// %APPDATA%\DemonsSoulsRecomp\DemonsSouls\settings.ini. Empty when the settings are not kept (a test harness run).
+// The file's location (UTF-8): DES_SETTINGS, else settings.ini in the data folder (report::data_dir(): DES_DATA_DIR,
+// <exe dir>\data when portable.txt is there, else %APPDATA%\DemonsSoulsRecomp\DemonsSouls). Empty when the settings
+// are not kept (a test harness run).
 const std::string& path();
+
+// The settings in use, as settings.ini lines, with the values the environment set noted (for an issue report).
+std::string describe();
 
 // Reads settings.ini and sets the environment variables it holds that are not set yet. Once, at startup, before the
 // game's options are read.

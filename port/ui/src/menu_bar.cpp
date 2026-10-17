@@ -1,5 +1,5 @@
 // Adapted from Dusklight (CC0), src/dusk/ui/menu_bar.cpp, by way of FFCCEOT-Recomp. Adapted for Demon's Souls: the
-// menu bar over the game has Settings and Quit (no report-an-issue).
+// menu bar over the game has Settings, Report an issue (FFCCEOT-Recomp's) and Quit.
 #include "menu_bar.hpp"
 
 #include "app.hpp"
@@ -101,6 +101,42 @@ MenuBar::MenuBar()
 
 void MenuBar::build_tabs() {
     mTabBar->add_tab("Settings", [this] { push(std::make_unique<SettingsWindow>()); });
+
+    mTabBar->add_tab("Report an issue", [this] {
+        mTabBar->set_active_tab(-1);
+        const auto dismiss = [](Modal& modal) { modal.pop(); };
+        push(std::make_unique<Modal>(Modal::Props{
+            .title = "Report an Issue",
+            .bodyText = "Opens a new issue on GitHub with the details filled in, and a zip to attach with a "
+                        "screenshot, your settings and the game's recent messages. It has no save data or game "
+                        "files; nothing is sent until you submit the issue.",
+            .actions =
+                {
+                    ModalAction{
+                        .label = "Cancel",
+                        .onPressed =
+                            [dismiss](Modal& modal) {
+                                play_sound(kSoundWindowClose);
+                                dismiss(modal);
+                            },
+                    },
+                    ModalAction{
+                        .label = "Report",
+                        .onPressed =
+                            [this, dismiss](Modal& modal) {
+                                play_sound(kSoundClick);
+                                dismiss(modal);
+                                hide(false);
+                                if (app().report_issue) {
+                                    app().report_issue();
+                                }
+                            },
+                    },
+                },
+            .onDismiss = dismiss,
+            .icon = "question-mark",
+        }));
+    });
 
     mTabBar->add_tab("Quit", [this] {
         mTabBar->set_active_tab(-1);

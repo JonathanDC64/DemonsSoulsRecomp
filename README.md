@@ -14,7 +14,7 @@ The first level is playable, from boot to Boletaria (2026-10):
 - Title screen, character creation, the tutorial, the Nexus and Boletarian Palace 1-1.
 - Lit and textured scenes with shadows, the HUD, particles, light shafts and haze.
 - Saving and loading, ATRAC audio and music, keyboard and DualSense (USB or Bluetooth, over HID).
-- Frame rate: the game's own 30 fps cap by default, and 60 or more with `DES_FPS` (see [Running](#running)). Boletarian Palace runs at about 110 fps with the 60 fps mode uncapped (measured with `DES_FPS=60 VBLANK_MHZ=120000`). Shaders are precompiled, so the game never stops to compile one.
+- Frame rate: the game's own 30 fps cap by default, and 60 or more with `DES_FPS` (see [Running](#running)). Boletarian Palace runs at about 120 fps with the 60 fps mode uncapped (measured with `DES_FPS=60 VBLANK_MHZ=240000`; physics above 60 fps is untested). Shaders are precompiled, so the game never stops to compile one.
 
 Known issues:
 

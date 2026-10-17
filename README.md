@@ -14,11 +14,12 @@ The first level is playable, from boot to Boletaria (2026-10):
 - Title screen, character creation, the tutorial, the Nexus and Boletarian Palace 1-1.
 - Lit and textured scenes with shadows, the HUD, particles, light shafts and haze.
 - Saving and loading, ATRAC audio and music, keyboard and DualSense (USB or Bluetooth, over HID).
+- Frame rate: the game's own 30 fps cap by default, and 60 or more with `DES_FPS` (see [Running](#running)). Boletarian Palace runs at about 97-100 fps with the 60 fps mode uncapped (measured with `DES_FPS=60 VBLANK_MHZ=120000`). Shaders are precompiled, so the game never stops to compile one.
 
 Known issues:
 
 - Some transparent effects (a fog wall, the soul-form aura, fog in the first cutscene) vanish for single frames.
-- The game runs at about 28-30 fps (its own cap is 30) and frame pacing is uneven. Higher frame rates, shader precompilation and faster loading are still to do.
+- Above 30 fps, cutscenes switch back to 30 on their own: the game's cutscene manager moves things at 30 Hz, and they judder otherwise. Above 60, physics is untested (RPCS3 warns of trouble there).
 - Only Demon's Souls is tested on this branch of ps3recomp.
 
 The full history, root causes and tools are in [`docs/`](docs/). Start with [`docs/28-in-game.md`](docs/28-in-game.md), which covers the current state.
@@ -52,7 +53,7 @@ The build is not yet a single command. The steps, in order:
    python ps3recomp/tools/gen_hle_nids.py --all --out work/recomp/hle_nid_table.cpp
    python scripts/apply_boot_patches.py work/recomp
    ```
-5. Lift the SPU images and jobs (`scripts/build_spu.py`; see [`docs/09`](docs/09-spu-spurs.md) and [`docs/26`](docs/26-first-pixels-loading-screen.md)), and libsre (`scripts/build_libsre.sh <libsre.prx>`).
+5. Lift the SPU images and jobs (`scripts/build_spu.py`; see [`docs/09`](docs/09-spu-spurs.md) and [`docs/26`](docs/26-first-pixels-loading-screen.md)), and libsre (`scripts/build_libsre.sh <libsre.prx>`). `build_spu.py` also puts the runtime's native blocks in place of parts of an image (`NATIVE_BLOCKS`; today the fetch step of the graphics ring consumer, image 2), so lift with the fork's `spu_lifter.py`.
 6. Configure and build the runtime and the game:
    ```
    cmake -S ps3recomp -B ps3recomp/build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release
@@ -71,7 +72,22 @@ Copy `tools/des/local.env.example` to `tools/des/local.env` and set `PS3_VFS_ROO
 tools/des/play.sh
 ```
 
+Options go after it as `NAME=value`:
+
+- `DES_FPS=60`: the game's 60 fps mode, with real frame times. `DES_FPS=61` to `240` also raises the frame cap to that many frames a second (and presents without vsync). `DES_FPS=30` keeps 30 with real frame times.
+- `DES_SKIP_INTRO=1`: shorter boot logos.
+- `DES_AUTO_CONTINUE=1`: presses through the title screen into the first save in the list.
+- `PS3_SAIL_MOVIES=0`: skip the intro movies.
+
+For example `tools/des/play.sh DES_SKIP_INTRO=1 DES_AUTO_CONTINUE=1 DES_FPS=60`.
+
 It first compiles the game's shaders into `gamedata/shader_cache` (about 20 s the first time, a few seconds after), so the game never stops to compile one. This runs the game for up to an hour (`play.sh 120` for two) with sound, at normal priority on every CPU, and logs to `work/tmp/play.txt`. Saves go to `gamedata/dev_hdd0/home/00000001/savedata`. F9 captures a frame for `rsx_replay`, F10 saves screenshots, and F11 starts and stops a profile session (frame times and the worst frames, in `work/tmp/prof`). The debug and test tools are described in [`docs/28`](docs/28-in-game.md#debug-and-test-tools-2026-10-14).
+
+## Performance
+
+The frame is a chain of host threads: HighGraphics (a PPU thread) fills a command ring, an SPU program (image 2) turns the commands into RSX commands, and the FIFO thread records them and renders the frame with Direct3D 12 at each flip. The game waits for the RSX to finish a frame before it builds the next one, so each of these threads is on the frame's path. The work so far, the measurements behind each change and the things that did not help are in [`docs/28`](docs/28-in-game.md), from "Palace frame rate" on.
+
+The scripts in `tools/des/` measure a change: `knobab.sh` alternates a live knob within one run, `exeab.sh` alternates two builds, `kprof.sh` profiles named threads, and `soak.sh` runs about six minutes at `DES_FPS=120` (the check before any change to the atomics).
 
 ## Layout
 

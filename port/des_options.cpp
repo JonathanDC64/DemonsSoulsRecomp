@@ -71,6 +71,7 @@
  */
 #include "ppu_recomp.h"
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
+#include "ui/include/des_ui.h"  /* the wrapper UI: settings.ini and the overlay (docs/32) */
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -435,8 +436,13 @@ extern "C" void des_move_post(ppu_context* ctx)
     if (s_move_real_time) move_stuck_real_time(mv, f0, dt);
 }
 
+extern "C" void des_menu_sfx_init(void);   /* des_menu_sfx.cpp */
+
 extern "C" void ps3_title_options_init(void)
 {
+    /* First: settings.ini fills in the options not set in the environment. */
+    des_ui_early_init();
+    des_menu_sfx_init();   /* the UI's sounds through the game's menu sounds */
     if (env_on("DES_SKIP_INTRO")) {
         ppu_register_function(kLogoUpdate, logo_update_skip);
         fprintf(stderr, "[des] DES_SKIP_INTRO: boot logos shortened\n");

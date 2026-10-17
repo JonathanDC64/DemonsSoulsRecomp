@@ -1,0 +1,77 @@
+/* The theme: the only file that sets the colours and fonts (the rest of the UI is Dusklight's, CC0, by way of
+   FFCCEOT-Recomp). Adapted for Demon's Souls: near-black translucent panels, thin silver borders, bone-coloured text,
+   a pale soul-white for what has the focus and blood red for what cannot be undone. */
+body {
+    --font-family-body: Alegreya Sans;
+    --font-family-heading: Cinzel;
+    --font-family-monospace: Noto Mono;
+    --font-family-icons: Material Symbols Rounded;
+    --font-family-display: Cinzel;
+
+    --font-size-3xs: 11dp;
+    --font-size-2xs: 12dp;
+    --font-size-xs: 13dp;
+    --font-size-sm: 14dp;
+    --font-size-base: 15dp;
+    --font-size-md: 16dp;
+    --font-size-lg: 17dp;
+    --font-size-xl: 18dp;
+    --font-size-2xl: 20dp;
+    --font-size-3xl: 22dp;
+    --font-size-4xl: 24dp;
+    --font-size-5xl: 28dp;
+    --font-size-6xl: 32dp;
+
+    --space-2xs: 2dp;
+    --space-xs: 4dp;
+    --space-sm: 8dp;
+    --space-md: 12dp;
+    --space-lg: 16dp;
+    --space-xl: 24dp;
+    --space-2xl: 32dp;
+
+    --radius-small: 2dp;
+    --radius-control: 3dp;
+    --radius-panel: 3dp;
+    --radius-window: 4dp;
+
+    --toolbar-height: 64dp;
+    --toolbar-hidden-offset: -64dp;
+
+    --color-text-rgb: 215, 210, 195;
+    --color-text: rgb(var(--color-text-rgb));
+    --color-accent-rgb: 236, 232, 220;
+    --color-accent: rgb(var(--color-accent-rgb));
+    --color-border-rgb: 148, 150, 154;
+    --color-border: rgb(var(--color-border-rgb));
+    --color-surface-rgb: 11, 11, 12;
+    --color-interactive-rgb: 200, 215, 225;
+    --color-control-rgb: 5, 5, 6;
+    --color-neutral-rgb: 217, 217, 217;
+    --color-neutral: rgb(var(--color-neutral-rgb));
+    --color-white-rgb: 255, 255, 255;
+    --color-white: rgb(var(--color-white-rgb));
+    --color-black-rgb: 0, 0, 0;
+    --color-black: rgb(var(--color-black-rgb));
+
+    --color-success-rgb: 150, 190, 140;
+    --color-success: rgb(var(--color-success-rgb));
+    --color-info-rgb: 175, 198, 215;
+    --color-info: rgb(var(--color-info-rgb));
+    --color-warning-rgb: 214, 172, 96;
+    --color-warning: rgb(var(--color-warning-rgb));
+    --color-error-rgb: 168, 40, 36;
+    --color-error: rgb(var(--color-error-rgb));
+
+    --color-danger-border: #6E1A17;
+    --color-danger-heading: #A8241D;
+
+    --button-color: var(--color-text);
+    --button-background: rgba(var(--color-control-rgb), 20%);
+    --button-background-hover: rgba(var(--color-interactive-rgb), 12%);
+    --button-background-selected: rgba(var(--color-interactive-rgb), 22%);
+    --button-background-active: rgba(var(--color-interactive-rgb), 26%);
+
+    --toast-border-color: var(--color-border);
+    --toast-heading-color: var(--color-border);
+}

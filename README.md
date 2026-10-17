@@ -48,7 +48,7 @@ The build is not yet a single command. The steps, in order:
    ```
    python ps3recomp/tools/ppu_lifter.py work/game/EBOOT.ELF \
      --functions work/loader/EBOOT.functions.json --hle-stubs work/loader/EBOOT.imports.json \
-     --override-funcs "0x167AC88=ds_malloc,0x167AC58=ds_free,0x273D38=des_move_post" --shadow-stack \
+     --override-funcs "0x167AC88=ds_malloc,0x167AC58=ds_free,0x273D38=des_move_post,0x724E40=des_menu_tick" --shadow-stack \
      --output work/recomp -j 16
    python ps3recomp/tools/gen_hle_nids.py --all --out work/recomp/hle_nid_table.cpp
    python scripts/apply_boot_patches.py work/recomp
@@ -81,6 +81,8 @@ Options go after it as `NAME=value`:
 - `PS3_SAIL_MOVIES=0`: skip the intro movies.
 
 For example `tools/des/play.sh DES_SKIP_INTRO=1 DES_AUTO_CONTINUE=1 DES_FPS=60`.
+
+A start screen (Play, Settings, Quit) shows over the boot logos. In the game, F1 or Esc (L3 + R3 on a gamepad) opens a menu with Settings and Quit; the game gets no input while it is open, and the menus use the game's own menu sounds. Settings are saved to `%APPDATA%\DemonsSoulsRecomp\DemonsSouls\settings.ini` (next to the exe if a `portable.txt` is there); an option given on the command line wins over the file. `DES_UI=0` turns all of it off, and `DES_SKIP_UI=1` skips the start screen once. Details in [`docs/32`](docs/32-launcher-ui.md).
 
 It first compiles the game's shaders into `gamedata/shader_cache` (about 20 s the first time, a few seconds after), so the game never stops to compile one. This runs the game for up to an hour (`play.sh 120` for two) with sound, at normal priority on every CPU, and logs to `work/tmp/play.txt`. Saves go to `gamedata/dev_hdd0/home/00000001/savedata`. F9 captures a frame for `rsx_replay`, F10 saves screenshots, and F11 starts and stops a profile session (frame times and the worst frames, in `work/tmp/prof`). The debug and test tools are described in [`docs/28`](docs/28-in-game.md#debug-and-test-tools-2026-10-14).
 

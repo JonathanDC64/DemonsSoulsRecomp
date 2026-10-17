@@ -104,6 +104,16 @@ target_include_directories(des_boot PRIVATE
     "${PS3RECOMP_DIR}/runtime/ppu"
 )
 
+# A lift made with --shadow-stack keeps a guest call stack in every lifted
+# function for ds_dump_shadow() backtraces: a thread-local push and pop and an
+# unwind cleanup per call, ~2.4% of the frame rate in Boletarian Palace. Off
+# by default; DES_SHADOW_STACK=ON keeps it for debugging. (A lift made without
+# --shadow-stack has no stack either way.)
+option(DES_SHADOW_STACK "Keep the guest shadow call stack of a --shadow-stack lift" OFF)
+if(NOT DES_SHADOW_STACK)
+    target_compile_definitions(des_boot PRIVATE DS_NO_SHADOW_STACK)
+endif()
+
 # Huge generated TUs need /bigobj (COFF >65k sections). /Zi keeps symbols for
 # host backtraces. NOTE: configure with an empty CMAKE_BUILD_TYPE so the Debug
 # config's /RTC1 (runtime checks: big slowdown, and incompatible with /O2) is

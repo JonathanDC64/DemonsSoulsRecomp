@@ -101,7 +101,7 @@ extern "C" void ds_dump_shadow(void)
     unsigned shown = n < 32u ? n : 32u;
     for (unsigned i = 0; i < shown; i++)
         fprintf(stderr, "   #%u 0x%08X\n", i, g_ds_stk[n - 1 - i]);
-    if (n == 0) { fprintf(stderr, "   (empty -- lift without --shadow-stack?)\n"); fflush(stderr); return; }
+    if (n == 0) { fprintf(stderr, "   (empty -- lift without --shadow-stack, or built without DES_SHADOW_STACK=ON?)\n"); fflush(stderr); return; }
     /* Temporal ring with `this`: find where this transitions valid->0. */
     unsigned win = g_ds_ring_pos < 64u ? g_ds_ring_pos : 64u;
     fprintf(stderr, "[shadow] last %u entries (addr this) -- watch this:valid->0:\n", win);

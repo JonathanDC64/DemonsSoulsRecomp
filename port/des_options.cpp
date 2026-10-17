@@ -393,9 +393,12 @@ void on_flip_request()
 constexpr unsigned kPadCross = 0x4000u, kPadStart = 0x0008u;
 volatile bool s_auto_done = false;
 
+extern "C" int des_ui_start_screen_up(void);   /* port/ui/src/des_ui.cpp */
+
 unsigned auto_continue_buttons()
 {
-    if (s_auto_done) return 0;
+    /* From settings.ini the start screen still shows: press nothing until Play. */
+    if (s_auto_done || des_ui_start_screen_up()) return 0;
     using clock = std::chrono::steady_clock;
     static const clock::time_point t0 = clock::now();
     const long long ms =

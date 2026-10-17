@@ -17,7 +17,8 @@ licences in `port/ui/NOTICE.md`.
   F1 or Start close it.
 - **Quit** asks first ("Return to the desktop? Progress since the game last
   saved will be lost.") in a blood-red window, then posts WM_CLOSE to the
-  game window.
+  game window. The window's close button and Alt+F4 ask the same question
+  (the UI consumes their WM_CLOSE); a scripted run's window closes at once.
 - **Settings**: tabs Display, Game, Controls, Interface, About, the left
   pane showing the value, the right pane showing the choices and help. Rows
   that only apply at the next start say so. A row whose option was set in
@@ -45,9 +46,9 @@ and on every change.
 | V-sync (Display) | `DES_VSYNC` (sets `RSX_VSYNC`) | 1 / 0 | at once (live knob) |
 | Short boot logos (Game) | `DES_SKIP_INTRO` | 0 / 1 | next start |
 | Intro movies (Game) | `PS3_SAIL_MOVIES` | 1 / 0 | from the next movie |
-| Continue automatically (Game) | `DES_AUTO_CONTINUE` | 0 / 1 | next start |
+| Continue automatically (Game) | `DES_AUTO_CONTINUE` | 0 / 1 | next start; from the file it waits for Play on the start screen |
 | Sound (Game) | `AUDIO_MUTE` (inverted) | 0 / 1 | at once (live knob) |
-| UI scale (Interface) | `ui_scale` | 0 = auto, 75, 100, 125, 150 | at once |
+| UI scale (Interface) | `ui_scale` | 0 = auto (the display's scale), 75, 100, 125, 150 (% of it) | at once |
 | Start screen (Interface) | `show_start_screen` | 1 / 0 | next start |
 | Menu hint (Interface) | `menu_hint` | 1 / 0 | at once |
 | Gamepad menu buttons (Interface) | `pad_menu_chord` | 0 = L3 + R3, 1 = Select + Start | at once |
@@ -79,11 +80,22 @@ before the first change and hands the vblank back to the PS3's 59.94 Hz. A
   pump the messages, so while Windows ran its modal loop for a drag or a
   resize the vblank stopped and the game froze: 0 flips during a 4 s move
   before, 128 after.
-- **Any size.** The window can be resized (a drag stops at a 640x360 client area).
-  The game still draws at 1280x720; each frame is scaled with a linear
-  filter into a swap chain the size of the window, letterboxed to 16:9.
-  The UI draws over that at the window's size, so it stays sharp and, with
-  UI scale on auto, scales with the window.
+- **Any size.** The window can be resized (a drag stops at a 640x360 client
+  area, at the display's scale). The game still draws at 1280x720; each
+  frame is scaled with a linear filter into a swap chain the size of the
+  window, letterboxed to 16:9. The UI draws over that at the window's size.
+- **UI size by the display, not the window**, as in FFCCEOT-Recomp
+  (Dusklight's rule): 1 dp is the display's scale (the window's DPI / 96)
+  times the UI scale setting. A larger window gives the menus more room
+  around them; their text stays the same size. The window is per-monitor
+  DPI aware, so on a display scaled above 100% it is drawn at the
+  display's resolution (not stretched by Windows) and the menus are as
+  large as other programs' text; moving it to a display of another scale
+  takes the size Windows suggests. (It used to be the window's height /
+  720, which made everything grow with the window.)
+- It opens centred on the primary display (its size the title's 1280x720
+  at the display's scale, made smaller if it would not fit), with a dark
+  title bar (`RSX_DARK_TITLE=0` for the system's).
 - **Alt+Enter** switches to borderless fullscreen on the window's monitor
   and back.
 - A resize happens between frames: the backend waits for the GPU, calls the
@@ -244,8 +256,10 @@ issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
 | `DES_PRECOMPILE=0` / `force` | No startup shader pass / one whatever the stamp says (above). |
 
 No start screen when the run is scripted: a tools/des test run
-(`PS3_PIDFILE` set and `DES_KIND` not `play`), `DES_AUTO_CONTINUE`,
-`PAD_FILE` or `EXIT_AFTER_MS`. Test runs also neither read nor write
+(`PS3_PIDFILE` set and `DES_KIND` not `play`), `DES_AUTO_CONTINUE` on the
+command line, `PAD_FILE` or `EXIT_AFTER_MS`. `DES_AUTO_CONTINUE` from
+settings.ini keeps the start screen: its presses wait until Play
+(`des_ui_start_screen_up`). A scripted run's close button closes at once. Test runs also neither read nor write
 settings.ini unless `DES_SETTINGS` (or `DES_DATA_DIR`) is given, so regress,
 levelcap, exeab and friends see exactly the options they pass; they also
 keep no log and install no crash handler.
@@ -450,3 +464,23 @@ reaching the filter).
 
 Not tested: a person dragging the window (the script drives the move and
 size loops with messages), Restart game after a resize.
+
+### Display scale, centred window, close button (2026-10-17)
+
+- Scale: the same resize script with the settings window open over the
+  start screen. At 1684x761 and 1587x922 the settings window is 1087 px
+  wide, as at 1280x720; at 640x360 it fills the window (the last tab is
+  cut there).
+- Window: centred (632 px each side and 316/317 above and below on a
+  2560x1392 work area), `DWMWA_USE_IMMERSIVE_DARK_MODE` reads 1.
+- Close: a play-kind run (`DES_KIND=play`, so not scripted), WM_CLOSE as
+  the X button sends it: the window stays and the Quit Game question
+  shows; a second WM_CLOSE with it up changes nothing; Right, Enter (Quit
+  Game) exits with `[boot] window closed -- exiting`.
+- Continue automatically from settings.ini with the start screen: the game
+  waits at its auto-save notice behind the start screen; after Play (frame
+  700) it pressed through into the save by itself.
+- regress.sh 4/4 ok.
+
+Not tested: a display scaled above 100% (this one is at 100%), moving the
+window between displays of different scales.

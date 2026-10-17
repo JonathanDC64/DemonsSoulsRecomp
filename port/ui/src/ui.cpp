@@ -369,7 +369,7 @@ bool consume_menu_notification_request() noexcept {
 }
 
 
-// The UI scale setting: 0 is Auto (1 dp = 1 pixel at 720p), otherwise a percentage.
+// The UI scale setting: 0 is Auto (the display's scale), otherwise a percentage of it.
 void apply_scale() noexcept {
     const int userScale = settings::get_int("ui_scale");
     host::set_ui_scale(userScale > 0 ? static_cast<float>(userScale) / 100.0f : 0.0f);

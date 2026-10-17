@@ -996,6 +996,43 @@ x86 lets each load pass the store before it, so both could read the old value. T
 
 Then rebuild `des_boot`.
 
+## The heavy hitters, worked through (2026-10-16 night to 10-17)
+
+All A/Bs: `DES_FPS=60 VBLANK_MHZ=120000` at the deep Palace save, unattended. Live knobs are toggled in one run, ABBAABBA, ~6 s windows (`tools/des/knobab.sh`). Run-to-run spread is about 1 fps at ~100 fps. Palace went from ~66 fps (uncapped) to ~97-100 over the night.
+
+**Cheaper lifted SPU ops** (item 5, done first; ps3recomp PR #18):
+- `shufb` in the host layout (`6a019d5`): 10 ops instead of 20. +1.8%.
+- One gate in front of the LS accessors' debug probes (`c2a2c84`): every LS access tested up to four probe globals; it now tests one. +6.8%.
+
+**HighGraphics' poll granularity** (item 1): no gain, twice. `USLEEP_SPIN=1` (spin every `usleep`, never fall back to the 0.5 ms timer after 64 polls): 69.25 -> 69.10 before items 3 and 4, and 97.88 -> 97.92 after them. HighGraphics' wake-up latency is not on the frame's path.
+
+**Vertex fetch on the GPU** (item 3; ps3recomp PR #20, `f7337e9`): strip and fan draws send the raw guest vertex arrays and a fetch description to the vertex shader, which fetches and converts the attributes itself (`VP_GPU_FETCH=1`, the default). Same run: 73.4 -> 78.6 fps. FIFO thread 96% -> 73% of a core, the `vpj_worker` 80% -> 14%. Done before item 2, because the FIFO thread was the busiest thread at the time.
+
+**The shield** (item 6, RPCS3 issue #3088 / #4302; ps3recomp PR #19, `758d3ec`): the Soldier's starting shield was invisible. The RSX decodes vertex type 1 (S1, signed 16-bit normalized) as (2x + 1) / 65535, not x / 32768 (RPCS3 PR #12450, `fetch_attribute`). Demon's Souls passes a skinning weight of 0 in that format and the shader takes `pow(w, -1)`: with x / 32768 that is 1/0 and the mesh collapses. The CPU and GPU fetch paths both decode it the RSX way now. The shield shows in regress set `20261016_225628`.
+
+**A native fetch step for image 2** (item 4; ps3recomp PR #21, port PR #19):
+- `spu_lifter.py --native-block ADDR-END=SYMBOL` (`6b1accb`): a C function runs in place of the lifted instructions from ADDR up to END. It returns 1 when it did their work, with every register, LS byte and channel they would write left as they leave them; 0 runs the lifted code. `scripts/build_spu.py` lists them per image (`NATIVE_BLOCKS`), keyed by the image's hash.
+- `spu_ring_hook.c` (`ac4058b`): image 2's per-command fetch, LS 0x4618-0x4730. Lifted, each 16-byte command costs a GETLLAR of the ring's control line and a PUTLLC writing it back unchanged. Natively, when the line shows a command, the pair is one seqlock read of the line (`spu_llar_noop_commit`, up to 8 tries; with 1 try 6.4% fell back to the lifted path, with 8 0.06%); the GET of the command and its tag wait still go through the channels. An empty ring returns 0 and the lifted code waits exactly as before. Same run: 77.58 -> 89.30 fps (+15%).
+- `87115e8`: while the LS copy from the last read still shows a put ahead of get, the commands up to it are published (the producer moves put only past whole commands), so the line is not read at all. 89.92 -> 97.20 (+8%).
+- `SPU_NATIVE_RING` (live): 1 the above (default), 2 reads the line for every command, 0 the lifted code. Regress ok; six-minute soaks in the Nexus and the Palace at `DES_FPS=120` ok.
+- No gain: extending the native block over the state PUT that follows (0xC358).
+
+**render_frame off the frame's path** (item 2): measured, then dropped; not implemented.
+- Causal, after item 3: `RSX_FRAME_SPIN_US=1000` cost 0 fps, so render_frame was off the path. After item 4 it is back on: a 1.5 ms spin costs 1.0 ms a frame (98.7 -> 89.8 fps).
+- From a console `trace`: flip -> `present` 2.4 ms, `present` -> label `0xFF0` 0.5 ms, `0xFF0` -> next flip 7.1 ms.
+- The cache-hit test's texture checksums in the prepass (~235 textures a frame, ~1,000 scattered reads each) were the obvious cut. Three ways, all without gain:
+  - At draw time, invalidated by the 2D engine's writes and the render-target write-back: flip -> `0xFF0` 2.97 -> 1.87 ms, but `0xFF0` -> flip 7.13 -> 7.75 ms. Same run: 100.40 vs 100.53 fps.
+  - The same, on the vertex-fetch worker: `0xFF0` -> flip still 7.66 ms.
+  - In render_frame on three helper threads, before the prepass: flip -> `present` 2.54 -> 2.02 ms, `0xFF0` -> flip 7.20 -> 7.44. Same run: 99.75 (on) vs 100.73 (off).
+- Each time the saved time came back in HighGraphics' window. The frame has a second chain of about the same length: HighGraphics -> ring -> image 2. Adding time to render_frame costs, but taking it away only lets HighGraphics start building a frame it then waits on image 2 to drain.
+- Also no gain: a branch-light strip walk on the FIFO thread (`vf_strip_list`, checked against the old walk with 0 mismatches over 6.8M draws), and `tex_csum` without the divide (+0.6%).
+
+**Where the time goes now** (`cpu 4` and `profrip`, ~97 fps):
+- HighGraphics 98.8% of a core. Its ring stores are ~15%: `spu_coh_notify_write` 6.8%, `spu_lockline_unlock_ea` 2.8%, `spu_ll_acquire` 1.8%, `spu_lockline_lock_ea` 1.7%, `vm_write32` 1.7%. The lifted functions are spread thin, none above 2.3%.
+- Image 2 84%. The state PUT after each command (region `0xC358`) 11.8%, `mfc_submit` 6.2%, `spu_wrch` 5.3%, region `0x4498` 8.0%, the native fetch 5.0%, region `0x3C90` 5.4%; napping ~15%.
+- FIFO thread 78%, not saturated.
+- Next levers: the per-command state PUT in image 2 (r3 = EA, r4 = LSA, r5 = size, synchronous), and HighGraphics' ring stores (each takes the line's stripe and notifies image 2).
+
 ## Still open
 
 - **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Heaviest Palace view: 13-14% skip frames since `099343f` (was 29%). Still: no side-by-side check against RPCS3 at the same spot yet.

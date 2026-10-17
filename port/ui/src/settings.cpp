@@ -77,8 +77,11 @@ bool harness_run() {
 }
 
 bool scripted_run() {
+    // DES_AUTO_CONTINUE counts only from the command line: from settings.ini it waits for Play instead
+    // (des_ui_start_screen_up).
     const char* ac = std::getenv("DES_AUTO_CONTINUE");
-    return harness_run() || (ac && *ac && std::strcmp(ac, "0") != 0) || env_set("PAD_FILE") ||
+    const bool auto_continue = pinned("DES_AUTO_CONTINUE") && ac && *ac && std::strcmp(ac, "0") != 0;
+    return harness_run() || auto_continue || env_set("PAD_FILE") ||
            env_set("EXIT_AFTER_MS");
 }
 

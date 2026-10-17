@@ -93,6 +93,11 @@ std::atomic<bool> sCapturing{false};  // a document is up: the wndproc takes the
 std::atomic<int> sBufferW{1280}, sBufferH{720};
 
 bool sStartScreen = false;
+std::atomic<bool> sStartUp{false};
+// The window's close button (and Alt+F4) asks first, as Quit does; a test run's window closes at once.
+bool sCloseAsks = false;
+std::atomic<bool> sCloseRequested{false};  // set on the window thread, the question opened in frame
+std::atomic<bool> sQuitConfirmed{false};   // Quit Game was chosen: the next WM_CLOSE goes through  // the start screen is to show or showing (des_ui_start_screen_up, any thread)
 bool sDocumentsPushed = false;
 bool sActive = false;
 bool sHold = false;
@@ -141,6 +146,11 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
     HWND hwnd = static_cast<HWND>(hwnd_);
     const bool capturing = sCapturing.load(std::memory_order_acquire);
     switch (msg) {
+    case WM_CLOSE:
+        if (!sCloseAsks || sQuitConfirmed.load()) return 0;
+        sCloseRequested.store(true);
+        *result = 0;
+        return 1;
     case WM_KEYDOWN:
     case WM_KEYUP: {
         const bool down = msg == WM_KEYDOWN;
@@ -380,7 +390,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     static bool sPreworkShown = false;
     const bool prework = ui::prework_running();
     if (!sActive && !sStartScreen && !chordEdge && !shot && !sQueued.load(std::memory_order_acquire) &&
-        !sOpenPending && !sReportCountdown && !(prework && !sPreworkShown)) {
+        !sOpenPending && !sReportCountdown && !(prework && !sPreworkShown) && !sCloseRequested.load()) {
         return;
     }
 
@@ -388,6 +398,8 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     sBufferH.store(int(height));
     if (!ensure_init(int(width), int(height))) {
         sStartScreen = false;
+        sStartUp.store(false);
+        if (sCloseRequested.exchange(false) && ui::app().quit) ui::app().quit();  // nothing to ask with
         sActive = false;
         std::lock_guard<std::mutex> lock(sQueueLock);
         sQueue.clear();
@@ -410,11 +422,13 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         sPreworkShown = true;
         ui::push_document(std::make_unique<ui::PreworkModal>());
     }
+    if (sCloseRequested.exchange(false)) ui::request_quit_confirm();
     process_queue();
     bool padNeutral = true;
     const ui::input::PadState pad = read_pads(padNeutral);
     ui::input::update_pad(pad, chord);
     ui::update();
+    sStartUp.store(ui::is_prelaunch_open());
 
     const bool visible = ui::any_document_visible();
     const auto now = clock_type::now();
@@ -504,6 +518,9 @@ App& app() {
 }
 }  // namespace ui
 
+// For des_options.cpp: the start screen is up (or about to be), so DES_AUTO_CONTINUE waits for Play.
+extern "C" int des_ui_start_screen_up(void) { return sStartUp.load() ? 1 : 0; }
+
 extern "C" void des_ui_early_init(void) {
     ui::crash_report::install();  // (with DES_UI=0 too; nothing in a test run)
     if (const char* v = std::getenv("DES_UI"); v && !std::strcmp(v, "0")) {
@@ -516,8 +533,11 @@ extern "C" void des_ui_early_init(void) {
 
     sStartScreen = env_on("DES_UI_START") ||
                    (ui::settings::get_int("show_start_screen") != 0 && !env_on("DES_SKIP_UI") && !ui::settings::scripted_run());
+    sStartUp.store(sStartScreen);
 
+    sCloseAsks = !ui::settings::scripted_run();
     ui::app().quit = [] {
+        sQuitConfirmed.store(true);
         if (HWND hwnd = static_cast<HWND>(rsx_d3d12_hwnd())) PostMessageW(hwnd, WM_CLOSE, 0, 0);
     };
     ui::app().report_issue = [] { sReportCountdown = 4; };  // (the render thread: the menu's callbacks run in frame)

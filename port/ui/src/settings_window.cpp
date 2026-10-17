@@ -144,9 +144,6 @@ constexpr Credit kCredits[] = {
      "FreeType Licence (FTL)", "https://freetype.org"},
     {"Dusklight", "The start screen, menu bar and settings windows are adapted from its interface code.", "CC0",
      "https://github.com/TwilitRealm/dusklight"},
-    {"FFCCEOT-Recomp", "The same interface, as adapted there for Final Fantasy Crystal Chronicles: Echoes of Time, "
-                       "by the same author as this port.",
-     "Its interface code is the author's own or Dusklight's (CC0)", ""},
     {"Cinzel and Alegreya Sans", "The fonts of the menus.", "SIL Open Font Licence 1.1", "https://fonts.google.com"},
     {"Material Symbols", "The icons of the menus.", "Apache-2.0", "https://fonts.google.com/icons"},
     {"RPCS3", "A behavioural reference for the PS3 system libraries. No RPCS3 code is copied.", "", "https://rpcs3.net"},
@@ -182,8 +179,8 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "Plays the game's movies (the opening, and the title screen's attract movie). Off skips them. Applies "
             "from the next movie.<br/><br/>(PS3_SAIL_MOVIES)");
         bool_row(leftPane, rightPane, "Continue automatically", "DES_AUTO_CONTINUE",
-            "Presses through the notices and the title screen into the last save, without touching a "
-            "button. The start screen is not shown then.<br/><br/>(DES_AUTO_CONTINUE)");
+            "After Play on the start screen, presses through the notices and the title screen into the last "
+            "save, without touching a button.<br/><br/>(DES_AUTO_CONTINUE)");
 
         leftPane.add_section("Sound");
         bool_row(leftPane, rightPane, "Sound", "AUDIO_MUTE",
@@ -226,8 +223,8 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
 
         choice_row(leftPane, rightPane, "UI scale", "ui_scale", {"0", "75", "100", "125", "150"},
             {"Auto", "75%", "100%", "125%", "150%"},
-            "The size of these menus. Auto suits the game's 1280x720 picture at any window size. Has no effect on "
-            "the game's own menus.",
+            "The size of these menus. Auto follows the display's scale in Windows' display settings; the "
+            "percentages are of that. Has no effect on the game's own menus.",
             [] { apply_scale(); });
         bool_row(leftPane, rightPane, "Start screen", "show_start_screen",
             "Shows the start screen (Play, Settings, Quit) over the game as it boots. Off goes straight to the game; "

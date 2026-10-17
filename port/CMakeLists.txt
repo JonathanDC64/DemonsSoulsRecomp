@@ -95,6 +95,8 @@ add_executable(des_boot
     "${CMAKE_CURRENT_SOURCE_DIR}/missing_stubs.cpp"         # degenerate external targets
     "${CMAKE_CURRENT_SOURCE_DIR}/des_heap.cpp"              # clean guest allocator (malloc override)
     "${CMAKE_CURRENT_SOURCE_DIR}/des_options.cpp"           # user options (DES_SKIP_INTRO, ...)
+    "${CMAKE_CURRENT_SOURCE_DIR}/des_menu_sfx.cpp"          # UI sounds via the game's menu SE (0x724E40 hook)
+    "${CMAKE_CURRENT_SOURCE_DIR}/des_prework.cpp"           # startup work: the shader cache, behind a progress bar
 )
 
 target_include_directories(des_boot PRIVATE
@@ -102,6 +104,7 @@ target_include_directories(des_boot PRIVATE
     "${RECOMP_DIR}"
     "${PS3RECOMP_DIR}/include"
     "${PS3RECOMP_DIR}/runtime/ppu"
+    "${PS3RECOMP_DIR}/libs/video"          # rsx_shader_precompile.h
 )
 
 # A lift made with --shadow-stack keeps a guest call stack in every lifted
@@ -177,3 +180,10 @@ target_link_libraries(des_boot PRIVATE
 # Emit a linker map so we can resolve host RVAs back to func_<guestaddr> even for
 # /O2 chunks that llvm-symbolizer can't (used to locate busy-loop spin addresses).
 target_link_options(des_boot PRIVATE "/MAP:des_boot.map")
+
+# --- The wrapper UI (port/ui, docs/32) ---------------------------------------
+# Start screen, in-game menu (F1 / Esc, or L3+R3 on a pad) and settings,
+# drawn over the game frame. Its own static library, linked only: des_boot's
+# compile flags do not change. DES_UI=0 at run time leaves it uninstalled.
+add_subdirectory(ui)
+target_link_libraries(des_boot PRIVATE des_ui)

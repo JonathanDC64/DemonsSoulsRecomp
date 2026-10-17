@@ -34,8 +34,9 @@
  *   things in the code; here the code is left alone. 60 mode flips at most
  *   once a vblank, so the vblank is the frame limit: DES_FPS=<n> above 60
  *   sets 60 mode and a vblank of n Hz (VBLANK_MHZ, unless that is set
- *   already), a cap of n, and presents that do not wait for the display's
- *   refresh (RSX_VSYNC=0, unless set). Movies keep their speed (cellSail
+ *   already) and so a cap of n. Presents still wait for the display's
+ *   refresh unless DES_VSYNC=0, so with vsync a 144 Hz display shows at most
+ *   144 of them a second. Movies keep their speed (cellSail
  *   hands out the frame that is due by the clock), and the game advances by
  *   real time: the regress walk ends in the same place at ~66 fps as at 30.
  *   The in-engine cutscenes (RemoMan) stay at 30: their positions step at
@@ -53,6 +54,13 @@
  *   a slow run (stamina still coming back) drops to half speed, 3.2 m/s,
  *   and stays there. des_move_post redoes the test with the step's real
  *   length and makes the rates per 30 Hz step as well.
+ *
+ * DES_VSYNC=0 | 1 — whether presents wait for the display's refresh (default
+ *   1). 0 presents each frame as soon as it is drawn, with tearing, where the
+ *   system supports it (the D3D12 backend asks DXGI; without it, it presents
+ *   with vsync and says so once in the log). Sets RSX_VSYNC unless that is
+ *   set already. Above the display's refresh (DES_FPS over 60 on a 60 or
+ *   144 Hz display) only DES_VSYNC=0 shows every frame.
  *
  * DES_AUTO_CONTINUE=1 — press through the boot menus into the last save.
  *   From the first pad poll it taps CROSS, CROSS, START in a 600 ms cycle:
@@ -441,18 +449,23 @@ extern "C" void ps3_title_options_init(void)
             s_move_real_time = true;
             g_gcm_flip_request_hook = on_flip_request;
             /* Before the vblank clock starts: boot_main reads the rate once.
-             * Presents stop waiting for the display's refresh too (RSX_VSYNC),
-             * or a 60 Hz desktop holds the game to 60 whatever the vblank. */
+             * Whether presents wait for the display is DES_VSYNC's. */
             if (fps > 60) {
                 char v[16];
                 snprintf(v, sizeof v, "%d", fps * 1000);
                 if (!getenv("VBLANK_MHZ")) ps3_setenv("VBLANK_MHZ", v);
-                if (!getenv("RSX_VSYNC"))  ps3_setenv("RSX_VSYNC", "0");
             }
             fprintf(stderr, "[des] DES_FPS=%d: real frame time, no skip frames%s\n", fps,
                     fps > 60 ? ", vblank at the cap" : "");
         } else if (*f) {
             fprintf(stderr, "[des] DES_FPS=%s ignored (30, 60, or 61-240)\n", f);
+        }
+    }
+    if (const char* v = getenv("DES_VSYNC")) {
+        if (*v && !getenv("RSX_VSYNC")) {
+            const bool on = atoi(v) != 0;
+            ps3_setenv("RSX_VSYNC", on ? "1" : "0");
+            if (!on) fprintf(stderr, "[des] DES_VSYNC=0: presents do not wait for the display\n");
         }
     }
     if (const char* f = getenv("DES_FRAMELOG")) {

@@ -355,6 +355,19 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                     open_url("https://github.com/JonathanDC64/DemonsSoulsRecomp");
                 });
             });
+        info_row(leftPane, rightPane, "ps3recomp", kPs3recompVersion,
+            "The recompiler and runtime this program was built with: ps3recomp, from this project's fork. A release "
+            "of the fork shows its tag (des-...), anything else its commit.<br/><br/>" + escape(kPs3recompVersion) +
+                ".");
+        {
+            const Rml::String sha = kDumpSha256;
+            Rml::String grouped;  // (in fours of 16, so the help pane can wrap it)
+            for (size_t i = 0; i < sha.size(); i += 16) grouped += (i ? " " : "") + sha.substr(i, 16);
+            info_row(leftPane, rightPane, "Game dump", sha.empty() ? Rml::String("unknown") : sha.substr(0, 12),
+                "The game executable this program was built from: PS3_GAME/USRDIR/EBOOT.BIN, decrypted. Its SHA-256 "
+                "is the same for every copy of the same release of the game.<br/><br/>" +
+                    (sha.empty() ? Rml::String("Not known: the build did not find work/game/EBOOT.ELF.") : grouped));
+        }
         info_row(leftPane, rightPane, "Licence", "MIT",
             "This port's own code is under the MIT licence. The game itself is not: it needs your own copy of Demon's "
             "Souls.<br/><br/>Demon's Souls is a trademark of Sony Interactive "

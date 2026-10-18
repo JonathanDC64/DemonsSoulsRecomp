@@ -85,17 +85,10 @@ endif()
 target_link_libraries(des_ui PRIVATE des_rmlui_backend RmlUi::RmlUi d3d11 d3d12 dxgi dxguid xinput shell32 ole32 user32
   dbghelp windowscodecs uuid)   # crash reports (minidump, stack), report screenshots (PNG through WIC)
 
-# The version shown on the start screen and in About (the git commit at configure time).
-find_package(Git QUIET)
-set(DES_VERSION "dev")
-if(GIT_EXECUTABLE)
-  execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    OUTPUT_VARIABLE DES_GIT_REV OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE DES_GIT_RC)
-  if(DES_GIT_RC EQUAL 0 AND DES_GIT_REV)
-    set(DES_VERSION "${DES_GIT_REV}")
-  endif()
+# The version shown on the start screen, in About, in reports and in the log: des_version.h, written on every build
+# by cmake/DesVersion.cmake (port/CMakeLists.txt includes it; a build of the UI alone includes it here).
+if(NOT TARGET des_version)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/DesVersion.cmake)
 endif()
-set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/prelaunch.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/settings_window.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/report.cpp
-  PROPERTIES COMPILE_DEFINITIONS "DES_VERSION=\"${DES_VERSION}\"")
+target_include_directories(des_ui PRIVATE ${DES_VERSION_DIR})
+add_dependencies(des_ui des_version)

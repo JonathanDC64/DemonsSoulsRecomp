@@ -181,6 +181,15 @@ target_link_libraries(des_boot PRIVATE
 # /O2 chunks that llvm-symbolizer can't (used to locate busy-loop spin addresses).
 target_link_options(des_boot PRIVATE "/MAP:des_boot.map")
 
+# --- The exe's version ---------------------------------------------------------
+# The port version (VERSION and git), the ps3recomp commit or tag and the game
+# dump's SHA-256, rewritten on every build into des_version.h (the UI, reports,
+# log) and a version resource (Explorer: Properties > Details). docs/54.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DesVersion.cmake")
+enable_language(RC)
+target_sources(des_boot PRIVATE "${DES_VERSION_RC}")
+add_dependencies(des_boot des_version)
+
 # --- The exe's icon ------------------------------------------------------------
 # Made at configure time from the game's own PS3_GAME/ICON0.PNG (copy it to
 # work/game/ next to EBOOT.ELF, or point DES_ICON0 at it) by scripts/make_icon.py,

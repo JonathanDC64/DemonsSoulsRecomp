@@ -142,3 +142,20 @@ des_console() {
 }
 
 des_cache_dir() { echo "${DES_CACHE_DIR:-$PS3_VFS_ROOT/cache}"; }
+
+# des_put_save <from> <to>: make directory <to> hold a copy of <from>. It
+# replaces what <to> holds, not <to> itself: while something has <to> open
+# (a shell sitting in it, say), `rm -rf <to>` empties it but cannot remove
+# it, and `cp -r <from> <to>` then puts the copy one level down, where the
+# game does not look.
+des_put_save() {
+  mkdir -p "$2" || return 1
+  find "$2" -mindepth 1 -delete 2>/dev/null
+  cp -r "$1/." "$2/"
+}
+
+# des_backup_save <save> <backup>: copy the save aside and check the copy.
+# Fails if the copy differs, so a script stops before it swaps the save.
+des_backup_save() {
+  des_put_save "$1" "$2" && diff -rq "$1" "$2" > /dev/null
+}

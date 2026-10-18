@@ -52,14 +52,16 @@ NAME="${1:-$(date +%Y%m%d_%H%M%S)}"; SET="$REG/$NAME"
 RUN="$DES_SCRATCH/regress_run"; rm -rf "$RUN" "$SET"; mkdir -p "$RUN/shots" "$SET"
 OUT="$RUN/run.txt"; PAD="$RUN/pad"; CON="$RUN/con"; : > "$PAD"; : > "$OUT"
 
-if [ -d "$SAVE" ]; then rm -rf "$RUN/save"; cp -r "$SAVE" "$RUN/save"; fi
-if [ -d "$REG/save" ]; then rm -rf "$SAVE"; mkdir -p "$(dirname "$SAVE")"; cp -r "$REG/save" "$SAVE"
-else echo "[regress] no pinned save ($REG/save): using the current one; see pin-save"; fi
+if [ -d "$SAVE" ]; then
+  des_backup_save "$SAVE" "$RUN/save" || { echo "[regress] could not back up $SAVE; save not swapped"; exit 1; }
+fi
 restore() {
   des_kill_own
-  if [ -d "$RUN/save" ]; then rm -rf "$SAVE"; cp -r "$RUN/save" "$SAVE"; fi
+  if [ -d "$RUN/save" ]; then des_put_save "$RUN/save" "$SAVE"; fi
 }
 trap restore EXIT
+if [ -d "$REG/save" ]; then des_put_save "$REG/save" "$SAVE"
+else echo "[regress] no pinned save ($REG/save): using the current one; see pin-save"; fi
 
 tools/des/desrun.sh "${REGRESS_MAX:-600}" "$OUT" DES_SKIP_INTRO=1 DES_AUTO_CONTINUE=1 \
   PAD_FILE="$(cygpath -m "$PAD")" PS3_DEBUG="$(cygpath -m "$CON")" PS3_OSK_TEXT=Aldia HLE_FIRST=1 \

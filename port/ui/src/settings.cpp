@@ -22,8 +22,8 @@ constexpr Def kDefs[] = {
     {"DES_FPS", "", Apply::Live},              // "" = the game's own 30 fps mode; read at each flip
     {"DES_MOTION_BLUR", "1", Apply::Live},     // des_motion_blur, read each frame
     {"DES_VSYNC", "1", Apply::Live},           // RSX_VSYNC, live
-    {"DES_SKIP_INTRO", "0", Apply::Restart},
-    {"PS3_SAIL_MOVIES", "1", Apply::Live},     // read as each movie opens
+    {"DES_SKIP_INTRO", "0", Apply::Restart},   // 1 = no logos, 2 = the last logo only
+    {"DES_SKIP_INTRO_MOVIE", "0", Apply::Live},  // PS3_SAIL_SKIP, read as each movie opens
     {"DES_AUTO_CONTINUE", "0", Apply::Restart},
     {"AUDIO_MUTE", "0", Apply::Live},
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
@@ -55,12 +55,14 @@ void make_dirs(const std::string& file) {
     std::filesystem::create_directories(std::filesystem::path(report::widen(file)).parent_path(), ec);
 }
 
-// The environment variables a setting drives (DES_VSYNC also sets RSX_VSYNC, which the D3D12 backend reads live).
+// The environment variables a setting drives (DES_VSYNC also sets RSX_VSYNC, which the D3D12 backend reads live;
+// DES_SKIP_INTRO_MOVIE sets PS3_SAIL_SKIP, which cellSail reads as each movie opens).
 void apply_env(std::string_view key, const std::string& value) {
     const std::string k(key);
     if (value.empty() && key != "DES_FPS") return;  // (an unset option stays unset; DES_FPS "" is the game's mode)
     ps3_setenv(k.c_str(), value.c_str());
     if (key == "DES_VSYNC") ps3_setenv("RSX_VSYNC", value == "0" ? "0" : "1");
+    if (key == "DES_SKIP_INTRO_MOVIE") ps3_setenv("PS3_SAIL_SKIP", value == "0" ? "" : "ds_advertise.pam");
 }
 
 }  // namespace
@@ -128,7 +130,12 @@ void load_and_apply_env() {
         if (l.empty() || l[0] == '#' || l[0] == ';') continue;
         const size_t eq = l.find('=');
         if (eq == std::string::npos) continue;
-        const std::string key = trim(l.substr(0, eq)), value = trim(l.substr(eq + 1));
+        std::string key = trim(l.substr(0, eq)), value = trim(l.substr(eq + 1));
+        if (key == "PS3_SAIL_MOVIES") {  // the older "Intro movies" row: off skipped every movie
+            if (sValues.count("DES_SKIP_INTRO_MOVIE")) continue;
+            key = "DES_SKIP_INTRO_MOVIE";
+            value = value == "0" ? "1" : "0";
+        }
         const Def* d = find(key);
         if (!d) continue;
         sValues[key] = value;

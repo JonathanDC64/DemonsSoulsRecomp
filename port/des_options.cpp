@@ -4,7 +4,7 @@
  * has, through the same transitions it takes on its own, just sooner. All are
  * off by default.
  *
- * DES_SKIP_INTRO=1 — shorten the boot logo sequence (DsMenuDlgLogo).
+ * DES_SKIP_INTRO=1 | 2 — skip or shorten the boot logos (DsMenuDlgLogo).
  *   The dialog's per-frame update (vtable method at 0x008EF430) runs a
  *   per-logo state machine on the dialog object:
  *     +0x0F8 m_elapseTime   (float, hold time accumulated in state 2)
@@ -15,10 +15,23 @@
  *   The hold is 3 s for logo 0 and 5 s for the others; each fade is 1 s, so the
  *   sequence takes about 33 s. When the fade-out of logo 4 finishes, the dialog
  *   requests the next menu state itself (0x3C, the title).
- *   With the option on, a logo that is about to start fading in (state 0) is
- *   made the last one, and the hold of state 2 is treated as already over. The
- *   game still plays the last logo's fade-in and fade-out and takes its own exit
- *   path, so nothing downstream sees a state it would not see on hardware.
+ *   1 does what RPCS3's "Skip Intro" patch for BLUS30443 does (li r0,3;
+ *   stw r0,0x100(r28) over the state tests at 0x008EEF78): every update takes
+ *   state 3's branch, which moves to the next logo without waiting for a fade,
+ *   and after the last one requests the title itself. No logo is drawn, and the
+ *   title comes up about five frames after the dialog opens.
+ *   2 (the first version of the option) makes a logo that is about to start
+ *   fading in (state 0) the last one, and treats the hold of state 2 as already
+ *   over: the last logo's fade-in and fade-out still play, about 2 s.
+ *   Either way the game takes its own exit path, so nothing downstream sees a
+ *   state it would not see on hardware.
+ *
+ * DES_SKIP_INTRO_MOVIE=1 — skip the opening movie (movie/ds_advertise.pam, the
+ *   130 s advert after the logos; the title screen also replays it when left
+ *   idle). It sets PS3_SAIL_SKIP, so cellSail ends that movie as soon as it
+ *   starts, as START does on hardware; the title screen's own movie, the one
+ *   after character creation and the endings still play. The settings window
+ *   changes it live (from the next movie).
  *
  * DES_FPS=30 | 60 | 61..240 — the game's own frame-rate mode, with real frame time.
  *   The engine object at *0x01AD6298 (built by 0x00025DD8) holds a flip mode
@@ -97,6 +110,7 @@ constexpr uint32_t kElapseTime   = 0x0F8u;
 constexpr uint32_t kCurLogType   = 0x0FCu;
 constexpr uint32_t kAnimState    = 0x100u;
 constexpr uint32_t kLastLogType  = 4u;
+constexpr const char* kOpeningMovie = "ds_advertise.pam";   /* PS3_SAIL_SKIP for DES_SKIP_INTRO_MOVIE */
 
 bool env_on(const char* name)
 {
@@ -104,10 +118,14 @@ bool env_on(const char* name)
     return v && *v && strcmp(v, "0") != 0;
 }
 
+int s_skip_intro = 0;
+
 void logo_update_skip(ppu_context* ctx)
 {
     const uint32_t dlg = (uint32_t)ctx->gpr[3];
-    if (dlg) {
+    if (dlg && s_skip_intro == 1) {
+        vm_write32(dlg + kAnimState, 3);   /* to the next logo, or out after the last */
+    } else if (dlg) {
         const uint32_t state = vm_read32(dlg + kAnimState);
         if (state == 0 && vm_read32(dlg + kCurLogType) < kLastLogType) {
             static bool said = false;
@@ -593,8 +611,14 @@ extern "C" void ps3_title_options_init(void)
     des_ui_early_init();
     des_menu_sfx_init();   /* the UI's sounds through the game's menu sounds */
     if (env_on("DES_SKIP_INTRO")) {
+        s_skip_intro = atoi(getenv("DES_SKIP_INTRO")) == 2 ? 2 : 1;
         ppu_register_function(kLogoUpdate, logo_update_skip);
-        fprintf(stderr, "[des] DES_SKIP_INTRO: boot logos shortened\n");
+        fprintf(stderr, "[des] DES_SKIP_INTRO=%d: boot logos %s\n", s_skip_intro,
+                s_skip_intro == 1 ? "skipped" : "shortened");
+    }
+    if (env_on("DES_SKIP_INTRO_MOVIE") && !getenv("PS3_SAIL_SKIP")) {
+        ps3_setenv("PS3_SAIL_SKIP", kOpeningMovie);
+        fprintf(stderr, "[des] DES_SKIP_INTRO_MOVIE: the opening movie is skipped\n");
     }
     /* DES_FPS is read at each flip request, so the settings window changes it
      * live; the hook is always on. A VBLANK_MHZ given at start wins over the

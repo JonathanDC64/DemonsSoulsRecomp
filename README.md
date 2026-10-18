@@ -78,9 +78,10 @@ Options go after it as `NAME=value`:
 - `DES_FPS=60`: the game's 60 fps mode, with real frame times. `DES_FPS=61` to `240` also raises the frame cap to that many frames a second. `DES_FPS=30` keeps 30 with real frame times.
 - `DES_MOTION_BLUR=0`: no camera motion blur (live; the same change as RPCS3's "Disable Motion Blur" patch).
 - `DES_VSYNC=0`: present each frame as soon as it is drawn, with tearing, instead of waiting for the display's refresh (the default, `DES_VSYNC=1`). With vsync, a frame rate above the display's refresh (say `DES_FPS=240` on a 144 Hz display) is shown at the refresh. If the system cannot tear, it keeps vsync and says so once in the log.
-- `DES_SKIP_INTRO=1`: shorter boot logos.
+- `DES_SKIP_INTRO=1`: skip the boot logos (`DES_SKIP_INTRO=2` shows only the last one).
+- `DES_SKIP_INTRO_MOVIE=1`: skip the opening movie (the advert after the logos). The game's other movies still play.
 - `DES_AUTO_CONTINUE=1`: presses through the title screen into the first save in the list.
-- `PS3_SAIL_MOVIES=0`: skip the intro movies.
+- `PS3_SAIL_MOVIES=0`: skip every movie.
 
 For example `tools/des/play.sh DES_SKIP_INTRO=1 DES_AUTO_CONTINUE=1 DES_FPS=60`.
 

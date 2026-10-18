@@ -9,6 +9,7 @@
 #include "bool_button.hpp"
 #include "controls_window.hpp"
 #include "input.hpp"
+#include "number_button.hpp"
 #include "pane.hpp"
 #include "report.hpp"
 #include "settings.hpp"
@@ -19,6 +20,7 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <format>
 #include <string>
 #include <vector>
@@ -74,10 +76,11 @@ SelectButton& bool_row(Pane& leftPane, Pane& rightPane, const Rml::String& label
 }
 
 // A row with a list of choices on the right, the current one marked. `values` and `labels` line up; a value from
-// settings.ini that is not in the list shows as itself.
+// settings.ini that is not in the list shows as itself. `extra` adds to the list, below the choices (Frame rate's
+// Custom).
 SelectButton& choice_row(Pane& leftPane, Pane& rightPane, const Rml::String& label, const Rml::String& key,
     std::vector<Rml::String> values, std::vector<Rml::String> labels, Rml::String helpText,
-    std::function<void()> onChange = {}) {
+    std::function<void()> onChange = {}, std::function<void(Pane&)> extra = {}) {
     helpText = with_note(key, std::move(helpText));
     const auto current = [key] { return settings::pinned(key) ? settings::pinned_value(key) : settings::get(key); };
     const auto index_of = [values, current] {
@@ -94,7 +97,7 @@ SelectButton& choice_row(Pane& leftPane, Pane& rightPane, const Rml::String& lab
         .isModified = [key] { return !settings::is_default(key); },
     });
     leftPane.register_control(button, rightPane,
-        [key, values = std::move(values), labels = std::move(labels), index_of, onChange,
+        [key, values = std::move(values), labels = std::move(labels), index_of, onChange, extra = std::move(extra),
             helpText = std::move(helpText)](Pane& pane) {
             for (int i = 0; i < int(labels.size()); ++i) {
                 pane.add_button({
@@ -107,6 +110,9 @@ SelectButton& choice_row(Pane& leftPane, Pane& rightPane, const Rml::String& lab
                         settings::set(key, value);
                         if (onChange) onChange();
                     });
+            }
+            if (extra) {
+                extra(pane);
             }
             if (!helpText.empty()) {
                 pane.add_rml("<br/>" + helpText);
@@ -127,6 +133,26 @@ void info_row(Pane& leftPane, Pane& rightPane, const Rml::String& label, const R
             pane.add_rml(helpRml);
             if (extra) extra(pane);
         });
+}
+
+// Frame rate's fixed choices. Any other DES_FPS (a number from 30 to 500, des_options.cpp's fps_parse) is its Custom
+// choice, whose number the Custom frame rate row sets; fps_custom keeps that number while a fixed choice is on.
+const std::vector<Rml::String> kFpsValues = {"", "30", "60", "120", "144", "165", "240", "unlocked"};
+constexpr int kFpsMin = 30;
+constexpr int kFpsMax = 500;
+
+std::string fps_setting() {
+    return settings::pinned("DES_FPS") ? settings::pinned_value("DES_FPS") : settings::get("DES_FPS");
+}
+
+bool fps_is_custom() {
+    return std::find(kFpsValues.begin(), kFpsValues.end(), fps_setting()) == kFpsValues.end();
+}
+
+// The Custom frame rate: DES_FPS while it is custom, else the last one set.
+int fps_custom() {
+    const std::string v = fps_is_custom() ? fps_setting() : settings::get("fps_custom");
+    return std::clamp(std::atoi(v.c_str()), kFpsMin, kFpsMax);
 }
 
 // The software this program is made of (mirrors port/ui/NOTICE.md).
@@ -178,12 +204,51 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         bool_row(leftPane, rightPane, "Depth of field", "DES_DOF",
             "The game's depth of field: distant scenery is blurred, more in some areas than others. Off draws it "
             "sharp. Applies at once.<br/><br/>(DES_DOF)");
-        choice_row(leftPane, rightPane, "Frame rate", "DES_FPS", {"", "30", "60", "120", "144", "165", "240"},
-            {"30 fps (original)", "30 fps, real frame time", "60 fps", "120 fps", "144 fps", "165 fps", "240 fps"},
+        choice_row(leftPane, rightPane, "Frame rate", "DES_FPS", kFpsValues,
+            {"30 fps (original)", "30 fps, real frame time", "60 fps", "120 fps", "144 fps", "165 fps", "240 fps",
+                "Unlocked"},
             "The game's own frame rate mode. The original 30 fps mode draws a near-empty frame when one runs late. "
-            "The others give the game the real time of each frame; 60 uses the game's 60 fps mode, and above that "
-            "the frame cap is raised to the number chosen. In-engine cutscenes stay at 30 fps, as on the PS3. Above "
-            "60 fps the game is less tested. Applies at once.<br/><br/>(DES_FPS)");
+            "The others give the game the real time of each frame; 60 uses the game's 60 fps mode, and the other "
+            "rates set the frame cap to the number chosen. Unlocked has no cap: the game runs as fast as the "
+            "machine allows, and with V-sync on the display still shows at most its refresh rate. Custom is the "
+            "rate set in Custom frame rate, below. In-engine cutscenes stay at 30 fps, as on the PS3. Above 60 fps "
+            "the game is less tested. Applies at once.<br/><br/>(DES_FPS)",
+            {}, [](Pane& pane) {
+                pane.add_button({
+                                    .text = "Custom",
+                                    .isSelected = [] { return fps_is_custom(); },
+                                    .isDisabled = [] { return settings::pinned("DES_FPS"); },
+                                })
+                    .on_pressed([] {
+                        play_sound(kSoundItemChange);
+                        settings::set("DES_FPS", std::to_string(fps_custom()));
+                    });
+            });
+        auto& customFps = leftPane.add_child<NumberButton>(NumberButton::Props{
+            .key = "Custom frame rate",
+            .getValue = fps_custom,
+            .setValue =
+                [](int value) {
+                    if (settings::pinned("DES_FPS")) {
+                        return;
+                    }
+                    settings::set("fps_custom", std::to_string(value));
+                    settings::set("DES_FPS", std::to_string(value));
+                },
+            .isDisabled = [] { return settings::pinned("DES_FPS"); },
+            .isModified = fps_is_custom,
+            .min = kFpsMin,
+            .max = kFpsMax,
+            .suffix = " fps",
+        });
+        leftPane.register_control(customFps, rightPane,
+            [helpText = with_note("DES_FPS",
+                 "A frame rate of your own, from 30 to 500 fps: Frame rate's Custom choice. Changing it here "
+                 "picks Custom. Left and right change it by one; confirm to type a number. Applies at once."
+                 "<br/><br/>(DES_FPS)")](Pane& pane) {
+                pane.clear();
+                pane.add_rml(helpText);
+            });
         bool_row(leftPane, rightPane, "V-sync", "DES_VSYNC",
             "Presents wait for the display's refresh. Off shows each frame as soon as it is drawn, with tearing: "
             "needed to see a frame rate above the display's refresh rate. Applies at once.<br/><br/>(DES_VSYNC)");

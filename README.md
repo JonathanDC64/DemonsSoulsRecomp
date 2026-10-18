@@ -14,7 +14,7 @@ The first level is playable, from boot to Boletaria (2026-10):
 - Title screen, character creation, the tutorial, the Nexus and Boletarian Palace 1-1.
 - Lit and textured scenes with shadows, the HUD, particles, light shafts and haze.
 - Saving and loading, ATRAC audio and music, keyboard and DualSense (USB or Bluetooth, over HID).
-- Frame rate: the game's own 30 fps cap by default, and 60 or more with `DES_FPS` (see [Running](#running)). Boletarian Palace runs at about 120 fps with the 60 fps mode uncapped (measured with `DES_FPS=60 VBLANK_MHZ=240000`; physics above 60 fps is untested). Shaders are precompiled, so the game never stops to compile one.
+- Frame rate: the game's own 30 fps cap by default, and any cap from 30 to 500 fps, or none, with `DES_FPS` (see [Running](#running)). Boletarian Palace runs at about 120 fps uncapped (measured with `DES_FPS=60 VBLANK_MHZ=240000`; physics above 60 fps is less tested). Shaders are precompiled, so the game never stops to compile one.
 
 Known issues:
 
@@ -76,7 +76,7 @@ tools/des/play.sh
 Options go after it as `NAME=value`:
 
 - `DES_DOF=0`: no depth of field (live).
-- `DES_FPS=60`: the game's 60 fps mode, with real frame times. `DES_FPS=61` to `240` also raises the frame cap to that many frames a second. `DES_FPS=30` keeps 30 with real frame times.
+- `DES_FPS=60`: the game's 60 fps mode, with real frame times. Any other number from `31` to `500` sets the frame cap to that many frames a second, and `DES_FPS=unlocked` removes the cap (the game runs as fast as the machine allows). `DES_FPS=30` keeps 30 with real frame times.
 - `DES_MOTION_BLUR=0`: no camera motion blur (live; the same change as RPCS3's "Disable Motion Blur" patch).
 - `DES_VSYNC=0`: present each frame as soon as it is drawn, with tearing, instead of waiting for the display's refresh (the default, `DES_VSYNC=1`). With vsync, a frame rate above the display's refresh (say `DES_FPS=240` on a 144 Hz display) is shown at the refresh. If the system cannot tear, it keeps vsync and says so once in the log.
 - `DES_SKIP_INTRO=1`: skip the boot logos (`DES_SKIP_INTRO=2` shows only the last one).

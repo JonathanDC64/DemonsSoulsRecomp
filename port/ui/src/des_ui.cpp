@@ -445,6 +445,11 @@ void process_queue() {
             ctx->ProcessKeyUp(RmlWin32::ConvertKey(e.a), e.mods);
             break;
         case InputEvent::Char:
+            // Typing into a text field (Custom frame rate's): printable characters only, as RmlUi's own Win32
+            // backend passes them; Enter, Backspace and Escape arrive as key presses.
+            if (e.a >= 0x20 && e.a != 0x7F && !(e.a >= 0xD800 && e.a <= 0xDFFF)) {
+                ctx->ProcessTextInput(Rml::Character(e.a));
+            }
             break;
         case InputEvent::MouseMove:
             ctx->ProcessMouseMove(e.a, e.b, e.mods);

@@ -2,7 +2,7 @@
 
 With `DES_FPS` above 30, two things ran fast:
 - the loading souls: the two soul icons by the small "Demon's Souls" logo, bottom left, at boot and on level loads. Fixed; see below.
-- some HUD and menu animations. Still open; see the last section.
+- menu text that is too long for its box and scrolls sideways, such as the key guide along the bottom of the inventory. Fixed; see "Scrolling menu text". The other HUD and menu animations that were checked already follow the frame's time.
 
 ## The loading souls
 
@@ -68,10 +68,46 @@ Two conclusions of the first attempt were wrong:
 - **"The screen is not drawn by the main game loop."** An indirect-call histogram (`PS3_ICALL_GATE`) over the boot screen did not show 0x0015AE10, yet the main loop reaches it once a frame. Do not rule a function out from that histogram alone.
 - **"No wisp state."** The scan looked for floats. The state is two integer cell indices.
 
-## HUD and menu animations (open)
+## Scrolling menu text
 
+Menu text that does not fit its box scrolls sideways. The inventory's key guide (the button list along the bottom: Select, Command Menu, Close, Change Item List Display, Change Status Display) is 58 px too long for its 1088 px box, so it scrolls whenever the inventory is open.
+
+- The class is DsMenuDlgObjScrollMsg (vtable 0x018690F0). Its update, 0x00798CD8 (slot 17, dt in f1), moves the text's offset (+0x20, a float) left by 1.5 px each call. It does so while the message (+0x28) is the one it had at the last call (+0x2C). When the message changes, or is -1, it sets the offset to 0. Constants: consts = `*(r2 - 0x7208)`; the step is at consts - 0x7FA0.
+- Slot 5, 0x00798AC8, places the text when it is drawn. It gets the draw rect in r4. If the text fits, it sets the offset to 0. If not, it adds clamp(offset + 90, -overflow, 0) to the rect's x. Once the offset is past -overflow - 180, it sets the offset back to the start, 0. The 90 px margin is at consts - 0x7F94 and the start at consts - 0x7F8C. Every test is a range test, so a part step is fine.
+- At 30 fps that gives a 2 s hold, the scroll at 45 px/s, another 2 s hold, then a restart: a 5.3 s cycle for the key guide. The update runs once a frame, so at 240 fps all of it ran 8 times as fast.
+- Nothing else steps the offset. The detector below also reported it from the key guide dialog (DsMenuDlgKeyGuide, +0x130) and from two parent layout objects. Those reports were the same field: the ObjScrollMsg object lies within the first 0x400 bytes of each of them.
+
+### The fix
+
+`scroll_msg_rate` in `port/des_options.cpp` hooks 0x00798CD8. After the game's code, it checks that the update made its step: the message is the same as at the last call, and the offset is exactly the old value minus 1.5. If so, it sets the offset to the old value minus 1.5 x dt x 30. dt is f1, capped at 50 ms like the game's step. At 30 fps it leaves the step alone. `DES_UIFIX=0` turns it off live, along with the souls hooks. Without `DES_FPS`, nothing changes.
+
+Measured on screen with a scratch log of the key guide's x at each draw (`DES_PLACELOG`), with the inventory open for 14 s:
+
+| | speed while moving | cycle |
+|---|---|---|
+| game's own mode (no `DES_FPS`) | 44.9 px/s | 5.31 s |
+| 30 fps | 45.0 px/s | 5.31 s |
+| 60 fps | 45.5 px/s | 5.30 s |
+| 240 fps | 44.9 px/s | 5.60 s |
+| 240 fps, `DES_UIFIX=0` | 358.6 px/s | 0.67 s |
+
+The 240 fps cycle is longer because it had five long frames (98 to 185 ms) as the inventory opened. A frame counts at most 50 ms, here as everywhere else in the game.
+
+### Checked and already right
+
+- These go by the frame's time at any rate: the menu cursor glow, the tab arrows, the menu slides, the HUD item slot highlight, and the title's PRESS START pulse (a 1.0 s period at both 30 and 240 fps).
 - The menu layout timers are dt-based. The frame update loads kFrameDt into f1 and passes it down 0x00138A98, 0x001372F8, 0x00135900, 0x00143920, 0x00141050, 0x00348EF8, 0x00355EA0 and 0x0035FB10 to 0x003624B0, which adds it to the timer at +0x10.
-- The animations that run fast are therefore likely per-frame integer counters, like the souls' cells. Next: run the same memory scan (integer steps of 1 a flip) while one is on screen, then a write watch on what it finds.
+
+### How it was found
+
+- **Draw logs:** a vertex log of every draw at 30 and at 240 fps, with the screen elements matched across frames and their rates of change compared over real time. The cursor glow, tab arrows, slides, slot highlight and title pulse came out the same at both rates.
+- **Update detector:** a scratch hook (`DES_FRAMELOCK`) on the update (vtable slot 17) of every dialog and dialog object class, 159 functions. It snapshots the first 0x400 bytes of the object before and after each call. It reports any field that changed by the same amount on every call while dt varied: ints by a small step 30 calls running, floats 60 calls running. Run at 240 fps over the HUD and the menus, it reported only ObjScrollMsg's +0x20, once from the object itself and three more times from objects around it.
+- **Finding the vtables:** in the EBOOT, a vtable is two zero words (offset-to-top and RTTI) followed by the slots. Slots 10 to 13 match within each family: 0x00F6DA58, 0x00F5E7C8, 0x00F53D18 and 0x00F53DF8 for dialogs; 0x00F638E8, 0x00F638B8, 0x00F633F0 and 0x00F633C0 for dialog objects. The base updates are 0x0071A6B8 (dialogs) and 0x00F63698 (dialog objects).
+- **Class names:** each vtable's address is stored in the class's constants block, next to pointers to its ASCII and UTF-16 names.
+
+### Not covered
+
+The detector only sees animations that keep running for 30 to 60 calls, and only in layout objects. The test runs did not exercise these short, one-off effects: the soul count on a soul pickup, the item pickup pop-up, the death screen, and the lock-on marker. If one of them looks fast, the next step is to run the detector with a lower threshold while it is on screen.
 
 ## Scratch tools used
 
@@ -84,3 +120,7 @@ These are kept outside the repo and rebuilt from this description:
 - `DES_FPATCH=addr=value,...`: rewrite floats at the first flip.
 - `DES_DTSCALE`: scale the step.
 - `DES_UIDTMSG`: log the movie task's message senders.
+- `DES_FRAMELOCK=1`: the update detector above.
+- `DES_SCROLLLOG=1`: log each scroll update call (dt, message, offset before and after).
+- `DES_PLACELOG=1`: hook slot 5 (0x00798AC8) and log the offset and the rect's x before and after each call.
+- `VA_FROM` read live, so the console's `setenv` can start and stop the vertex log; the log buffered, since writing each field held 240 fps down to 75.

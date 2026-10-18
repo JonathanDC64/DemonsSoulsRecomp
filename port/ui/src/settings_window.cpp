@@ -162,7 +162,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "Draws the game at a multiple of the PS3's 1280x720: 150% is 1920x1080, 200% 2560x1440, 300% "
             "3840x2160. The picture is then fitted to the window, so a higher setting is sharper even in a smaller "
             "window. The HUD and menus are drawn at the same size. Costs GPU time: about four times the pixels at "
-            "200%.<br/><br/>(RSX_SCALE)");
+            "200%. Applies at once.<br/><br/>(RSX_SCALE)");
         bool_row(leftPane, rightPane, "Depth of field", "DES_DOF",
             "The game's depth of field: distant scenery is blurred, more in some areas than others. Off draws it "
             "sharp. Applies at once.<br/><br/>(DES_DOF)");

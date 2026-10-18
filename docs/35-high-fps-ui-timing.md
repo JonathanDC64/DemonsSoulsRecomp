@@ -1,8 +1,11 @@
 # UI animation speed above 30 fps (2026-10-18)
 
-With `DES_FPS` above 30, two things ran fast:
+With `DES_FPS` above 30, these ran fast:
 - the loading souls: the two soul icons by the small "Demon's Souls" logo, bottom left, at boot and on level loads. Fixed; see below.
-- menu text that is too long for its box and scrolls sideways, such as the key guide along the bottom of the inventory. Fixed; see "Scrolling menu text". The other HUD and menu animations that were checked already follow the frame's time.
+- menu text that is too long for its box and scrolls sideways, such as the key guide along the bottom of the inventory. Fixed; see "Scrolling menu text".
+- on the HUD, the soul counter rolling up after a soul gain, the bars' fill (the trail after damage or stamina use, and a heal filling the HP bar) and the bars' length when the max changes. Fixed; see "HUD effects".
+
+The other HUD and menu animations that were checked already follow the frame's time.
 
 ## The loading souls
 
@@ -105,9 +108,59 @@ The 240 fps cycle is longer because it had five long frames (98 to 185 ms) as th
 - **Finding the vtables:** in the EBOOT, a vtable is two zero words (offset-to-top and RTTI) followed by the slots. Slots 10 to 13 match within each family: 0x00F6DA58, 0x00F5E7C8, 0x00F53D18 and 0x00F53DF8 for dialogs; 0x00F638E8, 0x00F638B8, 0x00F633F0 and 0x00F633C0 for dialog objects. The base updates are 0x0071A6B8 (dialogs) and 0x00F63698 (dialog objects).
 - **Class names:** each vtable's address is stored in the class's constants block, next to pointers to its ASCII and UTF-16 names.
 
-### Not covered
+## HUD effects
 
-The detector only sees animations that keep running for 30 to 60 calls, and only in layout objects. The test runs did not exercise these short, one-off effects: the soul count on a soul pickup, the item pickup pop-up, the death screen, and the lock-on marker. If one of them looks fast, the next step is to run the detector with a lower threshold while it is on screen.
+The detector above only sees animations that run for 30 to 60 calls in a dialog update. docs/38 read the HUD's classes for fields that move a fixed amount per call instead. Three do; test runs confirmed them and they are fixed here. The rest of what it read goes by the frame's time: the boss and enemy bar timers, the lock-on mark, the item pickup pop-up, the save icon, captions and the death screen's texts (docs/38, section 3).
+
+### Soul counter
+
+- DsMenuDlgFEGetSoul's update, 0x007A8C60 (vtable 0x018696C0, dt in f1). Fields: +0xF8 souls before the gain, +0xFC how much of the gain is counted, +0x100 the gain, +0x104 the "+N", +0x108 the hold timer, +0x110 the hold time (1.5 s).
+- Souls come in through two menu values, read by 0x00720F20 and cleared by 0x00720F50. 0x76 is added to the gain and 0x77 to the "+N". The update clears 0x76 whenever it reads it, even when 0x77 is 0, so a test that sets them must write both at once.
+- Each call moves +0xFC one step towards +0x100. The step depends on what is left: 1 up to 10, 2 up to 100, 12 up to 1,000, 112 up to 10,000, and so on up to 11,111,112 (immediates; table in docs/38, 2.1). The total shown is +0xF8 + +0xFC. At the gain it holds by dt, then clears.
+- A gain of 1,000 to 1,500 takes 130 calls: 4.3 s at 30 fps, 0.54 s at 240.
+
+### Bar fill
+
+- DsMenuDlgObjSmoothGauge (vtable 0x01868C28) draws the HP, MP and stamina bars, and the boss's and enemies' HP bars. It moves the fill shown (+0x3C) towards the target (+0x20) by +0x44 going down (0.012: the trail after damage or stamina use) or +0x4C going up (0.048 on the HP trail bar, 0.038 on the HP bar; 10 means at once). It snaps once it is within a step.
+- The steps happen in its draw callbacks, 0x0078EDC8, 0x0078EB60 and 0x0078F020 (slots 5 to 7), which get no dt. Each HUD bar takes two calls a frame, slot 5 then slot 6, so a trail drains 0.72 of the bar a second at 30 fps. The delay before a trail starts (+0x54 against +0x5C) goes by dt.
+
+### Bar length
+
+- DsMenuDlgObjGauge's update, 0x00789BC0 (vtable 0x018688A8, dt in f1), moves the length shown (+0x30) towards the target length (+0x2C). It moves half the gap a call while the gap is over 2 px, then 1 px, then snaps. ObjSmoothGauge's update, 0x0078E2E8, calls it directly (0x0078E340).
+- PCGauge's update, 0x007B2CD0, sets each bar's target length to its full length times min(1, max / cap). The caps are floats at PCGauge +0x294 (HP), +0x298 (MP) and +0x29C (stamina). The HP cap is 1900 in the test save.
+- Halving the HP bar takes 8 calls: 0.25 s at 30 fps, 33 ms at 240.
+
+### The fix
+
+`port/des_options.cpp` hooks the updates and callbacks. With `DES_FPS` set, each counts the frame in 30 Hz steps (the game's step, at most 50 ms, times 30):
+- `get_soul_rate` on 0x007A8C60 takes whole steps, with a carry, like the souls hooks. If the game took its one step, the hook takes that many steps from where the counter was. The number on screen was set from the game's step, so while it rolls it can be a step off the count. It ends on the total.
+- `gauge_fill_rate` on the three callbacks reads the frame step (kFrameDt). If the callback moved the fill by exactly one step, the hook moves it by the step times the frame's 30 Hz steps instead, not past the target.
+- `gauge_len_rate` on 0x00789BC0 and 0x0078E2E8 uses f1. It makes the half-gap step 0.5 to the power of the frame's 30 Hz steps, and the 1 px step that many px, not past the target.
+
+At 30 fps the hooks leave the game's step alone. `DES_UIFIX=0` turns them off live, with the other hooks here.
+
+### Measured
+
+Three runs on the pinned test save, which is in the tutorial. A scratch driver used the debug console and the pad file:
+- three backsteps in a row for the stamina trail;
+- a 10 m warp up for damage (you cannot die in the tutorial);
+- the item slot for a heal;
+- +1,500 souls, with both menu values set in one 8-byte write;
+- the HP cap doubled and put back. Max HP itself does not work for this, since the game writes it back every frame.
+
+A scratch field log gave each change's time and flip. The PC was busy with other work during the runs, so with the fix off, the "240 fps" runs went at about 50 to 70 fps. What shows the frame lock is that the number of calls stays the same.
+
+| | 30 fps | 240 fps, `DES_UIFIX=0` | 240 fps | unlocked |
+|---|---|---|---|---|
+| Soul roll, +1,500 | 130 calls, 4.38 s | 130 calls, 2.43 s | 4.31 s | 4.29 s |
+| Stamina trail, 0.42 of the bar | 0.57 s | 36 calls, 71 ms | 0.55 s | 0.58 s |
+| HP trail | 0.73 of the bar a second (all of it in 1.37 s) | | 0.083 of the bar in 99 ms, as at 30 fps* | 0.083 in 99 ms |
+| Heal fill, 0.18 of the bar (trail bar, HP bar) | 33 ms, 67 ms | | 46 ms, 62 ms | 47 ms, 63 ms |
+| HP bar length, halved and back | 8 calls, 234 ms and 218 ms | 8 calls, 116 ms and 136 ms | 229 ms and 218 ms | 234 ms and 234 ms |
+
+\* At 30 fps, 0.083 of the bar is six steps and the snap: three frames, 100 ms.
+
+Not run: the death screen, since the test save cannot die. docs/38 read its timer as dt-based. A bar's length changing in play (a level up, or going between body and soul form) uses the same code as the cap test.
 
 ## Scratch tools used
 
@@ -123,4 +176,6 @@ These are kept outside the repo and rebuilt from this description:
 - `DES_FRAMELOCK=1`: the update detector above.
 - `DES_SCROLLLOG=1`: log each scroll update call (dt, message, offset before and after).
 - `DES_PLACELOG=1`: hook slot 5 (0x00798AC8) and log the offset and the rect's x before and after each call.
+- `DES_FLWATCH=fn:offset[r|p],...` with `DES_FLWATCH_OUT=<file>`: on top of `DES_FRAMELOCK=1`, log each change a hooked update makes to the listed fields (r: a float; p: print the value once), with the time and flip.
+- `DES_GAUGELOG=1`: hook the three ObjSmoothGauge draw callbacks and log each call that moves the fill (target, fill before and after, steps, flags).
 - `VA_FROM` read live, so the console's `setenv` can start and stop the vertex log; the log buffered, since writing each field held 240 fps down to 75.

@@ -330,3 +330,137 @@ modal-actions.vertical button.modal-btn {
         width: 100%;
     }
 }
+
+/* The on-screen keyboard (osk_window.cpp). */
+window.modal.osk {
+    max-width: 760dp;
+    background-color: rgba(var(--color-surface-rgb), 100%); /* over whatever is up when the game asks */
+}
+
+osk-field {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    gap: var(--space-md);
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    border: 1dp var(--color-border);
+    background-color: rgba(0, 0, 0, 40%);
+}
+
+osk-text {
+    flex: 1 1 0;
+    font-family: var(--font-family-body);
+    font-weight: normal;
+    font-size: var(--font-size-4xl);
+    white-space: pre; /* the spaces typed */
+}
+
+osk-caret {
+    display: inline-block;
+    width: 2dp;
+    height: 1em;
+    margin: 0 1dp;
+    vertical-align: middle;
+    background-color: var(--color-text);
+}
+
+osk-count {
+    flex: 0 0 auto;
+    font-family: var(--font-family-body);
+    font-weight: normal;
+    font-size: var(--font-size-md);
+    opacity: 0.7;
+}
+
+osk-keys {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    width: 100%;
+}
+
+osk-row {
+    display: flex;
+    flex-direction: row;
+    gap: var(--space-xs);
+    width: 100%;
+}
+
+button.osk-key {
+    flex: 1 1 0;
+    padding: var(--space-sm) 0;
+    font-family: var(--font-family-body);
+    font-weight: normal;
+    font-size: var(--font-size-2xl);
+}
+
+button.osk-key.osk-wide {
+    flex: 2 1 0;
+    font-size: var(--font-size-lg);
+}
+
+button.osk-key.osk-space {
+    flex: 4 1 0;
+    font-size: var(--font-size-lg);
+}
+
+osk-hint {
+    display: block;
+    font-family: var(--font-family-body);
+    font-weight: normal;
+    font-size: var(--font-size-md);
+    opacity: 0.7;
+}
+
+osk-hints {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: center;
+    gap: var(--space-sm) var(--space-lg);
+    font-family: var(--font-family-body);
+    font-weight: normal;
+    font-size: var(--font-size-md);
+}
+
+osk-hint-item {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+osk-hint-item icon {
+    width: 1.4em;
+    height: 1.4em;
+    font-size: 1.4em;
+}
+
+osk-pill {
+    padding: 0 var(--space-xs);
+    border: 1dp var(--color-border);
+    border-radius: 4dp;
+    font-size: var(--font-size-sm);
+    opacity: 0.8;
+}
+
+/* The pad's face buttons, in their PlayStation colours, from the icon font. */
+icon.pad-cross {
+    decorator: text("&#xe5cd;" center center);
+    color: #7fb2e5;
+}
+
+icon.pad-circle {
+    decorator: text("&#xe836;" center center);
+    color: #e86a6a;
+}
+
+icon.pad-square {
+    decorator: text("&#xe3c6;" center center);
+    color: #d995c9;
+}
+
+icon.pad-triangle {
+    decorator: text("&#xe86b;" center center);
+    color: #4fc9a4;
+}

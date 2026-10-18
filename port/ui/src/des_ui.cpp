@@ -125,7 +125,9 @@ struct Shot {
 };
 std::vector<Shot> sShots;
 
-// DES_UI_KEYS=frame:KEY[,frame:KEY...]: press a key at a presented frame (a test drives the menus with it).
+// DES_UI_KEYS=frame:KEY[,frame:KEY...]: press a key at a presented frame (a test drives the menus with it). The key
+// OSK opens the keyboard as the game would.
+constexpr int kScriptOsk = -1;
 struct ScriptKey {
     unsigned long long frame;
     int vk;
@@ -378,6 +380,12 @@ void open_menu_bar() {
     }
 }
 
+// The keyboard as the game opens it (cellOskDialog_set_host), for DES_UI_OPEN=osk and the OSK test key.
+void open_test_osk() {
+    static const unsigned short kPrompt[] = {'T', 'e', 's', 't', 0}, kText[] = {'A', 'l', 'd', 'i', 'a', 0};
+    osk_open(kPrompt, kText, 16);
+}
+
 void push_documents() {
     if (sDocumentsPushed) return;
     sDocumentsPushed = true;
@@ -389,10 +397,7 @@ void push_documents() {
     if (const char* open = std::getenv("DES_UI_OPEN"); open && *open) {
         if (!std::strcmp(open, "menu")) open_menu_bar();
         else if (!std::strcmp(open, "settings")) ui::push_document(std::make_unique<ui::SettingsWindow>());
-        else if (!std::strcmp(open, "osk")) {  // as the game opens it (cellOskDialog_set_host)
-            static const unsigned short kPrompt[] = {'T', 'e', 's', 't', 0}, kText[] = {'A', 'l', 'd', 'i', 'a', 0};
-            osk_open(kPrompt, kText, 16);
-        }
+        else if (!std::strcmp(open, "osk")) open_test_osk();
     }
 }
 
@@ -467,6 +472,10 @@ const char* shot_for_frame(unsigned long long frame) {
 void script_keys_for_frame(unsigned long long frame) {
     for (const ScriptKey& k : sScriptKeys) {
         if (k.frame != frame) continue;
+        if (k.vk == kScriptOsk) {
+            open_test_osk();
+            continue;
+        }
         push_event({InputEvent::KeyDown, k.vk, 0, 0});
         push_event({InputEvent::KeyUp, k.vk, 0, 0});
     }
@@ -565,7 +574,7 @@ int vk_from_name(const std::string& name) {
         int vk;
     } kNames[] = {{"F1", VK_F1},       {"ESC", VK_ESCAPE}, {"UP", VK_UP},         {"DOWN", VK_DOWN},
                   {"LEFT", VK_LEFT},   {"RIGHT", VK_RIGHT}, {"ENTER", VK_RETURN}, {"PGUP", VK_PRIOR},
-                  {"PGDN", VK_NEXT},   {"TAB", VK_TAB},    {"SPACE", VK_SPACE}};
+                  {"PGDN", VK_NEXT},   {"TAB", VK_TAB},    {"SPACE", VK_SPACE}, {"OSK", kScriptOsk}};
     for (const auto& n : kNames)
         if (_stricmp(n.name, name.c_str()) == 0) return n.vk;
     return 0;

@@ -156,6 +156,9 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         auto& leftPane = add_child<Pane>(content, Pane::Type::Controlled);
         auto& rightPane = add_child<Pane>(content, Pane::Type::Uncontrolled);
 
+        bool_row(leftPane, rightPane, "Depth of field", "DES_DOF",
+            "The game's depth of field: distant scenery is blurred, more in some areas than others. Off draws it "
+            "sharp. Applies at once.<br/><br/>(DES_DOF)");
         choice_row(leftPane, rightPane, "Frame rate", "DES_FPS", {"", "30", "60", "120", "144", "165", "240"},
             {"30 fps (original)", "30 fps, real frame time", "60 fps", "120 fps", "144 fps", "165 fps", "240 fps"},
             "The game's own frame rate mode. The original 30 fps mode draws a near-empty frame when one runs late. "

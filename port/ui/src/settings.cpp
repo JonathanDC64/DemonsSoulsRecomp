@@ -26,6 +26,7 @@ constexpr Def kDefs[] = {
     {"DES_SKIP_INTRO_MOVIE", "0", Apply::Live},  // PS3_SAIL_SKIP, read as each movie opens
     {"DES_AUTO_CONTINUE", "0", Apply::Restart},
     {"AUDIO_MUTE", "0", Apply::Live},
+    {"DES_DOF", "1", Apply::Live},             // des_dof, read each frame
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
     {"show_start_screen", "1", Apply::UiOnly},
     {"menu_hint", "1", Apply::UiOnly},

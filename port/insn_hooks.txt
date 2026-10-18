@@ -27,6 +27,10 @@
 # The manager's second camera (0x00110608).
 0x00110808=des_cam_rate   # k = +0x138, +0x130 towards +0x134
 
+# des_dof (port/des_options.cpp): DES_DOF=0 zeroes the two depth-of-field
+# strengths that the image-process update blends from the area's DOF_BANK rows.
+0x002184DC=des_dof   # lbz r0, 0x1C4(r31), the first instruction after the blend (bl 0x005EAF18)
+
 # ChrFollowCam update (0x00122C40).
 0x00123100=des_cam_rate   # k = +0x114
 0x00123164=des_cam_rate   # k = +0x114

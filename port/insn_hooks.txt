@@ -28,3 +28,9 @@
 0x00124188=des_cam_rate   # k = +0x158
 0x0012554C=des_cam_rate   # k = +0x19C
 0x001256D4=des_cam_rate   # k = +0x19C
+
+# des_slide_rate (port/des_options.cpp): a character proxy's slide on slopes
+# too steep to stand on, in its velocity update 0x001FE778. The gain is added
+# and the decay applied once a frame, tuned for 30 fps.
+0x001FEAF4=des_slide_rate   # decay 0.65 (0x019D9C40), slide *= decay
+0x001FED50=des_slide_rate   # gain 1.0 (0x019D9C3C), slide += gravity along the slope * gain

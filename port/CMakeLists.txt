@@ -181,6 +181,29 @@ target_link_libraries(des_boot PRIVATE
 # /O2 chunks that llvm-symbolizer can't (used to locate busy-loop spin addresses).
 target_link_options(des_boot PRIVATE "/MAP:des_boot.map")
 
+# --- The exe's icon ------------------------------------------------------------
+# Made at configure time from the game's own PS3_GAME/ICON0.PNG (copy it to
+# work/game/ next to EBOOT.ELF, or point DES_ICON0 at it) by scripts/make_icon.py,
+# which needs only the Python standard library. GAME-DERIVED: written into the
+# build directory, never committed. Without the file the exe has no icon. The
+# window uses it too (resource 1, loaded by the runtime's window class).
+set(DES_ICON0 "${CMAKE_CURRENT_SOURCE_DIR}/../work/game/ICON0.PNG" CACHE FILEPATH "the game's PS3_GAME/ICON0.PNG")
+if(EXISTS "${DES_ICON0}")
+    enable_language(RC)
+    set(DES_ICO "${CMAKE_CURRENT_BINARY_DIR}/des_boot.ico")
+    set(DES_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/des_boot_icon.rc")
+    add_custom_command(OUTPUT "${DES_ICO}"
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/make_icon.py" "${DES_ICON0}" "${DES_ICO}"
+        DEPENDS "${DES_ICON0}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/make_icon.py"
+        VERBATIM)
+    file(CONFIGURE OUTPUT "${DES_ICON_RC}" CONTENT "1 ICON \"${DES_ICO}\"\n")
+    set_source_files_properties("${DES_ICON_RC}" PROPERTIES OBJECT_DEPENDS "${DES_ICO}")
+    target_sources(des_boot PRIVATE "${DES_ICON_RC}")
+    message(STATUS "des_boot: icon from ${DES_ICON0}")
+else()
+    message(STATUS "des_boot: no icon (${DES_ICON0} not found; copy PS3_GAME/ICON0.PNG there)")
+endif()
+
 # --- The wrapper UI (port/ui, docs/32) ---------------------------------------
 # Start screen, in-game menu (F1 / Esc, or L3+R3 on a pad) and settings,
 # drawn over the game frame. Its own static library, linked only: des_boot's

@@ -472,6 +472,25 @@ void move_stuck_real_time(uint32_t mv, float f0, float dt)
 
 } // namespace
 
+/* DES_DOF=0: no depth of field. The image-process update 0x00218428 blends
+ * the area's two DOF_BANK rows (0x005EAF18) into a buffer on its stack at
+ * r1 + 0xD0: far begin, far end, far strength (+0x08), near begin, near end,
+ * near strength (+0x14), dispersion. The strengths are the rows' 0..100
+ * bytes as floats, scaled by 0.01 on their way to the DoF pass (0x003E7290).
+ * The lifter calls this after the first instruction past the blend
+ * (0x002184DC, --insn-hooks); with both strengths 0 the pass blurs nothing.
+ * Live. */
+extern "C" void des_dof(ppu_context* ctx, uint32_t addr)
+{
+    (void)addr;
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_DOF", 1) != 0);
+    if (on) return;
+    const uint32_t blend = (uint32_t)ctx->gpr[1] + 0xD0u;
+    vm_writef(blend + 0x08, 0.0f);
+    vm_writef(blend + 0x14, 0.0f);
+}
+
 extern "C" PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);
 
 /* Lifted in place of 0x00273D38 (--override-funcs), which is only

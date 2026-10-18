@@ -93,6 +93,12 @@
  *   first save in the list. It never presses CIRCLE or the d-pad, so it only
  *   goes forwards and never moves a cursor off its default. It lets go for
  *   good when the level's script archive (script/m*.luabnd) opens.
+ *
+ * DES_WARP=x,y,z — debug, live (the console's setenv works): put the player
+ *   at x, y, z the way the level scripts' LoadChrPos does. Each new value
+ *   warps once. DES_WARP_CLEAR=<m> first sends the enemies within m metres
+ *   of the target to the tutorial's start. Test scripts use it to reach a
+ *   spot quickly.
  */
 #include "ppu_recomp.h"
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
@@ -886,6 +892,83 @@ extern "C" void des_slide_rate(ppu_context* ctx, uint32_t addr)
         if (r.wrapper == wrapper) r.steep_s = 0.0f;
         if (v > 0.0 && v < 1.0) ctx->fpr[0] = (float)std::pow(v, (double)steps);
     }
+}
+
+extern "C" PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);
+
+/* DES_WARP=x,y,z (debug, live): put the player there the way Lua's LoadChrPos
+ * does (0x004428F0 -> 0x00273BE0, r3 = character, vr2 = x y z 0). With
+ * DES_WARP_CLEAR=<m>, enemies (vtable 0x0185AF98, in the array at
+ * *(ChrMan + 0xC)) within that distance of the target go to the tutorial's
+ * start first. Main thread: des_menu_tick calls this once a frame. */
+static void warp_chr(ppu_context* ctx, uint32_t chr, const float* p)
+{
+    uint64_t g[32]; double f[32]; uint8_t v[32][16];
+    memcpy(g, ctx->gpr, sizeof g); memcpy(f, ctx->fpr, sizeof f); memcpy(v, ctx->vr, sizeof v);
+    const uint64_t lr = ctx->lr, ctr = ctx->ctr;
+    const uint32_t cr = ctx->cr, xer = ctx->xer;
+    uint8_t be[16] = {};
+    for (int i = 0; i < 3; i++) {
+        uint32_t b; memcpy(&b, &p[i], 4);
+        be[4 * i] = (uint8_t)(b >> 24); be[4 * i + 1] = (uint8_t)(b >> 16);
+        be[4 * i + 2] = (uint8_t)(b >> 8); be[4 * i + 3] = (uint8_t)b;
+    }
+    memcpy(&ctx->vr[2], be, 16);
+    ctx->gpr[3] = chr;
+    ctx->lr = 0x00724E40u;
+    func_00273BE0(ctx);
+    while (g_trampoline_fn) {
+        void (*tf)(void*) = g_trampoline_fn;
+        g_trampoline_fn = nullptr;
+        tf(ctx);
+    }
+    memcpy(ctx->gpr, g, sizeof g); memcpy(ctx->fpr, f, sizeof f); memcpy(ctx->vr, v, sizeof v);
+    ctx->lr = lr; ctx->ctr = ctr; ctx->cr = cr; ctx->xer = xer;
+}
+
+static bool chr_pos(uint32_t chr, float* p)
+{
+    uint32_t q = vm_read32(chr + 0x20);
+    if (!guest_ptr_ok(q) || !guest_ptr_ok(q = vm_read32(q + 0x10))) return false;
+    for (int i = 0; i < 3; i++) p[i] = vm_readf(q + 0x10 + 4 * i);
+    return true;
+}
+
+extern "C" void des_debug_tick(ppu_context* ctx)
+{
+    static int gen = 0;
+    static char last[96] = "";
+    const int before = gen;
+    PS3_KNOB(gen, gen + 1);
+    if (gen == before) return;
+    const char* e = getenv("DES_WARP");
+    if (!e || !strcmp(e, last)) return;
+    snprintf(last, sizeof last, "%s", e);
+    float p[3];
+    if (sscanf(e, "%f,%f,%f", &p[0], &p[1], &p[2]) != 3) return;
+    const uint32_t man = vm_read32(kChrMan);
+    uint32_t chr;
+    if (!guest_ptr_ok(man) || !guest_ptr_ok(chr = vm_read32(man + 0x1BC))) return;
+    const char* c = getenv("DES_WARP_CLEAR");
+    const float r = c ? (float)atof(c) : 0.0f;
+    const uint32_t list = vm_read32(man + 0xC);
+    if (r > 0.0f && guest_ptr_ok(list)) {
+        int moved = 0;
+        for (uint32_t i = 0; i < 64; i++) {
+            const uint32_t q = vm_read32(list + 4 * i);
+            float qp[3];
+            if (!guest_ptr_ok(q) || q == chr || vm_read32(q) != 0x0185AF98u || !chr_pos(q, qp)) continue;
+            const float d = std::sqrt((qp[0] - p[0]) * (qp[0] - p[0]) + (qp[1] - p[1]) * (qp[1] - p[1]) +
+                                      (qp[2] - p[2]) * (qp[2] - p[2]));
+            if (d > r) continue;
+            const float away[3] = {201.0f + 1.5f * moved, -1.1f, -96.2f};   /* the tutorial's start */
+            warp_chr(ctx, q, away);
+            fprintf(stderr, "[des] DES_WARP_CLEAR: enemy %08X (%.1f m) sent away\n", q, d);
+            moved++;
+        }
+    }
+    warp_chr(ctx, chr, p);
+    fprintf(stderr, "[des] DES_WARP %.3f %.3f %.3f (chr %08X)\n", p[0], p[1], p[2], chr);
 }
 
 extern "C" void des_menu_sfx_init(void);   /* des_menu_sfx.cpp */

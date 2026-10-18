@@ -272,13 +272,11 @@ ui::input::PadState read_pads(bool& neutral) {
     return pad;
 }
 
-// The keys the game reads from the keyboard (cellPad's keyboard pad), plus the menu keys: the game gets its input back
-// only when none of them is held.
+// No key or mouse button is held (the keyboard pad's keys can be any, PAD_KEYS): the game gets its input back only
+// then.
 bool keyboard_neutral() {
-    static const int kKeys[] = {VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, 'Z', 'X', 'A', 'S', 'Q', 'W', '1', '2',
-                                VK_RETURN, VK_TAB, VK_F1, VK_ESCAPE, VK_LBUTTON, VK_RBUTTON};
-    for (int k : kKeys)
-        if (GetAsyncKeyState(k) & 0x8000) return false;
+    for (int vk = 1; vk < 0xFF; vk++)
+        if (GetAsyncKeyState(vk) & 0x8000) return false;
     return true;
 }
 
@@ -330,6 +328,10 @@ void process_queue() {
     for (const InputEvent& e : events) {
         switch (e.type) {
         case InputEvent::KeyDown:
+            if (ui::input::binding_capture()) {  // a key for a binding (controls_window.cpp)
+                ui::input::capture_key(e.a);
+                break;
+            }
             if (is_menu_key(WPARAM(e.a)) && !ui::any_document_visible()) {
                 open_menu_bar();
                 break;
@@ -338,6 +340,7 @@ void process_queue() {
             ctx->ProcessKeyDown(RmlWin32::ConvertKey(e.a), e.mods);
             break;
         case InputEvent::KeyUp:
+            if (ui::input::binding_capture()) break;
             ctx->ProcessKeyUp(RmlWin32::ConvertKey(e.a), e.mods);
             break;
         case InputEvent::MouseMove:

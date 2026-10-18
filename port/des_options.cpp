@@ -489,6 +489,40 @@ extern "C" void des_move_post(ppu_context* ctx)
     if (s_fps > 0) move_stuck_real_time(mv, f0, dt);
 }
 
+/* The cameras ease towards their targets by a fixed fraction a frame,
+ * cur += (target - cur) * k, with k tuned for 30 fps (the follow camera's
+ * chase is k = 0.1 at 0x0011C2BC). At 240 fps that is eight steps where the
+ * game takes one, so the camera catches up eight times as fast. The lifter
+ * calls this after each such load of k (--insn-hooks, see docs/28); it puts
+ * k' = 1 - (1 - k)^(dt * 30) in the register, the fraction that leaves the
+ * same remainder per second as k does at 30 fps. Main thread. DES_CAMFIX=0
+ * turns it off live; DES_CAMLOG=1 counts the sites. */
+extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1, log = 0;
+    PS3_KNOB(on, ps3_env_int("DES_CAMFIX", 1) != 0);
+    PS3_KNOB(log, env_on("DES_CAMLOG"));
+    if (log) {
+        static uint32_t sites[32];
+        static unsigned counts[32], total;
+        for (int i = 0; i < 32; i++)
+            if (sites[i] == addr || !sites[i]) { sites[i] = addr; counts[i]++; break; }
+        if (++total % 20000 == 0) {
+            fprintf(stderr, "[camlog] dt=%.4f", vm_readf(kFrameDt));
+            for (int i = 0; i < 32 && sites[i]; i++) fprintf(stderr, " %X:%u", sites[i], counts[i]);
+            fputc('\n', stderr);
+        }
+    }
+    if (!on || s_fps <= 0) return;
+    const uint32_t insn = vm_read32(addr);
+    if ((insn >> 26) != 48) return;   /* lfs only */
+    const int fd = (insn >> 21) & 31;
+    const double k = ctx->fpr[fd];
+    const float steps = vm_readf(kFrameDt) * 30.0f;
+    if (!(k > 0.0 && k < 1.0) || !(steps > 0.0f) || steps == 1.0f) return;
+    ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
+}
+
 extern "C" void des_menu_sfx_init(void);   /* des_menu_sfx.cpp */
 
 extern "C" void ps3_title_options_init(void)

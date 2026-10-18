@@ -1,0 +1,30 @@
+# Instruction hooks for the PPU lift: ppu_lifter.py --insn-hooks @port/insn_hooks.txt
+# Each line: guest address = host function. The lifted code calls the function
+# with (ctx, address) right after that instruction. See docs/28, "Camera
+# catch-up at any frame rate".
+#
+# des_cam_rate (port/des_options.cpp): loads of a per-frame ease factor k in the
+# camera code (cur += (target - cur) * k, tuned for 30 fps). Each is an lfs; the
+# hook rescales k to the frame time.
+
+# ChrExFollowCam update (0x00119670), the usual third-person camera.
+# All of these run every frame while walking.
+0x00119818=des_cam_rate   # k = +0x294 (0.1)
+0x001198D8=des_cam_rate   # k = 0.1 (constant), +0x174 towards +0x178
+0x00119FAC=des_cam_rate   # k = +0x144
+0x0011A018=des_cam_rate   # k = +0x144
+0x0011B830=des_cam_rate   # k = +0x1A8 (0.4)
+0x0011C0E8=des_cam_rate   # k = 1/30 (constant), +0x17C back towards +0x180
+0x0011C2BC=des_cam_rate   # k = +0x17C (0.1): the follow point's chase (vector lerp)
+0x0011D6E4=des_cam_rate   # k = +0x220 (0.06), +0x130
+0x0011D820=des_cam_rate   # k = +0x220 (0.06), +0x130
+
+# The manager's second camera (0x00110608).
+0x00110808=des_cam_rate   # k = +0x138, +0x130 towards +0x134
+
+# ChrFollowCam update (0x00122C40).
+0x00123100=des_cam_rate   # k = +0x114
+0x00123164=des_cam_rate   # k = +0x114
+0x00124188=des_cam_rate   # k = +0x158
+0x0012554C=des_cam_rate   # k = +0x19C
+0x001256D4=des_cam_rate   # k = +0x19C

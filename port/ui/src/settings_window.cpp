@@ -163,6 +163,18 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "3840x2160. The picture is then fitted to the window, so a higher setting is sharper even in a smaller "
             "window. The HUD and menus are drawn at the same size. Costs GPU time: about four times the pixels at "
             "200%. Applies at once.<br/><br/>(RSX_SCALE)");
+        choice_row(leftPane, rightPane, "Texture filtering", "RSX_TEXFILTER", {"0", "1", "2", "3"},
+            {"Original", "Nearest", "Bilinear", "Trilinear"},
+            "How the game's surface textures are smoothed. Original uses the filter the game picks for each "
+            "texture. Nearest shows the texels as sharp squares, a pixelated look. Bilinear smooths within each "
+            "mipmap level; trilinear also blends between levels, so there are no visible bands where the detail "
+            "drops off. Textures the game reads as data (colour grading, the screen itself) always keep the game's "
+            "filter, because changing it breaks their colours. Applies at once.<br/><br/>(RSX_TEXFILTER)");
+        choice_row(leftPane, rightPane, "Anisotropic filtering", "RSX_ANISO", {"0", "1", "2", "4", "8", "16"},
+            {"Original (4x)", "Off", "2x", "4x", "8x", "16x"},
+            "Keeps textures sharp when they are seen at a steep angle, such as floors and walls into the distance. "
+            "Original uses the level the game asks for, which is 4x on most surfaces. Costs a little GPU time at "
+            "16x. Applies at once.<br/><br/>(RSX_ANISO)");
         bool_row(leftPane, rightPane, "Depth of field", "DES_DOF",
             "The game's depth of field: distant scenery is blurred, more in some areas than others. Off draws it "
             "sharp. Applies at once.<br/><br/>(DES_DOF)");

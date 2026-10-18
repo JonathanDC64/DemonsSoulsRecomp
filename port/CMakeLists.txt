@@ -117,10 +117,24 @@ if(NOT DES_SHADOW_STACK)
     target_compile_definitions(des_boot PRIVATE DS_NO_SHADOW_STACK)
 endif()
 
-# Huge generated TUs need /bigobj (COFF >65k sections). /Zi keeps symbols for
-# host backtraces. NOTE: configure with an empty CMAKE_BUILD_TYPE so the Debug
-# config's /RTC1 (runtime checks: big slowdown, and incompatible with /O2) is
-# NOT added.
+# Huge generated TUs need /bigobj (COFF >65k sections). NOTE: configure with an
+# empty CMAKE_BUILD_TYPE so the Debug config's /RTC1 (runtime checks: big
+# slowdown, and incompatible with /O2) is NOT added.
+#
+# No debug information by default. The link has no /DEBUG, so there is no PDB:
+# what /Zi put in the objects was dropped at the link, and host backtraces go
+# through des_boot.map. /Zi cost build time and memory: chunk 009 took 228 s
+# of CPU and 6.9 GB at its peak with it, 161 s and 2.4 GB without. The code is
+# nearly the same without it: /Zi nudges clang's code generation in a few
+# places (3 of chunk 004's 8,162 functions differ by a byte). DES_DEBUG_INFO=ON
+# compiles with /Zi and links des_boot.pdb, with /OPT:REF,ICF kept on (/DEBUG
+# turns them off) so that it links like the default build.
+option(DES_DEBUG_INFO "Compile des_boot (and the UI) with /Zi and link a PDB" OFF)
+set(DES_DEBUG_FLAGS "")
+if(DES_DEBUG_INFO)
+    set(DES_DEBUG_FLAGS /Zi)
+    target_link_options(des_boot PRIVATE /DEBUG /OPT:REF /OPT:ICF)
+endif()
 #
 # Everything here builds /O2: the lifted PPU chunks, the lifted libsre, and the
 # runtime sources compiled into this target (ppu_loader.cpp holds the guest
@@ -144,11 +158,12 @@ if(MSVC)   # also true for clang-cl
         set(DES_OPT_FLAGS /O2 /clang:-fwrapv /clang:-msse4.1)
     else()
         set(DES_OPT_FLAGS /Od)
+        set(DES_CHUNK005_FLAGS /O2 ${DES_DEBUG_FLAGS})
         set_source_files_properties("${RECOMP_DIR}/ppu_recomp_005.cpp"
-            PROPERTIES COMPILE_OPTIONS "/O2;/Zi")
+            PROPERTIES COMPILE_OPTIONS "${DES_CHUNK005_FLAGS}")
     endif()
     target_compile_options(des_boot PRIVATE
-        /bigobj ${DES_OPT_FLAGS} /Zi /EHsc /Zc:__cplusplus
+        /bigobj ${DES_OPT_FLAGS} ${DES_DEBUG_FLAGS} /EHsc /Zc:__cplusplus
         /wd4100 /wd4244 /wd4267 /wd4146 /wd4334
     )
     target_compile_definitions(des_boot PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -166,8 +181,9 @@ if(MSVC)   # also true for clang-cl
     # target's flags above, without SSE4.1.
     option(DES_SPU_OPT "Build the lifted SPU images /O2 with SSE4.1" ON)
     if(DES_SPU_OPT)
+        set(DES_SPU_FLAGS /O2 ${DES_DEBUG_FLAGS} /clang:-msse4.1)
         set_source_files_properties(${SPU_CHUNKS} PROPERTIES
-            COMPILE_OPTIONS "/O2;/Zi;/clang:-msse4.1")
+            COMPILE_OPTIONS "${DES_SPU_FLAGS}")
     endif()
 endif()
 

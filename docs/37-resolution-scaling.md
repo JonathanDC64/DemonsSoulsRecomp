@@ -226,9 +226,10 @@ size and host size.
 
 The code is in ps3recomp commits on `feat/rsx-scale`: the offscreen
 targets, the display buffers, the ZPASS counts, display-only batches, the
-write-back of scaled targets and the live knob. This repo adds the Settings
-row: Display -> Render resolution, 100 / 150 / 200 / 300%, a Live setting
-that writes `RSX_SCALE`.
+write-back of scaled targets, the live knob, texture filtering and sprite
+edges. This repo adds the Settings rows: Display -> Render resolution, 100 /
+150 / 200 / 300%, a Live setting that writes `RSX_SCALE`, and Texture
+filtering and Anisotropic filtering (below).
 
 ### Step 0: where the scene is drawn
 
@@ -304,3 +305,46 @@ have sharpened the HUD.
   errors.
 - Not checked yet: the Nexus, Boletaria (the sun flare), FMVs and other
   areas at a scale.
+
+### Lines along HUD and menu edges
+
+At 200% thin lines ran along panel edges and between the pieces of framed
+buttons. The menus are quads cut from texture atlases. At 1x a quad drawn
+1:1 puts each pixel centre on a texel centre, so linear filtering never
+reaches past the sprite. At 2x the outermost pixel centre is a quarter texel
+from the edge, and the filter blends in the next sprite in the atlas. A
+diagnostic that forced nearest filtering removed the lines; snapping 2D
+vertices to the guest pixel grid did not, so overlap was not the cause.
+
+The fix (`dr_uvclamp`, `uvclamp_gs`, `fp_inject_uvclamp`): a draw without a
+depth test on a scaled target gets a geometry shader that passes each
+triangle's texture-coordinate bounds (TEXCOORD0-7, xy) to the pixel shader
+as flat inputs, for triangles whose vertices all have w = 1. The pixel
+shader keeps each coordinate half a guest pixel inside the bounds (fwidth
+times half the scale), where the 1x edge pixel samples. Both triangles of a
+quad carry the quad's bounds, so the diagonal is not clamped, and interiors
+are unchanged. 3D draws (depth-tested) and 1x targets do not get it.
+`RSX_SCALE_UVCLAMP=0` turns it off.
+
+Checked on the System menu at 200%, downscaled and compared with 100%: the
+seam columns at the button joints and in the footer are gone. At DES_FPS=240
+uncapped it costs nothing measurable (240 fps either way).
+
+### Texture filtering
+
+Asked for with resolution scaling, and independent of it:
+
+- **Anisotropic filtering.** The game's own level (TEXTURE_CONTROL0 bits
+  4-6) was ignored and every sampler used `MaxAnisotropy = 1`. Demon's
+  Souls asks for 4x on its trilinear surface textures, and that is now
+  applied by default, as RPCS3 does. `RSX_ANISO` (1-16, live) replaces it.
+  It applies to mipmapped units whose min and mag filters are linear, never
+  to depth comparison. The regression set at 100% still passes.
+- **Filter override.** `RSX_TEXFILTER` (live): 1 nearest, 2 bilinear, 3
+  trilinear. It changes only the units the game samples with mipmaps (min
+  filter 3-6), which are its surface textures. Colour-grading LUTs, render
+  targets and other data are sampled without mipmaps and keep the game's
+  filter, because forcing it there changes colours: a LUT read nearest bands,
+  and one read linear where the game reads it nearest blends entries.
+
+Both are part of the sampler-table key, so a change makes new tables.

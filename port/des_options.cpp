@@ -71,7 +71,9 @@
  *   length and makes the rates per 30 Hz step as well.
  *   The loading screens' two soul icons step once a frame as well, and so
  *   does the boot screen's fade; load_souls_rate (boot) and
- *   nowloading_souls_rate (level loads) move them in 30 Hz steps.
+ *   nowloading_souls_rate (level loads) move them in 30 Hz steps. Menu
+ *   text too long for its box (the inventory's key guide) scrolls 1.5 px a
+ *   frame; scroll_msg_rate makes that 1.5 px a 30 Hz step.
  *
  * DES_VSYNC=0 | 1 — whether presents wait for the display's refresh (default
  *   1). 0 presents each frame as soon as it is drawn, with tearing, where the
@@ -501,7 +503,7 @@ void move_stuck_real_time(uint32_t mv, float f0, float dt)
  * frame, as on the PS3. DES_UIFIX=0 turns them off live. */
 constexpr uint32_t kSoulCells = 100;
 
-bool souls_fix_on()
+bool ui_fix_on()
 {
     static int on = 1;
     PS3_KNOB(on, ps3_env_int("DES_UIFIX", 1) != 0);
@@ -539,7 +541,7 @@ void load_souls_rate(ppu_context* ctx)
     const uint32_t obj = (uint32_t)ctx->gpr[3];
     static float carry = 0.5f;   /* so the cells round: one a frame at 30 fps */
     const float dt = vm_readf(kFrameDt);
-    const int n = souls_fix_on() && obj ? souls_steps(dt, carry) : -1;
+    const int n = ui_fix_on() && obj ? souls_steps(dt, carry) : -1;
     if (n >= 0) {
         for (const uint32_t off : kSoulCell) {
             const uint32_t cell = vm_read32(obj + off);
@@ -568,7 +570,7 @@ void nowloading_souls_rate(ppu_context* ctx)
 {
     const uint32_t dlg = (uint32_t)ctx->gpr[3];
     static float carry = 0.5f;
-    const int n = souls_fix_on() && dlg ? souls_steps((float)ctx->fpr[1], carry) : -1;
+    const int n = ui_fix_on() && dlg ? souls_steps((float)ctx->fpr[1], carry) : -1;
     uint32_t was[2] = {}, set[2] = {};
     bool moved[2] = {false, false};
     for (int i = 0; i < 2 && n >= 0; ++i) {
@@ -582,6 +584,36 @@ void nowloading_souls_rate(ppu_context* ctx)
     func_008CD078(ctx);
     for (int i = 0; i < 2; ++i)
         if (moved[i] && vm_read32(dlg + kNowLoadingCell[i]) == set[i]) vm_write32(dlg + kNowLoadingCell[i], was[i]);
+}
+
+/* Menu text too long for its box scrolls sideways, such as the key guide
+ * along the bottom of the inventory. ObjScrollMsg's update, 0x00798CD8
+ * (vtable 0x018690F0, dt in f1), moves the text's offset (+0x20) 1.5 px to
+ * the left a call while the message (+0x28) is the one it had at the last
+ * call (+0x2C), and sets the offset to 0 when the message changes. Its slot
+ * 5, 0x00798AC8, places the text by the offset when it is drawn: 90 px of
+ * hold at the start, the overflow, 90 px of hold at the end, then the offset
+ * starts over at 0. It compares ranges, so a part step is fine. The hook
+ * makes the step 1.5 px per 30 Hz step of the frame (dt in f1, capped at
+ * 50 ms like the game's step). DES_UIFIX=0 turns it off as well. */
+constexpr uint32_t kScrollMsgUpdate = 0x00798CD8u;
+constexpr uint32_t kScrollOffset    = 0x20u;   /* float, px */
+constexpr uint32_t kScrollMsgLast   = 0x2Cu;   /* the message at the last call; -1 for none */
+
+void scroll_msg_rate(ppu_context* ctx)
+{
+    const uint32_t obj = (uint32_t)ctx->gpr[3];
+    const float steps = (float)ctx->fpr[1] * 30.0f;
+    const float was = obj ? vm_readf(obj + kScrollOffset) : 0.0f;
+    const uint32_t last = obj ? vm_read32(obj + kScrollMsgLast) : 0u;
+    /* 0x00798CD8's constants: the step */
+    const float step = vm_readf(vm_read32((uint32_t)ctx->gpr[2] - 0x7208u) - 0x7FA0u);
+    func_00798CD8(ctx);
+    if (!obj || !ui_fix_on() || !(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
+    /* stepped: the same message as at the last call, and nothing else moved the offset */
+    const uint32_t msg = vm_read32(obj + kScrollMsgLast);
+    if (msg != 0xFFFFFFFFu && msg == last && vm_readf(obj + kScrollOffset) == was - step)
+        vm_writef(obj + kScrollOffset, was - step * steps);
 }
 
 } // namespace
@@ -742,6 +774,7 @@ extern "C" void ps3_title_options_init(void)
     g_gcm_flip_request_hook = on_flip_request;
     ppu_register_function(kLoadSouls, load_souls_rate);   /* the loading screens' souls, in 30 Hz steps */
     ppu_register_function(kNowLoadingUpdate, nowloading_souls_rate);
+    ppu_register_function(kScrollMsgUpdate, scroll_msg_rate);   /* menu text scroll, 1.5 px per 30 Hz step */
     if (const int fps = fps_wanted())
         fprintf(stderr, "[des] DES_FPS=%d: real frame time, no skip frames%s\n", fps,
                 fps_vblank_mhz(fps) ? ", vblank at the cap" : "");

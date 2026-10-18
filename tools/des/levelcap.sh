@@ -25,13 +25,15 @@ RUN="$DES_SCRATCH/lc_$NAME"; rm -rf "$RUN"; mkdir -p "$RUN/shots"; SHOTS="$RUN/s
 OUT="$RUN/run.txt"; PAD="$RUN/pad"; CON="$RUN/con"; : > "$PAD"; : > "$OUT"
 SAVE="gamedata/dev_hdd0/home/00000001/savedata"
 LC_SAVE="${LC_SAVE-work/tmp/regress/save}"
-[ -d "$SAVE" ] && cp -r "$SAVE" "$RUN/save"
+if [ -d "$SAVE" ]; then
+  des_backup_save "$SAVE" "$RUN/save" || { echo "[lc] could not back up $SAVE; save not swapped"; exit 2; }
+fi
+restore() { des_kill_own; if [ -d "$RUN/save" ]; then des_put_save "$RUN/save" "$SAVE"; fi; }
+trap restore EXIT
 if [ -n "$LC_SAVE" ]; then
   [ -d "$LC_SAVE" ] || { echo "[lc] no save at $LC_SAVE"; exit 2; }
-  rm -rf "$SAVE"; mkdir -p "$(dirname "$SAVE")"; cp -r "$LC_SAVE" "$SAVE"
+  des_put_save "$LC_SAVE" "$SAVE"
 fi
-restore() { des_kill_own; if [ -d "$RUN/save" ]; then rm -rf "$SAVE"; cp -r "$RUN/save" "$SAVE"; fi; }
-trap restore EXIT
 tools/des/desrun.sh "${LC_MAX:-600}" "$OUT" DES_SKIP_INTRO=1 \
   PAD_FILE="$(cygpath -m "$PAD")" PS3_DEBUG="$(cygpath -m "$CON")" PS3_OSK_TEXT=Aldia HLE_FIRST=1 CELLMARK_DUMP=${LC_DUMP:-100000} CELLMARK_DUMP_EVERY=${LC_EVERY:-30} CELLMARK_DUMP_CHANGED=1 CELLMARK_DUMP_MINDRAWS=1 CELLMARK_DUMP_DIR="$(cygpath -m "$SHOTS")" "$@" > "$RUN/summary.txt" 2>&1 &
 t0=$SECONDS; say() { echo "[lc] t=$((SECONDS - t0))s $*"; }

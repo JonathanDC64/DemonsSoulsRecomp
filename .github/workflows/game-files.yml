@@ -1,0 +1,52 @@
+# Fails when a game-derived file is in the repository or in a pull request's commits: the lift, the EBOOT,
+# firmware modules, game assets, saves, shader caches and dumps, frame captures, screenshots, Ghidra
+# output. None of it may ever be published (docs/05). The rules are in .github/scripts/check_game_files.py,
+# the exceptions in .github/game-files-allow.txt; the plan is docs/54.
+#
+# Every commit of a pull request is checked, not only its last tree: a file added and removed again inside
+# a pull request is still published by the merge, in the history.
+name: Game files
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: No game-derived files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # the pull request's commits, not only its tip
+
+      # The rules have to find made-up samples of each kind, or a pass would mean nothing.
+      - name: Self-test
+        run: python3 .github/scripts/check_game_files.py --self-test
+
+      - name: Every tracked file
+        run: python3 .github/scripts/check_game_files.py --tree HEAD
+
+      - name: Every commit of the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 .github/scripts/check_game_files.py --range "$BASE_SHA..$HEAD_SHA"
+
+      # (A force-push leaves "before" unreachable; the tree check above still ran.)
+      - name: Every commit of the push
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            python3 .github/scripts/check_game_files.py --range "$BEFORE..$GITHUB_SHA"
+          else
+            echo "::notice::No earlier commit to compare with ($BEFORE); only the tree was checked."
+          fi

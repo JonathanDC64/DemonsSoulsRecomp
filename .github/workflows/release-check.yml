@@ -1,0 +1,48 @@
+# The release workflow's steps on a pull request that changes them (docs/54), with no tag and nothing created: the
+# notes, the zip (made twice, which must come out the same) and the game-file check of what it holds.
+name: Release dry run
+
+on:
+  pull_request:
+    paths:
+      - 'tools/release/**'
+      - '.github/workflows/release*.yml'
+      - 'ps3recomp.pin'
+      - 'VERSION'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    name: Package without releasing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Release notes
+        run: |
+          python tools/release/changelog.py --out dist/notes.md
+          cat dist/notes.md
+
+      - name: Package, twice
+        run: |
+          python tools/release/package.py build --rev HEAD --out dist --dry-run
+          python tools/release/package.py build --rev HEAD --out dist2 --dry-run
+          cmp dist/SHA256SUMS dist2/SHA256SUMS
+          cat dist/SHA256SUMS
+
+      - name: No game-derived files in the package
+        run: |
+          if [ -f .github/scripts/check_game_files.py ]; then
+            python .github/scripts/check_game_files.py --dir dist/stage
+          else
+            echo "::notice::.github/scripts/check_game_files.py is not on this branch yet; skipped"
+          fi

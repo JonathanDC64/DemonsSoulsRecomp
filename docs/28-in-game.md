@@ -1134,6 +1134,42 @@ The ~10% left is expected: a smooth ease at fine steps lags `v * tau` (tau = 0.3
 - A site may be hooked only if its register is used as an ease factor before it is overwritten. Check the lifted code after the load, not just the field's name.
 - Vector stores in the lift are raw `memcpy`, so `PPU_WWATCH` does not see the camera's vec4 fields change. Sample them instead.
 
+## Snagged on small ledges above 30 fps (port `des_slide_rate`, 2026-10-17)
+
+**Symptom:** at high frame rates (easiest at 240) the player could get caught on a small lip in the ground. Walking into it, the character rose a few centimetres, slid back, and repeated forever. At 30 fps the same spot is crossed without a hitch. Reproduced in the Tutorial at about (135.54, 3.06, -3.32): a ~47° lip at the foot of a ~20° ramp.
+
+**Cause:** the slide on ground too steep to stand on runs once a frame without dt. Each frame, a character proxy's ground probe (`0x00200E60`, called from the proxy step `0x00201D78`) casts a ray down. If the face it hits is steeper than the walkable limit, it sets wrapper `+0x33`. The velocity update `0x001FE778` then:
+- on a steep frame, adds gravity along the slope times a gain of 1.0 (`0x019D9C3C`) to the slide velocity at wrapper `+0x100`;
+- on any other frame, multiplies the slide by 0.65 (`0x019D9C40`), and zeroes it under 0.1 m/s.
+
+Both values are in the game's debug menu (registered at `0x00202C44` and `0x0020340C`); nothing else reads them. A 30 fps step (several cm) carries the character over the narrow steep band, so the probe rarely lands on it, and one steep frame adds about 0.7 m/s. At 240 fps the steps are about 1 cm, the probe lands on the lip for several frames in a row, and the slide adds up to about 3 m/s, more than the walk.
+
+**Fix:** two more lines in [`port/insn_hooks.txt`](../port/insn_hooks.txt) call `des_slide_rate` (port/des_options.cpp) after the two `lfs f0` loads:
+- `0x001FED50`, the gain: scaled by `dt * 30`;
+- `0x001FEAF4`, the decay: raised to `dt * 30`.
+
+dt is the step's own (`r26 + 0x20`, the one the same function integrates gravity with), so the slide per second matches 30 fps. It does nothing at 30 fps or without DES_FPS. `DES_SLIDEFIX=0` turns it off live. It applies to every character proxy, on whichever thread steps it.
+
+**Result** (scripted pushes into the lip, 5 offsets x 2 angles, each warped onto the line mid-stride, 3 s each):
+
+| Run | Snags |
+|---|---|
+| 240 fps, `DES_SLIDEFIX=0` | 5 of 10 |
+| 240 fps, fix on | 0 of 10 |
+| 60 fps, fix on | 0 of 10 |
+| 30 fps, fix on | 0 of 10 |
+
+**How it was found:**
+- The frame log's speed factor (`DES_FRAMELOG`) stayed at 1.0, which ruled out the 30 Hz stuck test that `des_move_post` already handles.
+- Read-only sampling of the character, its movement object and the proxy wrapper during the pushes showed the wrapper's ground fields toggling each bounce.
+- `PPU_WWATCH` on wrapper `+0x184` (the ground material id) found the ground probe.
+- Its disassembly (`ps3recomp/tools/ppu_disasm.py`; Ghidra stops at its VMX) gave the steep flag. The flag's readers led to `0x001FE778`.
+
+**Watch out:**
+- Ghidra cannot decompile `0x00200E60` or the steep branch of `0x001FE778` (it gives up at a VMX instruction). Read the disassembly instead.
+- Wrapper `+0x184` is not Havok's supported state. It is the ground's material id (2 for the Tutorial floor); `+0x32` is on-ground, `+0x33` too-steep, `+0x220` the slope angle in degrees, `+0x150` the ground normal, `+0x160` the time in the air.
+- Other per-frame accumulators may hide in the same class (`0x001FE778`'s neighbours `0x001FF160`, `0x001FF8F0` also write `+0x33`). They were not on this path.
+
 ## Still open
 
 - **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Heaviest Palace view: 13-14% skip frames since `099343f` (was 29%). Still: no side-by-side check against RPCS3 at the same spot yet.

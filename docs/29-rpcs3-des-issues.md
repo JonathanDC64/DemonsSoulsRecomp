@@ -53,6 +53,34 @@ already hit and fixed the same problem.
    cellSail playback after Quit Game and in the end credits (#3476, #4302).
    Small; correctness.
 
+## Follow-up, 2026-10-18
+
+The five items above, checked against the game:
+
+1. **cellSysCacheMount: does not apply.** DeS mounts the cache with an
+   empty id (`SysCacheMount(id='')`, from 0x00C63E88). RPCS3 never reuses a
+   cache with an empty id either ("won't if cache id is an empty string"),
+   and returns OK_CLEARED like ours. So DeS rebuilds its /dev_hdd1 cache on
+   every boot in RPCS3 as well, and there is no boot time to win here.
+2. **cellSaveData write path: fixed** (ps3recomp PR #48). A whole-file write
+   now goes to `.<name>.tmp` and replaces the file once it is complete, so a
+   crash mid-autosave keeps the old USER.DAT. No flush was added. RPCS3's
+   other DeS save issue (the half-second completion delay) needs nothing
+   from us.
+3. **lv2 sync primitives audit: not done.** Still open; it is a longer job.
+4. **cellGcmGetLastFlipTime: does not matter for DeS.** DeS calls it in one
+   place (0x00FE0378) and passes the value straight to
+   `cellSailGraphicsAdapterUpdateAvSync`, which our cellSail ignores. The
+   units are still wrong for other games (ours: host ns; RPCS3: guest µs,
+   minus one second), but changing them is untested anywhere, so it is
+   left alone.
+5. **Colour mask reserved bits: fixed** (ps3recomp PR #47), as RPCS3 does:
+   a COLOR_MASK write with any bit other than bit 0 of each byte is ignored.
+   Our D3D12 path decoded bit 0 only, so such a write turned channels off
+   (not on, as the item above guessed). DeS sends none (0 in a 120 s level
+   run). cellSail after Quit Game and in the credits was not checked; it
+   needs a run that gets that far.
+
 ## Candidates in detail: yes
 
 ### Y1. S1 normalised vertex attribute: missing shields, eggs, hoods (have it)

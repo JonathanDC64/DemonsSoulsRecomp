@@ -3,6 +3,11 @@
 # with (ctx, address) right after that instruction. See docs/28, "Camera
 # catch-up at any frame rate".
 #
+# des_motion_blur (port/des_options.cpp): DES_MOTION_BLUR=0 inverts the blur
+# stage's test of its enable byte, like RPCS3's "Disable Motion Blur" patch
+# (bne -> beq at 0x00217E7C).
+0x00217E70=des_motion_blur   # cmpwi cr7, r0 (= byte +0x1D4), 0
+
 # des_cam_rate (port/des_options.cpp): loads of a per-frame ease factor k in the
 # camera code (cur += (target - cur) * k, tuned for 30 fps). Each is an lfs; the
 # hook rescales k to the frame time.

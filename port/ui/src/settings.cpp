@@ -20,6 +20,7 @@ namespace {
 
 constexpr Def kDefs[] = {
     {"DES_FPS", "", Apply::Live},              // "" = the game's own 30 fps mode; read at each flip
+    {"DES_MOTION_BLUR", "1", Apply::Live},     // des_motion_blur, read each frame
     {"DES_VSYNC", "1", Apply::Live},           // RSX_VSYNC, live
     {"DES_SKIP_INTRO", "0", Apply::Restart},
     {"PS3_SAIL_MOVIES", "1", Apply::Live},     // read as each movie opens

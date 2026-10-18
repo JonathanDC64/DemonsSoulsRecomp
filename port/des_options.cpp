@@ -495,6 +495,20 @@ extern "C" void des_move_post(ppu_context* ctx)
     if (s_fps > 0) move_stuck_real_time(mv, f0, dt);
 }
 
+/* DES_MOTION_BLUR=0: no camera motion blur. The blur stage (0x00217E68)
+ * tests a byte of its object (+0x1D4) and, when it is set, branches to the
+ * blur at 0x00217F50 (bne cr7); otherwise it hands the stage a fixed vector
+ * through 0x003E6ED8. RPCS3's "Disable Motion Blur" patch turns that bne
+ * into a beq. The lifter calls this after the cmpwi at 0x00217E70
+ * (--insn-hooks); flipping cr7's EQ bit there does the same. Live. */
+extern "C" void des_motion_blur(ppu_context* ctx, uint32_t addr)
+{
+    (void)addr;
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_MOTION_BLUR", 1) != 0);
+    if (!on) ctx->cr ^= 2u;   /* cr7 is the low field; EQ = 2 */
+}
+
 /* The cameras ease towards their targets by a fixed fraction a frame,
  * cur += (target - cur) * k, with k tuned for 30 fps (the follow camera's
  * chase is k = 0.1 at 0x0011C2BC). At 240 fps that is eight steps where the

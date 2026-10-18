@@ -165,6 +165,9 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         bool_row(leftPane, rightPane, "V-sync", "DES_VSYNC",
             "Presents wait for the display's refresh. Off shows each frame as soon as it is drawn, with tearing: "
             "needed to see a frame rate above the display's refresh rate. Applies at once.<br/><br/>(DES_VSYNC)");
+        bool_row(leftPane, rightPane, "Motion blur", "DES_MOTION_BLUR",
+            "The game's camera motion blur. Off draws the scene sharp while the camera moves. Applies at once."
+            "<br/><br/>(DES_MOTION_BLUR)");
     });
 
     add_tab("Game", [this](Rml::Element* content) {

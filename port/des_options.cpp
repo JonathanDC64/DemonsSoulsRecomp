@@ -529,6 +529,20 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
 }
 
+/* DES_MOTION_BLUR=0: no camera motion blur. The blur stage (0x00217E68)
+ * tests a byte of its object (+0x1D4) and, when it is set, branches to the
+ * blur at 0x00217F50 (bne cr7); otherwise it hands the stage a fixed vector
+ * through 0x003E6ED8. RPCS3's "Disable Motion Blur" patch turns that bne
+ * into a beq. The lifter calls this after the cmpwi at 0x00217E70
+ * (--insn-hooks); flipping cr7's EQ bit there does the same. Live. */
+extern "C" void des_motion_blur(ppu_context* ctx, uint32_t addr)
+{
+    (void)addr;
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_MOTION_BLUR", 1) != 0);
+    if (!on) ctx->cr ^= 2u;   /* cr7 is the low field; EQ = 2 */
+}
+
 extern "C" void des_menu_sfx_init(void);   /* des_menu_sfx.cpp */
 
 extern "C" void ps3_title_options_init(void)

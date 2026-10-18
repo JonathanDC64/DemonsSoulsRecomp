@@ -1148,7 +1148,7 @@ Both values are in the game's debug menu (registered at `0x00202C44` and `0x0020
 - `0x001FED50`, the gain: scaled by `dt * 30`;
 - `0x001FEAF4`, the decay: raised to `dt * 30`.
 
-dt is the step's own (`r26 + 0x20`, the one the same function integrates gravity with), so the slide per second matches 30 fps. It does nothing at 30 fps or without DES_FPS. `DES_SLIDEFIX=0` turns it off live. It applies to every character proxy, on whichever thread steps it.
+dt is the step's own (`r26 + 0x20`, the one the same function integrates gravity with), so the slide per second matches 30 fps. It does nothing at 30 fps or without DES_FPS. `DES_SLIDEFIX=0` turns it off live; `DES_SLIDEFIX=2` adds a grace period (below). It applies to every character proxy, on whichever thread steps it.
 
 **Result** (scripted pushes into the lip, 5 offsets x 2 angles, each warped onto the line mid-stride, 3 s each):
 
@@ -1158,6 +1158,16 @@ dt is the step's own (`r26 + 0x20`, the one the same function integrates gravity
 | 240 fps, fix on | 0 of 10 |
 | 60 fps, fix on | 0 of 10 |
 | 30 fps, fix on | 0 of 10 |
+
+**At a slow walk the original game snags too.** The same lip with the stick at half (6 angles x 5 offsets, 3 s each):
+
+| Run | Snags |
+|---|---|
+| 30 fps | 20 of 30 |
+| 240 fps, fix on | 21 of 30 |
+| 240 fps, `DES_SLIDEFIX=2` | 12 of 30 |
+
+So with the fix, 240 fps matches 30 fps at both speeds. `DES_SLIDEFIX=2` is kinder than the game. A slide starts only once the ground has been too steep for 1/30 s without a break, so a lip crossed faster than that is never slid on (the run is kept per proxy, `r29` = the wrapper, in a small table per thread). A real steep slope then slides at most 1/30 s late. It is off by default because it changes how the game plays.
 
 **How it was found:**
 - The frame log's speed factor (`DES_FRAMELOG`) stayed at 1.0, which ruled out the 30 Hz stuck test that `des_move_post` already handles.

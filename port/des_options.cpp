@@ -538,20 +538,37 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
  * in one frame gets several frames of slide, enough to push the character
  * back down: a snag that never ends. The lifter calls this after the two lfs
  * (--insn-hooks): 0x001FED50 loads the gain, scaled here by dt * 30, and
- * 0x001FEAF4 loads the decay, raised here to dt * 30. All characters, any
- * thread. DES_SLIDEFIX=0 turns it off live. */
+ * 0x001FEAF4 loads the decay, raised here to dt * 30.
+ *
+ * With that, the slide matches 30 fps: at a slow walk the game snags on such
+ * a lip at 30 fps too (half stick: 20 of 30 pushes at 30 fps, 21 of 30 at 240).
+ * DES_SLIDEFIX=2 is kinder than the game: a slide starts only once the ground
+ * has been too steep for 1/30 s without a break (12 of 30), and a real steep
+ * slope slides at most 1/30 s later. The run is kept per proxy (r29 = the
+ * wrapper) in a small table per thread. All characters, any thread.
+ * DES_SLIDEFIX=0 turns it off live. */
 extern "C" void des_slide_rate(ppu_context* ctx, uint32_t addr)
 {
-    static int on = 1;
-    PS3_KNOB(on, ps3_env_int("DES_SLIDEFIX", 1) != 0);
-    if (!on || s_fps <= 0) return;
-    const float steps = vm_readf((uint32_t)ctx->gpr[26] + 0x20) * 30.0f;
+    static int mode = 1;
+    PS3_KNOB(mode, ps3_env_int("DES_SLIDEFIX", 1));
+    if (!mode || s_fps <= 0) return;
+    const float dt = vm_readf((uint32_t)ctx->gpr[26] + 0x20);
+    const float steps = dt * 30.0f;
     if (!(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
+    struct Run { uint32_t wrapper; float steep_s; };
+    static PPU_THREAD_LOCAL Run runs[64];
+    const uint32_t wrapper = (uint32_t)ctx->gpr[29];
+    Run& r = runs[((wrapper >> 4) * 2654435761u) >> 26];
     const double v = ctx->fpr[0];   /* both sites are lfs f0 */
-    if (addr == 0x001FED50u)
-        ctx->fpr[0] = (float)(v * steps);
-    else if (addr == 0x001FEAF4u && v > 0.0 && v < 1.0)
-        ctx->fpr[0] = (float)std::pow(v, (double)steps);
+    if (addr == 0x001FED50u) {      /* a steep step */
+        if (r.wrapper != wrapper) r = {wrapper, 0.0f};
+        r.steep_s += dt;
+        const bool wait = mode == 2 && r.steep_s < 1.0f / 30.0f - 1e-4f;
+        ctx->fpr[0] = wait ? 0.0 : (float)(v * steps);
+    } else if (addr == 0x001FEAF4u) {   /* any other step */
+        if (r.wrapper == wrapper) r.steep_s = 0.0f;
+        if (v > 0.0 && v < 1.0) ctx->fpr[0] = (float)std::pow(v, (double)steps);
+    }
 }
 
 extern "C" void des_menu_sfx_init(void);   /* des_menu_sfx.cpp */

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://recomp.fyi/schema/v1.json",
+  "game": "Demon's Souls",
+  "wikidata": "Q1153708",
+  "system": "PS3",
+  "type": "recomp",
+  "original": { "region": "USA", "serial": "BLUS30443" },
+  "status": "in-progress",
+  "targets": ["Windows"],
+  "toolchain": "ps3recomp",
+  "approach": "Static recompilation of the PPU and SPU code to C, linked against a reimplementation of the PS3 system libraries, rendering through Direct3D 12.",
+  "links": [
+    { "label": "ps3recomp fork", "url": "https://github.com/JonathanDC64/ps3recomp" }
+  ],
+  "notes": "Playable from boot through the tutorial, the Nexus and Boletarian Palace 1-1. Unlocked frame rates up to 240 fps are being worked on. No release yet; building needs your own copy of the game."
+}

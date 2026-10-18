@@ -1,6 +1,8 @@
-# Internal resolution scaling: a plan
+# Internal resolution scaling
 
-Date: 2026-10-18. Status: plan only, no code yet.
+Date: 2026-10-18. Status: built (`RSX_SCALE`, and Settings -> Display ->
+Render resolution). "What was built" at the end says where it differs from
+the plan below.
 
 The aim is to render at a multiple of the game's 1280x720 (for example 1.5x,
 2x or 3x) and show the result at window size. Aspect ratios come later, and
@@ -219,3 +221,130 @@ On our side:
 
 This is independent of scaling, but it needs step 1's split between guest
 size and host size.
+
+## What was built
+
+The code is in ps3recomp commits on `feat/rsx-scale`: the offscreen
+targets, the display buffers, the ZPASS counts, display-only batches, the
+write-back of scaled targets, the live knob, texture filtering and sprite
+edges. This repo adds the Settings rows: Display -> Render resolution, 100 /
+150 / 200 / 300%, a Live setting that writes `RSX_SCALE`, and Texture
+filtering and Anisotropic filtering (below).
+
+### Step 0: where the scene is drawn
+
+Read with `RT_OFFDBG` at 100% in the tutorial level. The scene is drawn
+offscreen, so steps 1 and 2 were done together; step 1 alone would only
+have sharpened the HUD.
+
+- Scene: colour targets 0x7A0000 and 0x5870000 (1280x720), depth 0xB50000.
+- Shadow map: depth-only zeta 0x4860000, 2048x2048.
+- Post: 0x4260000 (1280x720), then a bloom chain at 640x360, 320x180 and
+  160x90.
+- Exposure: 64x64 and 16x16 targets, which the game reads back.
+- Two 128x128 targets, 0x17B0000 and 0x17D0000.
+- Display buffers 0x10000 and 0x3D0000 receive the last pass and the HUD.
+
+### Where it differs from the plan
+
+- **Threshold.** A target is scaled only if its larger side is above
+  `RSX_SCALE_MIN` (default 64), not 16. This keeps the 64x64 and 16x16
+  exposure targets at 1x, so their write-back is unchanged.
+- **Fill from guest memory.** `off_rt_get` expands the guest image
+  nearest-neighbour on the CPU, into the upload buffer, instead of a GPU
+  pass. It only runs when a target is created.
+- **Write-back.** Scaled targets are written back too, as the plan said.
+  `off_rt_downscale` draws each one down to a guest-size copy (one texel per
+  guest pixel, `Load`), and that copy is read back as a 1x target is. A first
+  version skipped them, since every target the game reads is under the
+  threshold, but the guest memory under a scaled target then went stale. All
+  16 offscreen slots are in use in menus (this happens at 1x as well:
+  "[RT] all 16 offscreen targets in use"), so targets are recreated often,
+  each filled from guest memory. At 200% the Profile List showed coloured
+  noise below its footer, where the menu draws nothing over a new target.
+- **Display-only batches.** A batch starts on the display buffer and may
+  never change target (the loading screens). Its draws must use the display
+  buffer's scale; with a 1.0 default they covered the top-left quarter on
+  every other frame, and the loading screens flickered between a small and
+  a full-size image.
+- **Live.** `RSX_SCALE` is a live knob. When it changes, the next batch
+  (GPU idle, last write-back stored) drops everything sized from it
+  (`rsx_scale_apply`): offscreen colour and depth targets, display buffers,
+  the shared depth buffer, the screen copy and readbacks. Colour targets
+  refill from guest memory. The step 3 note about RPCS3 recreating at a flip
+  is what this does.
+- **WPOS.** No constant was added, because no Demon's Souls fragment program
+  read WPOS in the test runs. With `RSX_SCALE` set, the decompiler logs once
+  if one does ("a fragment program reads WPOS, which RSX_SCALE scales").
+- **ZPASS.** Each query's count is divided by its target's host/guest pixel
+  ratio, rounded up. Not seen live: the tutorial level and Stonefang issue
+  no queries, so the sun probe has not been checked at a scale.
+- **Scissor.** It is still the viewport rect, scaled with it. The guest
+  scissor is still not applied.
+- **Range.** `RSX_SCALE` takes 50 to 800 (percent). Host sizes are capped at
+  16384.
+- The guest size is kept for everything the game compares: texture sizes
+  against the display, `RT_DISPLAY_BY_SIZE`, `subvp_note`, the guest
+  viewport and the window's aspect in `blit_to_window`. Copies, captures and
+  frame dumps use the host size, so `capdiff.py` and `shotdiff.py` only
+  compare sets taken at the same scale.
+
+### Results
+
+- At 150%, 200% and 300% the opening cutscene and gameplay look as they do
+  at 100%, only sharper: HUD, exposure, shadows, bloom and fog. Frame dumps
+  come out at 1920x1080, 2560x1440 and 3840x2160. There were no device
+  errors.
+- Frame rate in the tutorial level (DES_FPS=240, VBLANK_MHZ=240000, an
+  RTX 5070 Ti): 240 at 100% (the cap), 240 at 150%, 236 at 200%, 226 at
+  300%.
+- At 100% every size and ratio is the guest's, so the output is the same as
+  before.
+- Switching live in the tutorial level, 100 -> 200 -> 100 -> 300 -> 150%:
+  each frame after a switch is complete and at the new size, with no device
+  errors.
+- Not checked yet: the Nexus, Boletaria (the sun flare), FMVs and other
+  areas at a scale.
+
+### Lines along HUD and menu edges
+
+At 200% thin lines ran along panel edges and between the pieces of framed
+buttons. The menus are quads cut from texture atlases. At 1x a quad drawn
+1:1 puts each pixel centre on a texel centre, so linear filtering never
+reaches past the sprite. At 2x the outermost pixel centre is a quarter texel
+from the edge, and the filter blends in the next sprite in the atlas. A
+diagnostic that forced nearest filtering removed the lines; snapping 2D
+vertices to the guest pixel grid did not, so overlap was not the cause.
+
+The fix (`dr_uvclamp`, `uvclamp_gs`, `fp_inject_uvclamp`): a draw without a
+depth test on a scaled target gets a geometry shader that passes each
+triangle's texture-coordinate bounds (TEXCOORD0-7, xy) to the pixel shader
+as flat inputs, for triangles whose vertices all have w = 1. The pixel
+shader keeps each coordinate half a guest pixel inside the bounds (fwidth
+times half the scale), where the 1x edge pixel samples. Both triangles of a
+quad carry the quad's bounds, so the diagonal is not clamped, and interiors
+are unchanged. 3D draws (depth-tested) and 1x targets do not get it.
+`RSX_SCALE_UVCLAMP=0` turns it off.
+
+Checked on the System menu at 200%, downscaled and compared with 100%: the
+seam columns at the button joints and in the footer are gone. At DES_FPS=240
+uncapped it costs nothing measurable (240 fps either way).
+
+### Texture filtering
+
+Asked for with resolution scaling, and independent of it:
+
+- **Anisotropic filtering.** The game's own level (TEXTURE_CONTROL0 bits
+  4-6) was ignored and every sampler used `MaxAnisotropy = 1`. Demon's
+  Souls asks for 4x on its trilinear surface textures, and that is now
+  applied by default, as RPCS3 does. `RSX_ANISO` (1-16, live) replaces it.
+  It applies to mipmapped units whose min and mag filters are linear, never
+  to depth comparison. The regression set at 100% still passes.
+- **Filter override.** `RSX_TEXFILTER` (live): 1 nearest, 2 bilinear, 3
+  trilinear. It changes only the units the game samples with mipmaps (min
+  filter 3-6), which are its surface textures. Colour-grading LUTs, render
+  targets and other data are sampled without mipmaps and keep the game's
+  filter, because forcing it there changes colours: a LUT read nearest bands,
+  and one read linear where the game reads it nearest blends entries.
+
+Both are part of the sampler-table key, so a change makes new tables.

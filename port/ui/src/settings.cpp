@@ -27,6 +27,7 @@ constexpr Def kDefs[] = {
     {"DES_AUTO_CONTINUE", "0", Apply::Restart},
     {"AUDIO_MUTE", "0", Apply::Live},
     {"DES_DOF", "1", Apply::Live},             // des_dof, read each frame
+    {"RSX_SCALE", "100", Apply::Restart},      // the D3D12 backend sizes its render targets at init
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
     {"show_start_screen", "1", Apply::UiOnly},
     {"menu_hint", "1", Apply::UiOnly},

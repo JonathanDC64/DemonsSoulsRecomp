@@ -126,8 +126,9 @@ struct Shot {
 std::vector<Shot> sShots;
 
 // DES_UI_KEYS=frame:KEY[,frame:KEY...]: press a key at a presented frame (a test drives the menus with it). The key
-// OSK opens the keyboard as the game would.
+// OSK opens the keyboard as the game would, and a digit types it (a number field).
 constexpr int kScriptOsk = -1;
+constexpr int kScriptChar = 0x10000;  // + the character
 struct ScriptKey {
     unsigned long long frame;
     int vk;
@@ -479,6 +480,10 @@ void script_keys_for_frame(unsigned long long frame) {
             open_test_osk();
             continue;
         }
+        if (k.vk >= kScriptChar) {
+            push_event({InputEvent::Char, k.vk - kScriptChar});
+            continue;
+        }
         push_event({InputEvent::KeyDown, k.vk, 0, 0});
         push_event({InputEvent::KeyUp, k.vk, 0, 0});
     }
@@ -580,6 +585,7 @@ int vk_from_name(const std::string& name) {
                   {"PGDN", VK_NEXT},   {"TAB", VK_TAB},    {"SPACE", VK_SPACE}, {"OSK", kScriptOsk}};
     for (const auto& n : kNames)
         if (_stricmp(n.name, name.c_str()) == 0) return n.vk;
+    if (name.size() == 1 && name[0] >= '0' && name[0] <= '9') return kScriptChar + name[0];
     return 0;
 }
 

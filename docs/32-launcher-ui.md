@@ -273,7 +273,7 @@ issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
 | `DES_CRASH_DIALOG_EXIT_MS=<ms>` | The crash dialog closes itself after that long. |
 | `DES_UI_OPEN=menu` / `settings` / `osk` | Open the menu bar, the settings window or a test of the on-screen keyboard at startup. |
 | `DES_UI_SHOT=<a.bmp>[,frame][;<b.bmp>,frame...]` | Write the back buffer, UI included, at that presented frame (default 300). |
-| `DES_UI_KEYS=<frame>:<KEY>[,...]` | Press keys at presented frames: F1 ESC UP DOWN LEFT RIGHT ENTER PGUP PGDN TAB SPACE. With DES_UI_SHOT, a test can walk the menus. |
+| `DES_UI_KEYS=<frame>:<KEY>[,...]` | Press keys at presented frames: F1 ESC UP DOWN LEFT RIGHT ENTER PGUP PGDN TAB SPACE. OSK opens the on-screen keyboard as the game would, and a digit (0-9) is typed, for a number field. With DES_UI_SHOT, a test can walk the menus. |
 | `DES_UI_NO_ANIM=1` | No transitions. |
 | `DES_UI_SOUND=0` | No UI sounds. |
 | `DES_PRECOMPILE=0` / `force` | No startup shader pass / one whatever the stamp says (above). |

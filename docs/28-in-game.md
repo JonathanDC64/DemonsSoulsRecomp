@@ -1104,6 +1104,36 @@ All A/Bs: `DES_FPS=60 VBLANK_MHZ=120000` at the deep Palace save, unattended. Li
 - FIFO thread 78%, not saturated.
 - Next levers: the per-command state PUT in image 2 (r3 = EA, r4 = LSA, r5 = size, synchronous), and HighGraphics' ring stores (each takes the line's stripe and notifies image 2).
 
+## Camera catch-up at any frame rate (ps3recomp `--insn-hooks`, port `des_cam_rate`, 2026-10-17)
+
+**Symptom:** above 30 fps the camera caught up with the player too fast when walking, not only when turning it with the right stick. It was fine at 30 fps.
+
+**Cause:** the cameras ease towards their targets by a fixed fraction a frame, `cur += (target - cur) * k`, with k tuned for 30 fps. The camera manager (`0x00115370`, vtable `0x01855FB8`) passes the real frame time to the follow camera's update (`0x00119670`, ChrExFollowCam). But the eases ignore it, so at 240 fps the camera takes eight steps where the game takes one. The main one is the follow point's chase at `0x0011C2BC`: `lfs f0, 0x17C(r31)` (k = 0.1), splatted into a vector lerp. The same k is stored to `r1+0xC4` for the eases further down.
+
+**Fix:**
+- ps3recomp PR: the lifter's `--insn-hooks ADDR=sym` calls `sym(ctx, addr)` right after an instruction.
+- The port lists each load of k in [`port/insn_hooks.txt`](../port/insn_hooks.txt); the re-lift recipe (docs/27, README) passes it with `--insn-hooks @port/insn_hooks.txt`.
+- `des_cam_rate` (port/des_options.cpp) reads the lfs at that address for its register and replaces k with `1 - (1 - k)^(dt * 30)`. That leaves the same remainder per second as k does at 30 fps. dt is the game's frame time (`0x018C8DB4`).
+- It does nothing at 30 fps, in a cutscene (dt is 1/30 there) or without DES_FPS.
+- `DES_CAMFIX=0` turns it off live. `DES_CAMLOG=1` prints per-site counts every 20000 calls.
+
+**How the sites were found:** read-only sampling of the manager and its sub-cameras during a scripted walk (levelcap plus a ReadProcessMemory sampler; the manager is found by its vtable, since its heap address moves with DES_FPS), at 30 and 240 fps. Then a pattern search over the lifted camera functions for `a + (b - c) * k`, and the k loads located in the EBOOT by their encoding. `DES_CAMLOG` showed that 7 of the 15 sites run every frame while walking: `0x119818`, `0x1198D8`, `0x119FAC`, `0x11A018`, `0x11B830`, `0x11C0E8` and `0x11C2BC`. The ChrFollowCam and second-camera sites did not run on that walk. They are hooked because they follow the same pattern.
+
+**Result** (the same walk; distance from the camera's follow point at `sub+0x90` to the player while moving):
+
+| Run | Median lag | Lag per m/s |
+|---|---|---|
+| 30 fps | 0.69 m | 0.27 |
+| 240 fps, `DES_CAMFIX=0` | 0.21 m | 0.08 |
+| 240 fps, fix on | 0.87 m | 0.31 |
+
+The ~10% left is expected: a smooth ease at fine steps lags `v * tau` (tau = 0.316 s for k = 0.1 at 30 Hz), while 30 Hz steps lag `v * dt * (1 - k) / k` = 0.30 s.
+
+**Watch out:**
+- Changing the hook list touches `ppu_recomp.h`, so all 14 chunks rebuild (~15 min).
+- A site may be hooked only if its register is used as an ease factor before it is overwritten. Check the lifted code after the load, not just the field's name.
+- Vector stores in the lift are raw `memcpy`, so `PPU_WWATCH` does not see the camera's vec4 fields change. Sample them instead.
+
 ## Still open
 
 - **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Heaviest Palace view: 13-14% skip frames since `099343f` (was 29%). Still: no side-by-side check against RPCS3 at the same spot yet.

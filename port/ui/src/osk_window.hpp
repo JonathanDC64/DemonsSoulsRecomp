@@ -47,15 +47,20 @@ private:
     };
 
     void build_keys();
+    void build_hints();
     void press(const Key& key);
     void type(char16_t c);
     void backspace();
+    void delete_forward();
+    void move_caret(int d);
+    void toggle_shift();
     void finish(bool ok);
     void refresh();
     void move(int dx, int dy);
 
     Props mProps;
     std::u16string mText;
+    size_t mCaret = 0;            // where typing goes: before mText[mCaret]
     bool mShift = false;
     bool mDone = false;
     std::vector<Key> mKeys;
@@ -63,6 +68,7 @@ private:
     int mCursor = 0;              // the focused key
     unsigned mPadPrev = 0;        // the pad's buttons last frame (Square, Triangle, Select)
     bool mPadPrimed = false;
+    unsigned long long mSquareNext = 0, mTriangleNext = 0;  // when a held Square / Triangle repeats (0 = not held)
     Rml::Element* mTextElem = nullptr;
     Rml::Element* mCountElem = nullptr;
 };

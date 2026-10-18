@@ -108,13 +108,17 @@ When the game asks for text (the character's name), the UI shows its own
 keyboard in place of the small Windows input box. ps3recomp's cellOskDialog
 hands the dialog to the port (`cellOskDialog_set_host`), and
 `osk_window.cpp` draws it. The window shows the game's prompt, the text
-with a counter against the game's limit, and five rows of keys.
+with a counter against the game's limit and a cursor, five rows of keys, and
+a row of the pad's buttons with what they do.
 
-- **Gamepad.** The D-pad moves to the nearest key in the next row, and Cross
-  types the key. Circle deletes, Triangle types a space and Square is Shift.
-  Start is Done and Select is Cancel.
-- **Keyboard.** Typing goes straight into the text, Backspace deletes, Enter
-  is Done and Esc is Cancel. The arrows move on the grid.
+- **Gamepad.** The buttons are the PS3 keyboard's (as RPCS3 has them too).
+  The D-pad moves to the nearest key in the next row, and Cross types the key.
+  Square is Backspace, Triangle types a space, Select is Shift, L1/R1 (and
+  L2/R2) move the cursor, Start is Enter and Circle is Back. Square and
+  Triangle repeat while held.
+- **Keyboard.** Typing goes straight into the text at the cursor. Backspace
+  and Delete delete, Home/End move the cursor, Enter finishes and Esc goes
+  back. The arrows move on the grid.
 
 The game gets no pad input while the keyboard is up, as with any menu. With
 `DES_UI=0`, or when the UI fails to start, the Windows input box is used, or

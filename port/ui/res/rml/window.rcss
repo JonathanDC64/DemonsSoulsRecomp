@@ -353,6 +353,16 @@ osk-text {
     font-family: var(--font-family-body);
     font-weight: normal;
     font-size: var(--font-size-4xl);
+    white-space: pre; /* the spaces typed */
+}
+
+osk-caret {
+    display: inline-block;
+    width: 2dp;
+    height: 1em;
+    margin: 0 1dp;
+    vertical-align: middle;
+    background-color: var(--color-text);
 }
 
 osk-count {
@@ -401,4 +411,56 @@ osk-hint {
     font-weight: normal;
     font-size: var(--font-size-md);
     opacity: 0.7;
+}
+
+osk-hints {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: center;
+    gap: var(--space-sm) var(--space-lg);
+    font-family: var(--font-family-body);
+    font-weight: normal;
+    font-size: var(--font-size-md);
+}
+
+osk-hint-item {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+osk-hint-item icon {
+    width: 1.4em;
+    height: 1.4em;
+    font-size: 1.4em;
+}
+
+osk-pill {
+    padding: 0 var(--space-xs);
+    border: 1dp var(--color-border);
+    border-radius: 4dp;
+    font-size: var(--font-size-sm);
+    opacity: 0.8;
+}
+
+/* The pad's face buttons, in their PlayStation colours, from the icon font. */
+icon.pad-cross {
+    decorator: text("&#xe5cd;" center center);
+    color: #7fb2e5;
+}
+
+icon.pad-circle {
+    decorator: text("&#xe836;" center center);
+    color: #e86a6a;
+}
+
+icon.pad-square {
+    decorator: text("&#xe3c6;" center center);
+    color: #d995c9;
+}
+
+icon.pad-triangle {
+    decorator: text("&#xe86b;" center center);
+    color: #4fc9a4;
 }

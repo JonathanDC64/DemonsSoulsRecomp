@@ -1,7 +1,9 @@
 // The game's on-screen keyboard, drawn by the menus (see osk_window.hpp). The window is the small modal window, with
-// the prompt, the text and a counter, the keys in rows, and a line on the buttons. The D-pad moves between keys (to
-// the nearest key in the next row), Cross types the key, Circle deletes, Triangle is a space, Square is Shift, Start
-// is Done and Select is Cancel. On the keyboard, typing goes straight into the text; Enter is Done, Esc is Cancel.
+// the prompt, the text and a counter, the keys in rows, and a row of the pad's buttons and what they do. The buttons
+// are the PS3 keyboard's: the D-pad moves between keys (to the nearest key in the next row), Cross types the key,
+// Square deletes, Triangle is a space, Select is Shift, L1/R1 move the cursor, Start is Done and Circle is Cancel.
+// Square and Triangle repeat while held. On the keyboard, typing goes straight into the text; Enter is Done, Esc is
+// Cancel, Home/End move the cursor.
 #include "osk_window.hpp"
 
 #include "ui.hpp"
@@ -19,6 +21,8 @@ enum Action { kNone, kShift, kSpace, kDelete, kCancel, kDone };
 
 // CELL_PAD_CTRL_* (cellPad.h)
 constexpr unsigned kSelect = 1u << 0, kTriangle = 1u << 12, kSquare = 1u << 15;
+// A held Square or Triangle: the first repeat, then the rest (ms).
+constexpr unsigned long long kRepeatDelay = 400, kRepeatEvery = 60;
 
 // Each row: the keys, each its character and its shifted one.
 constexpr const char* kRows[] = {
@@ -43,6 +47,17 @@ float centre_x(Rml::Element* e) {
     return e->GetAbsoluteOffset(Rml::BoxArea::Border).x + e->GetOffsetWidth() * 0.5f;
 }
 
+// One entry of the button row: the pad button (an icon from the icon font, or a label such as START) and its action.
+void add_hint(Rml::Element* row, const char* icon, const char* label, const char* action) {
+    auto* item = append(row, "osk-hint-item");
+    if (icon) {
+        append(item, "icon")->SetClass(Rml::String("pad-") + icon, true);
+    } else {
+        append_text(append(item, "osk-pill"), label);
+    }
+    append_text(append(item, "osk-hint-action"), action);
+}
+
 }  // namespace
 
 OskWindow* active_osk() noexcept {
@@ -52,6 +67,7 @@ OskWindow* active_osk() noexcept {
 OskWindow::OskWindow(Props props) : WindowSmall("modal"), mProps(std::move(props)), mText(mProps.text) {
     mRoot->SetClass("osk", true);
     if (mText.size() > mProps.limit) mText.resize(mProps.limit);
+    mCaret = mText.size();
 
     auto* header = append(mDialog, "modal-header");
     append_text(append(header, "modal-title"), mProps.prompt.empty() ? Rml::String("Enter Text") : mProps.prompt);
@@ -61,10 +77,7 @@ OskWindow::OskWindow(Props props) : WindowSmall("modal"), mProps(std::move(props
     mCountElem = append(field, "osk-count");
 
     build_keys();
-
-    auto* hint = append(mDialog, "osk-hint");
-    append_text(hint, "Cross types, Circle deletes, Triangle: space, Square: Shift, Start: Done, Select: Cancel. "
-                      "Or type on the keyboard: Enter is Done, Esc is Cancel.");
+    build_hints();
 
     refresh();
     sActive = this;
@@ -98,8 +111,8 @@ void OskWindow::build_keys() {
         const char* cls;
     };
     constexpr Special kSpecial[] = {
-        {"Shift", kShift, "osk-wide"}, {"Space", kSpace, "osk-space"}, {"Delete", kDelete, "osk-wide"},
-        {"Cancel", kCancel, "osk-wide"}, {"Done", kDone, "osk-wide"},
+        {"Shift", kShift, "osk-wide"}, {"Space", kSpace, "osk-space"}, {"Backspace", kDelete, "osk-wide"},
+        {"Back", kCancel, "osk-wide"}, {"Enter", kDone, "osk-wide"},
     };
     auto* rowElem = append(keys, "osk-row");
     for (const Special& s : kSpecial) {
@@ -117,13 +130,21 @@ void OskWindow::build_keys() {
     }
 }
 
+void OskWindow::build_hints() {
+    auto* row = append(mDialog, "osk-hints");
+    // As the PS3's keyboard shows them (and RPCS3's), with the cursor keys added.
+    add_hint(row, "circle", nullptr, "Back");
+    add_hint(row, "triangle", nullptr, "Space");
+    add_hint(row, "square", nullptr, "Backspace");
+    add_hint(row, nullptr, "SELECT", "Shift");
+    add_hint(row, nullptr, "START", "Enter");
+    add_hint(row, nullptr, "L1 R1", "Cursor");
+    append_text(append(mDialog, "osk-hint"), "Or type on the keyboard: Enter to finish, Esc to go back.");
+}
+
 void OskWindow::press(const Key& key) {
     switch (key.action) {
-    case kShift:
-        mShift = !mShift;
-        play_sound(kSoundItemChange);
-        refresh();
-        return;
+    case kShift: toggle_shift(); return;
     case kSpace: type(u' '); return;
     case kDelete: backspace(); return;
     case kCancel: finish(false); return;
@@ -138,15 +159,36 @@ void OskWindow::type(char16_t c) {
         play_sound(kSoundWarning);
         return;
     }
-    mText.push_back(c);
+    mText.insert(mCaret++, 1, c);
     play_sound(kSoundItemFocus);
     refresh();
 }
 
 void OskWindow::backspace() {
-    if (mDone || mText.empty()) return;
-    mText.pop_back();
+    if (mDone || mCaret == 0) return;
+    mText.erase(--mCaret, 1);
     play_sound(kSoundItemFocus);
+    refresh();
+}
+
+void OskWindow::delete_forward() {
+    if (mDone || mCaret >= mText.size()) return;
+    mText.erase(mCaret, 1);
+    play_sound(kSoundItemFocus);
+    refresh();
+}
+
+void OskWindow::move_caret(int d) {
+    const size_t to = d < 0 ? (mCaret > 0 ? mCaret - 1 : 0) : (mCaret < mText.size() ? mCaret + 1 : mCaret);
+    if (to == mCaret) return;
+    mCaret = to;
+    play_sound(kSoundItemFocus);
+    refresh();
+}
+
+void OskWindow::toggle_shift() {
+    mShift = !mShift;
+    play_sound(kSoundItemChange);
     refresh();
 }
 
@@ -167,7 +209,7 @@ void OskWindow::close_silently() {
 }
 
 void OskWindow::refresh() {
-    set_text_content(mTextElem, utf8(mText) + "_");
+    mTextElem->SetInnerRML(escape(utf8(mText.substr(0, mCaret))) + "<osk-caret/>" + escape(utf8(mText.substr(mCaret))));
     set_text_content(mCountElem, std::to_string(mText.size()) + " / " + std::to_string(mProps.limit));
     for (Key& key : mKeys) {
         if (key.action == kNone) key.button->set_text(Rml::String(1, key.chars[mShift ? 1 : 0]));
@@ -212,10 +254,10 @@ bool OskWindow::handle_nav_command(Rml::Event& event, NavCommand cmd) {
     case NavCommand::Down: move(0, 1); return true;
     case NavCommand::Left: move(-1, 0); return true;
     case NavCommand::Right: move(1, 0); return true;
-    case NavCommand::Cancel: backspace(); return true;  // Circle
-    case NavCommand::Menu: finish(true); return true;   // Start
-    case NavCommand::Next:
-    case NavCommand::Previous: return true;
+    case NavCommand::Cancel: finish(false); return true;    // Circle
+    case NavCommand::Menu: finish(true); return true;       // Start
+    case NavCommand::Next: move_caret(1); return true;      // R1, R2
+    case NavCommand::Previous: move_caret(-1); return true; // L1, L2
     default: return false;
     }
 }
@@ -225,6 +267,9 @@ bool OskWindow::on_key(int vk) {
     case VK_RETURN: finish(true); return true;
     case VK_ESCAPE: finish(false); return true;
     case VK_BACK: backspace(); return true;
+    case VK_DELETE: delete_forward(); return true;
+    case VK_HOME: while (mCaret > 0) move_caret(-1); return true;
+    case VK_END: while (mCaret < mText.size()) move_caret(1); return true;
     case VK_F1: return true;  // not Done by accident
     case VK_UP: case VK_DOWN: case VK_LEFT: case VK_RIGHT: case VK_TAB: return false;  // the grid
     default: return true;  // the character comes as on_char
@@ -237,16 +282,24 @@ void OskWindow::on_char(unsigned c) {
 }
 
 void OskWindow::on_pad(unsigned buttons) {
-    const unsigned pressed = mPadPrimed ? buttons & ~mPadPrev : 0;
+    const unsigned long long now = GetTickCount64();
+    const unsigned pressed = mPadPrimed ? buttons & ~mPadPrev : 0;  // a button held as the window opened waits
     mPadPrev = buttons;
     mPadPrimed = true;
-    if (pressed & kTriangle) type(u' ');
-    if (pressed & kSquare) {
-        mShift = !mShift;
-        play_sound(kSoundItemChange);
-        refresh();
-    }
-    if (pressed & kSelect) finish(false);
+    if (pressed & kSelect) toggle_shift();
+    const auto repeat = [&](unsigned bit, unsigned long long& next, auto&& act) {
+        if (!(buttons & bit)) {
+            next = 0;
+        } else if (pressed & bit) {
+            act();
+            next = now + kRepeatDelay;
+        } else if (next != 0 && now >= next) {
+            act();
+            next = now + kRepeatEvery;
+        }
+    };
+    repeat(kSquare, mSquareNext, [this] { backspace(); });
+    repeat(kTriangle, mTriangleNext, [this] { type(u' '); });
 }
 
 void OskWindow::update() {

@@ -224,10 +224,11 @@ size and host size.
 
 ## What was built
 
-The code is in three ps3recomp commits on `feat/rsx-scale`: the offscreen
-targets, the display buffers and the ZPASS counts. This repo adds the
-Settings row: Display -> Render resolution, 100 / 150 / 200 / 300%, a
-Restart setting that writes `RSX_SCALE`.
+The code is in ps3recomp commits on `feat/rsx-scale`: the offscreen
+targets, the display buffers, the ZPASS counts, display-only batches, the
+write-back of scaled targets and the live knob. This repo adds the Settings
+row: Display -> Render resolution, 100 / 150 / 200 / 300%, a Live setting
+that writes `RSX_SCALE`.
 
 ### Step 0: where the scene is drawn
 
@@ -251,10 +252,26 @@ have sharpened the HUD.
 - **Fill from guest memory.** `off_rt_get` expands the guest image
   nearest-neighbour on the CPU, into the upload buffer, instead of a GPU
   pass. It only runs when a target is created.
-- **Write-back.** Scaled targets are not written back:
-  `rt_writeback_record` skips them. Every target Demon's Souls reads back is
-  at or below the threshold. A game that reads back a large target would
-  need the downscale pass from the plan.
+- **Write-back.** Scaled targets are written back too, as the plan said.
+  `off_rt_downscale` draws each one down to a guest-size copy (one texel per
+  guest pixel, `Load`), and that copy is read back as a 1x target is. A first
+  version skipped them, since every target the game reads is under the
+  threshold, but the guest memory under a scaled target then went stale. All
+  16 offscreen slots are in use in menus (this happens at 1x as well:
+  "[RT] all 16 offscreen targets in use"), so targets are recreated often,
+  each filled from guest memory. At 200% the Profile List showed coloured
+  noise below its footer, where the menu draws nothing over a new target.
+- **Display-only batches.** A batch starts on the display buffer and may
+  never change target (the loading screens). Its draws must use the display
+  buffer's scale; with a 1.0 default they covered the top-left quarter on
+  every other frame, and the loading screens flickered between a small and
+  a full-size image.
+- **Live.** `RSX_SCALE` is a live knob. When it changes, the next batch
+  (GPU idle, last write-back stored) drops everything sized from it
+  (`rsx_scale_apply`): offscreen colour and depth targets, display buffers,
+  the shared depth buffer, the screen copy and readbacks. Colour targets
+  refill from guest memory. The step 3 note about RPCS3 recreating at a flip
+  is what this does.
 - **WPOS.** No constant was added, because no Demon's Souls fragment program
   read WPOS in the test runs. With `RSX_SCALE` set, the decompiler logs once
   if one does ("a fragment program reads WPOS, which RSX_SCALE scales").
@@ -282,5 +299,8 @@ have sharpened the HUD.
   300%.
 - At 100% every size and ratio is the guest's, so the output is the same as
   before.
+- Switching live in the tutorial level, 100 -> 200 -> 100 -> 300 -> 150%:
+  each frame after a switch is complete and at the new size, with no device
+  errors.
 - Not checked yet: the Nexus, Boletaria (the sun flare), FMVs and other
   areas at a scale.

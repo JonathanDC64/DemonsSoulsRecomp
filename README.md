@@ -42,7 +42,7 @@ The build is not yet a single command. The steps, in order:
    cd DemonsSoulsRecomp
    git clone https://github.com/JonathanDC64/ps3recomp.git
    ```
-2. Decrypt `PS3_GAME/USRDIR/EBOOT.BIN` with RPCS3 (Utilities > Decrypt PS3 Binaries) to `work/game/EBOOT.ELF`.
+2. Decrypt `PS3_GAME/USRDIR/EBOOT.BIN` with RPCS3 (Utilities > Decrypt PS3 Binaries) to `work/game/EBOOT.ELF`. Copy `PS3_GAME/ICON0.PNG` to `work/game/` as well: the build makes the exe's icon from it (`scripts/make_icon.py`, standard library only). Without it the exe has no icon.
 3. Analyse the executable: `python ps3recomp/tools/ppu_loader.py work/game/EBOOT.ELF -o work/loader` writes `EBOOT.functions.json` and `EBOOT.imports.json`.
 4. Lift the PPU code and apply the boot shim. The commands are in [`docs/27`](docs/27-relift-auto-save-notice.md#re-lift-recipe):
    ```

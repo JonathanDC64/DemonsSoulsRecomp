@@ -44,8 +44,8 @@ and on every change.
 |---|---|---|---|
 | Frame rate (Display) | `DES_FPS` | "" = 30 fps original, 30, 60, 120, 144, 165, 240 | at once (read at each flip request) |
 | V-sync (Display) | `DES_VSYNC` (sets `RSX_VSYNC`) | 1 / 0 | at once (live knob) |
-| Short boot logos (Game) | `DES_SKIP_INTRO` | 0 / 1 | next start |
-| Intro movies (Game) | `PS3_SAIL_MOVIES` | 1 / 0 | from the next movie |
+| Boot logos (Game) | `DES_SKIP_INTRO` | 0 = show, 1 = skip, 2 = last logo only | next start |
+| Skip opening movie (Game) | `DES_SKIP_INTRO_MOVIE` (sets `PS3_SAIL_SKIP`) | 0 / 1 | from the next movie |
 | Continue automatically (Game) | `DES_AUTO_CONTINUE` | 0 / 1 | next start; from the file it waits for Play on the start screen |
 | Sound (Game) | `AUDIO_MUTE` (inverted) | 0 / 1 | at once (live knob) |
 | UI scale (Interface) | `ui_scale` | 0 = auto (the display's scale), 75, 100, 125, 150 (% of it) | at once |

@@ -481,6 +481,7 @@ Measured (`017dd06` counters): the game calls GetFrame about 31 times a second a
 Tools and knobs:
 - `PS3_SAIL_MOVIES=0`: never play; every stream ends at once (the old behaviour).
 - `PS3_SAIL_MOVIES=<text>` (`96757fc`): play only the movies whose path contains `<text>`; the rest end at once. `PS3_SAIL_MOVIES=title` reaches the title movie in about 50 s without sitting through the 130 s advert, which CROSS does not skip.
+- `PS3_SAIL_SKIP=<text>[,<text>...]`: never play the movies whose path contains one of the texts; the rest play. `DES_SKIP_INTRO_MOVIE=1` sets it to `ds_advertise.pam`.
 - `SAIL_AUDIO_TONE=<peak>` (`96757fc`): replace the movie's sound with one sine per channel, 250 Hz x (channel + 1). Pair it with `AUDIO_WAV=<file>` and look at the spectrum per channel.
 - `SAIL_AUDIO_DOWNMIX=0` (`7f48932`): hand 5.1 out as 5.1 (default: stereo).
 - `RSX_STALE_FLIPS=<n>` (`ad2d649`): flips without a present before the frame-size max counts as stale (default 4; 0 = never).
@@ -816,7 +817,17 @@ The harnesses drove the boot menus from outside: every 2 s, if the log showed th
 
 The same save's level now starts loading at 15.2 s instead of 32.5 s, and runs normally after (29.8 fps unattended). `regress.sh` uses it (all four shots ok, 117 s instead of about 150). For playing: `tools/des/play.sh DES_SKIP_INTRO=1 DES_AUTO_CONTINUE=1` goes straight into the last save.
 
-RPCS3's "Skip Intro Videos" patch for BLUS30443 (GalCiv) writes `li r0,3; stw r0,0x100(r28)` at 0x008EEF78: every logo's `m_animState` goes straight to 3 (wait for the fade-out). `DES_SKIP_INTRO` jumps to the last logo and skips its hold instead, so one fade-in and fade-out still play, about 2 s more.
+RPCS3's "Skip Intro Videos" patch for BLUS30443 (GalCiv) writes `li r0,3; stw r0,0x100(r28)` at 0x008EEF78: every logo's `m_animState` goes straight to 3 (wait for the fade-out). `DES_SKIP_INTRO` jumped to the last logo and skipped its hold instead, so one fade-in and fade-out still played, about 2 s more.
+
+### Skip options: logos and the opening movie (2026-10-17)
+
+The two are now separate options:
+
+- `DES_SKIP_INTRO=1` does what the RPCS3 patch does. State 3's branch (`0x008EF168`) does not wait for a fade. It moves to the next logo, and after logo 4 it requests the title (menu state 0x3C) itself. The hook writes 3 to `m_animState` before each update, so all five logos pass in five frames and none is drawn. A test run reached the auto-save notice 6 s after boot.
+- `DES_SKIP_INTRO=2` is the first version (the last logo, about 2 s). It is kept as an option.
+- `DES_SKIP_INTRO_MOVIE=1` skips only the opening movie, `movie/ds_advertise.pam`, the 130 s advert after the auto-save notice. It sets the runtime's `PS3_SAIL_SKIP` (ps3recomp `feat/sail-skip`: a comma list of path texts that are never played, while the rest play). The skipped movie ends as soon as it starts, as START ends it on hardware. In a test run the advert was skipped, and `ds_title.pam`, the movie behind the title screen, still played all 300 frames. Left idle, the title screen replays the advert as its attract movie, so that is skipped too, and the title movie plays again. `ds_opening` (after character creation) and the endings are not touched.
+
+`PS3_SAIL_MOVIES=0` still skips every movie. The settings window's "Intro movies" row (`PS3_SAIL_MOVIES`) is replaced by "Skip opening movie" (`DES_SKIP_INTRO_MOVIE`). A settings.ini with `PS3_SAIL_MOVIES = 0` reads as `DES_SKIP_INTRO_MOVIE = 1`.
 
 ## 60 fps mode: runtime cost on the HighGraphics ring (ps3recomp branch `perf/spu-regions`, 2026-10-16)
 

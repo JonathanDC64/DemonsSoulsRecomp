@@ -172,12 +172,15 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         auto& rightPane = add_child<Pane>(content, Pane::Type::Uncontrolled);
 
         leftPane.add_section("Start");
-        bool_row(leftPane, rightPane, "Short boot logos", "DES_SKIP_INTRO",
-            "Shortens the company logos at boot: the game still shows the last one and takes its own way to the "
-            "title screen.<br/><br/>(DES_SKIP_INTRO)");
-        bool_row(leftPane, rightPane, "Intro movies", "PS3_SAIL_MOVIES",
-            "Plays the game's movies (the opening, and the title screen's attract movie). Off skips them. Applies "
-            "from the next movie.<br/><br/>(PS3_SAIL_MOVIES)");
+        choice_row(leftPane, rightPane, "Boot logos", "DES_SKIP_INTRO", {"0", "1", "2"},
+            {"Show (original)", "Skip", "Last logo only"},
+            "The company logos at boot. Skip goes straight past them, as RPCS3's Skip Intro patch does. Last logo "
+            "only shows the last one, about 2 s. Either way the game takes its own way to the title screen."
+            "<br/><br/>(DES_SKIP_INTRO)");
+        bool_row(leftPane, rightPane, "Skip opening movie", "DES_SKIP_INTRO_MOVIE",
+            "Skips the opening movie after the logos (the title screen also replays it when left idle). The title "
+            "screen's own movie, the one after character creation and the endings still play. Applies from the "
+            "next movie.<br/><br/>(DES_SKIP_INTRO_MOVIE)");
         bool_row(leftPane, rightPane, "Continue automatically", "DES_AUTO_CONTINUE",
             "After Play on the start screen, presses through the notices and the title screen into the last "
             "save, without touching a button.<br/><br/>(DES_AUTO_CONTINUE)");

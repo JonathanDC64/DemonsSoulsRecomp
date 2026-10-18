@@ -79,6 +79,8 @@
  *   soul counter's roll after a kill (get_soul_rate), the bars' fill after
  *   damage or a heal (gauge_fill_rate) and their length when the max
  *   changes (gauge_len_rate) step once a frame too, and go in 30 Hz steps.
+ *   So do the character creation screen's previews, which turn a fixed
+ *   angle a frame with the right stick (des_viewer_rate).
  *
  * DES_VSYNC=0 | 1 — whether presents wait for the display's refresh (default
  *   1). 0 presents each frame as soon as it is drawn, with tearing, where the
@@ -892,6 +894,25 @@ extern "C" void des_slide_rate(ppu_context* ctx, uint32_t addr)
         if (r.wrapper == wrapper) r.steep_s = 0.0f;
         if (v > 0.0 && v < 1.0) ctx->fpr[0] = (float)std::pow(v, (double)steps);
     }
+}
+
+/* The character creation screen's previews turn with the right stick: the
+ * whole body (0x008DB170, from Create Profile on) and the face in Edit
+ * Appearance (0x008DA0E0). Each step gets r3 = the preview and f1, f2 = the
+ * stick's x and y, which PadMan's getters 0x001B3F58 and 0x001B3F90 scale by
+ * pi/120, and adds 1.5 times the stick to the yaw (+0x154, wrapped to pi)
+ * and the pitch (+0x158, clamped) once a frame: 2.25 degrees a frame at full
+ * tilt, 67.5 degrees a second at 30 fps and eight times that at 240.
+ * The lifter calls this after their first instruction (--insn-hooks); it
+ * scales the stick by the frame's 30 Hz steps (kFrameDt). DES_UIFIX=0 turns
+ * it off. */
+extern "C" void des_viewer_rate(ppu_context* ctx, uint32_t addr)
+{
+    (void)addr;
+    const float steps = vm_readf(kFrameDt) * 30.0f;
+    if (!ui_fix_on() || !(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
+    ctx->fpr[1] = (float)(ctx->fpr[1] * steps);
+    ctx->fpr[2] = (float)(ctx->fpr[2] * steps);
 }
 
 extern "C" PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);

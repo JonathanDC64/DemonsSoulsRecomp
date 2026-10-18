@@ -69,6 +69,9 @@
  *   a slow run (stamina still coming back) drops to half speed, 3.2 m/s,
  *   and stays there. des_move_post redoes the test with the step's real
  *   length and makes the rates per 30 Hz step as well.
+ *   The loading screens' two soul icons step once a frame as well, and so
+ *   does the boot screen's fade; load_souls_rate (boot) and
+ *   nowloading_souls_rate (level loads) move them in 30 Hz steps.
  *
  * DES_VSYNC=0 | 1 — whether presents wait for the display's refresh (default
  *   1). 0 presents each frame as soon as it is drawn, with tearing, where the
@@ -488,6 +491,99 @@ void move_stuck_real_time(uint32_t mv, float f0, float dt)
     vm_writef(mv + kMoveSpeedFactor, f);
 }
 
+/* The loading screens' two soul icons by the small logo, bottom left. Each
+ * soul is a flipbook of 100 cells on a 16 x 8 sheet, the two 50 apart, and
+ * the game moves each one cell a frame without looking at the frame's step,
+ * so above 30 fps they turn fps/30 times as fast. With DES_FPS set the hooks
+ * below count the frame in 30 Hz steps, take whole steps, rounded, carry the
+ * rest to the next frame, and set the cells back before the game's own +1 so
+ * that it lands where that many steps would. At 30 fps that is one step a
+ * frame, as on the PS3. DES_UIFIX=0 turns them off live. */
+constexpr uint32_t kSoulCells = 100;
+
+bool souls_fix_on()
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_UIFIX", 1) != 0);
+    return on && s_fps > 0;
+}
+
+/* dt seconds in whole 30 Hz steps, the rest kept on carry; -1 out of range. */
+int souls_steps(float dt, float& carry)
+{
+    const float steps = dt * 30.0f;
+    if (!(steps >= 0.0f && steps < 30.0f)) return -1;
+    carry += steps;
+    const int n = (int)carry;
+    carry -= (float)n;
+    return n;
+}
+
+/* The cell from which the game's +1 (0 after 99) lands n steps past cell. */
+uint32_t soul_cell_before(uint32_t cell, int n)
+{
+    return (cell + (uint32_t)n) % kSoulCells - 1u;
+}
+
+/* Boot: the frame update calls 0x0015AE10 once a frame while the boot
+ * loading screen is up. It moves the screen's fade (+0x1C) one step a call,
+ * in or out by a flag, clamped to [0, max], and calls 0x0015AA00, which
+ * steps the souls' cells (+0x20, +0x24) and draws the logo and the souls.
+ * The fade is set back the same way. */
+constexpr uint32_t kLoadSouls  = 0x0015AE10u;
+constexpr uint32_t kSoulFade   = 0x1Cu;          /* float */
+constexpr uint32_t kSoulCell[] = {0x20u, 0x24u};
+
+void load_souls_rate(ppu_context* ctx)
+{
+    const uint32_t obj = (uint32_t)ctx->gpr[3];
+    static float carry = 0.5f;   /* so the cells round: one a frame at 30 fps */
+    const float dt = vm_readf(kFrameDt);
+    const int n = souls_fix_on() && obj ? souls_steps(dt, carry) : -1;
+    if (n >= 0) {
+        for (const uint32_t off : kSoulCell) {
+            const uint32_t cell = vm_read32(obj + off);
+            if (cell < kSoulCells) vm_write32(obj + off, soul_cell_before(cell, n));
+        }
+        /* 0x0015AE10's constants: the fade's step and the fade-out flag */
+        const uint32_t consts = vm_read32((uint32_t)ctx->gpr[2] - 0x7C90u);
+        const float more = vm_readf(consts - 0x7EE4u) * (dt * 30.0f - 1.0f);
+        const bool out = vm_read8(vm_read32(consts - 0x7F7Cu)) != 0;
+        vm_writef(obj + kSoulFade, vm_readf(obj + kSoulFade) + (out ? -more : more));
+    }
+    func_0015AE10(ctx);
+}
+
+/* Level loads: the NowLoading dialog draws the souls as layout parts.
+ * soul_0 to soul_99 hold the cells, and icon_soul1 and icon_soul2 take the
+ * images of the cells at +0xF8 and +0xFC (0x008CCB08). The dialog's update,
+ * 0x008CD078 (vtable 0x0186FC04, dt in f1), steps both cells once a call
+ * while the dialog is up, and sets them to 0 and 50 while it is hidden; its
+ * fade goes by dt already. The cells go back to what they were when the
+ * update skipped them. */
+constexpr uint32_t kNowLoadingUpdate = 0x008CD078u;
+constexpr uint32_t kNowLoadingCell[] = {0xF8u, 0xFCu};
+
+void nowloading_souls_rate(ppu_context* ctx)
+{
+    const uint32_t dlg = (uint32_t)ctx->gpr[3];
+    static float carry = 0.5f;
+    const int n = souls_fix_on() && dlg ? souls_steps((float)ctx->fpr[1], carry) : -1;
+    uint32_t was[2] = {}, set[2] = {};
+    bool moved[2] = {false, false};
+    for (int i = 0; i < 2 && n >= 0; ++i) {
+        was[i] = vm_read32(dlg + kNowLoadingCell[i]);
+        if (was[i] < kSoulCells) {
+            set[i] = soul_cell_before(was[i], n);
+            vm_write32(dlg + kNowLoadingCell[i], set[i]);
+            moved[i] = true;
+        }
+    }
+    func_008CD078(ctx);
+    for (int i = 0; i < 2; ++i)
+        if (moved[i] && vm_read32(dlg + kNowLoadingCell[i]) == set[i]) vm_write32(dlg + kNowLoadingCell[i], was[i]);
+}
+
 } // namespace
 
 /* DES_DOF=0: no depth of field. The image-process update 0x00218428 blends
@@ -644,6 +740,8 @@ extern "C" void ps3_title_options_init(void)
      * cap. */
     s_vblank_pinned = getenv("VBLANK_MHZ") != nullptr;
     g_gcm_flip_request_hook = on_flip_request;
+    ppu_register_function(kLoadSouls, load_souls_rate);   /* the loading screens' souls, in 30 Hz steps */
+    ppu_register_function(kNowLoadingUpdate, nowloading_souls_rate);
     if (const int fps = fps_wanted())
         fprintf(stderr, "[des] DES_FPS=%d: real frame time, no skip frames%s\n", fps,
                 fps_vblank_mhz(fps) ? ", vblank at the cap" : "");

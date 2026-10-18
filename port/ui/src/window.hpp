@@ -8,7 +8,24 @@
 #include "tab_bar.hpp"
 #include "ui.hpp"
 
+#include <chrono>
+
 namespace ui {
+
+// A window closes when its root's transition ends. One closed before that transition began (opened and closed in
+// one update: the startup shader window when there is nothing to compile) gets no transitionend, and its document
+// stayed shown, invisible, over everything below it, taking the mouse from the start screen. CloseFallback hides
+// such a document once the transition has had twice its time.
+class CloseFallback {
+public:
+    void start() noexcept { mAt = std::chrono::steady_clock::now(); mArmed = true; }
+    void cancel() noexcept { mArmed = false; }
+    bool due() noexcept;
+
+private:
+    std::chrono::steady_clock::time_point mAt{};
+    bool mArmed = false;
+};
 
 class Window : public Document {
 public:
@@ -67,6 +84,7 @@ protected:
     std::vector<std::unique_ptr<Component>> mContentComponents;
     Insets mBodyPadding;
     bool mInitialOpen = true;
+    CloseFallback mCloseFallback;
 };
 
 // Shared shell for small-style windows such as Modal and PresetWindow
@@ -76,11 +94,13 @@ public:
 
     void show() override;
     void hide(bool close) override;
+    void update() override;
     bool visible() const override;
 
 protected:
     Rml::Element* mRoot = nullptr;
     Rml::Element* mDialog = nullptr;
+    CloseFallback mCloseFallback;
 };
 
 }  // namespace ui

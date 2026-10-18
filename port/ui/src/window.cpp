@@ -9,8 +9,22 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace ui {
+
+bool CloseFallback::due() noexcept {
+    if (!mArmed || std::chrono::steady_clock::now() - mAt < std::chrono::milliseconds(400)) {  // the CSS has 0.2 s
+        return false;
+    }
+    mArmed = false;
+    static int said = 0;
+    if (said++ < 3) {
+        std::fprintf(stderr, "[ui] a window's close transition did not run; hidden without it\n");
+    }
+    return true;
+}
+
 namespace {
 
 float base_body_padding(Rml::Context* context) noexcept {
@@ -124,6 +138,7 @@ Window::Window(Props props)
 
 void Window::show() {
     Document::show();
+    mCloseFallback.cancel();
     mRoot->SetAttribute("open", "");
     if (mInitialOpen) {
         play_sound(kSoundWindowOpen);
@@ -137,6 +152,8 @@ void Window::hide(bool close) {
     if (!host::animations_enabled()) {
         // No transition will end (tests turn them off): hide right away.
         Document::hide(close);
+    } else {
+        mCloseFallback.start();
     }
 }
 
@@ -144,6 +161,9 @@ void Window::update() {
     update_safe_area();
     for (const auto& component : mContentComponents) {
         component->update();
+    }
+    if (!mRoot->HasAttribute("open") && Document::visible() && mCloseFallback.due()) {
+        Document::hide(mPendingClose);
     }
     Document::update();
 }
@@ -351,6 +371,7 @@ WindowSmall::WindowSmall(const Rml::String& windowClass)
 
 void WindowSmall::show() {
     Document::show();
+    mCloseFallback.cancel();
     mRoot->SetAttribute("open", "");
 }
 
@@ -360,7 +381,16 @@ void WindowSmall::hide(bool close) {
     if (!host::animations_enabled()) {
         // No transition will end (tests turn them off): hide right away.
         Document::hide(close);
+    } else {
+        mCloseFallback.start();
     }
+}
+
+void WindowSmall::update() {
+    if (!mRoot->HasAttribute("open") && Document::visible() && mCloseFallback.due()) {
+        Document::hide(mPendingClose);
+    }
+    Document::update();
 }
 
 bool WindowSmall::visible() const {

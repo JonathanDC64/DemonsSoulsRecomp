@@ -69,6 +69,14 @@
  *   a slow run (stamina still coming back) drops to half speed, 3.2 m/s,
  *   and stays there. des_move_post redoes the test with the step's real
  *   length and makes the rates per 30 Hz step as well.
+ *   The loading screens' two soul icons step once a frame as well, and so
+ *   does the boot screen's fade; load_souls_rate (boot) and
+ *   nowloading_souls_rate (level loads) move them in 30 Hz steps. Menu
+ *   text too long for its box (the inventory's key guide) scrolls 1.5 px a
+ *   frame; scroll_msg_rate makes that 1.5 px a 30 Hz step. On the HUD, the
+ *   soul counter's roll after a kill (get_soul_rate), the bars' fill after
+ *   damage or a heal (gauge_fill_rate) and their length when the max
+ *   changes (gauge_len_rate) step once a frame too, and go in 30 Hz steps.
  *
  * DES_VSYNC=0 | 1 — whether presents wait for the display's refresh (default
  *   1). 0 presents each frame as soon as it is drawn, with tearing, where the
@@ -488,6 +496,249 @@ void move_stuck_real_time(uint32_t mv, float f0, float dt)
     vm_writef(mv + kMoveSpeedFactor, f);
 }
 
+/* The loading screens' two soul icons by the small logo, bottom left. Each
+ * soul is a flipbook of 100 cells on a 16 x 8 sheet, the two 50 apart, and
+ * the game moves each one cell a frame without looking at the frame's step,
+ * so above 30 fps they turn fps/30 times as fast. With DES_FPS set the hooks
+ * below count the frame in 30 Hz steps, take whole steps, rounded, carry the
+ * rest to the next frame, and set the cells back before the game's own +1 so
+ * that it lands where that many steps would. At 30 fps that is one step a
+ * frame, as on the PS3. DES_UIFIX=0 turns them off live. */
+constexpr uint32_t kSoulCells = 100;
+
+bool ui_fix_on()
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_UIFIX", 1) != 0);
+    return on && s_fps > 0;
+}
+
+/* dt seconds in whole 30 Hz steps, the rest kept on carry; -1 out of range. */
+int souls_steps(float dt, float& carry)
+{
+    const float steps = dt * 30.0f;
+    if (!(steps >= 0.0f && steps < 30.0f)) return -1;
+    carry += steps;
+    const int n = (int)carry;
+    carry -= (float)n;
+    return n;
+}
+
+/* The cell from which the game's +1 (0 after 99) lands n steps past cell. */
+uint32_t soul_cell_before(uint32_t cell, int n)
+{
+    return (cell + (uint32_t)n) % kSoulCells - 1u;
+}
+
+/* Boot: the frame update calls 0x0015AE10 once a frame while the boot
+ * loading screen is up. It moves the screen's fade (+0x1C) one step a call,
+ * in or out by a flag, clamped to [0, max], and calls 0x0015AA00, which
+ * steps the souls' cells (+0x20, +0x24) and draws the logo and the souls.
+ * The fade is set back the same way. */
+constexpr uint32_t kLoadSouls  = 0x0015AE10u;
+constexpr uint32_t kSoulFade   = 0x1Cu;          /* float */
+constexpr uint32_t kSoulCell[] = {0x20u, 0x24u};
+
+void load_souls_rate(ppu_context* ctx)
+{
+    const uint32_t obj = (uint32_t)ctx->gpr[3];
+    static float carry = 0.5f;   /* so the cells round: one a frame at 30 fps */
+    const float dt = vm_readf(kFrameDt);
+    const int n = ui_fix_on() && obj ? souls_steps(dt, carry) : -1;
+    if (n >= 0) {
+        for (const uint32_t off : kSoulCell) {
+            const uint32_t cell = vm_read32(obj + off);
+            if (cell < kSoulCells) vm_write32(obj + off, soul_cell_before(cell, n));
+        }
+        /* 0x0015AE10's constants: the fade's step and the fade-out flag */
+        const uint32_t consts = vm_read32((uint32_t)ctx->gpr[2] - 0x7C90u);
+        const float more = vm_readf(consts - 0x7EE4u) * (dt * 30.0f - 1.0f);
+        const bool out = vm_read8(vm_read32(consts - 0x7F7Cu)) != 0;
+        vm_writef(obj + kSoulFade, vm_readf(obj + kSoulFade) + (out ? -more : more));
+    }
+    func_0015AE10(ctx);
+}
+
+/* Level loads: the NowLoading dialog draws the souls as layout parts.
+ * soul_0 to soul_99 hold the cells, and icon_soul1 and icon_soul2 take the
+ * images of the cells at +0xF8 and +0xFC (0x008CCB08). The dialog's update,
+ * 0x008CD078 (vtable 0x0186FC04, dt in f1), steps both cells once a call
+ * while the dialog is up, and sets them to 0 and 50 while it is hidden; its
+ * fade goes by dt already. The cells go back to what they were when the
+ * update skipped them. */
+constexpr uint32_t kNowLoadingUpdate = 0x008CD078u;
+constexpr uint32_t kNowLoadingCell[] = {0xF8u, 0xFCu};
+
+void nowloading_souls_rate(ppu_context* ctx)
+{
+    const uint32_t dlg = (uint32_t)ctx->gpr[3];
+    static float carry = 0.5f;
+    const int n = ui_fix_on() && dlg ? souls_steps((float)ctx->fpr[1], carry) : -1;
+    uint32_t was[2] = {}, set[2] = {};
+    bool moved[2] = {false, false};
+    for (int i = 0; i < 2 && n >= 0; ++i) {
+        was[i] = vm_read32(dlg + kNowLoadingCell[i]);
+        if (was[i] < kSoulCells) {
+            set[i] = soul_cell_before(was[i], n);
+            vm_write32(dlg + kNowLoadingCell[i], set[i]);
+            moved[i] = true;
+        }
+    }
+    func_008CD078(ctx);
+    for (int i = 0; i < 2; ++i)
+        if (moved[i] && vm_read32(dlg + kNowLoadingCell[i]) == set[i]) vm_write32(dlg + kNowLoadingCell[i], was[i]);
+}
+
+/* Menu text too long for its box scrolls sideways, such as the key guide
+ * along the bottom of the inventory. ObjScrollMsg's update, 0x00798CD8
+ * (vtable 0x018690F0, dt in f1), moves the text's offset (+0x20) 1.5 px to
+ * the left a call while the message (+0x28) is the one it had at the last
+ * call (+0x2C), and sets the offset to 0 when the message changes. Its slot
+ * 5, 0x00798AC8, places the text by the offset when it is drawn: 90 px of
+ * hold at the start, the overflow, 90 px of hold at the end, then the offset
+ * starts over at 0. It compares ranges, so a part step is fine. The hook
+ * makes the step 1.5 px per 30 Hz step of the frame (dt in f1, capped at
+ * 50 ms like the game's step). DES_UIFIX=0 turns it off as well. */
+constexpr uint32_t kScrollMsgUpdate = 0x00798CD8u;
+constexpr uint32_t kScrollOffset    = 0x20u;   /* float, px */
+constexpr uint32_t kScrollMsgLast   = 0x2Cu;   /* the message at the last call; -1 for none */
+
+void scroll_msg_rate(ppu_context* ctx)
+{
+    const uint32_t obj = (uint32_t)ctx->gpr[3];
+    const float steps = (float)ctx->fpr[1] * 30.0f;
+    const float was = obj ? vm_readf(obj + kScrollOffset) : 0.0f;
+    const uint32_t last = obj ? vm_read32(obj + kScrollMsgLast) : 0u;
+    /* 0x00798CD8's constants: the step */
+    const float step = vm_readf(vm_read32((uint32_t)ctx->gpr[2] - 0x7208u) - 0x7FA0u);
+    func_00798CD8(ctx);
+    if (!obj || !ui_fix_on() || !(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
+    /* stepped: the same message as at the last call, and nothing else moved the offset */
+    const uint32_t msg = vm_read32(obj + kScrollMsgLast);
+    if (msg != 0xFFFFFFFFu && msg == last && vm_readf(obj + kScrollOffset) == was - step)
+        vm_writef(obj + kScrollOffset, was - step * steps);
+}
+
+/* The HUD's soul counter after a kill. DsMenuDlgFEGetSoul's update,
+ * 0x007A8C60 (vtable 0x018696C0, dt in f1), adds new souls to the gain to
+ * show (+0x100), then moves what it shows of it (+0xFC) one step a call
+ * towards the gain, the step by how much is left: 1 up to 10, 2 up to 100,
+ * 12 up to 1,000, 112 up to 10,000 and so on (immediates, 0x007A8D24 to
+ * 0x007A8D74 and 0x007A9078 to 0x007A9290), and stops at the gain. When it
+ * gets there it holds by dt and clears. So +1,000 souls roll in 130 calls,
+ * 4.3 s at 30 fps. The hook counts the frame in 30 Hz steps and takes that
+ * many steps instead of the game's one, from where the counter was. The
+ * number on screen was already set from the game's step, so while it rolls
+ * it can be a step off the count; it ends on the total. DES_UIFIX=0 turns
+ * it off. */
+constexpr uint32_t kGetSoulUpdate = 0x007A8C60u;
+constexpr uint32_t kSoulShown     = 0xFCu;    /* int: how much of the gain is shown */
+constexpr uint32_t kSoulGain      = 0x100u;   /* int: the gain to show */
+
+int32_t soul_step(int32_t left)
+{
+    const uint32_t a = left < 0 ? 0u - (uint32_t)left : (uint32_t)left;
+    const int32_t step = a > 100000000u ? 11111112 : a > 10000000u ? 1111112 : a > 1000000u ? 111112
+                       : a > 100000u ? 11112 : a > 10000u ? 1112 : a > 1000u ? 112 : a > 100u ? 12
+                       : a > 10u ? 2 : 1;
+    return left < 0 ? -step : step;
+}
+
+/* One call's move of the shown souls, as 0x007A8C60 makes it. */
+int32_t soul_shown_after(int32_t shown, int32_t gain)
+{
+    if (shown == gain) return shown;
+    const uint32_t left = (uint32_t)gain - (uint32_t)shown;
+    const int32_t s = (int32_t)((uint32_t)shown + (uint32_t)soul_step((int32_t)left));
+    if (gain > 0) return s < gain ? s : gain;
+    return gain < s ? s : gain;
+}
+
+void get_soul_rate(ppu_context* ctx)
+{
+    const uint32_t obj = (uint32_t)ctx->gpr[3];
+    static float carry = 0.5f;
+    const int n = ui_fix_on() && obj ? souls_steps((float)ctx->fpr[1], carry) : -1;
+    const int32_t was = obj ? (int32_t)vm_read32(obj + kSoulShown) : 0;
+    func_007A8C60(ctx);
+    if (n < 0 || n == 1) return;
+    const int32_t gain = (int32_t)vm_read32(obj + kSoulGain);
+    /* stepped: something to show, and the counter moved by the game's one step */
+    if (gain == 0 || was == gain || (int32_t)vm_read32(obj + kSoulShown) != soul_shown_after(was, gain)) return;
+    int32_t shown = was;
+    for (int i = 0; i < n && shown != gain; ++i) shown = soul_shown_after(shown, gain);
+    vm_write32(obj + kSoulShown, (uint32_t)shown);
+}
+
+/* The HP, MP and stamina bars, and the boss's and enemies' HP bars:
+ * DsMenuDlgObjSmoothGauge (vtable 0x01868C28) moves the fill it shows
+ * (+0x3C) towards the target (+0x20) by a fixed step a call, +0x44 down
+ * (0.012: the trail after damage) and +0x4C up (0.038 or 0.048: a heal; 10
+ * is at once), snapping to the target once it is within a step. That
+ * happens in its draw callbacks, 0x0078EDC8, 0x0078EB60 and 0x0078F020
+ * (slots 5 to 7), which get no dt; each bar on the HUD takes two calls a
+ * frame, so the HP trail drains 0.72 bar/s at 30 fps. The hooks make a step
+ * they see the step times the frame's 30 Hz steps (the frame step,
+ * kFrameDt), not going past the target. DES_UIFIX=0 turns them off. */
+constexpr uint32_t kGaugeDraw[]   = {0x0078EDC8u, 0x0078EB60u, 0x0078F020u};
+constexpr uint32_t kGaugeTarget   = 0x20u;   /* float, 0 to 1 */
+constexpr uint32_t kGaugeFill     = 0x3Cu;   /* float, 0 to 1 */
+constexpr uint32_t kGaugeStepDown = 0x44u;   /* float, per call */
+constexpr uint32_t kGaugeStepUp   = 0x4Cu;   /* float, per call */
+
+template <void (*Draw)(ppu_context*)>
+void gauge_fill_rate(ppu_context* ctx)
+{
+    const uint32_t obj = (uint32_t)ctx->gpr[3];
+    const float was = obj ? vm_readf(obj + kGaugeFill) : 0.0f;
+    Draw(ctx);
+    const float steps = vm_readf(kFrameDt) * 30.0f;
+    if (!obj || !ui_fix_on() || !(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
+    const float now = vm_readf(obj + kGaugeFill), target = vm_readf(obj + kGaugeTarget);
+    const float down = vm_readf(obj + kGaugeStepDown), up = vm_readf(obj + kGaugeStepUp);
+    if (now == was - down && target < now) {
+        const float f = was - down * steps;
+        vm_writef(obj + kGaugeFill, f > target ? f : target);
+    } else if (now == was + up && target > now) {
+        const float f = was + up * steps;
+        vm_writef(obj + kGaugeFill, f < target ? f : target);
+    }
+}
+
+/* A bar's length follows its max (the HP bar is longer with more max HP).
+ * DsMenuDlgObjGauge's update, 0x00789BC0 (vtable 0x018688A8, dt in f1),
+ * moves the length shown (+0x30) towards the target length (+0x2C) by half
+ * the gap a call while it is over 2 px (0.5 at 0x018F2A04), then by 1 px,
+ * then snaps. ObjSmoothGauge's update, 0x0078E2E8, runs it with a direct
+ * call (0x0078E340), so both are hooked. The hooks make the half-gap step
+ * 0.5 to the power of the frame's 30 Hz steps and the 1 px step that many
+ * px. DES_UIFIX=0 turns them off. */
+constexpr uint32_t kGaugeUpdate       = 0x00789BC0u;
+constexpr uint32_t kSmoothGaugeUpdate = 0x0078E2E8u;
+constexpr uint32_t kGaugeLenTarget    = 0x2Cu;   /* float, px */
+constexpr uint32_t kGaugeLen          = 0x30u;   /* float, px */
+
+template <void (*Update)(ppu_context*)>
+void gauge_len_rate(ppu_context* ctx)
+{
+    const uint32_t obj = (uint32_t)ctx->gpr[3];
+    const float steps = (float)ctx->fpr[1] * 30.0f;
+    const float was = obj ? vm_readf(obj + kGaugeLen) : 0.0f;
+    Update(ctx);
+    if (!obj || !ui_fix_on() || !(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
+    const float now = vm_readf(obj + kGaugeLen), target = vm_readf(obj + kGaugeLenTarget);
+    const float gap = std::fabs(target - was), moved = std::fabs(now - was);
+    float len;
+    if (gap > 2.0f && std::fabs(moved - gap * 0.5f) <= 1e-3f)
+        len = target + (was - target) * std::pow(0.5f, steps);
+    else if (gap > 1.0f && gap <= 2.0f && std::fabs(moved - 1.0f) <= 1e-4f)
+        len = now > was ? was + steps : was - steps;
+    else
+        return;
+    if ((target - len) * (target - was) < 0.0f) len = target;   /* not past it */
+    vm_writef(obj + kGaugeLen, len);
+}
+
 } // namespace
 
 /* DES_DOF=0: no depth of field. The image-process update 0x00218428 blends
@@ -644,6 +895,15 @@ extern "C" void ps3_title_options_init(void)
      * cap. */
     s_vblank_pinned = getenv("VBLANK_MHZ") != nullptr;
     g_gcm_flip_request_hook = on_flip_request;
+    ppu_register_function(kLoadSouls, load_souls_rate);   /* the loading screens' souls, in 30 Hz steps */
+    ppu_register_function(kNowLoadingUpdate, nowloading_souls_rate);
+    ppu_register_function(kScrollMsgUpdate, scroll_msg_rate);   /* menu text scroll, 1.5 px per 30 Hz step */
+    ppu_register_function(kGetSoulUpdate, get_soul_rate);   /* the HUD's soul counter, a step per 30 Hz step */
+    ppu_register_function(kGaugeDraw[0], gauge_fill_rate<func_0078EDC8>);   /* HUD bars' fill */
+    ppu_register_function(kGaugeDraw[1], gauge_fill_rate<func_0078EB60>);
+    ppu_register_function(kGaugeDraw[2], gauge_fill_rate<func_0078F020>);
+    ppu_register_function(kGaugeUpdate, gauge_len_rate<func_00789BC0>);   /* HUD bars' length */
+    ppu_register_function(kSmoothGaugeUpdate, gauge_len_rate<func_0078E2E8>);
     if (const int fps = fps_wanted())
         fprintf(stderr, "[des] DES_FPS=%d: real frame time, no skip frames%s\n", fps,
                 fps_vblank_mhz(fps) ? ", vblank at the cap" : "");

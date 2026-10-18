@@ -102,6 +102,25 @@ before the first change and hands the vblank back to the PS3's 59.94 Hz. A
   overlay's `release` hook (the UI drops its wrapped buffers and flushes
   D3D11On12), then ResizeBuffers.
 
+## The on-screen keyboard
+
+When the game asks for text (the character's name), the UI shows its own
+keyboard in place of the small Windows input box. ps3recomp's cellOskDialog
+hands the dialog to the port (`cellOskDialog_set_host`), and
+`osk_window.cpp` draws it. The window shows the game's prompt, the text
+with a counter against the game's limit, and five rows of keys.
+
+- **Gamepad.** The D-pad moves to the nearest key in the next row, and Cross
+  types the key. Circle deletes, Triangle types a space and Square is Shift.
+  Start is Done and Select is Cancel.
+- **Keyboard.** Typing goes straight into the text, Backspace deletes, Enter
+  is Done and Esc is Cancel. The arrows move on the grid.
+
+The game gets no pad input while the keyboard is up, as with any menu. With
+`DES_UI=0`, or when the UI fails to start, the Windows input box is used, or
+the initial text is given back. `PS3_OSK_TEXT` still answers at once for
+scripted runs.
+
 ## Startup work: the shader cache
 
 The window opens as soon as the program starts (about 0.1-0.2 s), and the
@@ -248,7 +267,7 @@ issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
 | `DES_CRASH_DIALOG_REPORT=1` | The crash dialog presses Report on GitHub by itself (its frame 10). |
 | `DES_CRASH_DIALOG_SHOT=<file.bmp>` | The crash dialog writes its picture (its frame 40). |
 | `DES_CRASH_DIALOG_EXIT_MS=<ms>` | The crash dialog closes itself after that long. |
-| `DES_UI_OPEN=menu` / `settings` | Open the menu bar or the settings window at startup. |
+| `DES_UI_OPEN=menu` / `settings` / `osk` | Open the menu bar, the settings window or a test of the on-screen keyboard at startup. |
 | `DES_UI_SHOT=<a.bmp>[,frame][;<b.bmp>,frame...]` | Write the back buffer, UI included, at that presented frame (default 300). |
 | `DES_UI_KEYS=<frame>:<KEY>[,...]` | Press keys at presented frames: F1 ESC UP DOWN LEFT RIGHT ENTER PGUP PGDN TAB SPACE. With DES_UI_SHOT, a test can walk the menus. |
 | `DES_UI_NO_ANIM=1` | No transitions. |

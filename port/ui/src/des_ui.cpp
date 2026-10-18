@@ -19,6 +19,7 @@
 #include "host.hpp"
 #include "input.hpp"
 #include "menu_bar.hpp"
+#include "osk_window.hpp"
 #include "overlay.hpp"
 #include "prelaunch.hpp"
 #include "prework_modal.hpp"
@@ -39,6 +40,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 // ---- What the UI uses of the runtime (declared here: des_ui does not take ps3recomp's include paths) ----
@@ -63,6 +65,13 @@ typedef struct {
     unsigned char l2, r2;
 } PadHidSonyState;
 int pad_hid_sony_poll(PadHidSonyState* out, int max);
+
+typedef struct CellOskDialogHost {  // cellOskDialog.h: the game's on-screen keyboard, shown by the UI
+    void (*open)(const unsigned short* prompt, const unsigned short* text, unsigned limit);
+    void (*close)(void);
+} CellOskDialogHost;
+void cellOskDialog_set_host(const CellOskDialogHost* host);
+void cellOskDialog_host_finish(int ok, const unsigned short* text, unsigned n);
 }
 
 namespace {
@@ -79,8 +88,8 @@ constexpr unsigned kTriangle = 1u << 12, kCircle = 1u << 13, kCross = 1u << 14, 
 constexpr auto kGrace = std::chrono::milliseconds(600);
 
 struct InputEvent {
-    enum Type { KeyDown, KeyUp, MouseMove, MouseDown, MouseUp, Wheel, Leave } type;
-    int a = 0;  // key (VK) / button / x
+    enum Type { KeyDown, KeyUp, Char, MouseMove, MouseDown, MouseUp, Wheel, Leave } type;
+    int a = 0;  // key (VK) / character / button / x
     int b = 0;  // y
     int mods = 0;
     float wheel = 0.0f;
@@ -123,6 +132,77 @@ struct ScriptKey {
 };
 std::vector<ScriptKey> sScriptKeys;
 
+// The game's on-screen keyboard (cellOskDialog_set_host). The game opens and closes it on its own threads; frame
+// shows and closes the window.
+struct OskRequest {
+    bool open = false;   // show it with these
+    bool close = false;  // the game stopped it first
+    std::u16string prompt, text;
+    unsigned limit = 0;
+};
+std::mutex sOskLock;
+OskRequest sOsk;
+std::atomic<bool> sOskPending{false};
+
+std::u16string osk_string(const unsigned short* s) {
+    std::u16string out;
+    for (; s && *s; ++s) out.push_back(char16_t(*s));
+    return out;
+}
+
+void osk_open(const unsigned short* prompt, const unsigned short* text, unsigned limit) {
+    std::lock_guard<std::mutex> lock(sOskLock);
+    sOsk = {true, false, osk_string(prompt), osk_string(text), limit ? limit : 1};
+    sOskPending.store(true, std::memory_order_release);
+}
+
+void osk_close() {
+    std::lock_guard<std::mutex> lock(sOskLock);
+    sOsk.open = false;
+    sOsk.close = true;
+    sOskPending.store(true, std::memory_order_release);
+}
+
+std::string osk_utf8(const std::u16string& s) {
+    if (s.empty()) return {};
+    const int n = WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<const wchar_t*>(s.data()), int(s.size()), nullptr,
+                                      0, nullptr, nullptr);
+    std::string out(size_t(n > 0 ? n : 0), '\0');
+    if (n > 0)
+        WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<const wchar_t*>(s.data()), int(s.size()), out.data(), n,
+                            nullptr, nullptr);
+    return out;
+}
+
+// In frame: show or close the keyboard as the game asked. Without the UI (it failed to start) the game gets its
+// initial text back rather than waiting for good.
+void apply_osk_request(bool ui_up) {
+    OskRequest r;
+    {
+        std::lock_guard<std::mutex> lock(sOskLock);
+        r = std::exchange(sOsk, {});
+    }
+    if (r.close) {
+        if (ui::OskWindow* osk = ui::active_osk()) osk->close_silently();
+    }
+    if (!r.open) return;
+    if (!ui_up) {
+        cellOskDialog_host_finish(1, reinterpret_cast<const unsigned short*>(r.text.c_str()), unsigned(r.text.size()));
+        return;
+    }
+    if (ui::OskWindow* osk = ui::active_osk()) osk->close_silently();
+    ui::push_document(std::make_unique<ui::OskWindow>(ui::OskWindow::Props{
+        .prompt = osk_utf8(r.prompt),
+        .text = r.text,
+        .limit = r.limit,
+        .onDone = [](bool ok, const std::u16string& text) {
+            std::fprintf(stderr, "[ui] keyboard: %s, %zu characters\n", ok ? "Done" : "Cancel", text.size());
+            cellOskDialog_host_finish(ok ? 1 : 0, reinterpret_cast<const unsigned short*>(text.c_str()),
+                                      unsigned(text.size()));
+        },
+    }));
+}
+
 void push_event(const InputEvent& e) {
     std::lock_guard<std::mutex> lock(sQueueLock);
     sQueue.push_back(e);
@@ -163,6 +243,11 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
         }
         return 0;
     }
+    case WM_CHAR:  // typing, for the on-screen keyboard
+        if (!capturing) return 0;
+        push_event({InputEvent::Char, int(wp)});
+        *result = 0;
+        return 1;
     case WM_MOUSEMOVE:
     case WM_LBUTTONDOWN:
     case WM_LBUTTONUP:
@@ -300,10 +385,14 @@ void push_documents() {
     ui::push_document(std::make_unique<ui::MenuBar>(), false);
     if (sStartScreen) ui::push_document(std::make_unique<ui::Prelaunch>());
 
-    // DES_UI_OPEN=menu | settings: open one at startup (for screenshots and tests).
+    // DES_UI_OPEN=menu | settings | osk: open one at startup (for screenshots and tests).
     if (const char* open = std::getenv("DES_UI_OPEN"); open && *open) {
         if (!std::strcmp(open, "menu")) open_menu_bar();
         else if (!std::strcmp(open, "settings")) ui::push_document(std::make_unique<ui::SettingsWindow>());
+        else if (!std::strcmp(open, "osk")) {  // as the game opens it (cellOskDialog_set_host)
+            static const unsigned short kPrompt[] = {'T', 'e', 's', 't', 0}, kText[] = {'A', 'l', 'd', 'i', 'a', 0};
+            osk_open(kPrompt, kText, 16);
+        }
     }
 }
 
@@ -328,6 +417,13 @@ void process_queue() {
     }
     Rml::Context* ctx = ui::host::context();
     for (const InputEvent& e : events) {
+        if (ui::OskWindow* osk = ui::active_osk()) {  // the on-screen keyboard is up: typing goes into it
+            if (e.type == InputEvent::Char) {
+                osk->on_char(unsigned(e.a));
+                continue;
+            }
+            if (e.type == InputEvent::KeyDown && osk->on_key(e.a)) continue;
+        }
         switch (e.type) {
         case InputEvent::KeyDown:
             if (is_menu_key(WPARAM(e.a)) && !ui::any_document_visible()) {
@@ -339,6 +435,8 @@ void process_queue() {
             break;
         case InputEvent::KeyUp:
             ctx->ProcessKeyUp(RmlWin32::ConvertKey(e.a), e.mods);
+            break;
+        case InputEvent::Char:
             break;
         case InputEvent::MouseMove:
             ctx->ProcessMouseMove(e.a, e.b, e.mods);
@@ -390,7 +488,8 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     static bool sPreworkShown = false;
     const bool prework = ui::prework_running();
     if (!sActive && !sStartScreen && !chordEdge && !shot && !sQueued.load(std::memory_order_acquire) &&
-        !sOpenPending && !sReportCountdown && !(prework && !sPreworkShown) && !sCloseRequested.load()) {
+        !sOpenPending && !sReportCountdown && !(prework && !sPreworkShown) && !sCloseRequested.load() &&
+        !sOskPending.load(std::memory_order_acquire)) {
         return;
     }
 
@@ -400,6 +499,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         sStartScreen = false;
         sStartUp.store(false);
         if (sCloseRequested.exchange(false) && ui::app().quit) ui::app().quit();  // nothing to ask with
+        if (sOskPending.exchange(false)) apply_osk_request(false);
         sActive = false;
         std::lock_guard<std::mutex> lock(sQueueLock);
         sQueue.clear();
@@ -423,10 +523,12 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         ui::push_document(std::make_unique<ui::PreworkModal>());
     }
     if (sCloseRequested.exchange(false)) ui::request_quit_confirm();
+    if (sOskPending.exchange(false)) apply_osk_request(true);
     process_queue();
     bool padNeutral = true;
     const ui::input::PadState pad = read_pads(padNeutral);
     ui::input::update_pad(pad, chord);
+    if (ui::OskWindow* osk = ui::active_osk()) osk->on_pad(pad.buttons);
     ui::update();
     sStartUp.store(ui::is_prelaunch_open());
 
@@ -544,4 +646,6 @@ extern "C" void des_ui_early_init(void) {
 
     static const rsx_d3d12_overlay kOverlay = {nullptr, wndproc, frame, [](void*) { ui::host::release_buffers(); }};
     rsx_d3d12_set_overlay(&kOverlay);
+    static const CellOskDialogHost kOsk = {osk_open, osk_close};
+    cellOskDialog_set_host(&kOsk);
 }

@@ -330,3 +330,75 @@ modal-actions.vertical button.modal-btn {
         width: 100%;
     }
 }
+
+/* The on-screen keyboard (osk_window.cpp). */
+window.modal.osk {
+    max-width: 760dp;
+    background-color: rgba(var(--color-surface-rgb), 100%); /* over whatever is up when the game asks */
+}
+
+osk-field {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    gap: var(--space-md);
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    border: 1dp var(--color-border);
+    background-color: rgba(0, 0, 0, 40%);
+}
+
+osk-text {
+    flex: 1 1 0;
+    font-family: var(--font-family-body);
+    font-weight: normal;
+    font-size: var(--font-size-4xl);
+}
+
+osk-count {
+    flex: 0 0 auto;
+    font-family: var(--font-family-body);
+    font-weight: normal;
+    font-size: var(--font-size-md);
+    opacity: 0.7;
+}
+
+osk-keys {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    width: 100%;
+}
+
+osk-row {
+    display: flex;
+    flex-direction: row;
+    gap: var(--space-xs);
+    width: 100%;
+}
+
+button.osk-key {
+    flex: 1 1 0;
+    padding: var(--space-sm) 0;
+    font-family: var(--font-family-body);
+    font-weight: normal;
+    font-size: var(--font-size-2xl);
+}
+
+button.osk-key.osk-wide {
+    flex: 2 1 0;
+    font-size: var(--font-size-lg);
+}
+
+button.osk-key.osk-space {
+    flex: 4 1 0;
+    font-size: var(--font-size-lg);
+}
+
+osk-hint {
+    display: block;
+    font-family: var(--font-family-body);
+    font-weight: normal;
+    font-size: var(--font-size-md);
+    opacity: 0.7;
+}

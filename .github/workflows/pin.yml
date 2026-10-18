@@ -1,0 +1,31 @@
+# Checks ps3recomp.pin, the one ps3recomp commit (and, for a release, the fork's tag) this port builds with
+# (docs/54): the file's format, that the commit is on the fork's master, and that the tag points to it.
+# A pull request that moves the pin to a commit of an unmerged ps3recomp pull request fails here until that
+# one merges; the run on master after both merges is the one that counts.
+name: ps3recomp pin
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pin:
+    name: Pinned ps3recomp commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Self-test
+        run: python tools/release/pin_ps3recomp.py self-test
+
+      - name: Pin against the fork
+        run: python tools/release/pin_ps3recomp.py check --remote

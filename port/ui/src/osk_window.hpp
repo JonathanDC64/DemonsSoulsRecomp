@@ -55,6 +55,7 @@ private:
     void move_caret(int d);
     void toggle_shift();
     void finish(bool ok);
+    void close();
     void refresh();
     void move(int dx, int dy);
 

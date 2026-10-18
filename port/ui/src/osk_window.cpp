@@ -198,14 +198,21 @@ void OskWindow::finish(bool ok) {
     play_sound(ok ? kSoundClick : kSoundWindowClose);
     if (sActive == this) sActive = nullptr;
     if (mProps.onDone) mProps.onDone(ok, mText);
-    pop();
+    close();
 }
 
 void OskWindow::close_silently() {
     if (mDone) return;
     mDone = true;
     if (sActive == this) sActive = nullptr;
-    pop();
+    close();
+}
+
+// Not pop(): the game opened the keyboard, not the document below, which was never covered. pop() would uncover it,
+// and the menu bar remembers being shown from the last time a window covered it, so it came back up.
+void OskWindow::close() {
+    hide(true);
+    if (Document* below = top_document(); below && below->visible()) below->focus();
 }
 
 void OskWindow::refresh() {

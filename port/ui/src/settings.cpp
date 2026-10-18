@@ -31,6 +31,8 @@ constexpr Def kDefs[] = {
     {"show_start_screen", "1", Apply::UiOnly},
     {"menu_hint", "1", Apply::UiOnly},
     {"pad_menu_chord", "0", Apply::UiOnly},    // 0 = L3 + R3, 1 = Select + Start
+    {"PAD_MAP", "", Apply::Live},              // cellPad, gamepad buttons (controls_window.cpp)
+    {"PAD_KEYS", "", Apply::Live},             // cellPad, the keyboard pad's keys
 };
 
 std::map<std::string, std::string, std::less<>> sValues;
@@ -60,7 +62,8 @@ void make_dirs(const std::string& file) {
 // DES_SKIP_INTRO_MOVIE sets PS3_SAIL_SKIP, which cellSail reads as each movie opens).
 void apply_env(std::string_view key, const std::string& value) {
     const std::string k(key);
-    if (value.empty() && key != "DES_FPS") return;  // (an unset option stays unset; DES_FPS "" is the game's mode)
+    // (an unset option stays unset; DES_FPS "" is the game's mode, PAD_MAP and PAD_KEYS "" the game's buttons)
+    if (value.empty() && key != "DES_FPS" && key != "PAD_MAP" && key != "PAD_KEYS") return;
     ps3_setenv(k.c_str(), value.c_str());
     if (key == "DES_VSYNC") ps3_setenv("RSX_VSYNC", value == "0" ? "0" : "1");
     if (key == "DES_SKIP_INTRO_MOVIE") ps3_setenv("PS3_SAIL_SKIP", value == "0" ? "" : "ds_advertise.pam");

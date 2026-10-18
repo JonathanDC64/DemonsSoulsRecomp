@@ -45,6 +45,9 @@ bool sInputBlocked = false;
 std::array<Repeat, kKeyCount> sRepeats;
 bool sStickX[2] = {}, sStickY[2] = {};  // left/right, up/down held (with hysteresis)
 bool sPrimed = false;  // the first state after a reset only records what is held (no presses)
+bool sBindingCapture = false;
+unsigned sPadButtons = 0;
+int sCapturedKey = 0;
 
 double now_seconds() noexcept {
     using namespace std::chrono;
@@ -97,9 +100,38 @@ void reset_input_state() noexcept {
     sPrimed = false;
 }
 
+void set_binding_capture(bool on) noexcept {
+    sBindingCapture = on;
+    sCapturedKey = 0;
+    reset_input_state();  // what is held when a capture starts or ends is not a press
+}
+
+bool binding_capture() noexcept {
+    return sBindingCapture;
+}
+
+unsigned pad_buttons() noexcept {
+    return sPadButtons;
+}
+
+void capture_key(int vk) noexcept {
+    sCapturedKey = vk;
+}
+
+int take_captured_key() noexcept {
+    const int vk = sCapturedKey;
+    sCapturedKey = 0;
+    return vk;
+}
+
 void update_pad(const PadState& pad, int chord) noexcept {
     auto* context = host::context();
     if (context == nullptr) return;
+    sPadButtons = pad.buttons;
+    if (sBindingCapture) {
+        sync_input_block();
+        return;
+    }
     stick_axis(pad.lx, sStickX);
     stick_axis(pad.ly, sStickY);
     const unsigned b = pad.buttons;

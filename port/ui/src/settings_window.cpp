@@ -7,6 +7,7 @@
 
 #include "app.hpp"
 #include "bool_button.hpp"
+#include "controls_window.hpp"
 #include "input.hpp"
 #include "pane.hpp"
 #include "report.hpp"
@@ -214,6 +215,15 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "R1 change tabs, Start closes the menu.");
 
         leftPane.add_section("The game");
+        leftPane.register_control(
+            leftPane.add_group_button({.text = "Change Buttons"}).on_pressed([this] {
+                play_sound(kSoundClick);
+                push(std::make_unique<ControlsWindow>());
+            }),
+            rightPane, [](Pane& pane) {
+                pane.clear();
+                pane.add_text("Choose which gamepad button or key presses each of the PS3 pad's buttons in the game.");
+            });
         info_row(leftPane, rightPane, "Gamepads", "XInput, DualSense, DualShock 4",
             "Xbox-style (XInput) controllers, and the DualSense, DualSense Edge and DualShock 4 over USB or "
             "Bluetooth, are read directly. The game sees the first one as the PS3's pad.");
@@ -223,7 +233,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "<b>Z</b> Cross &nbsp; <b>X</b> Circle &nbsp; <b>A</b> Square &nbsp; <b>S</b> Triangle<br/>"
             "<b>Q</b> L1 &nbsp; <b>W</b> R1 &nbsp; <b>1</b> L2 &nbsp; <b>2</b> R2<br/>"
             "<b>Enter</b> Start &nbsp; <b>Tab</b> Select<br/><br/>"
-            "Rebinding is not available yet.");
+            "These are the defaults; Change Buttons changes them.");
     });
 
     add_tab("Interface", [this](Rml::Element* content) {

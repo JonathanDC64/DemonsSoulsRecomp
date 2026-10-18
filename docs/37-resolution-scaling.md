@@ -1,6 +1,8 @@
-# Internal resolution scaling: a plan
+# Internal resolution scaling
 
-Date: 2026-10-18. Status: plan only, no code yet.
+Date: 2026-10-18. Status: built (`RSX_SCALE`, and Settings -> Display ->
+Render resolution). "What was built" at the end says where it differs from
+the plan below.
 
 The aim is to render at a multiple of the game's 1280x720 (for example 1.5x,
 2x or 3x) and show the result at window size. Aspect ratios come later, and
@@ -219,3 +221,66 @@ On our side:
 
 This is independent of scaling, but it needs step 1's split between guest
 size and host size.
+
+## What was built
+
+The code is in three ps3recomp commits on `feat/rsx-scale`: the offscreen
+targets, the display buffers and the ZPASS counts. This repo adds the
+Settings row: Display -> Render resolution, 100 / 150 / 200 / 300%, a
+Restart setting that writes `RSX_SCALE`.
+
+### Step 0: where the scene is drawn
+
+Read with `RT_OFFDBG` at 100% in the tutorial level. The scene is drawn
+offscreen, so steps 1 and 2 were done together; step 1 alone would only
+have sharpened the HUD.
+
+- Scene: colour targets 0x7A0000 and 0x5870000 (1280x720), depth 0xB50000.
+- Shadow map: depth-only zeta 0x4860000, 2048x2048.
+- Post: 0x4260000 (1280x720), then a bloom chain at 640x360, 320x180 and
+  160x90.
+- Exposure: 64x64 and 16x16 targets, which the game reads back.
+- Two 128x128 targets, 0x17B0000 and 0x17D0000.
+- Display buffers 0x10000 and 0x3D0000 receive the last pass and the HUD.
+
+### Where it differs from the plan
+
+- **Threshold.** A target is scaled only if its larger side is above
+  `RSX_SCALE_MIN` (default 64), not 16. This keeps the 64x64 and 16x16
+  exposure targets at 1x, so their write-back is unchanged.
+- **Fill from guest memory.** `off_rt_get` expands the guest image
+  nearest-neighbour on the CPU, into the upload buffer, instead of a GPU
+  pass. It only runs when a target is created.
+- **Write-back.** Scaled targets are not written back:
+  `rt_writeback_record` skips them. Every target Demon's Souls reads back is
+  at or below the threshold. A game that reads back a large target would
+  need the downscale pass from the plan.
+- **WPOS.** No constant was added, because no Demon's Souls fragment program
+  read WPOS in the test runs. With `RSX_SCALE` set, the decompiler logs once
+  if one does ("a fragment program reads WPOS, which RSX_SCALE scales").
+- **ZPASS.** Each query's count is divided by its target's host/guest pixel
+  ratio, rounded up. Not seen live: the tutorial level and Stonefang issue
+  no queries, so the sun probe has not been checked at a scale.
+- **Scissor.** It is still the viewport rect, scaled with it. The guest
+  scissor is still not applied.
+- **Range.** `RSX_SCALE` takes 50 to 800 (percent). Host sizes are capped at
+  16384.
+- The guest size is kept for everything the game compares: texture sizes
+  against the display, `RT_DISPLAY_BY_SIZE`, `subvp_note`, the guest
+  viewport and the window's aspect in `blit_to_window`. Copies, captures and
+  frame dumps use the host size, so `capdiff.py` and `shotdiff.py` only
+  compare sets taken at the same scale.
+
+### Results
+
+- At 150%, 200% and 300% the opening cutscene and gameplay look as they do
+  at 100%, only sharper: HUD, exposure, shadows, bloom and fog. Frame dumps
+  come out at 1920x1080, 2560x1440 and 3840x2160. There were no device
+  errors.
+- Frame rate in the tutorial level (DES_FPS=240, VBLANK_MHZ=240000, an
+  RTX 5070 Ti): 240 at 100% (the cap), 240 at 150%, 236 at 200%, 226 at
+  300%.
+- At 100% every size and ratio is the guest's, so the output is the same as
+  before.
+- Not checked yet: the Nexus, Boletaria (the sun flare), FMVs and other
+  areas at a scale.

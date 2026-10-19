@@ -78,7 +78,7 @@ target_include_directories(des_ui PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(des_ui PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 if(MSVC)
-  target_compile_options(des_ui PRIVATE /O2 /EHsc /Zi /W3 /wd4100)
+  target_compile_options(des_ui PRIVATE /O2 /EHsc ${DES_DEBUG_FLAGS} /W3 /wd4100)   # DES_DEBUG_FLAGS: port/CMakeLists.txt
 endif()
 # PRIVATE: nothing of RmlUi's (include paths, definitions) reaches des_boot's
 # compile lines, only its link line.

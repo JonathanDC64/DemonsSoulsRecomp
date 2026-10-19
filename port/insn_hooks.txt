@@ -119,3 +119,14 @@
 0x0025EC14=des_fade_rate   # lfs f0, 0.05: type 16 fading out (distance mode)
 0x00265C88=des_fade_rate   # lfs f13, 1/30 (0x018D691C): type 14 fading in
 0x0026558C=des_fade_rate   # lfs f13, 1/30: type 14 fading out
+
+# des_fx_state (port/des_options.cpp): particle effect (FFX) nodes' state
+# machine in the scene update 0x013B74B8. An emitter repeats by re-entering its
+# own state, at most once an update: 30 times a second at 30 fps, 240 at 240.
+# The hook holds a re-entry until the state has lasted 1/30 s.
+0x013B75A8=des_fx_state   # mr r0, r3: the next state from the state's own transitions (0 = none)
+0x013B7940=des_fx_state   # mr r0, r3: the next state (1) on the paths of templates 0x7E7, 0x835 and 0x849
+0x013B7B9C=des_fx_state   # mr r0, r3: the next state (2) on template 0x7E4's path
+0x013B7CA4=des_fx_state   # mr r0, r3: the next state (2) on template 0x7E7's path
+0x013B7CCC=des_fx_state   # mr r0, r3: the next state (4) on the paths of templates 0x7E4 and 0x7E7
+0x013B75D4=des_fx_state   # stfs f0, 0x94(r31): the new state's time set to 0; takes the part of a frame past 1/30 s

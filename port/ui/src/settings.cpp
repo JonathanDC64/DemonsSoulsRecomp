@@ -42,6 +42,7 @@ constexpr Def kDefs[] = {
     {"pad_menu_chord", "0", Apply::UiOnly},    // 0 = L3 + R3, 1 = Select + Start
     {"PAD_MAP", "", Apply::Live},              // cellPad, gamepad buttons (controls_window.cpp)
     {"PAD_KEYS", "", Apply::Live},             // cellPad, changes to the keyboard and mouse layout (kKeysLayout)
+    {"keys_layout", "souls", Apply::UiOnly},   // the layout PAD_KEYS changes; a file without this line is older
     {"DES_MOUSE_LOOK", "0", Apply::Live},      // mouse look (des_mouse_look; port/ui/src/mouse.cpp), read each frame
     {"DES_MOUSE_SENS", "0.09", Apply::Live},   // mouse look's degrees per mouse count
     {"DES_MOUSE_INVERT_X", "0", Apply::Live},
@@ -155,6 +156,7 @@ void load_file() {
     if (!f) return;
     char line[512];
     int applied = 0;
+    bool layout_line = false;
     while (std::fgets(line, sizeof line, f)) {
         const std::string l = trim(line);
         if (l.empty() || l[0] == '#' || l[0] == ';') continue;
@@ -168,6 +170,7 @@ void load_file() {
         }
         const Def* d = find(key);
         if (!d) continue;
+        if (key == "keys_layout") layout_line = true;
         sValues[key] = value;
         if (d->apply != Apply::UiOnly && !sPinned.count(key) && !value.empty()) {
             apply_env(key, value);
@@ -176,6 +179,15 @@ void load_file() {
     }
     std::fclose(f);
     std::fprintf(stderr, "[ui] settings: %s (%d option%s applied)\n", file.c_str(), applied, applied == 1 ? "" : "s");
+    // A file from before the Souls layout has no keys_layout line, and its PAD_KEYS is the old Keyboard page's: changes
+    // to the old keys, one a button, 0x00 for none. Read as changes to the layout, an old start=0x00 would leave Esc
+    // unbound and an old cross=0x20 put Space on Circle and Cross, so the keys start from the layout again
+    // (load_and_apply_env sets PAD_KEYS after this).
+    if (!layout_line && !get("PAD_KEYS").empty()) {
+        std::fprintf(stderr, "[ui] settings: PAD_KEYS from the old Keyboard page (%s) dropped: the keys are the Souls "
+                     "layout again\n", get("PAD_KEYS").c_str());
+        sValues["PAD_KEYS"] = "";
+    }
 }
 
 }  // namespace

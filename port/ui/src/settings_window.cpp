@@ -438,17 +438,19 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         auto& leftPane = add_child<Pane>(content, Pane::Type::Controlled);
         auto& rightPane = add_child<Pane>(content, Pane::Type::Uncontrolled);
 
-        // des_dev_boot decides the session once, at start: cheats, online or offline.
+        // des_dev_boot sets the session at start (cheats, online or offline); des_dev.cpp makes it online for good
+        // when PS3_NET_ONLINE or PSNR_SERVER is set later. The tab is built again each time it is shown.
         const char* session = std::getenv("DES_DEV_SESSION");
         if (session && std::strcmp(session, "online") == 0) {
             info_row(leftPane, rightPane, "Cheats", "Off: online session",
-                "This session is online, so the cheats are off. Start the game without PS3_NET_ONLINE to use "
-                "them.");
+                "This session is online (PS3_NET_ONLINE or PSNR_SERVER is or was set), so the cheats are off "
+                "until the next start. Start the game without them to use the cheats.");
             return;
         }
         info_row(leftPane, rightPane, "Developer build", "Cheats compiled in",
-            "This is a developer build (" DES_DEV_MARKER "). The cheats below are for testing. While one is on, "
-            "this session stays offline. They are not saved: each start begins with all of them off.");
+            "This is a developer build (" DES_DEV_MARKER "). The cheats below are for testing. Turning one on "
+            "keeps this session offline; if the network is turned on later, they stop until the next start. They "
+            "are not saved: each start begins with all of them off.");
         bool_row(leftPane, rightPane, "God mode", "DES_GOD",
             "Your HP, MP and stamina never drop: hits, falls, poison, spells, attacks, rolls, guarding and dashing "
             "cost nothing. Instant deaths still kill: falling out of the level, lethal grabs and scripted deaths."

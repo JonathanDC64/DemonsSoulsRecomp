@@ -24,21 +24,24 @@
  * by default, none kept in settings.ini. Out-of-range values are clamped; a
  * value that does not parse counts as the default.
  *
- * The offline rule: cheats must never reach other players. The session is
- * decided once, at start (des_dev_boot, from ps3_title_options_init, before
- * the network modules read their knobs):
+ * The offline rule: cheats must never reach other players. At start
+ * (des_dev_boot, from ps3_title_options_init, before the network modules
+ * read their knobs) the session is:
  *   - a cheat set at start: a cheat session. PS3_NET_ONLINE, PSNR_SERVER and
  *     PS3_NET_HOSTS are cleared, so the host sockets are never registered and
  *     cellNetCtl and NP report no connection;
- *   - the network on at start (PS3_NET_ONLINE) and no cheat: an online
- *     session, and the cheats stay off until the next start;
+ *   - the network on at start (PS3_NET_ONLINE or PSNR_SERVER) and no cheat:
+ *     an online session, and the cheats stay off until the next start;
  *   - neither: an offline session. A cheat can be turned on at any time; the
  *     first one sets the "cheats used" latch (des_dev_cheats_used) for the
  *     rest of the session and clears the network knobs again.
- * DES_DEV_SESSION tells the UI which: cheats, online or offline. One gap is
- * left: in an offline session the debug console could set the network knobs
- * again after the latch; cellNetCtl and NP read them live, though the host
- * sockets stay unregistered. A lock in ps3recomp closes it (docs/55 section 6).
+ * Later the debug console can set the network knobs again, and cellNetCtl and
+ * NP read them live. So every cheat and DES_WARP checks them where it acts,
+ * and des_debug_tick after each setenv: once PS3_NET_ONLINE or PSNR_SERVER is
+ * seen set, the session is online for good and the cheats do nothing until
+ * the next start (one log line). ps3recomp may still connect then; a lock
+ * there closes that (docs/55 section 6). DES_DEV_SESSION tells the UI which
+ * session it is: cheats, online or offline.
  *
  * The hooks: --insn-hooks makes the lifter call des_dev_hook(ctx, addr) right
  * after each instruction in the dev block of port/insn_hooks.txt. The same
@@ -114,16 +117,43 @@ float atk_knob()   { return knob_f("DES_ATK", 1.0f, 0.0f, kAtkMax); }
 float speed_knob() { return knob_f("DES_SPEED", 1.0f, kSpeedMin, kSpeedMax); }
 
 enum Session { kOffline, kCheats, kOnline };
-Session s_session = kOffline;   /* set once by des_dev_boot, before any game thread runs */
+std::atomic<int> s_session{kOffline};   /* des_dev_boot sets it before any game thread runs; online() can make it kOnline */
 std::atomic<bool> s_used{false};
 
-const char* session_name(Session s) { return s == kCheats ? "cheats" : s == kOnline ? "online" : "offline"; }
+const char* session_name(int s) { return s == kCheats ? "cheats" : s == kOnline ? "online" : "offline"; }
+
+/* ps3recomp goes online with the first two: PS3_NET_ONLINE (host sockets, cellNetCtl, NP) and PSNR_SERVER (NP's
+ * server). Any value counts, as there (getenv(...) ? 1 : 0). PS3_NET_HOSTS (docs/46's planned host map) is only
+ * cleared with them. */
+const char* const kNetKnobs[] = {"PS3_NET_ONLINE", "PSNR_SERVER", "PS3_NET_HOSTS"};
+constexpr int kNetKnobsOnline = 2;
+
+/* The first of the network knobs that is set, or null. getenv is boot_main's lock-free cache, cheap at a hook. */
+const char* net_knob()
+{
+    for (int i = 0; i < kNetKnobsOnline; i++)
+        if (getenv(kNetKnobs[i])) return kNetKnobs[i];
+    return nullptr;
+}
 
 void clear_network()
 {
-    ps3_setenv("PS3_NET_ONLINE", "");   /* an empty value reads as unset (cached_setenv) */
-    ps3_setenv("PSNR_SERVER", "");
-    ps3_setenv("PS3_NET_HOSTS", "");
+    for (const char* k : kNetKnobs) ps3_setenv(k, "");   /* an empty value reads as unset (cached_setenv) */
+}
+
+/* True once a network knob has been seen set, at start or since: the session is then online until the next start.
+ * Checked where the cheats act, so a knob set from the debug console turns them off at once. Says so once. */
+bool online()
+{
+    if (s_session.load() == kOnline) return true;
+    const char* k = net_knob();
+    if (!k) return false;
+    if (s_session.exchange(kOnline) != kOnline) {
+        ps3_setenv("DES_DEV_SESSION", "online");
+        fprintf(stderr, "[dev] %s is set: the session is online, and the cheats are off until the next start%s\n", k,
+                s_used.load() ? " (cheats were used earlier in this session)" : "");
+    }
+    return true;
 }
 
 /* The first cheat of the session: it stays offline from here on. */
@@ -137,11 +167,11 @@ void mark_used(const char* what)
 /* An online session ignores the cheats, and says so once. */
 bool refused(const char* what)
 {
-    if (s_session != kOnline) return false;
+    if (!online()) return false;
     static std::atomic<bool> said{false};
     if (!said.exchange(true))
-        fprintf(stderr, "[dev] %s ignored: this session is online (PS3_NET_ONLINE at start); start the game "
-                "without it to use the cheats\n", what);
+        fprintf(stderr, "[dev] %s ignored: the session is online; start the game without PS3_NET_ONLINE and "
+                "PSNR_SERVER to use the cheats\n", what);
     return true;
 }
 
@@ -300,19 +330,19 @@ extern "C" void des_dev_boot(void)
 {
     fprintf(stderr, "[dev] %s\n", DES_DEV_MARKER);
     const char* warp = getenv("DES_WARP");
-    const char* net = getenv("PS3_NET_ONLINE");
     const bool cheat = god_knob() || atk_knob() != 1.0f || speed_knob() != 1.0f || (warp && *warp);
     if (cheat) {
         s_session = kCheats;
         mark_used("set at start");
-    } else if (net && *net) {
+    } else if (net_knob()) {
         s_session = kOnline;
     }
-    ps3_setenv("DES_DEV_SESSION", session_name(s_session));
-    fprintf(stderr, "[dev] session: %s%s\n", session_name(s_session),
-            s_session == kCheats   ? " (a cheat was set at start: the network knobs are cleared)"
-            : s_session == kOnline ? " (the network is on: the cheats stay off until the next start)"
-                                   : " (the first cheat turned on keeps it offline)");
+    const int s = s_session.load();
+    ps3_setenv("DES_DEV_SESSION", session_name(s));
+    fprintf(stderr, "[dev] session: %s%s\n", session_name(s),
+            s == kCheats   ? " (a cheat was set at start: the network knobs are cleared)"
+            : s == kOnline ? " (the network is on: the cheats stay off until the next start)"
+                           : " (the first cheat turned on keeps it offline)");
 }
 
 /* True from the first cheat to the end of the session: future network code
@@ -366,6 +396,7 @@ extern "C" void des_debug_tick(ppu_context* ctx)
     const int before = gen;
     PS3_KNOB(gen, gen + 1);
     if (gen == before) return;
+    online();   /* after each setenv: a network knob set now turns the cheats off even while none is on (the top) */
     const char* e = getenv("DES_WARP");
     if (!e || !strcmp(e, last)) return;
     snprintf(last, sizeof last, "%s", e);

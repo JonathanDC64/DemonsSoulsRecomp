@@ -474,7 +474,8 @@ fine. A build from an unpatched lift would crash at the NULL heap.
 The first start precompiles the shader cache behind a progress bar
 (`port/des_prework.cpp`): 3,535 shaders in 28 s on 15 threads with an empty
 cache (docs/32). It is not part of the build and runs again only when the
-stamp changes. [read] Run request R1 re-measures it on master.
+stamp changes. [read] Run request R1 re-measured it on master on
+2026-10-19: 3,603 shaders in 38.5 s on 15 threads (section 14). [measured]
 
 ## 12. Ideas ranked
 
@@ -533,6 +534,16 @@ These run the game. The exes are in the lane folder under `exe_nozi14/` and
   shaders compiled in about 28 s on 15 threads. `DES_PRECOMPILE=force` alone
   is not enough: it runs the pass, but shaders already in the cache count
   as "already cached". [read, port/des_prework.cpp]
+
+  **Result (2026-10-19), two boots** of master's exe (port d408341,
+  ps3recomp d5dec60, no `/Zi`), each with a new empty cache folder and the
+  pinned regression save: `1421 programs, 3603 shaders -> 3603 compiled,
+  0 already cached, 0 failed; 38.5 s on 15 threads`, the same in both. The
+  cache then holds 3,613 files, 39 MB. That is 68 more shaders than docs/32
+  counted and 10 s more than its 28 s. The PC was not idle: the overnight
+  batch kept total CPU at 12-13 % (programs outside it under 0.5 %), so
+  part of the 10 s may be load. A rerun on an idle PC would separate the
+  two. [measured]
 - **R2. Boot check of the no-/Zi exe.** `DES_EXE=<lane>/exe_nozi14/des_boot.exe`
   with the usual knobs. Load into the Nexus, walk for a minute, open the menu.
   Expect: same as master. Against a `/Zi` build, three functions in chunk

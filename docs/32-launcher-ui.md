@@ -29,7 +29,10 @@ licences in `port/ui/NOTICE.md`.
 While any of it is showing, the game sees neutral pads
 (`cellPad_set_host_hold(1)`) and gets the input back only once every game
 key, F1, Esc, the mouse buttons and every pad button and stick are back at
-rest, so the press that closed the menu never reaches the game.
+rest, so the press that closed the menu never reaches the game. Toasts (the
+menu hint, trophy pop-ups) are the exception: while one shows, the game
+keeps its input, Start included, and F1, Esc or the gamepad chord still
+open the menu.
 
 ## Settings
 
@@ -51,6 +54,7 @@ and on every change.
 | UI scale (Interface) | `ui_scale` | 0 = auto (the display's scale), 75, 100, 125, 150 (% of it) | at once |
 | Start screen (Interface) | `show_start_screen` | 1 / 0 | next start |
 | Menu hint (Interface) | `menu_hint` | 1 / 0 | at once |
+| Trophy pop-ups (Interface) | `trophy_popups` | 1 / 0 (off hides the toast; the unlock is still kept) | at once |
 | Gamepad menu buttons (Interface) | `pad_menu_chord` | 0 = L3 + R3, 1 = Select + Start | at once |
 
 Live values go through `ps3_setenv` (the runtime's getenv cache and
@@ -277,6 +281,7 @@ issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
 | `DES_UI_NO_ANIM=1` | No transitions. |
 | `DES_UI_SOUND=0` | No UI sounds. |
 | `DES_PRECOMPILE=0` / `force` | No startup shader pass / one whatever the stamp says (above). |
+| `DES_TROPHY_TEST=<id>` | Unlock trophy `<id>` (0-127) through the sceNpTrophy HLE as the game would (unlock file, platinum rule, pop-up), once the game has registered its trophies. Also live: the debug console's `setenv DES_TROPHY_TEST=<id>`; each new value unlocks once. It is a real unlock in the unlock file, so point `PS3_TROPHY_DIR=<folder>` at a scratch folder. |
 
 No start screen when the run is scripted: a tools/des test run
 (`PS3_PIDFILE` set and `DES_KIND` not `play`), `DES_AUTO_CONTINUE` on the
@@ -330,8 +335,12 @@ Files:
 - `des_ui.cpp`: `des_ui_early_init()` (called first in
   `ps3_title_options_init`, des_options.cpp), the overlay hooks, the input
   queue, gamepad reads, the input hold, the debug knobs.
-- `host.cpp`: D3D11On12, the renderer, system and file interfaces (the
-  embedded files), fonts, scale, the BMP screenshot.
+- `host.cpp`: D3D11On12, the renderer (plus PNG images through WIC,
+  `add_png`), system and file interfaces (the embedded files), fonts, scale,
+  the BMP screenshot.
+- `trophy_toasts.cpp`: trophy pop-ups (docs/44). The sceNpTrophy HLE's unlock
+  hook queues on the game's thread; `frame` wakes for it and shows a toast
+  with the trophy's icon, grade and name. `DES_TROPHY_TEST`.
 - `settings.cpp`: settings.ini, the option table, pinned (env) detection,
   harness detection.
 - `report.cpp`: the data folder, the log tee, system facts, redaction, the

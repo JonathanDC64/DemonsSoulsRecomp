@@ -6,8 +6,9 @@
 //     (except F9-F12, the backend's capture keys) and the mouse are queued and kept from the game window. Mouse look
 //     (mouse.cpp) sees each message first, and holds the cursor in the window while the game has the mouse.
 //   frame (the render thread, once per presented frame, before Present): drains the queue into RmlUi, reads the
-//     gamepads, updates and draws. When nothing is showing it returns after a couple of loads: no RmlUi work, no
-//     pad reads, no GPU work. The gamepad's menu chord is then seen in g_pad0_buttons, the game's own pad 0 read.
+//     gamepads (they drive RmlUi only while a document is up), updates and draws. When nothing is showing (no
+//     document, no pop-up) it returns after a couple of loads: no RmlUi work, no pad reads, no GPU work. The
+//     gamepad's menu chord is then seen in g_pad0_buttons, the game's own pad 0 read.
 //
 // The game does not see the pads or the keyboard while a document is up (cellPad_set_host_hold), and gets them back
 // only once every key and button is released, so the press that closed the menu does not reach the game.
@@ -28,6 +29,7 @@
 #include "report.hpp"
 #include "settings.hpp"
 #include "settings_window.hpp"
+#include "trophy_toasts.hpp"
 #include "ui.hpp"
 
 #include <windows.h>
@@ -111,6 +113,7 @@ std::atomic<bool> sCloseRequested{false};  // set on the window thread, the ques
 std::atomic<bool> sQuitConfirmed{false};   // Quit Game was chosen: the next WM_CLOSE goes through  // the start screen is to show or showing (des_ui_start_screen_up, any thread)
 bool sDocumentsPushed = false;
 bool sActive = false;
+bool sPadIdle = false;  // awake with no document up: the pads are not fed to RmlUi (frame)
 bool sHold = false;
 bool sChordWasDown = false;
 clock_type::time_point sLastVisible{};
@@ -504,8 +507,9 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     const bool script = !sScriptKeys.empty();
     const char* shot = sShots.empty() ? nullptr : shot_for_frame(sFrame);
     if (script) script_keys_for_frame(sFrame);
+    ui::trophies::poll_test_knob();  // DES_TROPHY_TEST
 
-    // Fast path: nothing showing, nothing queued, no chord pressed.
+    // Fast path: nothing showing, nothing queued (input, a trophy pop-up), no chord pressed.
     const unsigned mask = sChordMask;
     const bool chordDown = (g_pad0_buttons & mask) == mask;
     const bool chordEdge = chordDown && !sChordWasDown;
@@ -515,7 +519,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     const bool prework = ui::prework_running();
     if (!sActive && !sStartScreen && !chordEdge && !shot && !sQueued.load(std::memory_order_acquire) &&
         !sOpenPending && !sReportCountdown && !(prework && !sPreworkShown) && !sCloseRequested.load() &&
-        !sOskPending.load(std::memory_order_acquire)) {
+        !sOskPending.load(std::memory_order_acquire) && !ui::trophies::pending()) {
         return;
     }
 
@@ -527,6 +531,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         ui::mouse::set_ui_open(false);
         if (sCloseRequested.exchange(false) && ui::app().quit) ui::app().quit();  // nothing to ask with
         if (sOskPending.exchange(false)) apply_osk_request(false);
+        ui::trophies::discard();  // (the unlocks are saved; only the pop-ups are lost)
         sActive = false;
         std::lock_guard<std::mutex> lock(sQueueLock);
         sQueue.clear();
@@ -554,8 +559,21 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     process_queue();
     bool padNeutral = true;
     const ui::input::PadState pad = read_pads(padNeutral);
-    ui::input::update_pad(pad, chord);
+    // The pads drive the UI only while a document is up. With just the overlay (a trophy pop-up, the menu hint) the
+    // UI stays awake to draw it, but the pads stay the game's as when it sleeps: Start is the game's, and the chord
+    // opens the menu.
+    if (ui::any_document_visible()) {
+        sPadIdle = false;
+        ui::input::update_pad(pad, chord);
+    } else {
+        if (!sPadIdle) {
+            sPadIdle = true;
+            ui::input::reset_input_state();  // what is held now is not a press when a document opens
+        }
+        if (chordEdge) open_menu_bar();
+    }
     if (ui::OskWindow* osk = ui::active_osk()) osk->on_pad(pad.buttons);
+    ui::trophies::drain();
     ui::update();
     sStartUp.store(ui::is_prelaunch_open());
 
@@ -678,4 +696,5 @@ extern "C" void des_ui_early_init(void) {
     rsx_d3d12_set_overlay(&kOverlay);
     static const CellOskDialogHost kOsk = {osk_open, osk_close};
     cellOskDialog_set_host(&kOsk);
+    ui::trophies::install();
 }

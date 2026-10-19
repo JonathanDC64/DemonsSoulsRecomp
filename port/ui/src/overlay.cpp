@@ -27,14 +27,24 @@ const Rml::String kDocumentSource = R"RML(
 )RML";
 
 constexpr auto kMenuNotificationDuration = std::chrono::milliseconds(2500);
+// A closing toast (or the menu hint) goes when its transition ends, and this long after its time at the latest: while
+// one is up the UI stays awake (Overlay::busy), so a transition that never ends must not keep it so.
+constexpr auto kCloseTimeout = std::chrono::milliseconds(1000);
 
 Rml::Element* create_toast(Rml::Element* parent, const Toast& toast) {
     auto* elem = append(parent, "toast");
     if (!toast.type.empty()) {
         elem->SetClass(toast.type, true);
     }
+    // With an icon: toast > toast-row > (toast-icon, toast-body > heading, message), then the progress bar.
+    Rml::Element* body = elem;
+    if (!toast.icon.empty()) {
+        auto* row = append(elem, "toast-row");
+        append(row, "toast-icon")->SetInnerRML(toast.icon);
+        body = append(row, "toast-body");
+    }
     {
-        auto* heading = append(elem, "heading");
+        auto* heading = append(body, "heading");
         if (toast.title.starts_with("<")) {
             heading->SetInnerRML(toast.title);
         } else {
@@ -46,7 +56,7 @@ Rml::Element* create_toast(Rml::Element* parent, const Toast& toast) {
         }
     }
     {
-        auto* message = append(elem, "message");
+        auto* message = append(body, "message");
         if (toast.content.starts_with("<")) {
             message->SetInnerRML(toast.content);
         } else {
@@ -126,7 +136,8 @@ void Overlay::update() {
     if (mMenuNotification != nullptr) {
         if (clock::now() >= mMenuNotificationStartTime + kMenuNotificationDuration) {
             if (!animated || mMenuNotification->IsPseudoClassSet("done") ||
-                !mMenuNotification->IsPseudoClassSet("opened"))
+                !mMenuNotification->IsPseudoClassSet("opened") ||
+                clock::now() >= mMenuNotificationStartTime + kMenuNotificationDuration + kCloseTimeout)
             {
                 remove_element(mMenuNotification);
             } else {
@@ -165,7 +176,8 @@ void Overlay::update() {
         if (remaining == 0.f) {
             if (!animated || mCurrentToast->IsPseudoClassSet("done") ||
                 // Fallback for large gaps in time where we never actually opened it
-                !mCurrentToast->IsPseudoClassSet("opened"))
+                !mCurrentToast->IsPseudoClassSet("opened") ||
+                clock::now() >= mCurrentToastStartTime + toast.duration + kCloseTimeout)
             {
                 remove_element(mCurrentToast);
                 toasts.pop_front();

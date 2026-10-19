@@ -642,7 +642,7 @@ The game module or exe built on the player's PC is never distributed by us, so n
 
 ## 13. Trial builds and run requests
 
-T3 and T2 were run on 2026-10-19 (results below the table). T4 is queued. T1 was not run: it needs the llvm-mingw download, which is not OK'd.
+T2, T3 and T4 were run on 2026-10-19 (results below the table). T1 was not run: it needs the llvm-mingw download, which is not OK'd.
 
 | # | What | Needs | Expect |
 |---|---|---|---|
@@ -680,6 +680,25 @@ Chunk 013 of master's lift, compiled with clang 22.1.8 and T2's flags (`-nostdli
 - **`-ffreestanding` turns builtins off**, so every `memcpy` in the lift becomes a real call (the one extra outside symbol here). The builtin shims bring the object back to today's symbol list. Route B needs them. [measured]
 - **The outside symbols, all 11:** the thread-local machinery (`_tls_index`, `__tls_guard`, `__dyn_tls_on_demand_init`, from the thread-local `g_trampoline_fn`), `g_trampoline_fn`, `vm_base`, `vm_read64`, `vm_write64`, `g_vm_inl_rd_lim`, `g_vm_inl_wr_lim`, `g_spu_coh_bitmap` and `g_spu_coh_armed_line`, plus the 93,945 `func_*` entries of the function table. So the thread-locals are still referenced: the expected list (docs/45 minus the thread-locals) holds only once `g_trampoline_fn` stops being `thread_local` or moves behind an accessor. [measured]
 - The size difference that remains (+6 %) was not looked into. Chunk 013 is mostly the function table (72 functions), so it says little about code size; a code-heavy chunk is the better size check. [inferred]
+
+### 13.3 T4 results (2026-10-19)
+
+The embeddable Python 3.13.9 zip (10,926,675 bytes; `python.exe`, `pythonw.exe` and `python313.dll` signed by the Python Software Foundation, `vcruntime140.dll` by Microsoft), extracted to a folder named `Pythön-テスト`. The tools ran from a copy in `wörk-テスト` (ps3recomp at c779320, the commit master's lift came from, and master's `insn_hooks.txt`), with every path argument absolute, as a launcher would pass them. Output went to a pipe, as a launcher would read it.
+
+| Step | Plain `python.exe` | With `-X utf8` |
+|---|---|---|
+| Interpreter | isolated, environment ignored, no `site`; `sys.path` = `python313.zip` and Python's folder | |
+| `ppu_loader` | its 4 outputs written, byte-identical to the system Python's and to `work/loader`; then exit 1 printing a path | |
+| `ppu_lifter -j 4` | 15 files written, then exit 1 printing a path | exit 0 in 47.1 s; 39 hooks, 19,166 call targets |
+| `gen_hle_nids --all` | its output written (identical to master's), then exit 1 printing a path | |
+| `apply_boot_patches` | exit 0, 1 patch applied | |
+
+- **The `-j 4` workers start** under the embeddable Python (docs/45 question 13). [measured]
+- **The script's folder is not on `sys.path`** with the `._pth` file (docs/45 question 12). Each lifter inserts its own folder, so they work anyway. [measured]
+- **Printing a path with characters outside the code page ends the script with an error** when its output goes to a pipe: standard output is cp1252 and `print` raises `UnicodeEncodeError`. The files are written by then, but the exit code is 1. `PYTHONUTF8` would not help, because the environment is ignored; `-X utf8` fixes it. [measured]
+- **The lift is the same, but not byte for byte.** Against `work/recomp_master`, `ppu_recomp.h` and `hle_nid_table.cpp` are identical. The 14 chunks are the same text in another encoding: the lifter opens its outputs with no encoding, so they are written in the system code page (cp1252 here) unless Python runs in UTF-8 mode, and three comments it writes have an em dash (the header, `mtfsf` and `tw` traps: 1 to 23 a chunk). Under `-X utf8` the chunks are UTF-8. [measured]
+- **So a plain `python` lift fails on Japanese and Korean Windows.** Python's cp932 and cp949 codecs cannot encode U+2014, so the first chunk write would raise `UnicodeEncodeError` there (Western, Cyrillic, Chinese and other ANSI code pages can encode it). The fix is small: ASCII in the lifter's comments and `encoding="utf-8"` on its writes. That changes every chunk's bytes once, so the next lift rebuilds all 14 chunks once. [measured for the codecs; inferred for a Japanese or Korean PC]
+- **For the launcher:** start every script with `python.exe -X utf8`. It makes the prints safe and the outputs UTF-8 whatever the code page.
 
 The run request for the shader cache size is done: the main session measured it without a game run, and the numbers are in section 10.2.
 

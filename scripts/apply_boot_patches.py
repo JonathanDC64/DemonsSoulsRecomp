@@ -23,8 +23,10 @@ Fixes:
    accessor's own register state) when X's vtable is still 0.
 
 Idempotent: running twice is a no-op. See docs/07-m2-boot-debug.md.
+
+If another program holds the chunk open, the write is retried for up to 30 s.
 """
-import sys, pathlib
+import sys, pathlib, time
 
 LIFT = pathlib.Path(__file__).resolve().parent.parent / "work" / "recomp"
 
@@ -81,6 +83,36 @@ _OBSOLETE_PATCHES = [
     ),
 ]
 
+# VS Code's C/C++ extension opens a chunk about 3 s after the lifter writes it
+# and keeps it open for about 10 s without write sharing. A write in that window
+# fails with PermissionError, so wait for the file instead of leaving the chunk
+# unpatched.
+WRITE_WAIT_S = 30
+
+
+def write_chunk(chunk, text):
+    """Write the patched chunk, retrying while another program holds it open.
+    Returns False if it is still locked after WRITE_WAIT_S seconds."""
+    deadline = time.monotonic() + WRITE_WAIT_S
+    waiting = False
+    while True:
+        try:
+            chunk.write_text(text, encoding="utf-8", errors="surrogateescape")
+            return True
+        except PermissionError as e:
+            if time.monotonic() >= deadline:
+                print(f"ERROR: could not write {chunk}: {e.strerror or e}. Another program "
+                      f"kept it open for {WRITE_WAIT_S} s, so the patch is not applied. Close "
+                      f"that program or exclude the lift folder from it (VS Code: "
+                      f"C_Cpp.files.exclude), then run this script again.", file=sys.stderr)
+                return False
+            if not waiting:
+                print(f"  [wait] {chunk.name} is open in another program; "
+                      f"retrying for up to {WRITE_WAIT_S} s")
+                waiting = True
+            time.sleep(0.5)
+
+
 def main():
     # Optional argument: the lift directory (default work/recomp). The patched
     # function moves between chunks from one lift to the next, so find it.
@@ -104,7 +136,8 @@ def main():
             print(f"  [WARN] pattern not found for: {desc} -- lifter output changed?", file=sys.stderr)
             continue
         text = text.replace(old, new, 1)
-        CHUNK.write_text(text, encoding="utf-8", errors="surrogateescape")
+        if not write_chunk(CHUNK, text):
+            return 1
         applied += 1
         print(f"  [ok]   applied: {desc} ({CHUNK.name})")
     print(f"apply_boot_patches: {applied} patch(es) applied")

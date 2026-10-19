@@ -28,11 +28,15 @@ Each of these is planned from the anchor (s4_on at anchor + --settle + 3 GAP
 
 A hold is the console's `setenv PAD_STICK=lx,ly,rx,ry,0,<secs>`: the runtime
 lets go of the stick itself <secs> of wall time after it picked the value up,
-so the console's latency does not stretch it. <secs> is the game time over the
-game/real rate of the last second, and is issued again with a new length when
-the rate changes during the hold. The runtime times the window with
-GetTickCount64, which moves in steps of about 16 ms, so at 30 fps a hold can
-come out one frame long (240 or 241 frames for the 8 s walk). A shot is
+so the console's latency does not stretch it. <secs> is the game time less
+half a frame step, over the game/real rate of the last second, and is issued
+again with a new length when the rate changes during the hold. The half frame
+is for 30 fps: a window of the full length would end right on the frame after
+the last one wanted, and the runtime times it with GetTickCount64, which moves
+in steps of about 16 ms, so whether that frame gets the stick too would be a
+toss-up (without it: 240 or 241 frames for the 8 s walk, 45 or 46 for the
+turn, and one frame of turn moves the camera enough to send the walk on past
+the wall it otherwise ends at). A shot is
 `setenv CELLMARK_DUMP_NOW=1`: the runtime saves the next frame with draws.
 The game flushes the frame log twice a second, so the current game time is
 predicted from the newest line and the rate, on a clock mapped to the frame
@@ -140,6 +144,15 @@ class FrameLog:
                 st += self.g[j] - self.g[j - 1]
                 sw += v
         return 1.0 if sw <= 0 else min(2.0, max(0.05, st / sw))
+
+    def step(self, span=1.0):
+        """Game seconds a frame takes now: the median frame step in the last `span` s of the log."""
+        n = len(self.t)
+        if n < 2:
+            return 1.0 / 30
+        k = max(1, bisect.bisect_left(self.t, self.t[-1] - span))
+        st = sorted(self.g[j] - self.g[j - 1] for j in range(k, n))
+        return st[len(st) // 2]
 
     def game_at(self, T):
         """Game time at frame-log time T; past the newest line, at the recent rate."""
@@ -302,7 +315,8 @@ class Route:
         fl, con = self.fl, self.con
         self.wait_game(start_g - con.lat * fl.rate())
         spec = lambda w: 'PAD_STICK=%d,%d,%d,%d,0,%.3f' % (tuple(sticks) + (w,))
-        w = secs / fl.rate()
+        want = secs - fl.step() / 2   # end between two frames (see the docstring)
+        w = max(0.05, want / fl.rate())
         s = spec(w)
         t_app = con.setenv(s)
         end = t_app + w
@@ -314,9 +328,9 @@ class Route:
                 r = fl.rate(min(1.0, T1 - T0))
                 done = fl.game_at(T1) - fl.game_at(T0)
                 heading = done + r * (fl.fl_time(end) - T1)
-                if abs(heading - secs) > TOL and len(fixes) < 4:
+                if abs(heading - want) > TOL and len(fixes) < 4:
                     at = done + r * (fl.fl_time(now() + con.lat) - T1)
-                    w2 = max(0.05, (secs - at) / r)
+                    w2 = max(0.05, (want - at) / r)
                     s2 = spec(w2)
                     if s2 == s:
                         s2 = spec(w2 + 0.001)
@@ -329,7 +343,7 @@ class Route:
             time.sleep(0.002)
         con.setenv('PAD_STICK=')   # a later hold with the same value then still restarts the window
         g0, g1 = fl.game_at(fl.fl_time(t_app)), fl.game_at(fl.fl_time(end))
-        self.hold_log.append((what, sticks, secs, t_app, end, fixes))
+        self.hold_log.append((what, sticks, secs, t_app, end, fixes, secs - want))
         self.note('%s: %s for %.2f s, from %s to %.2f%s' % (what, s, secs, self.g_str(g0), g1,
                                                            ''.join('; re-issued ' + x for x in fixes)))
         return g1
@@ -337,9 +351,9 @@ class Route:
     def report_holds(self):
         """What the game read: left-stick holds counted from the frame log's stick column."""
         fl = self.fl
-        for what, sticks, secs, t_app, end, fixes in self.hold_log:
+        for what, sticks, secs, t_app, end, fixes, half in self.hold_log:
             T0, T1 = fl.fl_time(t_app), fl.fl_time(end)
-            g = fl.game_at(T1) - fl.game_at(T0)
+            g = fl.game_at(T1) - fl.game_at(T0) + half   # the frames in a window hold half a frame more than it spans
             msg = '%s: %.2f s wanted, %.2f s by the clock map' % (what, secs, g)
             want = (sticks[0] << 8) | sticks[1]
             if want != 0x8080:

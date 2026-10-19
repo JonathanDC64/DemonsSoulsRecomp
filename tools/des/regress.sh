@@ -19,6 +19,7 @@
 #
 #   regress.sh                 new set named by date+time, diffed against "good"
 #   regress.sh accept <name>   make <name> the new "good" set
+# Like a run, pin-save and accept wait for a run that holds the save folder.
 #
 # Sets live in REGRESS_DIR (default $DES_SCRATCH/regress). Screenshots are
 # game-derived: point REGRESS_DIR outside the repository and never commit them.
@@ -54,11 +55,13 @@ take_save() {
 # after pinning a different one.
 if [ "${1:-}" = pin-save ]; then
   src="${2:-$SAVE}"; [ -d "$src" ] || { echo "no save at $src"; exit 1; }
+  take_save
   rm -rf "$REG/save"; cp -r "$src" "$REG/save"; echo "pinned $src"; exit 0
 fi
 
 if [ "${1:-}" = accept ]; then
   [ -d "$REG/${2:?set name}" ] || { echo "no set $REG/$2"; exit 1; }
+  take_save
   rm -rf "$REG/good"; cp -r "$REG/$2" "$REG/good"; echo "good = $2"; exit 0
 fi
 

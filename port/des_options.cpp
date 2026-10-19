@@ -863,6 +863,46 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
 }
 
+/* A factor kept once a frame, cur = base + (cur - base) * r (or cur *= r),
+ * tuned for 30 fps: at 240 fps the remainder shrinks eight times as fast. Called
+ * after the lfs of r (--insn-hooks); puts r' = r^(dt * 30) in the register, the
+ * factor that keeps the same part per second as r does at 30 fps. Nothing at
+ * 30 fps or without DES_FPS. */
+static void keep_rate(ppu_context* ctx, uint32_t addr)
+{
+    const uint32_t insn = vm_read32(addr);
+    if ((insn >> 26) != 48) return;   /* lfs only */
+    const int fd = (insn >> 21) & 31;
+    const double r = ctx->fpr[fd];
+    const float steps = vm_readf(kFrameDt) * 30.0f;
+    if (!(r > 0.0 && r < 1.0) || !(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
+    ctx->fpr[fd] = (float)std::pow(r, (double)steps);
+}
+
+/* The follow camera's pitch return after a scripted angle (0x00119670):
+ * pitch = +0x140 + (pitch - +0x140) * r, r = +0x18C (0.3) loaded at 0x0011C15C.
+ * Main thread. DES_CAMFIX=0 turns it off with the camera eases. */
+extern "C" void des_cam_keep(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_CAMFIX", 1) != 0);
+    if (on && s_fps > 0) keep_rate(ctx, addr);
+}
+
+/* Sound events: a position, a radius (0.5 to 13 m) and a life (0.5 or 2 s),
+ * in three lists that the game's frame step updates through 0x006A3970. Each
+ * frame the radius is multiplied by 0.99 (loaded at 0x006A3990; 0x006A2E8C in
+ * the single-entry twin 0x006A2E78) while the life counts down by dt. So at
+ * 240 fps a radius falls to 8% of its size in a second instead of 74%, and
+ * (inferred) enemies hear the player less. Main thread. DES_NOISEFIX=0 turns
+ * it off live. */
+extern "C" void des_noise_rate(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_NOISEFIX", 1) != 0);
+    if (on && s_fps > 0) keep_rate(ctx, addr);
+}
+
 /* A character proxy's slide velocity (wrapper + 0x100), in its velocity
  * update 0x001FE778 (r26 = the step, dt at +0x20). On a frame whose ground
  * probe finds a slope too steep to stand on (+0x33), the game adds gravity

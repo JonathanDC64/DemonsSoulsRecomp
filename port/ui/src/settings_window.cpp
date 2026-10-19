@@ -361,7 +361,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "below)<br/>"
             "<b>Left button</b> attack (R1) &nbsp; <b>Shift + left button</b> strong attack (R2)<br/>"
             "<b>Right button</b> guard (L1) &nbsp; <b>Left Ctrl</b> or <b>Shift + right button</b> parry (L2)<br/>"
-            "<b>Space</b> roll, backstep, dash (Circle) &nbsp; <b>C</b> jump while dashing (L3)<br/>"
+            "<b>Space</b> roll, backstep, dash (Circle) &nbsp; <b>C</b> left stick press (L3)<br/>"
             "<b>Q</b> or <b>middle button</b> lock on (R3)<br/>"
             "<b>E</b> action (Cross) &nbsp; <b>R</b> use item (Square) &nbsp; <b>F</b> two-hand (Triangle)<br/>"
             "<b>Arrows</b> D-pad &nbsp; <b>Wheel up / down</b> spell / item &nbsp; <b>Shift + wheel up / down</b> "
@@ -369,12 +369,6 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "<b>Esc</b> menu (Start) &nbsp; <b>G</b> or <b>Tab</b> Select<br/><br/>"
             "A chord works alone: Shift and the left button is a strong attack, not an attack as well. The mouse's "
             "buttons and wheel need Mouse look on. Change Buttons changes any of these.");
-        bool_row(leftPane, rightPane, "Jump with Space again", "DES_DASH_JUMP",
-            "While dashing (Space held while moving), let go of Space and press it again at once to jump, as in the "
-            "Souls games on PC. The game sees Space held through the gap, so the dash goes on, and a dash ends up to "
-            "a quarter of a second after Space is let go. Off: C jumps while dashing (L3); it still does with this "
-            "on. Works with whichever key rolls (Change Buttons). Applies at once.<br/><br/>(DES_DASH_JUMP)");
-
         leftPane.add_section("Mouse");
         bool_row(leftPane, rightPane, "Mouse look", "DES_MOUSE_LOOK",
             "Turns the camera with the mouse, as well as with the right stick, and gives the game the mouse's "

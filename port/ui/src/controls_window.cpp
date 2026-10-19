@@ -116,7 +116,7 @@ constexpr Target kTargets[] = {
     {"ls_right", "Move right", nullptr},
     {"walk", "Walk (held)", nullptr},
     {"circle", "Roll, backstep, dash (Circle)", "Actions"},
-    {"l3", "Jump, while dashing (L3)", nullptr},
+    {"l3", "Left stick press (L3)", nullptr},
     {"r1", "Attack (R1)", nullptr},
     {"r2", "Strong attack (R2)", nullptr},
     {"l1", "Left hand, guard (L1)", nullptr},

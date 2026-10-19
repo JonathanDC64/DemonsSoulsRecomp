@@ -206,6 +206,10 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "Keeps textures sharp when they are seen at a steep angle, such as floors and walls into the distance. "
             "Original uses the level the game asks for, which is 4x on most surfaces. Costs a little GPU time at "
             "16x. Applies at once.<br/><br/>(RSX_ANISO)");
+        choice_row(leftPane, rightPane, "Anti-aliasing", "RSX_AA", {"0", "1"}, {"Off (original)", "FXAA"},
+            "Smooths the jagged edges of the 3D scene. FXAA is a filter over the finished scene, run before the "
+            "HUD is drawn, so text and the HUD stay sharp. It also softens fine texture detail a little. Costs a "
+            "little GPU time, more at a higher render resolution. Applies at once.<br/><br/>(RSX_AA)");
         bool_row(leftPane, rightPane, "Depth of field", "DES_DOF",
             "The game's depth of field: distant scenery is blurred, more in some areas than others. Off draws it "
             "sharp. Applies at once.<br/><br/>(DES_DOF)");

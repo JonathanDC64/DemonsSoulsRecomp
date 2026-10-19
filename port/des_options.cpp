@@ -1306,9 +1306,12 @@ long long s_flicks;   /* lock-on switching's flicks, for DES_MOUSELOG */
 
 /* Lock-on switching: this move's counts to the side (left negative), the
  * updates left before the next flick can start, and the updates since the
- * last count to the side. */
+ * last count to the side. A lock starts settling: counts to the side wait for
+ * an update without one, so the turn towards the target, still going on as
+ * the lock starts, does not switch to the next target at once. */
 int s_flick_x = 0;
 unsigned s_flick_rest = 0, s_flick_idle = 0;
+bool s_flick_settle = true;
 
 float mouse_sens()
 {
@@ -1328,6 +1331,10 @@ float flick_degrees()
  * DES_MOUSE_INVERT_X) towards a flick of the right stick. */
 void mouse_flick(int dx, float sens, float deg)
 {
+    if (s_flick_settle) {
+        if (!dx) s_flick_settle = false;
+        return;
+    }
     if (s_flick_rest) {
         s_flick_rest--;
         s_flick_x = 0;
@@ -1414,6 +1421,7 @@ extern "C" void des_mouse_look(ppu_context* ctx, uint32_t addr)
     } else {
         s_flick_x = 0;
         s_flick_rest = s_flick_idle = 0;
+        s_flick_settle = true;
     }
     if (why != kTurned) {
         s_mouse_counts[why] += std::abs(dx) + std::abs(dy);

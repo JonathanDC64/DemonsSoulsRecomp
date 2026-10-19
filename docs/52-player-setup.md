@@ -642,7 +642,7 @@ The game module or exe built on the player's PC is never distributed by us, so n
 
 ## 13. Trial builds and run requests
 
-T3 was run on 2026-10-19 (results below the table). T2 and T4 are queued. T1 was not run: it needs the llvm-mingw download, which is not OK'd.
+T3 and T2 were run on 2026-10-19 (results below the table). T4 is queued. T1 was not run: it needs the llvm-mingw download, which is not OK'd.
 
 | # | What | Needs | Expect |
 |---|---|---|---|
@@ -662,6 +662,24 @@ A 60-line program (`seh_test.cpp`) maps one committed page followed by a reserve
 | `/Od /EHsc` | access violation, process dies | caught | ok |
 
 Every object references `__C_specific_handler`. What it means: section 7.9.
+
+### 13.2 T2 results (2026-10-19)
+
+Chunk 013 of master's lift, compiled with clang 22.1.8 and T2's flags (`-nostdlibinc`, the shims, `force.h`), one job, compared with the object today's clang-cl `/O2` build made from the same source (`llvm-nm -u`, `llvm-objdump -h`).
+
+| Variant | Result | `.text` | Outside symbols |
+|---|---|---|---|
+| T2's flags as written (`-ffreestanding`) | 2 errors | | |
+| The same plus `-include stddef.h` | builds, 1.9 s | 15,285 B (+15 %) | today's 11, plus `memcpy` |
+| The same plus the shims mapping `memcpy`, `sqrt` and the rest to `__builtin_*` | builds, 2.0 s | 14,116 B (+6 %) | exactly today's 11 |
+| Hosted (no `-ffreestanding`), no system headers | 1 fatal error | | |
+| Today's build (reference) | | 13,275 B | 11 |
+
+- **The two errors are both `NULL`**, in the function table's end entry `{ 0, NULL, NULL }`. Clang's own `stddef.h` defines it, but nothing in the chunk includes it; the MSVC build gets it through the CRT headers. Either the freestanding module force-includes `stddef.h`, or the lifter writes `nullptr` there (a one-line change). [measured]
+- **Hosted mode does not work without system headers:** clang's `intrin.h` includes `mm_malloc.h`, which includes `stdlib.h`. `-ffreestanding` skips that include. [measured]
+- **`-ffreestanding` turns builtins off**, so every `memcpy` in the lift becomes a real call (the one extra outside symbol here). The builtin shims bring the object back to today's symbol list. Route B needs them. [measured]
+- **The outside symbols, all 11:** the thread-local machinery (`_tls_index`, `__tls_guard`, `__dyn_tls_on_demand_init`, from the thread-local `g_trampoline_fn`), `g_trampoline_fn`, `vm_base`, `vm_read64`, `vm_write64`, `g_vm_inl_rd_lim`, `g_vm_inl_wr_lim`, `g_spu_coh_bitmap` and `g_spu_coh_armed_line`, plus the 93,945 `func_*` entries of the function table. So the thread-locals are still referenced: the expected list (docs/45 minus the thread-locals) holds only once `g_trampoline_fn` stops being `thread_local` or moves behind an accessor. [measured]
+- The size difference that remains (+6 %) was not looked into. Chunk 013 is mostly the function table (72 functions), so it says little about code size; a code-heavy chunk is the better size check. [inferred]
 
 The run request for the shader cache size is done: the main session measured it without a game run, and the numbers are in section 10.2.
 

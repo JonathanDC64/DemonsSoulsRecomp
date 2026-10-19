@@ -189,6 +189,20 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "3840x2160. The picture is then fitted to the window, so a higher setting is sharper even in a smaller "
             "window. The HUD and menus are drawn at the same size. Costs GPU time: about four times the pixels at "
             "200%. Applies at once.<br/><br/>(RSX_SCALE)");
+        choice_row(leftPane, rightPane, "Aspect ratio", "DES_ASPECT",
+            {"", "2560:1080", "3440:1440", "3840:1600", "32:9", "auto"},
+            {"16:9 (original)", "21:9 (2560x1080)", "21:9 (3440x1440)", "21:9 (3840x1600)", "32:9", "Match the display"},
+            "The shape of the picture, for ultrawide displays. A wider shape shows more of the scene at the sides, "
+            "with the same height as at 16:9. The window opens in that shape, and fullscreen fills an ultrawide "
+            "display. The game still draws 1280 pixels across, stretched to the wider shape, so raise Render "
+            "resolution to keep it sharp. Match the display uses the main display's shape. Displays narrower than "
+            "16:9 (16:10, 4:3) keep 16:9 with bars. The HUD and menus stay 16:9 in the middle (see HUD below); "
+            "full-screen fades and the dim behind menus may still cover only that middle.<br/><br/>(DES_ASPECT)");
+        choice_row(leftPane, rightPane, "HUD", "DES_HUD", {"", "stretch"}, {"Centred 16:9", "Stretched"},
+            "Where the HUD and menus go when Aspect ratio is wider than 16:9. Centred keeps their size and shape in "
+            "a 16:9 area in the middle of the screen, and keeps the markers on things in the world (the lock-on "
+            "reticle, enemy health bars) on them. Stretched spreads everything across the full width, wider than "
+            "it is drawn. No effect at 16:9.<br/><br/>(DES_HUD)");
         choice_row(leftPane, rightPane, "Texture filtering", "RSX_TEXFILTER", {"0", "1", "2", "3"},
             {"Original", "Nearest", "Bilinear", "Trilinear"},
             "How the game's surface textures are smoothed. Original uses the filter the game picks for each "

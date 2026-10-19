@@ -75,6 +75,8 @@ tools/des/play.sh
 
 Options go after it as `NAME=value`:
 
+- `DES_ASPECT=21:9`: a wider picture for an ultrawide display (any `w:h`, such as `2560:1080` or `32:9`, a size such as `3440x1440`, or `auto` for the display's shape). The view gets wider at the same height (the same change as RPCS3's "Aspect Ratio" patch), the window opens in that shape, and fullscreen fills the display. The game still draws 1280 pixels across, stretched, so a higher render resolution (Settings, or `RSX_SCALE=150` and up) keeps it sharp. The HUD and menus stay 16:9 in the middle, and the lock-on reticle and enemy health bars stay on their targets; full-screen fades and the dim behind menus may still cover only the middle. Shapes narrower than 16:9 keep 16:9 with bars. Read at start.
+- `DES_HUD=stretch`: with `DES_ASPECT`, spread the HUD and menus across the full width instead. `DES_HUD_FADES=1` (experimental) keeps the HUD centred but stretches the full-screen fade and the dim behind menus across the full width.
 - `DES_DOF=0`: no depth of field (live).
 - `DES_FPS=60`: the game's 60 fps mode, with real frame times. Any other number from `31` to `500` sets the frame cap to that many frames a second, and `DES_FPS=unlocked` removes the cap (the game runs as fast as the machine allows). `DES_FPS=30` keeps 30 with real frame times.
 - `DES_MOTION_BLUR=0`: no camera motion blur (live; the same change as RPCS3's "Disable Motion Blur" patch).

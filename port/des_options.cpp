@@ -889,12 +889,14 @@ extern "C" void des_slide_rate(ppu_context* ctx, uint32_t addr)
 }
 
 extern "C" void des_menu_sfx_init(void);   /* des_menu_sfx.cpp */
+extern "C" void des_aspect_init(void);     /* des_aspect.cpp */
 
 extern "C" void ps3_title_options_init(void)
 {
     /* First: settings.ini fills in the options not set in the environment. */
     des_ui_early_init();
     des_menu_sfx_init();   /* the UI's sounds through the game's menu sounds */
+    des_aspect_init();     /* DES_ASPECT, DES_HUD: before the first camera is built */
     if (env_on("DES_SKIP_INTRO")) {
         s_skip_intro = atoi(getenv("DES_SKIP_INTRO")) == 2 ? 2 : 1;
         ppu_register_function(kLogoUpdate, logo_update_skip);

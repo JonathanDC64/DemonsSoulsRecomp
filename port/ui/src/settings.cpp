@@ -31,6 +31,8 @@ constexpr Def kDefs[] = {
     {"RSX_SCALE", "100", Apply::Live},         // the D3D12 backend remakes its render targets at the next batch
     {"RSX_TEXFILTER", "0", Apply::Live},       // 0 = the game's filters; the backend's sampler key, per draw
     {"RSX_ANISO", "0", Apply::Live},           // 0 = the game's own level
+    {"DES_ASPECT", "", Apply::Restart},        // "" = 16:9; des_aspect.cpp writes the cameras' aspect at start
+    {"DES_HUD", "", Apply::Restart},           // "" = centred at 16:9, "stretch"; the HUD canvas is recorded at boot
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
     {"show_start_screen", "1", Apply::UiOnly},
     {"menu_hint", "1", Apply::UiOnly},

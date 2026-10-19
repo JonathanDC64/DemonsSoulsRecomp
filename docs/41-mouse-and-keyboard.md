@@ -194,6 +194,7 @@ How (inferred design, using code that exists):
 - **Interaction with the camera's eases:** mouse look changes only the angles. The position chase eases (des_cam_rate) still apply and are already corrected for dt. The auto-turn ease at 0x0011A100 (k = +0x224 = 0.3 per frame) is not in `insn_hooks.txt` (inferred: it runs faster above 30 fps). That is a separate high-fps item, but it decides how fast the camera swings after a set-angle event while the mouse is gated.
 - **Lock-on (inferred):** while a target is held, the camera tracks it (probably the +0x240 look-at path), so free look does not apply. A fast horizontal mouse flick can become a short virtual right-stick pulse (approach a), to switch targets. What I read: the PadManipulator variant 0x0030F7A4 compares the absolute value of each processed right-stick component against 0.1 (0x0030F948 to 0x0030F970; the 0.1 is at *(TOC-0x7A64) -0x7E34). Above it, it makes a virtual call (0x0030FC58). That looks like the target switch.
 - **Aim view (bow):** the second camera (update 0x00110608) calls 0x001B9AA0 at 0x001107B8. That function returns -1, 0 or +1 from two bits of a PadMan button word (+0x122). The camera adds that times its +0x13C to its +0x138 and clamps it, like a zoom (read). That this is the bow aim view is inferred. The aim direction comes from somewhere else (not found). Use approach (a) there until it is found.
+- **As built (aim view):** the second camera is ChrAimCam, the bow's aim view. The camera manager (0x00115370) runs one camera a game frame, by its mode (+0x74): the follow camera in modes 0 and 3, the aim camera in modes 1 and 2. The aim camera keeps pitch (+0x144) and yaw (+0x148) from frame to frame and adds the stick's turn to them, times its field of view over the widest (+0x50 / +0x134), then wraps yaw and clamps pitch. So approach (b) works there after all: mouse look's fourth hook, at its entry (0x00110608), takes the counts while its input is on (+0x184) and adds their turn to the kept angles, times the same ratio. It skips the camera's first frame (+0x140), whose angles come from the follow camera, and a frame with no character. Taking the counts there also keeps the mouse's buttons while aiming. Leaving the aim view hands the aim camera's angles to the follow camera (0x00115E08), so the turn stays.
 
 A sketch of the hook, next to `des_cam_rate` in `port/des_options.cpp`:
 
@@ -400,6 +401,6 @@ All are read in code unless marked.
 | 0x0011D508 to 0x0011D72C | stick turn, ramp path |
 | 0x0011988C to 0x00119900 | turn rates rebuilt from camera speed |
 | 0x0011A100 | auto-turn ease (k = +0x224), not dt-corrected (inferred) |
-| 0x00110608 | second camera update (aim view, inferred) |
+| 0x00110608 | ChrAimCam update, the bow's aim view (the camera manager's modes 1 and 2); mouse look's aim hook |
 | 0x0012B2F8 | `DbgCamControls`, the debug free camera (name from the RPCS3 patch) |
 | 0x018C8DB4 | `kFrameDt`, the frame step in seconds |

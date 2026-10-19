@@ -24,6 +24,9 @@
 0x00119670=des_mouse_look   # li r0, 4080: the entry (r3 = the camera); takes the counts once a game frame
 0x0011C910=des_mouse_look   # lfs f0, 0xF0(r1): the stick's pitch input, tested against 0 next; nonzero with a turn to make
 0x0011C758=des_mouse_look   # lwz r9, -0x7F84(r30): the angles rebuilt, the stick's turn next; adds the mouse's turn
+# The bow's aim view (ChrAimCam, the camera manager's modes 1 and 2) keeps its
+# angles from frame to frame, so the mouse's turn goes onto them at its entry.
+0x00110608=des_mouse_look   # li r0, 1776: the aim camera's entry (r3 = the camera, r5 = the character); takes the counts and turns its kept angles
 
 # des_cam_rate (port/des_options.cpp): loads of a per-frame ease factor k in the
 # camera code (cur += (target - cur) * k, tuned for 30 fps). Each is an lfs; the

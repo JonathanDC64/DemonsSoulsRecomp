@@ -8,8 +8,9 @@
 //   - no document of the UI is open (the start screen, the menu, settings, the keyboard, a question, the startup
 //     work);
 //   - the window is not being moved or resized, and its system menu is not open;
-//   - the game's follow camera is running: des_mouse_look (des_options.cpp) takes the counts once a game frame, and
-//     after kIdleFrames presented frames without a take (the title screen, a load, a cutscene) the game lets go;
+//   - the game's follow camera or the bow's aim view is running: des_mouse_look (des_options.cpp) takes the counts
+//     once a game frame, and after kIdleFrames presented frames without a take (the title screen, a load, a cutscene)
+//     the game lets go;
 //   - no mouse button is still held from before, such as the click that brought the window to the front or a drag of
 //     its title bar: the game takes the mouse once every button is up.
 // With mouse look on (DES_MOUSE_LOOK=1, or Settings, Controls), the cursor is then hidden (WM_SETCURSOR) and held on

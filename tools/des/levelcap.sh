@@ -20,19 +20,30 @@
 #   LC_DUMP     CELLMARK screenshot count (default 100000; 0 for none)
 #   LC_EVERY    frames between screenshots (default 30)
 #   DES_EXE     exe to run (desrun.sh; default port/build/des_boot.exe)
+#
+# Exit status: 0 done; 2 the run stopped before the level, or could not start
+# (no save at LC_SAVE); 3 the save folder could not be used: another run
+# holds it (waited DES_SAVE_LOCK_WAIT s), or the player's save could not be
+# copied aside, so nothing was swapped; 4 a run that has gone left the save
+# folder swapped out, and this one did not undo it: the [save] lines say what
+# was found and what to do (DES_SAVE_TAKEOVER, des_save_lock in deslib.sh).
 set -uo pipefail
 . "$(dirname "$0")/deslib.sh"
 cd "$DES_ROOT" || exit 1
 NAME=$1; CMDS=$2; shift 2
 SAVE="gamedata/dev_hdd0/home/00000001/savedata"
-des_save_lock "$SAVE" || { echo "[lc] $SAVE is not free; not starting"; exit 2; }
+des_save_lock "$SAVE"; case $? in
+  0) ;;
+  1) echo "[lc] $SAVE is not free; not starting"; exit 3 ;;
+  *) echo "[lc] not starting: see the [save] lines above"; exit 4 ;;
+esac
 trap 'des_save_unlock "$SAVE"' EXIT
 RUN="$DES_SCRATCH/lc_$NAME"; rm -rf "$RUN"; mkdir -p "$RUN/shots"; SHOTS="$RUN/shots"
 OUT="$RUN/run.txt"; PAD="$RUN/pad"; CON="$RUN/con"; : > "$PAD"; : > "$OUT"
 LC_SAVE="${LC_SAVE-work/tmp/regress/save}"
 if [ -d "$SAVE" ]; then
-  des_backup_save "$SAVE" "$RUN/save" || { echo "[lc] could not back up $SAVE; save not swapped"; exit 2; }
-  des_save_note "$SAVE" "$RUN/save"
+  des_backup_save "$SAVE" "$RUN/save" || { echo "[lc] could not back up $SAVE; save not swapped"; exit 3; }
+  des_save_note "$SAVE" "$RUN/save" || { echo "[lc] could not note the backup in $SAVE.lock; save not swapped"; exit 3; }
 fi
 # bash runs the EXIT trap when a plain kill, Ctrl+C or a closed terminal ends
 # it too. Further signals are ignored until the save is back: des_put_save

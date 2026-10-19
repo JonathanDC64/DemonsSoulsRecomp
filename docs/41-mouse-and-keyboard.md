@@ -253,6 +253,7 @@ This is close to the default PC layouts of FromSoftware's later games (Q lock-on
   - a click while the cursor is over another window of the same process (a dialog) still counts.
 - Fix: take the buttons from WM_INPUT (`RAWMOUSE.usButtonFlags`) only while the cursor is captured, and pass them to cellPad as a host mouse-button mask. `PAD_KEYS` then names them (`mouse1` to `mouse5`). The wrapper's input hold already covers them (`keyboard_neutral()` includes virtual keys 1 to 6).
 - Both `GetAsyncKeyState` and raw input report the physical buttons, so a left-handed button swap in Windows does not apply. The Controls tab covers that: rebind the buttons.
+- **As built** (`port/ui/src/mouse.cpp`): the buttons and the wheel come from WM_INPUT whenever the game has the mouse: the window in front, no wrapper document open, the camera running, no button held from before. That holds with mouse look on or off, because the Souls layout puts the attacks and the guard on the mouse. With mouse look on, the cursor is hidden and clipped. With it off, the cursor stays free, and a press or a wheel notch counts only over the game's picture (the client area, with no other window on top). Letting go of a button always counts.
 - Chords (Shift + click for R2 and L2) need a small binding extension: a key can carry a modifier. About half a day.
 
 ### 3.3 Wheel

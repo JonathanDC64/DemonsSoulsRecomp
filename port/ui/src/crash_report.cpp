@@ -4,6 +4,7 @@
 #include "crash_report.hpp"
 
 #include "crash_dialog.hpp"
+#include "mouse.hpp"
 #include "report.hpp"
 
 #include <windows.h>
@@ -190,6 +191,7 @@ void show_dialog() {
 }
 
 LONG WINAPI on_unhandled(EXCEPTION_POINTERS* info) {
+    mouse::release_now();  // (mouse look: the cursor shown and free while the report is written)
     // The runtime's filter first: it prints the guest state (last HLE call, guest registers) into the log.
     const LONG result = g_prev_filter ? g_prev_filter(info) : EXCEPTION_CONTINUE_SEARCH;
     const EXCEPTION_RECORD& e = *info->ExceptionRecord;
@@ -206,6 +208,7 @@ LONG WINAPI on_unhandled(EXCEPTION_POINTERS* info) {
 }
 
 void on_abort(int sig) {
+    mouse::release_now();
     CONTEXT context{};
     RtlCaptureContext(&context);
     write_report("abort (see the messages above it in the log)", &context, nullptr);

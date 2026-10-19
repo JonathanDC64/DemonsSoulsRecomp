@@ -101,6 +101,7 @@
 #include "ppu_recomp.h"
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include "ui/include/des_ui.h"  /* the wrapper UI: settings.ini and the overlay (docs/32) */
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -449,8 +450,13 @@ void frame_log()
     last_ms = ms;
 }
 
+/* Flip requests so far (any thread): des_mouse_look tells a gap in the
+ * camera's updates by them. */
+std::atomic<unsigned> s_flips{0};
+
 void on_flip_request()
 {
+    s_flips.fetch_add(1, std::memory_order_relaxed);
     fps_on_flip_request();
     if (s_framelog) frame_log();
 }
@@ -1116,6 +1122,119 @@ extern "C" void des_cut_cam(ppu_context* ctx, uint32_t addr)
     if (!said) {
         said = true;
         fprintf(stderr, "[des] DES_CUTFPS: cutscene camera keys blended (first at t=%.3f s)\n", ctx->fpr[1]);
+    }
+}
+
+/* Mouse look (docs/41, approach b): DES_MOUSE_LOOK=1, or Settings, Controls,
+ * Mouse look. The lifter calls this at the entry of the ChrExFollowCam update
+ * 0x00119670 (--insn-hooks; r3 = the camera), before the update turns the
+ * camera and places it, so both follow the new angles in the same frame. It
+ * adds the mouse's counts since the last frame (gathered on the window's
+ * thread, port/ui/src/mouse.cpp) to the camera's yaw (+0x134) and pitch
+ * (+0x130), in radians, and keeps pitch inside the camera's limits
+ * (+0x1D4 to +0x1D0) as the update does for the stick. The update then adds
+ * the right stick (input * rate * dt, 0x0011C890).
+ *
+ * Only an active camera (+0x298) takes the counts; another instance's update
+ * leaves them. The window holds the cursor only while they are being taken,
+ * so it is free on the title screen, in loads and in cutscenes, where the
+ * camera is not running. The counts are dropped while the camera has a
+ * set-angle request (+0x12C), a look-at target (+0x240, lock-on, inferred)
+ * or an auto-turn running (+0x243): the paths the update takes instead of
+ * the stick's. They are dropped too on the first update after a gap of more
+ * than three flips, so moves made while the camera was not running do not
+ * turn it all at once. On a frame where the stick moves, the update rebuilds
+ * the angles from where the camera is (0x0011D4CC), so that frame's mouse
+ * move is lost.
+ *
+ * Signs (read from the code, not yet seen in a run): pitch grows as the view
+ * looks down. 0x00114120 rebuilds it as -atan2(y, horizontal length) of the
+ * look direction, the target (+0xD0) minus the eye (+0x100). The camera
+ * matrix's Z row is that look direction (0x0011BA44, a left-handed camera),
+ * so yaw, atan2(x, z) of it, grows as the view turns right. The right stick
+ * agrees: with the game's default camera options (RotLR = RotUD = 1, set at
+ * 0x00918090), stick right raises yaw and stick up lowers pitch (getters
+ * 0x001B6A80 and 0x001B6B40; the pad's Y is up-positive, 0x00C46410). So
+ * the mouse right raises yaw and forward (dy < 0) lowers pitch: right turns
+ * right, forward looks up. DES_MOUSE_INVERT_X=1 and DES_MOUSE_INVERT_Y=1
+ * turn either around; the game's own camera options don't apply to it.
+ * DES_MOUSE_SENS is in degrees per count (0.09: a full turn per 4000). All
+ * live. The camera turns once a game frame, so at 30 fps it moves in 30 Hz
+ * steps. Main thread. DES_MOUSELOG=1 prints what happened to the counts every
+ * 60 updates (and mouse.cpp when it takes and lets go of the mouse). */
+namespace {
+constexpr uint32_t kCamPitch     = 0x130u;   /* float, radians */
+constexpr uint32_t kCamYaw       = 0x134u;   /* float, radians, kept in [-pi, pi] by the update */
+constexpr uint32_t kCamPitchMax  = 0x1D0u;
+constexpr uint32_t kCamPitchMin  = 0x1D4u;
+constexpr uint32_t kCamSetAngle  = 0x12Cu;   /* bytes */
+constexpr uint32_t kCamLookAt    = 0x240u;
+constexpr uint32_t kCamAutoTurn  = 0x243u;
+constexpr uint32_t kCamActive    = 0x298u;
+constexpr float    kMouseSensDefault = 0.09f;   /* degrees per count; settings.cpp's default too */
+constexpr unsigned kMouseStaleFlips  = 3;
+
+float mouse_sens()
+{
+    const char* v = getenv("DES_MOUSE_SENS");
+    const float s = (v && *v) ? (float)atof(v) : kMouseSensDefault;
+    return (s > 0.0f && s <= 10.0f) ? s : kMouseSensDefault;
+}
+} // namespace
+
+extern "C" void des_mouse_look(ppu_context* ctx, uint32_t addr)
+{
+    (void)addr;
+    static int on = 0, inv_x = 0, inv_y = 0, log = 0;
+    static float sens = kMouseSensDefault;
+    PS3_KNOB(on, env_on("DES_MOUSE_LOOK"));
+    PS3_KNOB(inv_x, env_on("DES_MOUSE_INVERT_X"));
+    PS3_KNOB(inv_y, env_on("DES_MOUSE_INVERT_Y"));
+    PS3_KNOB(sens, mouse_sens());
+    PS3_KNOB(log, env_on("DES_MOUSELOG"));
+    static int was_on = 0;
+    if (on != was_on) {   /* turned on or off live: the window takes or lets go of the mouse */
+        was_on = on;
+        des_mouse_refresh();
+    }
+    const uint32_t cam = (uint32_t)ctx->gpr[3];
+    if (!on || !guest_ptr_ok(cam) || !vm_read8(cam + kCamActive)) return;
+    int dx = 0, dy = 0;
+    des_mouse_take(&dx, &dy);
+    static unsigned last_flip = 0;
+    const unsigned flip = s_flips.load(std::memory_order_relaxed);
+    const bool stale = flip - last_flip > kMouseStaleFlips;
+    last_flip = flip;
+    enum { kApplied, kStale, kSetAngle, kLookAt, kAutoTurn, kReasons };
+    const int why = stale                          ? kStale
+                    : vm_read8(cam + kCamSetAngle) ? kSetAngle
+                    : vm_read8(cam + kCamLookAt)   ? kLookAt
+                    : vm_read8(cam + kCamAutoTurn) ? kAutoTurn
+                                                   : kApplied;
+    if (why == kApplied && (dx || dy)) {
+        const float k = sens * 0.0174532925f;   /* radians per count */
+        float yaw = vm_readf(cam + kCamYaw) + (inv_x ? -1.0f : 1.0f) * (float)dx * k;
+        float pitch = vm_readf(cam + kCamPitch) + (inv_y ? -1.0f : 1.0f) * (float)dy * k;
+        yaw = (float)std::remainder((double)yaw, 6.283185307179586);
+        const float lo = vm_readf(cam + kCamPitchMin), hi = vm_readf(cam + kCamPitchMax);
+        if (lo < hi) pitch = pitch < lo ? lo : pitch > hi ? hi : pitch;
+        if (std::isfinite(yaw) && std::isfinite(pitch)) {
+            vm_writef(cam + kCamYaw, yaw);
+            vm_writef(cam + kCamPitch, pitch);
+        }
+    }
+    if (log) {
+        static long long counts[kReasons];
+        static unsigned updates;
+        counts[why] += std::abs(dx) + std::abs(dy);
+        if (++updates % 60 == 0) {
+            fprintf(stderr, "[mouse] cam %08X counts used %lld, dropped: gap %lld set-angle %lld look-at %lld "
+                    "auto-turn %lld; yaw %.3f pitch %.3f in [%.3f, %.3f], %.3f deg/count\n", cam,
+                    counts[kApplied], counts[kStale], counts[kSetAngle], counts[kLookAt], counts[kAutoTurn],
+                    vm_readf(cam + kCamYaw), vm_readf(cam + kCamPitch), vm_readf(cam + kCamPitchMin),
+                    vm_readf(cam + kCamPitchMax), sens);
+            memset(counts, 0, sizeof counts);
+        }
     }
 }
 

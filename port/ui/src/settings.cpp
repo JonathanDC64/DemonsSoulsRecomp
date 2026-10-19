@@ -41,6 +41,10 @@ constexpr Def kDefs[] = {
     {"pad_menu_chord", "0", Apply::UiOnly},    // 0 = L3 + R3, 1 = Select + Start
     {"PAD_MAP", "", Apply::Live},              // cellPad, gamepad buttons (controls_window.cpp)
     {"PAD_KEYS", "", Apply::Live},             // cellPad, the keyboard pad's keys
+    {"DES_MOUSE_LOOK", "0", Apply::Live},      // mouse look (des_mouse_look; port/ui/src/mouse.cpp), read each frame
+    {"DES_MOUSE_SENS", "0.09", Apply::Live},   // mouse look's degrees per mouse count
+    {"DES_MOUSE_INVERT_X", "0", Apply::Live},
+    {"DES_MOUSE_INVERT_Y", "0", Apply::Live},
 };
 
 std::map<std::string, std::string, std::less<>> sValues;

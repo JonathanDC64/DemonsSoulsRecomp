@@ -329,6 +329,7 @@ ui::input::PadState read_pads(bool& neutral) {
     static clock_type::time_point sNextScan[XUSER_MAX_COUNT]{};
     ui::input::PadState pad;
     neutral = true;
+    if (ui::settings::no_user_input()) return pad;  // PS3_NO_USER_INPUT: no pad of the user's is read
     const auto now = clock_type::now();
     for (DWORD i = 0; i < XUSER_MAX_COUNT; i++) {
         if (now < sNextScan[i]) continue;
@@ -369,6 +370,7 @@ ui::input::PadState read_pads(bool& neutral) {
 // No key or mouse button is held (the keyboard pad's keys can be any, PAD_KEYS): the game gets its input back only
 // then.
 bool keyboard_neutral() {
+    if (ui::settings::no_user_input()) return true;  // PS3_NO_USER_INPUT: a key held is the user's
     for (int vk = 1; vk < 0xFF; vk++)
         if (GetAsyncKeyState(vk) & 0x8000) return false;
     return true;

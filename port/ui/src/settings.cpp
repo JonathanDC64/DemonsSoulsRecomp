@@ -105,6 +105,11 @@ bool scripted_run() {
            env_set("EXIT_AFTER_MS");
 }
 
+bool no_user_input() {
+    const char* v = std::getenv("PS3_NO_USER_INPUT");  // a number, as the runtime reads it: 0 or unset is off
+    return v && std::atoi(v) != 0;
+}
+
 const std::string& path() {
     if (sPathResolved) return sPath;
     sPathResolved = true;

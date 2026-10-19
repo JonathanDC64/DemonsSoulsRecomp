@@ -443,7 +443,7 @@ void frame_log()
     }
     have_pos = pos; px = x; pz = z;
     win_dt += dt; win_n++;
-    const bool f8 = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
+    const bool f8 = !ps3_env_int("PS3_NO_USER_INPUT", 0) && (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
     if (f8 && !f8_down) { fprintf(s_framelog, "MARK %.1f\n", ms); movement_dump("mark", ms); }
     f8_down = f8;
     if (ms - win_ms >= 500.0) {

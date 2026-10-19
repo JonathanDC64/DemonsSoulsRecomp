@@ -46,6 +46,7 @@ and on every change.
 | Row (tab) | Key | Values | Applies |
 |---|---|---|---|
 | Frame rate (Display) | `DES_FPS` | "" = 30 fps original, 30, 60, 120, 144, 165, 240 | at once (read at each flip request) |
+| Cutscene frame rate (Display) | `DES_CUTFPS` | 0 = 30 fps (original), 1 = the frame rate, the camera blended between its keys | at once (read at each flip request) |
 | V-sync (Display) | `DES_VSYNC` (sets `RSX_VSYNC`) | 1 / 0 | at once (live knob) |
 | Boot logos (Game) | `DES_SKIP_INTRO` | 0 = show, 1 = skip, 2 = last logo only | next start |
 | Skip opening movie (Game) | `DES_SKIP_INTRO_MOVIE` (sets `PS3_SAIL_SKIP`) | 0 / 1 | from the next movie |

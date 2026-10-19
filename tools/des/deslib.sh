@@ -177,15 +177,17 @@ des_restore_save() {
 # des_save_lock <save>: wait until no other run holds <save>, then hold it
 # (the directory <save>.lock, with the holder's pid). Waits up to
 # DES_SAVE_LOCK_WAIT seconds, a whole number (default 900, longer than a
-# capped run; 0 tries once). The lock of a run that has gone is taken over.
-# If that run had swapped the save and not put it back (it was killed
-# outright, or the copy back failed), its backup goes back first; if that
-# fails too, the lock stays and this fails.
+# capped run; 0 tries once). The lock of a run that has gone (its pid has
+# exited, or it never wrote one) is taken over by one waiter, the first to
+# make claim.<pid> in it; the others wait for that one. If that run had
+# swapped the save and not put it back (it was killed outright, or the copy
+# back failed), its backup goes back first; if that fails too, the lock stays
+# and this fails.
 # des_save_note <save> <backup>: record in the lock that <backup> holds the
 # player's save, before the swap.
 # des_save_unlock <save>: let the folder go, once the save is back.
 des_save_lock() {
-  local lock="$1.lock" wait="${DES_SAVE_LOCK_WAIT:-900}" owner b tries i nopid=0
+  local lock="$1.lock" wait="${DES_SAVE_LOCK_WAIT:-900}" owner tries i nopid=0 said=
   case "$wait" in ''|*[!0-9]*)
     echo "[save] DES_SAVE_LOCK_WAIT=$wait: it takes a whole number of seconds" >&2; return 1 ;;
   esac
@@ -193,25 +195,38 @@ des_save_lock() {
   tries=$(( 10#$wait * 2 )); [ "$tries" -ge 1 ] || tries=1
   for ((i = 1; i <= tries; i++)); do
     if mkdir "$lock" 2>/dev/null; then echo $$ > "$lock/pid"; return 0; fi
-    owner=$(cat "$lock/pid" 2>/dev/null)
+    owner=$(cat "$lock/pid" 2>/dev/null); owner="${owner//[!0-9]/}"
     if [ -n "$owner" ]; then nopid=0; else nopid=$((nopid + 1)); fi
     # Gone: its pid has exited, or it never wrote one (5 s without).
     if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } || [ $nopid -gt 10 ]; then
-      b=$(cat "$lock/backup" 2>/dev/null)
-      if [ -n "$b" ]; then
-        echo "[save] run ${owner:-?} ended with $1 swapped out; putting back $b" >&2
-        des_restore_save "$b" "$1" || { echo "[save] leaving $lock in place" >&2; return 1; }
+      if mkdir "$lock/claim.${owner:-none}" 2>/dev/null; then
+        if [ "$(cat "$lock/pid" 2>/dev/null | tr -cd 0-9)" = "$owner" ]; then
+          echo $$ > "$lock/pid"
+          des_save_takeover "$1" "${owner:-?}"; return
+        fi
+        rmdir "$lock/claim.${owner:-none}" 2>/dev/null   # it changed hands meanwhile
       fi
-      if [ "$(cat "$lock/pid" 2>/dev/null)" = "$owner" ] && rm -rf "$lock" && mkdir "$lock" 2>/dev/null; then
-        echo $$ > "$lock/pid"; return 0
-      fi
-    elif [ $i = 1 ]; then
-      echo "[save] waiting for run ${owner:-?} to finish with $1" >&2
+    elif [ -z "$said" ]; then
+      said=1; echo "[save] waiting for run ${owner:-?} to finish with $1" >&2
     fi
     if [ $i -lt $tries ]; then sleep 0.5; fi
   done
   echo "[save] gave up waiting for $1 ($lock)" >&2
   return 1
+}
+
+# des_save_takeover <save> <owner>: finish the lock of run <owner>, which has
+# gone, for des_save_lock, once this shell has claimed it and written its pid
+# in it. Returns 0 once the lock is this shell's.
+des_save_takeover() {
+  local save="$1" lock="$1.lock" b
+  b=$(cat "$lock/backup" 2>/dev/null)
+  if [ -n "$b" ]; then
+    echo "[save] run $2 ended with $save swapped out; putting back $b" >&2
+    des_restore_save "$b" "$save" || { echo "[save] leaving $lock in place" >&2; return 1; }
+  fi
+  rm -f "$lock/backup"; rm -rf "$lock"/claim.*
+  return 0
 }
 des_save_note() { realpath "$2" > "$1.lock/backup"; }
 des_save_unlock() {

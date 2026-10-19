@@ -8,6 +8,15 @@
 # (bne -> beq at 0x00217E7C).
 0x00217E70=des_motion_blur   # cmpwi cr7, r0 (= byte +0x1D4), 0
 
+# des_cut_cam (port/des_options.cpp): the cutscene camera's keys (sibcam).
+# 0x005F71D0 loads the nearest of two keys 1/30 s apart (s < 0.5 ? earlier :
+# later); with DES_CUTFPS=1 the hooks blend the two by s. The first decides
+# once a call; the other three replace the loaded vector.
+0x005F7254=des_cut_cam   # lwz r9, -0x7F6C(r30): s (f10), the gap (f11) and the key indices are set; decides once a call
+0x005F72EC=des_cut_cam   # lvx v4: position (earlier r1+0xA0, later r1+0xB0)
+0x005F7394=des_cut_cam   # lvx v12: rotation in radians, before the wrap (earlier r1+0xD0, later r1+0xA0)
+0x005F743C=des_cut_cam   # lvx v2: scale (earlier r1+0x70, later r1+0xA0)
+
 # des_cam_rate (port/des_options.cpp): loads of a per-frame ease factor k in the
 # camera code (cur += (target - cur) * k, tuned for 30 fps). Each is an lfs; the
 # hook rescales k to the frame time.

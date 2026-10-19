@@ -1396,9 +1396,10 @@ extern "C" void des_mouse_look(ppu_context* ctx, uint32_t addr)
         s_mouse_counts[kLost] += s_turn_counts;
     }
     const uint32_t cam = (uint32_t)ctx->gpr[3];
-    if (!on || !guest_ptr_ok(cam) || !vm_read8(cam + kCamActive)) return;
+    if (!guest_ptr_ok(cam) || !vm_read8(cam + kCamActive)) return;
     int dx = 0, dy = 0;
-    des_mouse_take(&dx, &dy);
+    des_mouse_take(&dx, &dy);   /* (with mouse look off too: the game has the mouse's buttons while the camera runs) */
+    if (!on) return;
     static unsigned last_flip = 0;
     const unsigned flip = s_flips.load(std::memory_order_relaxed);
     const bool stale = flip - last_flip > kMouseStaleFlips;

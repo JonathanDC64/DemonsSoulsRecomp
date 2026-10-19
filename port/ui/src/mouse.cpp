@@ -1,9 +1,9 @@
-// Written for Demon's Souls. Mouse look's side of the window (docs/41, section 1.3).
+// Written for Demon's Souls. The mouse's side of the window (docs/41, sections 1.3 and 3.2): mouse look, and the mouse
+// buttons and wheel for the keyboard layout.
 //
-// With mouse look on (DES_MOUSE_LOOK=1, or Settings, Controls), the mouse is read as raw input (WM_INPUT): counts as
-// the mouse reports them, without Windows' pointer acceleration and without stopping at the edge of the screen. The
-// game has the mouse while all of these hold:
-//   - mouse look is on;
+// The mouse is read as raw input (WM_INPUT): counts as the mouse reports them, without Windows' pointer acceleration
+// and without stopping at the edge of the screen, and the buttons as the mouse has them (Windows' swapped buttons do
+// not apply). The game has the mouse while all of these hold:
 //   - the window is in front and not minimised;
 //   - no document of the UI is open (the start screen, the menu, settings, the keyboard, a question, the startup
 //     work);
@@ -12,15 +12,16 @@
 //     after kIdleFrames presented frames without a take (the title screen, a load, a cutscene) the game lets go;
 //   - no mouse button is still held from before, such as the click that brought the window to the front or a drag of
 //     its title bar: the game takes the mouse once every button is up.
-// While the game has the mouse, the cursor is hidden (WM_SETCURSOR) and held on the middle of the window (ClipCursor),
-// so it cannot reach the title bar, the frame or another window. Anything else lets it go, shown and free, and drops
-// the counts not yet taken. Windows can drop the clip by itself (Ctrl+Alt+Del, a UAC prompt), so it is checked again
-// as the mouse moves.
+// With mouse look on (DES_MOUSE_LOOK=1, or Settings, Controls), the cursor is then hidden (WM_SETCURSOR) and held on
+// the middle of the window (ClipCursor), so it cannot reach the title bar, the frame or another window, and the counts
+// turn the camera. Windows can drop the clip by itself (Ctrl+Alt+Del, a UAC prompt), so it is checked again as the
+// mouse moves. With mouse look off, the cursor stays shown and free: a button counts only if it goes down over the
+// game's picture (the client area, with no other window on top), and so does a wheel notch; letting go always counts.
 //
-// While the game has the mouse, its buttons and wheel go to cellPad too (cellPad_host_mouse_buttons and _wheel, from
-// the same raw input), where the keyboard layout's bindings name them (mouse1 = left click is R1, wheelup is Up, and
-// so on; settings.cpp). Letting go lets go of the buttons. So a click that brings the window to the front, or one on
-// the UI, never presses anything in the game.
+// Either way, the buttons and wheel go to cellPad (cellPad_host_mouse_buttons and _wheel), where the keyboard layout's
+// bindings name them (mouse1 = left click is R1, wheelup is Up, and so on; settings.cpp). Anything else lets the mouse
+// go: the cursor shown and free, the counts not yet taken dropped, the buttons let go. So a click that brings the
+// window to the front, or one on the UI, never presses anything in the game.
 //
 // Threads: the window's thread owns the state (wndproc). The counts are atomics that the camera hook takes on the
 // game's main thread (des_mouse_take). set_ui_open and on_frame (the render thread) and des_mouse_refresh (any thread)
@@ -53,12 +54,13 @@ constexpr unsigned kIdleFrames = 10;
 std::atomic<int> sDx{0}, sDy{0};    // counts gathered while the game has the mouse: x right, y down
 std::atomic<unsigned> sTakes{0};    // des_mouse_take calls
 std::atomic<bool> sCamera{false};   // the game's camera takes the counts (on_frame)
-std::atomic<bool> sHeld{false};     // the cursor is hidden and clipped
+std::atomic<bool> sHeld{false};     // the cursor is hidden and clipped (mouse look)
 std::atomic<bool> sUiOpen{false};   // a document of the UI is open
 std::atomic<HWND> sHwnd{nullptr};   // the game's window, for posting to it
 
 // The window's thread only.
 bool sRegistered = false;   // raw mouse input is registered for the window
+bool sFree = false;         // the game has the buttons and the wheel, the cursor shown and free (mouse look off)
 bool sSizeMove = false;     // between WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE
 bool sMenuLoop = false;     // the window's system menu is open
 bool sWaitButtons = false;  // the game would have the mouse, but a button is still held
@@ -93,25 +95,32 @@ bool is_mouse_message(unsigned msg) {
     return (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || (msg >= WM_NCMOUSEMOVE && msg <= WM_NCXBUTTONDBLCLK);
 }
 
-// Raw input from the mouse (usage page 1, usage 2) for the window, while mouse look is on. Without RIDEV_INPUTSINK it
-// arrives only while the window is in front; without RIDEV_NOLEGACY the UI still gets its usual mouse messages.
-void register_raw(HWND hwnd, bool on) {
-    if (on == sRegistered) return;
+// Raw input from the mouse (usage page 1, usage 2) for the window. Without RIDEV_INPUTSINK it arrives only while the
+// window is in front; without RIDEV_NOLEGACY the UI still gets its usual mouse messages.
+void register_raw(HWND hwnd) {
+    if (sRegistered) return;
     RAWINPUTDEVICE rid{};
     rid.usUsagePage = 0x01;
     rid.usUsage = 0x02;
-    rid.dwFlags = on ? 0 : RIDEV_REMOVE;
-    rid.hwndTarget = on ? hwnd : nullptr;
+    rid.hwndTarget = hwnd;
     if (RegisterRawInputDevices(&rid, 1, sizeof rid)) {
-        sRegistered = on;
-        std::fprintf(stderr, "[mouse] mouse look %s\n", on ? "on (raw mouse input)" : "off");
+        sRegistered = true;
         return;
     }
     static bool said = false;
     if (!said) {
         said = true;
-        std::fprintf(stderr, "[mouse] RegisterRawInputDevices failed (error %lu): no mouse look\n", GetLastError());
+        std::fprintf(stderr, "[mouse] RegisterRawInputDevices failed (error %lu): no mouse look, buttons or wheel\n",
+                     GetLastError());
     }
+}
+
+// The cursor is over the window's client area, with no other window on top there: a click there is on the game.
+bool over_picture(HWND hwnd) {
+    POINT p{};
+    if (!GetCursorPos(&p) || WindowFromPoint(p) != hwnd) return false;
+    RECT c{};
+    return ScreenToClient(hwnd, &p) && GetClientRect(hwnd, &c) && PtInRect(&c, p);
 }
 
 // The middle of the client area, in screen pixels: where the hidden cursor is held.
@@ -147,6 +156,10 @@ void let_go(HWND hwnd, const char* why) {
         cellPad_host_mouse_buttons(0);
     }
     sWheel = 0;
+    if (sFree) {
+        sFree = false;
+        if (log_on()) std::fprintf(stderr, "[mouse] let go (%s)\n", why);
+    }
     if (!sHeld.exchange(false)) return;
     ClipCursor(nullptr);
     sDx.store(0);
@@ -159,10 +172,15 @@ void let_go(HWND hwnd, const char* why) {
 
 // Gives the game the mouse or lets it go, as things are now.
 void update(HWND hwnd, const char* why) {
-    const bool on = env_on("DES_MOUSE_LOOK");
-    register_raw(hwnd, on);
-    const char* no = !on                                                ? "mouse look off"
-                     : !sRegistered                                     ? "no raw mouse input"
+    register_raw(hwnd);
+    const bool look = env_on("DES_MOUSE_LOOK");
+    static int sLookSaid = -1;
+    if (sLookSaid != int(look)) {
+        sLookSaid = int(look);
+        std::fprintf(stderr, "[mouse] mouse look %s\n",
+                     look ? "on" : "off (mouse buttons and wheel with the cursor free)");
+    }
+    const char* no = !sRegistered                                       ? "no raw mouse input"
                      : GetForegroundWindow() != hwnd || IsIconic(hwnd) ? "window in the background"
                      : sUiOpen.load(std::memory_order_acquire)          ? "a menu of the UI is open"
                      : sSizeMove                                        ? "window moving or resizing"
@@ -173,12 +191,19 @@ void update(HWND hwnd, const char* why) {
         let_go(hwnd, no);
         return;
     }
-    if (sHeld.load()) {
-        hold(hwnd, why);  // the clip again
+    if (look ? sHeld.load() : sFree) {  // the game has the mouse already, the same way
+        if (look) hold(hwnd, why);       // the clip again
         return;
     }
+    if (sHeld.load() || sFree) let_go(hwnd, look ? "mouse look on" : "mouse look off");  // the other way: over again
     sWaitButtons = buttons_down();  // the click that brought the window up, or a drag of its title bar, ends first
-    if (!sWaitButtons) hold(hwnd, why);
+    if (sWaitButtons) return;
+    if (look) {
+        hold(hwnd, why);
+    } else {
+        sFree = true;
+        if (log_on()) std::fprintf(stderr, "[mouse] buttons and wheel, cursor free (%s)\n", why);
+    }
 }
 
 void on_input(HWND hwnd, WPARAM wp, LPARAM lp) {
@@ -186,7 +211,8 @@ void on_input(HWND hwnd, WPARAM wp, LPARAM lp) {
         if (!buttons_down()) update(hwnd, "buttons up");
         return;  // nothing counts before the game has the mouse
     }
-    if (!sHeld.load(std::memory_order_relaxed) || GET_RAWINPUT_CODE_WPARAM(wp) != RIM_INPUT) return;
+    const bool held = sHeld.load(std::memory_order_relaxed);
+    if ((!held && !sFree) || GET_RAWINPUT_CODE_WPARAM(wp) != RIM_INPUT) return;
     RAWINPUT ri;
     UINT size = sizeof ri;
     if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lp), RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER)) == UINT(-1) ||
@@ -194,34 +220,37 @@ void on_input(HWND hwnd, WPARAM wp, LPARAM lp) {
         return;
     }
     const RAWMOUSE& m = ri.data.mouse;
-    LONG dx = m.lLastX, dy = m.lLastY;
-    if (m.usFlags & MOUSE_MOVE_ABSOLUTE) {  // 0..65535 across the screen (or the virtual desktop): a change in pixels
-        const bool desk = (m.usFlags & MOUSE_VIRTUAL_DESKTOP) != 0;
-        const LONG x = MulDiv(m.lLastX, GetSystemMetrics(desk ? SM_CXVIRTUALSCREEN : SM_CXSCREEN), 65535);
-        const LONG y = MulDiv(m.lLastY, GetSystemMetrics(desk ? SM_CYVIRTUALSCREEN : SM_CYSCREEN), 65535);
-        dx = sAbsValid ? x - sAbsX : 0;
-        dy = sAbsValid ? y - sAbsY : 0;
-        sAbsX = x;
-        sAbsY = y;
-        sAbsValid = true;
+    if (held) {  // the counts, for the camera
+        LONG dx = m.lLastX, dy = m.lLastY;
+        if (m.usFlags & MOUSE_MOVE_ABSOLUTE) {  // 0..65535 across the screen (or the virtual desktop): pixels moved
+            const bool desk = (m.usFlags & MOUSE_VIRTUAL_DESKTOP) != 0;
+            const LONG x = MulDiv(m.lLastX, GetSystemMetrics(desk ? SM_CXVIRTUALSCREEN : SM_CXSCREEN), 65535);
+            const LONG y = MulDiv(m.lLastY, GetSystemMetrics(desk ? SM_CYVIRTUALSCREEN : SM_CYSCREEN), 65535);
+            dx = sAbsValid ? x - sAbsX : 0;
+            dy = sAbsValid ? y - sAbsY : 0;
+            sAbsX = x;
+            sAbsY = y;
+            sAbsValid = true;
+        }
+        if (dx) sDx.fetch_add(int(dx), std::memory_order_relaxed);
+        if (dy) sDy.fetch_add(int(dy), std::memory_order_relaxed);
     }
-    if (dx) sDx.fetch_add(int(dx), std::memory_order_relaxed);
-    if (dy) sDy.fetch_add(int(dy), std::memory_order_relaxed);
     if (const USHORT f = m.usButtonFlags) {  // the buttons and the wheel, for cellPad
         static const USHORT kDown[5] = {RI_MOUSE_BUTTON_1_DOWN, RI_MOUSE_BUTTON_2_DOWN, RI_MOUSE_BUTTON_3_DOWN,
                                         RI_MOUSE_BUTTON_4_DOWN, RI_MOUSE_BUTTON_5_DOWN};
         static const USHORT kUp[5] = {RI_MOUSE_BUTTON_1_UP, RI_MOUSE_BUTTON_2_UP, RI_MOUSE_BUTTON_3_UP,
                                       RI_MOUSE_BUTTON_4_UP, RI_MOUSE_BUTTON_5_UP};
+        const bool over = held || over_picture(hwnd);  // (a free cursor: presses and notches over the picture only)
         unsigned b = sButtons;
         for (int i = 0; i < 5; i++) {
-            if (f & kDown[i]) b |= 1u << i;
+            if ((f & kDown[i]) && over) b |= 1u << i;
             if (f & kUp[i]) b &= ~(1u << i);
         }
         if (b != sButtons) {
             sButtons = b;
             cellPad_host_mouse_buttons(b);
         }
-        if (f & RI_MOUSE_WHEEL) {  // usButtonData: signed, WHEEL_DELTA a notch, positive away from the user
+        if ((f & RI_MOUSE_WHEEL) && over) {  // usButtonData: signed, WHEEL_DELTA a notch, positive away from the user
             sWheel += short(m.usButtonData);
             if (const int notches = sWheel / WHEEL_DELTA) {
                 sWheel -= notches * WHEEL_DELTA;
@@ -229,6 +258,7 @@ void on_input(HWND hwnd, WPARAM wp, LPARAM lp) {
             }
         }
     }
+    if (!held) return;
     RECT clip{};
     if (GetClipCursor(&clip) && !EqualRect(&clip, &sClip)) hold(hwnd, "clip lost");  // Windows dropped it
 }

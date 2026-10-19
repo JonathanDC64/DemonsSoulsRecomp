@@ -40,6 +40,15 @@
 # strengths that the image-process update blends from the area's DOF_BANK rows.
 0x002184DC=des_dof   # lbz r0, 0x1C4(r31), the first instruction after the blend (bl 0x005EAF18)
 
+# DES_ASPECT wider than 16:9 (port/des_aspect.cpp): the HUD and menus kept 16:9
+# in the middle (unless DES_HUD=stretch). All are no-ops at 16:9.
+0x00718D84=des_hud_canvas     # stfs f13,0(r11): the menu canvas's right word (1280); widened to [-L, 1280+L]
+0x0079EF7C=des_hud_w2s        # stvx v31,0,r29: WorldToScreen's result; x spread onto the wider canvas
+0x007B5AE8=des_hud_onscreen   # lfs f13,0(r3): TargettingSite's on-screen test, x
+0x007B61D4=des_hud_onscreen   # lfs f13,0(r3): TargettingSite's update, the same test
+0x008AEB68=des_hud_onscreen   # lfs f13,0(r31): FloatingPCGauge's on-screen test, x
+0x007A6264=des_hud_onscreen   # lfs f13,0(r26): 0x007A61D8's on-screen test (the +0xBA0 slot), x
+
 # ChrFollowCam update (0x00122C40).
 0x00123100=des_cam_rate   # k = +0x114
 0x00123164=des_cam_rate   # k = +0x114
@@ -58,12 +67,3 @@
 # for 30 fps. The hook scales the stick (f1, f2) by the frame's 30 Hz steps.
 0x008DA0E0=des_viewer_rate   # stdu r1, -0x290(r1), the first instruction: the face (Edit Appearance)
 0x008DB170=des_viewer_rate   # stdu r1, -0x290(r1), the first instruction: the body
-
-# DES_ASPECT wider than 16:9 (port/des_aspect.cpp): the HUD and menus kept 16:9
-# in the middle (unless DES_HUD=stretch). All are no-ops at 16:9.
-0x00718D84=des_hud_canvas     # stfs f13,0(r11): the menu canvas's right word (1280); widened to [-L, 1280+L]
-0x0079EF7C=des_hud_w2s        # stvx v31,0,r29: WorldToScreen's result; x spread onto the wider canvas
-0x007B5AE8=des_hud_onscreen   # lfs f13,0(r3): TargettingSite's on-screen test, x
-0x007B61D4=des_hud_onscreen   # lfs f13,0(r3): TargettingSite's update, the same test
-0x008AEB68=des_hud_onscreen   # lfs f13,0(r31): FloatingPCGauge's on-screen test, x
-0x007A6264=des_hud_onscreen   # lfs f13,0(r26): 0x007A61D8's on-screen test (the +0xBA0 slot), x

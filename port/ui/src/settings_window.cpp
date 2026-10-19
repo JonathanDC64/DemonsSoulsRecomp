@@ -183,12 +183,6 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         auto& leftPane = add_child<Pane>(content, Pane::Type::Controlled);
         auto& rightPane = add_child<Pane>(content, Pane::Type::Uncontrolled);
 
-        choice_row(leftPane, rightPane, "Render resolution", "RSX_SCALE", {"100", "150", "200", "300"},
-            {"100% (original)", "150%", "200%", "300%"},
-            "Draws the game at a multiple of the PS3's 1280x720: 150% is 1920x1080, 200% 2560x1440, 300% "
-            "3840x2160. The picture is then fitted to the window, so a higher setting is sharper even in a smaller "
-            "window. The HUD and menus are drawn at the same size. Costs GPU time: about four times the pixels at "
-            "200%. Applies at once.<br/><br/>(RSX_SCALE)");
         choice_row(leftPane, rightPane, "Aspect ratio", "DES_ASPECT",
             {"", "2560:1080", "3440:1440", "3840:1600", "32:9", "auto"},
             {"16:9 (original)", "21:9 (2560x1080)", "21:9 (3440x1440)", "21:9 (3840x1600)", "32:9", "Match the display"},
@@ -203,6 +197,12 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "a 16:9 area in the middle of the screen, and keeps the markers on things in the world (the lock-on "
             "reticle, enemy health bars) on them. Stretched spreads everything across the full width, wider than "
             "it is drawn. No effect at 16:9.<br/><br/>(DES_HUD)");
+        choice_row(leftPane, rightPane, "Render resolution", "RSX_SCALE", {"100", "150", "200", "300"},
+            {"100% (original)", "150%", "200%", "300%"},
+            "Draws the game at a multiple of the PS3's 1280x720: 150% is 1920x1080, 200% 2560x1440, 300% "
+            "3840x2160. The picture is then fitted to the window, so a higher setting is sharper even in a smaller "
+            "window. The HUD and menus are drawn at the same size. Costs GPU time: about four times the pixels at "
+            "200%. Applies at once.<br/><br/>(RSX_SCALE)");
         choice_row(leftPane, rightPane, "Texture filtering", "RSX_TEXFILTER", {"0", "1", "2", "3"},
             {"Original", "Nearest", "Bilinear", "Trilinear"},
             "How the game's surface textures are smoothed. Original uses the filter the game picks for each "

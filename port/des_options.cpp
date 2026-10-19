@@ -114,6 +114,7 @@ extern "C" void (*g_gcm_flip_request_hook)(void);
 extern "C" unsigned (*g_pad_title_hook)(void);
 extern "C" void (*g_fs_open_hook)(const char* guest_path);
 extern "C" void ps3_vblank_set_mhz(int mhz);   /* boot_main.cpp; 0 = VBLANK_MHZ */
+extern "C" void des_aspect_init(void);         /* des_aspect.cpp: DES_ASPECT, DES_HUD */
 extern "C" volatile unsigned g_pad0_reads, g_pad0_empty_reads, g_pad0_buttons, g_pad0_lstick;   /* cellPad.c */
 extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vkey);   /* user32 */
 constexpr int VK_F8 = 0x77;
@@ -1125,6 +1126,7 @@ extern "C" void ps3_title_options_init(void)
 {
     /* First: settings.ini fills in the options not set in the environment. */
     des_ui_early_init();
+    des_aspect_init();     /* DES_ASPECT, DES_HUD: before the first camera is built */
     des_menu_sfx_init();   /* the UI's sounds through the game's menu sounds */
     des_chrins_init();     /* the character step's handshake without its lost-kick race */
     if (env_on("DES_SKIP_INTRO")) {

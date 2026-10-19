@@ -183,6 +183,20 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         auto& leftPane = add_child<Pane>(content, Pane::Type::Controlled);
         auto& rightPane = add_child<Pane>(content, Pane::Type::Uncontrolled);
 
+        choice_row(leftPane, rightPane, "Aspect ratio", "DES_ASPECT",
+            {"", "2560:1080", "3440:1440", "3840:1600", "32:9", "auto"},
+            {"16:9 (original)", "21:9 (2560x1080)", "21:9 (3440x1440)", "21:9 (3840x1600)", "32:9", "Match the display"},
+            "The shape of the picture, for ultrawide displays. A wider shape shows more of the scene at the sides, "
+            "with the same height as at 16:9. The window opens in that shape, and fullscreen fills an ultrawide "
+            "display. The game still draws 1280 pixels across, stretched to the wider shape, so raise Render "
+            "resolution to keep it sharp. Match the display uses the main display's shape. Displays narrower than "
+            "16:9 (16:10, 4:3) keep 16:9 with bars. The HUD and menus stay 16:9 in the middle (see HUD below); "
+            "full-screen fades and the dim behind menus may still cover only that middle.<br/><br/>(DES_ASPECT)");
+        choice_row(leftPane, rightPane, "HUD", "DES_HUD", {"", "stretch"}, {"Centred 16:9", "Stretched"},
+            "Where the HUD and menus go when Aspect ratio is wider than 16:9. Centred keeps their size and shape in "
+            "a 16:9 area in the middle of the screen, and keeps the markers on things in the world (the lock-on "
+            "reticle, enemy health bars) on them. Stretched spreads everything across the full width, wider than "
+            "it is drawn. No effect at 16:9.<br/><br/>(DES_HUD)");
         choice_row(leftPane, rightPane, "Render resolution", "RSX_SCALE", {"100", "150", "200", "300"},
             {"100% (original)", "150%", "200%", "300%"},
             "Draws the game at a multiple of the PS3's 1280x720: 150% is 1920x1080, 200% 2560x1440, 300% "

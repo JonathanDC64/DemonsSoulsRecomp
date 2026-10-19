@@ -528,3 +528,11 @@ Use the usual `play.sh` line (pinned save, scratch dir, `RSX_PRESENT` from the l
 | 0x0071B800 | default clip rect [0, -1280, 1280, 1280] | H3 risk |
 | 0x00096348 | second 1280x720 canvas record (three contexts at boot) | check in R3/R4 |
 | 0x00949228, 0x0094F978 | movie player calls with 1280x720 | check in R4 |
+
+## 7. Corrections from the first implementation
+
+Found while building the first ultrawide version (branch `feat/ultrawide`, 2026-10-18). They replace what sections 3 and 6 say:
+
+- **Plate rects.** FadePlate's and CommonBackPlate's rect is stored in the dialog at +0x74 (left, top, right, bottom). It is not set through vtable +0x50 and read through +0x58, as "Dialog layout and anchors" and the full-screen plates fix say.
+- **A fourth on-screen test.** 0x007A61D8, listed as unclassified in the 1280/720 table, is a fourth on-screen test. It loads x at 0x007A6264. It needs the same treatment as the other three; the implementation hooks all four.
+- **WorldToScreen's callers.** 0x0079F780 does not call WorldToScreen. Its callers among the HUD anchor updates are 0x0079EFA0, 0x0079F4A8 and 0x0079FCB8.

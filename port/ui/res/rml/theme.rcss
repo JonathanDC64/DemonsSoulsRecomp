@@ -66,6 +66,12 @@ body {
     --color-danger-border: #6E1A17;
     --color-danger-heading: #A8241D;
 
+    /* Trophy grades (the pop-ups and the Trophies window) */
+    --color-grade-platinum: rgb(180, 205, 225);
+    --color-grade-gold: rgb(222, 184, 84);
+    --color-grade-silver: rgb(192, 194, 198);
+    --color-grade-bronze: rgb(196, 128, 72);
+
     --button-color: var(--color-text);
     --button-background: rgba(var(--color-control-rgb), 20%);
     --button-background-hover: rgba(var(--color-interactive-rgb), 12%);

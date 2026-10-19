@@ -41,6 +41,13 @@ des_env_defaults() {
   if [ "${DES_KIND:-test}" != play ] && [ -z "${RSX_PRESENT:-}" ]; then
     export RSX_PRESENT=$(des_session_locked && echo 0 || echo 1)
   fi
+  # Test runs ignore the user's pads, keyboard and mouse, and their window
+  # never takes the focus (PS3_NO_USER_INPUT, ps3recomp's ps3_knob.h): someone
+  # at the PC cannot nudge a run, and their typing stays in their own window.
+  # Scripted input still drives it. PS3_NO_USER_INPUT=0 to drive one by hand.
+  if [ "${DES_KIND:-test}" != play ]; then
+    export PS3_NO_USER_INPUT="${PS3_NO_USER_INPUT:-1}"
+  fi
   # Per-event log lines go through one FILE lock and change the timing being
   # measured (ps3_log.h); runs are quiet unless asked. PS3_VERBOSE=1 restores.
   export PS3_VERBOSE="${PS3_VERBOSE:-0}"

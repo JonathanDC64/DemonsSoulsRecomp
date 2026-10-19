@@ -27,6 +27,9 @@ const Rml::String kDocumentSource = R"RML(
 )RML";
 
 constexpr auto kMenuNotificationDuration = std::chrono::milliseconds(2500);
+// A closing toast (or the menu hint) goes when its transition ends, and this long after its time at the latest: while
+// one is up the UI stays awake (Overlay::busy), so a transition that never ends must not keep it so.
+constexpr auto kCloseTimeout = std::chrono::milliseconds(1000);
 
 Rml::Element* create_toast(Rml::Element* parent, const Toast& toast) {
     auto* elem = append(parent, "toast");
@@ -133,7 +136,8 @@ void Overlay::update() {
     if (mMenuNotification != nullptr) {
         if (clock::now() >= mMenuNotificationStartTime + kMenuNotificationDuration) {
             if (!animated || mMenuNotification->IsPseudoClassSet("done") ||
-                !mMenuNotification->IsPseudoClassSet("opened"))
+                !mMenuNotification->IsPseudoClassSet("opened") ||
+                clock::now() >= mMenuNotificationStartTime + kMenuNotificationDuration + kCloseTimeout)
             {
                 remove_element(mMenuNotification);
             } else {
@@ -172,7 +176,8 @@ void Overlay::update() {
         if (remaining == 0.f) {
             if (!animated || mCurrentToast->IsPseudoClassSet("done") ||
                 // Fallback for large gaps in time where we never actually opened it
-                !mCurrentToast->IsPseudoClassSet("opened"))
+                !mCurrentToast->IsPseudoClassSet("opened") ||
+                clock::now() >= mCurrentToastStartTime + toast.duration + kCloseTimeout)
             {
                 remove_element(mCurrentToast);
                 toasts.pop_front();

@@ -19,7 +19,7 @@ The first level is playable, from boot to Boletaria (2026-10):
 Known issues:
 
 - Some transparent effects (a fog wall, the soul-form aura, fog in the first cutscene) vanish for single frames.
-- Above 30 fps, cutscenes switch back to 30 on their own: the game's cutscene manager moves things at 30 Hz, and they judder otherwise. Above 60, physics is untested (RPCS3 warns of trouble there).
+- Above 30 fps, cutscenes switch back to 30 on their own: the cutscene camera moves in 30 Hz steps, and they judder otherwise. `DES_CUTFPS=1` keeps them at the frame rate and blends the camera between its steps (opt-in). Above 60, physics is untested (RPCS3 warns of trouble there).
 - Only Demon's Souls is tested on this branch of ps3recomp.
 
 The full history, root causes and tools are in [`docs/`](docs/). Start with [`docs/28-in-game.md`](docs/28-in-game.md), which covers the current state.
@@ -75,6 +75,9 @@ tools/des/play.sh
 
 Options go after it as `NAME=value`:
 
+- `DES_ASPECT=21:9`: a wider picture for an ultrawide display (any `w:h`, such as `2560:1080` or `32:9`, a size such as `3440x1440`, or `auto` for the display's shape). The view gets wider at the same height (the same change as RPCS3's "Aspect Ratio" patch), the window opens in that shape, and fullscreen fills the display. The game still draws 1280 pixels across, stretched, so a higher render resolution (Settings, or `RSX_SCALE=150` and up) keeps it sharp. The HUD and menus stay 16:9 in the middle, and the lock-on reticle and enemy health bars stay on their targets; full-screen fades and the dim behind menus may still cover only the middle. Shapes narrower than 16:9 keep 16:9 with bars. Read at start.
+- `DES_HUD=stretch`: with `DES_ASPECT`, spread the HUD and menus across the full width instead. `DES_HUD_FADES=1` (experimental) keeps the HUD centred but stretches the full-screen fade and the dim behind menus across the full width.
+- `DES_CUTFPS=1`: with `DES_FPS` above 30, in-engine cutscenes stay at that frame rate instead of switching to 30, and the camera is blended between its 30 Hz keys (live).
 - `DES_DOF=0`: no depth of field (live).
 - `DES_FPS=60`: the game's 60 fps mode, with real frame times. Any other number from `31` to `500` sets the frame cap to that many frames a second, and `DES_FPS=unlocked` removes the cap (the game runs as fast as the machine allows). `DES_FPS=30` keeps 30 with real frame times.
 - `DES_MOTION_BLUR=0`: no camera motion blur (live; the same change as RPCS3's "Disable Motion Blur" patch).
@@ -89,6 +92,8 @@ For example `tools/des/play.sh DES_SKIP_INTRO=1 DES_AUTO_CONTINUE=1 DES_FPS=60`.
 A start screen (Play, Settings, Quit) shows over the boot logos. In the game, F1 or Esc (L3 + R3 on a gamepad) opens a menu with Settings and Quit; the game gets no input while it is open, and the menus use the game's own menu sounds. Settings are saved to `%APPDATA%\DemonsSoulsRecomp\DemonsSouls\settings.ini` (next to the exe if a `portable.txt` is there); an option given on the command line wins over the file. `DES_UI=0` turns all of it off, and `DES_SKIP_UI=1` skips the start screen once. The frame rate can be changed in Settings during play. The window can be moved and resized without stopping the game (the game is scaled to it, letterboxed), and Alt+Enter switches to borderless fullscreen. Details in [`docs/32`](docs/32-launcher-ui.md).
 
 Settings, Controls, Change Buttons chooses which gamepad button or key presses each of the PS3 pad's buttons. From the command line: `PAD_MAP=cross=circle,circle=cross` (the game's button = the gamepad's button) and `PAD_KEYS=cross=J,l3=0x10` (the game's button = a letter, digit or virtual-key code). Button names: cross circle square triangle l1 r1 l2 r2 l3 r3 start select up down left right.
+
+Settings, Controls, Mouse look turns the camera with the mouse as well as the right stick (off by default; `DES_MOUSE_LOOK=1` from the command line, live). In play the cursor is hidden and held in the window (on the title screen, in loading screens and in cutscenes it is free); F1 or Esc, switching to another window or moving the window frees it too, and it is taken again when you come back, once the mouse buttons are up. `DES_MOUSE_SENS` is the sensitivity in degrees per count of the mouse (default `0.09`, a full turn per 4000 counts), and `DES_MOUSE_INVERT_Y=1` and `DES_MOUSE_INVERT_X=1` invert it. The camera turns once a game frame, so it is smoothest at 60 fps or more. While locked on, the mouse does nothing; the mouse buttons are not used yet. It needs the menus (not with `DES_UI=0`).
 
 The window opens at once. The first start after an update then fills the shader cache in `gamedata/shader_cache` behind a progress bar (under a minute; Skip leaves the rest to compile as the game draws them), so the game never stops to compile one. This runs the game for up to an hour (`play.sh 120` for two) with sound, at normal priority on every CPU, and logs to `work/tmp/play.txt`. Saves go to `gamedata/dev_hdd0/home/00000001/savedata`. F9 captures a frame for `rsx_replay`, F10 saves screenshots, and F11 starts and stops a profile session (frame times and the worst frames, in `work/tmp/prof`). The debug and test tools are described in [`docs/28`](docs/28-in-game.md#debug-and-test-tools-2026-10-14).
 

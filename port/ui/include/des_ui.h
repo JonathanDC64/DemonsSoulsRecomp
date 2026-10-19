@@ -12,6 +12,18 @@ extern "C" {
  * settings) on the D3D12 backend. DES_UI=0 skips all of it. */
 void des_ui_early_init(void);
 
+/* Mouse look (docs/41; port/ui/src/mouse.cpp): the mouse's counts (x right,
+ * y down) gathered on the window's thread since the last call, while the game
+ * has the mouse (DES_MOUSE_LOOK on, the window in front, no document of the
+ * UI open); 0 otherwise. des_mouse_look (des_options.cpp) takes them once a
+ * game frame while the follow camera runs, and the game has the mouse only
+ * while these calls keep coming. Any thread. */
+void des_mouse_take(int* dx, int* dy);
+
+/* Mouse look's settings changed: the window's thread takes or lets go of the
+ * mouse to match, soon after. Any thread. */
+void des_mouse_refresh(void);
+
 /* The UI's sounds, by id (ui::Sound in port/ui/src/sound.hpp, in this order). */
 enum {
     DES_UI_SOUND_CLICK = 0,       /* a button pressed */

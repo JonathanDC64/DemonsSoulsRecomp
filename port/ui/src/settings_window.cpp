@@ -20,6 +20,7 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <format>
 #include <string>
@@ -155,6 +156,24 @@ int fps_custom() {
     return std::clamp(std::atoi(v.c_str()), kFpsMin, kFpsMax);
 }
 
+// Mouse sensitivity, shown as a percentage of its default (DES_MOUSE_SENS, degrees per count; des_mouse_look in
+// des_options.cpp).
+constexpr int kMouseSensMin = 5;
+constexpr int kMouseSensMax = 500;
+
+double mouse_sens_default() {
+    const settings::Def* d = settings::find("DES_MOUSE_SENS");
+    return d ? std::atof(d->def) : 0.09;
+}
+
+int mouse_sens_percent() {
+    const std::string v =
+        settings::pinned("DES_MOUSE_SENS") ? settings::pinned_value("DES_MOUSE_SENS") : settings::get("DES_MOUSE_SENS");
+    const double sens = std::atof(v.c_str());
+    if (!(sens > 0.0) || !(mouse_sens_default() > 0.0)) return 100;  // (des_mouse_look uses the default then)
+    return std::clamp(int(std::lround(sens / mouse_sens_default() * 100.0)), kMouseSensMin, kMouseSensMax);
+}
+
 // The software this program is made of (mirrors port/ui/NOTICE.md).
 struct Credit {
     const char* name;
@@ -183,12 +202,31 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         auto& leftPane = add_child<Pane>(content, Pane::Type::Controlled);
         auto& rightPane = add_child<Pane>(content, Pane::Type::Uncontrolled);
 
+        choice_row(leftPane, rightPane, "Aspect ratio", "DES_ASPECT",
+            {"", "2560:1080", "3440:1440", "3840:1600", "32:9", "auto"},
+            {"16:9 (original)", "21:9 (2560x1080)", "21:9 (3440x1440)", "21:9 (3840x1600)", "32:9", "Match the display"},
+            "The shape of the picture, for ultrawide displays. A wider shape shows more of the scene at the sides, "
+            "with the same height as at 16:9. The window opens in that shape, and fullscreen fills an ultrawide "
+            "display. The game still draws 1280 pixels across, stretched to the wider shape, so raise Render "
+            "resolution to keep it sharp. Match the display uses the main display's shape. Displays narrower than "
+            "16:9 (16:10, 4:3) keep 16:9 with bars. The HUD and menus stay 16:9 in the middle (see HUD below); "
+            "full-screen fades and the dim behind menus may still cover only that middle.<br/><br/>(DES_ASPECT)");
+        choice_row(leftPane, rightPane, "HUD", "DES_HUD", {"", "stretch"}, {"Centred 16:9", "Stretched"},
+            "Where the HUD and menus go when Aspect ratio is wider than 16:9. Centred keeps their size and shape in "
+            "a 16:9 area in the middle of the screen, and keeps the markers on things in the world (the lock-on "
+            "reticle, enemy health bars) on them. Stretched spreads everything across the full width, wider than "
+            "it is drawn. No effect at 16:9.<br/><br/>(DES_HUD)");
         choice_row(leftPane, rightPane, "Render resolution", "RSX_SCALE", {"100", "150", "200", "300"},
             {"100% (original)", "150%", "200%", "300%"},
             "Draws the game at a multiple of the PS3's 1280x720: 150% is 1920x1080, 200% 2560x1440, 300% "
             "3840x2160. The picture is then fitted to the window, so a higher setting is sharper even in a smaller "
             "window. The HUD and menus are drawn at the same size. Costs GPU time: about four times the pixels at "
             "200%. Applies at once.<br/><br/>(RSX_SCALE)");
+        choice_row(leftPane, rightPane, "Scaling filter", "RSX_OUTFILTER", {"0", "1"}, {"Bilinear", "Sharp"},
+            "How the finished picture is fitted to the window. Bilinear is the plain filter used so far. Sharp "
+            "averages all the pixels the picture has under each window pixel when it is bigger than the window "
+            "(a render resolution above the window's size), so fine detail does not shimmer, and uses a bicubic "
+            "filter when it is smaller, which is crisper than bilinear. Applies at once.<br/><br/>(RSX_OUTFILTER)");
         choice_row(leftPane, rightPane, "Texture filtering", "RSX_TEXFILTER", {"0", "1", "2", "3"},
             {"Original", "Nearest", "Bilinear", "Trilinear"},
             "How the game's surface textures are smoothed. Original uses the filter the game picks for each "
@@ -201,6 +239,10 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "Keeps textures sharp when they are seen at a steep angle, such as floors and walls into the distance. "
             "Original uses the level the game asks for, which is 4x on most surfaces. Costs a little GPU time at "
             "16x. Applies at once.<br/><br/>(RSX_ANISO)");
+        choice_row(leftPane, rightPane, "Anti-aliasing", "RSX_AA", {"0", "1"}, {"Off (original)", "FXAA"},
+            "Smooths the jagged edges of the 3D scene. FXAA is a filter over the finished scene, run before the "
+            "HUD is drawn, so text and the HUD stay sharp. It also softens fine texture detail a little. Costs a "
+            "little GPU time, more at a higher render resolution. Applies at once.<br/><br/>(RSX_AA)");
         bool_row(leftPane, rightPane, "Depth of field", "DES_DOF",
             "The game's depth of field: distant scenery is blurred, more in some areas than others. Off draws it "
             "sharp. Applies at once.<br/><br/>(DES_DOF)");
@@ -317,6 +359,48 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "<b>Q</b> L1 &nbsp; <b>W</b> R1 &nbsp; <b>1</b> L2 &nbsp; <b>2</b> R2<br/>"
             "<b>Enter</b> Start &nbsp; <b>Tab</b> Select<br/><br/>"
             "These are the defaults; Change Buttons changes them.");
+
+        leftPane.add_section("Mouse");
+        bool_row(leftPane, rightPane, "Mouse look", "DES_MOUSE_LOOK",
+            "Turns the camera with the mouse, as well as with the right stick. In play the cursor is hidden and "
+            "held in the window; on the title screen, in loading screens and in cutscenes it is free. Opening "
+            "this menu (F1 or Esc), switching to another window or moving the window frees it too, and the game "
+            "takes it again when you come back, once the mouse buttons are up. While locked on, the camera "
+            "follows the target and the mouse does nothing. The camera turns once a game frame, so it is "
+            "smoothest at 60 fps or more (Display, Frame rate). Applies at once: the game takes the mouse when "
+            "this menu closes.<br/><br/>(DES_MOUSE_LOOK)");
+        auto& mouseSens = leftPane.add_child<NumberButton>(NumberButton::Props{
+            .key = "Mouse sensitivity",
+            .getValue = mouse_sens_percent,
+            .setValue =
+                [](int value) {
+                    if (settings::pinned("DES_MOUSE_SENS")) {
+                        return;
+                    }
+                    settings::set("DES_MOUSE_SENS", std::format("{:g}", mouse_sens_default() * value / 100.0));
+                },
+            .isDisabled = [] { return settings::pinned("DES_MOUSE_SENS"); },
+            .isModified = [] { return !settings::is_default("DES_MOUSE_SENS"); },
+            .min = kMouseSensMin,
+            .max = kMouseSensMax,
+            .step = 5,
+            .suffix = "%",
+        });
+        leftPane.register_control(mouseSens, rightPane,
+            [helpText = with_note("DES_MOUSE_SENS",
+                 "How far the camera turns for a move of the mouse. 100% is 0.09 degrees for each count the mouse "
+                 "reports: a full turn for 4000 counts, about 13 cm at 800 dpi. From 5% to 500%; left and right "
+                 "change it by 5%, confirm to type a number. Applies at once.<br/><br/>(DES_MOUSE_SENS, in degrees "
+                 "per count)")](Pane& pane) {
+                pane.clear();
+                pane.add_rml(helpText);
+            });
+        bool_row(leftPane, rightPane, "Invert vertical", "DES_MOUSE_INVERT_Y",
+            "Off: moving the mouse forward looks up. On: forward looks down, like an aircraft's controls. Applies at "
+            "once.<br/><br/>(DES_MOUSE_INVERT_Y)");
+        bool_row(leftPane, rightPane, "Invert horizontal", "DES_MOUSE_INVERT_X",
+            "Off: moving the mouse right turns the camera right. On: it turns left. Applies at once."
+            "<br/><br/>(DES_MOUSE_INVERT_X)");
     });
 
     add_tab("Interface", [this](Rml::Element* content) {

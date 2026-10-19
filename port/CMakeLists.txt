@@ -95,7 +95,9 @@ add_executable(des_boot
     "${CMAKE_CURRENT_SOURCE_DIR}/missing_stubs.cpp"         # degenerate external targets
     "${CMAKE_CURRENT_SOURCE_DIR}/des_heap.cpp"              # clean guest allocator (malloc override)
     "${CMAKE_CURRENT_SOURCE_DIR}/des_options.cpp"           # user options (DES_SKIP_INTRO, ...)
+    "${CMAKE_CURRENT_SOURCE_DIR}/des_aspect.cpp"            # DES_ASPECT / DES_HUD: wider pictures, the HUD kept 16:9
     "${CMAKE_CURRENT_SOURCE_DIR}/des_menu_sfx.cpp"          # UI sounds via the game's menu SE (0x724E40 hook)
+    "${CMAKE_CURRENT_SOURCE_DIR}/des_chrins.cpp"            # ChrIns worker: done flag before the done event
     "${CMAKE_CURRENT_SOURCE_DIR}/des_prework.cpp"           # startup work: the shader cache, behind a progress bar
 )
 

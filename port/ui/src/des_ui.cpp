@@ -3,7 +3,8 @@
 // ui::update and draw per frame), with the window procedure and the frame hook in place of SDL.
 //
 //   wndproc (the window's message thread): F1 and Esc are always the UI's. While a document is up, the keyboard
-//     (except F9-F12, the backend's capture keys) and the mouse are queued and kept from the game window.
+//     (except F9-F12, the backend's capture keys) and the mouse are queued and kept from the game window. Mouse look
+//     (mouse.cpp) sees each message first, and holds the cursor in the window while the game has the mouse.
 //   frame (the render thread, once per presented frame, before Present): drains the queue into RmlUi, reads the
 //     gamepads (they drive RmlUi only while a document is up), updates and draws. When nothing is showing (no
 //     document, no pop-up) it returns after a couple of loads: no RmlUi work, no pad reads, no GPU work. The
@@ -20,6 +21,7 @@
 #include "host.hpp"
 #include "input.hpp"
 #include "menu_bar.hpp"
+#include "mouse.hpp"
 #include "osk_window.hpp"
 #include "overlay.hpp"
 #include "prelaunch.hpp"
@@ -230,6 +232,7 @@ void map_mouse(HWND hwnd, LPARAM lp, int& x, int& y) {
 
 int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long lp, long long* result) {
     HWND hwnd = static_cast<HWND>(hwnd_);
+    if (ui::mouse::wndproc(hwnd_, msg, wp, lp, result)) return 1;
     const bool capturing = sCapturing.load(std::memory_order_acquire);
     switch (msg) {
     case WM_CLOSE:
@@ -499,6 +502,7 @@ void script_keys_for_frame(unsigned long long frame) {
 
 void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned height) {
     ++sFrame;
+    ui::mouse::on_frame();  // (mouse look: is the game's camera taking the mouse?)
     if (ui::report::frame_hook(sFrame)) sReportCountdown = 4;  // DES_REPORT_AT_FRAME (and the crash test knobs)
     const bool script = !sScriptKeys.empty();
     const char* shot = sShots.empty() ? nullptr : shot_for_frame(sFrame);
@@ -524,6 +528,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     if (!ensure_init(int(width), int(height))) {
         sStartScreen = false;
         sStartUp.store(false);
+        ui::mouse::set_ui_open(false);
         if (sCloseRequested.exchange(false) && ui::app().quit) ui::app().quit();  // nothing to ask with
         if (sOskPending.exchange(false)) apply_osk_request(false);
         ui::trophies::discard();  // (the unlocks are saved; only the pop-ups are lost)
@@ -576,6 +581,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     const auto now = clock_type::now();
     if (visible) sLastVisible = now;
     sCapturing.store(visible, std::memory_order_release);
+    ui::mouse::set_ui_open(visible);  // (the cursor is the UI's while a document is up)
 
     if (visible && !sHold) {
         sHold = true;
@@ -677,6 +683,7 @@ extern "C" void des_ui_early_init(void) {
     sStartScreen = env_on("DES_UI_START") ||
                    (ui::settings::get_int("show_start_screen") != 0 && !env_on("DES_SKIP_UI") && !ui::settings::scripted_run());
     sStartUp.store(sStartScreen);
+    ui::mouse::set_ui_open(sStartScreen);  // (until the first frame pushes it)
 
     sCloseAsks = !ui::settings::scripted_run();
     ui::app().quit = [] {

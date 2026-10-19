@@ -56,11 +56,13 @@
  *   144 of them a second. Movies keep their speed (cellSail
  *   hands out the frame that is due by the clock), and the game advances by
  *   real time: the regress walk ends in the same place at ~66 fps as at 30.
- *   The in-engine cutscenes (RemoMan) stay at 30: their positions step at
- *   30 Hz while animation follows the frame time, so unlocked they judder
- *   (a 2-frame back-and-forth at 60, a 4-frame sawtooth at 120). While a
- *   RemoMan slot holds a cutscene the game is put back in 30 mode with the
- *   1/30 step and the PS3's vblank, and unlocked again when it ends.
+ *   The in-engine cutscenes (RemoMan) stay at 30: their camera takes the
+ *   nearest of keys 1/30 s apart while the characters follow the frame
+ *   time, so unlocked they judder (a 2-frame back-and-forth at 60, a
+ *   4-frame sawtooth at 120). While a RemoMan slot holds a cutscene the
+ *   game is put back in 30 mode with the 1/30 step and the PS3's vblank,
+ *   and unlocked again when it ends. DES_CUTFPS=1 leaves cutscenes
+ *   unlocked and blends the camera's keys instead (des_cut_cam).
  *   One movement test counts in 30 Hz steps too. After physics, 0x002EC2B8
  *   asks whether a character that wants to move fast (its animation asks
  *   for more than 5 m/s) moved less than 1/30 m this step, i.e. under 1 m/s
@@ -79,6 +81,8 @@
  *   soul counter's roll after a kill (get_soul_rate), the bars' fill after
  *   damage or a heal (gauge_fill_rate) and their length when the max
  *   changes (gauge_len_rate) step once a frame too, and go in 30 Hz steps.
+ *   So do the character creation screen's previews, which turn a fixed
+ *   angle a frame with the right stick (des_viewer_rate).
  *
  * DES_VSYNC=0 | 1 — whether presents wait for the display's refresh (default
  *   1). 0 presents each frame as soon as it is drawn, with tearing, where the
@@ -97,6 +101,7 @@
 #include "ppu_recomp.h"
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include "ui/include/des_ui.h"  /* the wrapper UI: settings.ini and the overlay (docs/32) */
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -110,6 +115,7 @@ extern "C" void (*g_gcm_flip_request_hook)(void);
 extern "C" unsigned (*g_pad_title_hook)(void);
 extern "C" void (*g_fs_open_hook)(const char* guest_path);
 extern "C" void ps3_vblank_set_mhz(int mhz);   /* boot_main.cpp; 0 = VBLANK_MHZ */
+extern "C" void des_aspect_init(void);         /* des_aspect.cpp: DES_ASPECT, DES_HUD */
 extern "C" volatile unsigned g_pad0_reads, g_pad0_empty_reads, g_pad0_buttons, g_pad0_lstick;   /* cellPad.c */
 extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vkey);   /* user32 */
 constexpr int VK_F8 = 0x77;
@@ -224,12 +230,21 @@ bool cutscene_playing()
     return false;
 }
 
+/* DES_CUTFPS=1: cutscenes at the DES_FPS rate, without the 30 fps lock
+ * below; des_cut_cam blends the camera's keys. Read live. */
+bool cutfps_on()
+{
+    static int on = 0;
+    PS3_KNOB(on, env_on("DES_CUTFPS"));
+    return on != 0;
+}
+
 void fps_on_flip_request()
 {
     using clock = std::chrono::steady_clock;
     static uint8_t orig60, orig_noskip;
     static uint32_t orig_dt;
-    static bool in_cutscene = false;
+    static int in_cutscene = 0;   /* 0 none, 1 at 30 (the lock), 2 unlocked (DES_CUTFPS) */
     static clock::time_point last;
     const uint32_t obj = vm_read32(kFlipModeObj);
     if (!obj) return;
@@ -258,26 +273,30 @@ void fps_on_flip_request()
             fprintf(stderr, "[des] DES_FPS off: the game's own 30 fps mode\n");
         }
         s_fps = want;
-        in_cutscene = false;
+        in_cutscene = 0;
         last = clock::time_point();
     }
     if (!s_fps) return;
     /* A cutscene plays as the game ships it: 30 mode on the PS3's vblank, so
-     * it flips every other vblank, and a fixed 1/30 step. RemoMan steps its
-     * positions at 30 Hz while animation follows the frame step, so any
-     * faster and a cutscene judders. The vblank goes back to the unlocked
-     * rate when the cutscene ends. */
-    const bool cut = s_fps > 30 && cutscene_playing();
+     * it flips every other vblank, and a fixed 1/30 step. Its camera takes
+     * the nearest of keys 1/30 s apart while everything else follows the
+     * frame step, so any faster and a cutscene judders. The vblank goes back
+     * to the unlocked rate when the cutscene ends. With DES_CUTFPS=1 a
+     * cutscene stays unlocked and des_cut_cam blends the camera's keys. */
+    const int cut = s_fps > 30 && cutscene_playing() ? (cutfps_on() ? 2 : 1) : 0;
     if (cut != in_cutscene) {
-        in_cutscene = cut;
-        vm_write8(obj + kFlipMode60, cut ? 0 : 1);
-        ps3_vblank_set_mhz(cut ? kPs3VblankMhz : fps_vblank_mhz(s_fps));
+        if ((cut == 1) != (in_cutscene == 1)) {
+            vm_write8(obj + kFlipMode60, cut == 1 ? 0 : 1);
+            ps3_vblank_set_mhz(cut == 1 ? kPs3VblankMhz : fps_vblank_mhz(s_fps));
+        }
         fprintf(stderr, "[des] DES_FPS: %s\n",
-                cut ? "cutscene, 30 fps" : "cutscene over, unlocked again");
+                cut == 1 ? "cutscene, 30 fps" : cut == 2 ? "cutscene, unlocked (DES_CUTFPS)"
+                : in_cutscene == 1 ? "cutscene over, unlocked again" : "cutscene over");
+        in_cutscene = cut;
     }
     const clock::time_point now = clock::now();
     float dt = kCutsceneDt;
-    if (!cut && last != clock::time_point()) {
+    if (cut != 1 && last != clock::time_point()) {
         dt = std::chrono::duration<float>(now - last).count();
         if (dt > kMaxFrameDt) dt = kMaxFrameDt;
     }
@@ -431,8 +450,13 @@ void frame_log()
     last_ms = ms;
 }
 
+/* Flip requests so far (any thread): des_mouse_look tells a gap in the
+ * camera's updates by them. */
+std::atomic<unsigned> s_flips{0};
+
 void on_flip_request()
 {
+    s_flips.fetch_add(1, std::memory_order_relaxed);
     fps_on_flip_request();
     if (s_framelog) frame_log();
 }
@@ -846,6 +870,46 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
 }
 
+/* A factor kept once a frame, cur = base + (cur - base) * r (or cur *= r),
+ * tuned for 30 fps: at 240 fps the remainder shrinks eight times as fast. Called
+ * after the lfs of r (--insn-hooks); puts r' = r^(dt * 30) in the register, the
+ * factor that keeps the same part per second as r does at 30 fps. Nothing at
+ * 30 fps or without DES_FPS. */
+static void keep_rate(ppu_context* ctx, uint32_t addr)
+{
+    const uint32_t insn = vm_read32(addr);
+    if ((insn >> 26) != 48) return;   /* lfs only */
+    const int fd = (insn >> 21) & 31;
+    const double r = ctx->fpr[fd];
+    const float steps = vm_readf(kFrameDt) * 30.0f;
+    if (!(r > 0.0 && r < 1.0) || !(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
+    ctx->fpr[fd] = (float)std::pow(r, (double)steps);
+}
+
+/* The follow camera's pitch return after a scripted angle (0x00119670):
+ * pitch = +0x140 + (pitch - +0x140) * r, r = +0x18C (0.3) loaded at 0x0011C15C.
+ * Main thread. DES_CAMFIX=0 turns it off with the camera eases. */
+extern "C" void des_cam_keep(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_CAMFIX", 1) != 0);
+    if (on && s_fps > 0) keep_rate(ctx, addr);
+}
+
+/* Sound events: a position, a radius (0.5 to 13 m) and a life (0.5 or 2 s),
+ * in three lists that the game's frame step updates through 0x006A3970. Each
+ * frame the radius is multiplied by 0.99 (loaded at 0x006A3990; 0x006A2E8C in
+ * the single-entry twin 0x006A2E78) while the life counts down by dt. So at
+ * 240 fps a radius falls to 8% of its size in a second instead of 74%, and
+ * (inferred) enemies hear the player less. Main thread. DES_NOISEFIX=0 turns
+ * it off live. */
+extern "C" void des_noise_rate(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_NOISEFIX", 1) != 0);
+    if (on && s_fps > 0) keep_rate(ctx, addr);
+}
+
 /* A character proxy's slide velocity (wrapper + 0x100), in its velocity
  * update 0x001FE778 (r26 = the step, dt at +0x20). On a frame whose ground
  * probe finds a slope too steep to stand on (+0x33), the game adds gravity
@@ -888,13 +952,302 @@ extern "C" void des_slide_rate(ppu_context* ctx, uint32_t addr)
     }
 }
 
+/* The character creation screen's previews turn with the right stick: the
+ * whole body (0x008DB170, from Create Profile on) and the face in Edit
+ * Appearance (0x008DA0E0). Each step gets r3 = the preview and f1, f2 = the
+ * stick's x and y, which PadMan's getters 0x001B3F58 and 0x001B3F90 scale by
+ * pi/120, and adds 1.5 times the stick to the yaw (+0x154, wrapped to pi)
+ * and the pitch (+0x158, clamped) once a frame: 2.25 degrees a frame at full
+ * tilt, 67.5 degrees a second at 30 fps and eight times that at 240.
+ * The lifter calls this after their first instruction (--insn-hooks); it
+ * scales the stick by the frame's 30 Hz steps (kFrameDt). DES_UIFIX=0 turns
+ * it off. */
+extern "C" void des_viewer_rate(ppu_context* ctx, uint32_t addr)
+{
+    (void)addr;
+    const float steps = vm_readf(kFrameDt) * 30.0f;
+    if (!ui_fix_on() || !(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
+    ctx->fpr[1] = (float)(ctx->fpr[1] * steps);
+    ctx->fpr[2] = (float)(ctx->fpr[2] * steps);
+}
+
+namespace {
+
+constexpr uint32_t kCutCamKeys  = 0x005F7254u;   /* lwz r9: s, the gap and the six key indices are set */
+constexpr uint32_t kCutCamPos   = 0x005F72ECu;   /* lvx v4: earlier key at r1+0xA0, later at r1+0xB0 */
+constexpr uint32_t kCutCamRot   = 0x005F7394u;   /* lvx v12: earlier r1+0xD0, later r1+0xA0 */
+constexpr uint32_t kCutCamScale = 0x005F743Cu;   /* lvx v2: earlier r1+0x70, later r1+0xA0 */
+constexpr float    kCutMaxMove  = 2.0f;          /* m in one 1/30 s step */
+constexpr float    kCutMaxTurn  = 0.5f;          /* rad, any angle, in one step */
+constexpr float    kTwoPi       = 6.28318531f;
+
+/* The choice for the call of 0x005F71D0 running on this thread, made at
+ * kCutCamKeys before its three loads: blend them, or leave them alone. */
+PPU_THREAD_LOCAL bool s_cut_blend;
+
+uint32_t bswap32(uint32_t b)
+{
+    return (b >> 24) | ((b >> 8) & 0xFF00u) | ((b << 8) & 0xFF0000u) | (b << 24);
+}
+
+/* b - a for two angles, the short way round. */
+float angle_delta(float a, float b)
+{
+    const float d = b - a;
+    return d - kTwoPi * std::nearbyint(d / kTwoPi);
+}
+
+/* One channel's two keys, read from the track as 0x005F71D0 reads them. i0
+ * and i1 are the keys' indices; the game skips the channel when i0 is -1.
+ * The byte at h + zero makes both keys read as zero, and the word at
+ * h + 0x14 points at the 12-byte x, y, z entries the indices select.
+ * Returns 1 with the keys, 0 for a channel skipped or read as zero, and -1
+ * when only i1 is -1 (the game would read the entry before the table). */
+int cut_keys(uint32_t h, uint32_t zero, int32_t i0, int32_t i1, float k0[3], float k1[3])
+{
+    if (i0 < 0 || vm_read8(h + zero)) return 0;
+    if (i1 < 0) return -1;
+    const uint32_t table = vm_read32(h + 0x14);
+    for (uint32_t c = 0; c < 3; c++) {
+        k0[c] = vm_readf(table + 12u * (uint32_t)i0 + 4 * c);
+        k1[c] = vm_readf(table + 12u * (uint32_t)i1 + 4 * c);
+    }
+    return 1;
+}
+
+} // namespace
+
+/* DES_CUTFPS=1: the cutscene camera between its keys. A remo cut's camera
+ * track (sibcam) keys position, rotation and scale at whole frames (time =
+ * frame / 30). 0x005F71D0 finds the keys either side of the cut time t (f1),
+ * puts how far t is between them in f10 (s, 0 to 1) and their gap in f11
+ * (seconds), then for each channel copies both keys' vectors to its stack
+ * and loads one: the earlier when s < 0.5, else the later. So the camera
+ * moves 30 times a second at any frame rate, while the characters, posed at
+ * the same t, move every frame: above 30 they creep against a still
+ * background and snap back when the camera catches up (docs/40).
+ *
+ * The lifter calls this after four instructions (--insn-hooks). At
+ * kCutCamKeys, once a call and before any load, it decides: with
+ * DES_CUTFPS=1 and DES_FPS set, blend when t is strictly between keys one
+ * frame apart. Keys further apart keep the nearest key: those are holds or
+ * jumps made on purpose. So does a step that moves the camera over 2 m or
+ * turns it over 0.5 rad, a shot change inside one track. After each of the
+ * three loads it then puts the two keys blended by s in the register.
+ * Rotations are Euler angles in radians and blend the short way round; the
+ * code after the load wraps them again. A register that holds neither key
+ * is left alone. DES_CUTLOG=1 counts what it did. Main thread. */
+extern "C" void des_cut_cam(ppu_context* ctx, uint32_t addr)
+{
+    static int log = 0;
+    PS3_KNOB(log, env_on("DES_CUTLOG"));
+    static unsigned n_calls, n_blend, n_apart, n_jump, n_odd, n_neither;
+    static double widest;   /* the widest gap between keys, frames */
+    if (addr == kCutCamKeys) {
+        s_cut_blend = false;
+        if (!cutfps_on() || s_fps <= 0) return;
+        const double s = ctx->fpr[10], gap = ctx->fpr[11];
+        if (!(s > 0.0 && s < 1.0)) return;   /* t on a key: the loads are exact */
+        const uint32_t h = (uint32_t)ctx->gpr[7];
+        float p0[3], p1[3], r0[3], r1[3], k0[3], k1[3];
+        const int pos   = cut_keys(h, 0x2C, (int32_t)ctx->gpr[6], (int32_t)ctx->gpr[4], p0, p1);
+        const int rot   = cut_keys(h, 0x2F, (int32_t)ctx->gpr[29], (int32_t)ctx->gpr[31], r0, r1);
+        const int scale = cut_keys(h, 0x32, (int32_t)ctx->gpr[12], (int32_t)ctx->gpr[28], k0, k1);
+        float move = 0.0f, turn = 0.0f;
+        for (int c = 0; c < 3; c++) {
+            if (pos > 0) move += (p1[c] - p0[c]) * (p1[c] - p0[c]);
+            if (rot > 0) turn = std::fmax(turn, std::fabs(angle_delta(r0[c], r1[c])));
+        }
+        move = std::sqrt(move);
+        const bool apart = std::fabs(gap * 30.0 - 1.0) > 0.01;
+        const bool jump  = !apart && (move > kCutMaxMove || turn > kCutMaxTurn);
+        const bool odd   = pos < 0 || rot < 0 || scale < 0;
+        s_cut_blend = !apart && !jump && !odd;
+        if (log) {
+            n_calls++;
+            if (s_cut_blend) n_blend++;
+            if (apart) { n_apart++; if (gap * 30.0 > widest) widest = gap * 30.0; }
+            if (jump) n_jump++;
+            if (odd) n_odd++;
+            static uint32_t jump_h;
+            static double jump_t0 = -1.0;
+            if (jump && !(h == jump_h && ctx->fpr[12] == jump_t0)) {   /* f12: the earlier key's time */
+                jump_h = h;
+                jump_t0 = ctx->fpr[12];
+                fprintf(stderr, "[cutlog] t=%.3f s: a jump (move %.2f m, turn %.2f rad), nearest key kept\n",
+                        ctx->fpr[1], move, turn);
+            }
+            if (n_calls % 1000 == 0)
+                fprintf(stderr, "[cutlog] calls between keys %u: blended %u, keys apart %u (widest %.1f frames),"
+                        " jumps %u, one index unset %u; loads holding neither key %u\n",
+                        n_calls, n_blend, n_apart, widest, n_jump, n_odd, n_neither);
+        }
+        return;
+    }
+    if (!s_cut_blend) return;
+    const double s = ctx->fpr[10];
+    const uint32_t sp = (uint32_t)ctx->gpr[1];
+    int ch, v;       /* the channel (0 position, 1 rotation, 2 scale) and its register */
+    uint32_t a, b;   /* the earlier and the later key's vector */
+    switch (addr) {
+    case kCutCamPos:   ch = 0; v = 4;  a = sp + 0xA0; b = sp + 0xB0; break;
+    case kCutCamRot:   ch = 1; v = 12; a = sp + 0xD0; b = sp + 0xA0; break;
+    case kCutCamScale: ch = 2; v = 2;  a = sp + 0x70; b = sp + 0xA0; break;
+    default: return;
+    }
+    a &= ~0xFu;   /* as lvx and stvx address them */
+    b &= ~0xFu;
+    float x[4], y[4];
+    bool is_x = true, is_y = true;
+    for (uint32_t i = 0; i < 4; i++) {
+        const uint32_t xb = vm_read32(a + 4 * i), yb = vm_read32(b + 4 * i);
+        const uint32_t rb = bswap32(ctx->vr[v].w[i]);   /* the register holds guest bytes */
+        is_x = is_x && rb == xb;
+        is_y = is_y && rb == yb;
+        memcpy(&x[i], &xb, 4);
+        memcpy(&y[i], &yb, 4);
+    }
+    if (!is_x && !is_y) {
+        if (log) n_neither++;
+        return;
+    }
+    for (uint32_t i = 0; i < 4; i++) {
+        const float d = i == 3 ? 0.0f : ch == 1 ? angle_delta(x[i], y[i]) : y[i] - x[i];
+        const float f = x[i] + d * (float)s;
+        uint32_t fb;
+        memcpy(&fb, &f, 4);
+        ctx->vr[v].w[i] = bswap32(fb);
+    }
+    static bool said = false;
+    if (!said) {
+        said = true;
+        fprintf(stderr, "[des] DES_CUTFPS: cutscene camera keys blended (first at t=%.3f s)\n", ctx->fpr[1]);
+    }
+}
+
+/* Mouse look (docs/41, approach b): DES_MOUSE_LOOK=1, or Settings, Controls,
+ * Mouse look. The lifter calls this at the entry of the ChrExFollowCam update
+ * 0x00119670 (--insn-hooks; r3 = the camera), before the update turns the
+ * camera and places it, so both follow the new angles in the same frame. It
+ * adds the mouse's counts since the last frame (gathered on the window's
+ * thread, port/ui/src/mouse.cpp) to the camera's yaw (+0x134) and pitch
+ * (+0x130), in radians, and keeps pitch inside the camera's limits
+ * (+0x1D4 to +0x1D0) as the update does for the stick. The update then adds
+ * the right stick (input * rate * dt, 0x0011C890).
+ *
+ * Only an active camera (+0x298) takes the counts; another instance's update
+ * leaves them. The window holds the cursor only while they are being taken,
+ * so it is free on the title screen, in loads and in cutscenes, where the
+ * camera is not running. The counts are dropped while the camera has a
+ * set-angle request (+0x12C), a look-at target (+0x240, lock-on, inferred)
+ * or an auto-turn running (+0x243): the paths the update takes instead of
+ * the stick's. They are dropped too on the first update after a gap of more
+ * than three flips, so moves made while the camera was not running do not
+ * turn it all at once. On a frame where the stick moves, the update rebuilds
+ * the angles from where the camera is (0x0011D4CC), so that frame's mouse
+ * move is lost.
+ *
+ * Signs (read from the code, not yet seen in a run): pitch grows as the view
+ * looks down. 0x00114120 rebuilds it as -atan2(y, horizontal length) of the
+ * look direction, the target (+0xD0) minus the eye (+0x100). The camera
+ * matrix's Z row is that look direction (0x0011BA44, a left-handed camera),
+ * so yaw, atan2(x, z) of it, grows as the view turns right. The right stick
+ * agrees: with the game's default camera options (RotLR = RotUD = 1, set at
+ * 0x00918090), stick right raises yaw and stick up lowers pitch (getters
+ * 0x001B6A80 and 0x001B6B40; the pad's Y is up-positive, 0x00C46410). So
+ * the mouse right raises yaw and forward (dy < 0) lowers pitch: right turns
+ * right, forward looks up. DES_MOUSE_INVERT_X=1 and DES_MOUSE_INVERT_Y=1
+ * turn either around; the game's own camera options don't apply to it.
+ * DES_MOUSE_SENS is in degrees per count (0.09: a full turn per 4000). All
+ * live. The camera turns once a game frame, so at 30 fps it moves in 30 Hz
+ * steps. Main thread. DES_MOUSELOG=1 prints what happened to the counts every
+ * 60 updates (and mouse.cpp when it takes and lets go of the mouse). */
+namespace {
+constexpr uint32_t kCamPitch     = 0x130u;   /* float, radians */
+constexpr uint32_t kCamYaw       = 0x134u;   /* float, radians, kept in [-pi, pi] by the update */
+constexpr uint32_t kCamPitchMax  = 0x1D0u;
+constexpr uint32_t kCamPitchMin  = 0x1D4u;
+constexpr uint32_t kCamSetAngle  = 0x12Cu;   /* bytes */
+constexpr uint32_t kCamLookAt    = 0x240u;
+constexpr uint32_t kCamAutoTurn  = 0x243u;
+constexpr uint32_t kCamActive    = 0x298u;
+constexpr float    kMouseSensDefault = 0.09f;   /* degrees per count; settings.cpp's default too */
+constexpr unsigned kMouseStaleFlips  = 3;
+
+float mouse_sens()
+{
+    const char* v = getenv("DES_MOUSE_SENS");
+    const float s = (v && *v) ? (float)atof(v) : kMouseSensDefault;
+    return (s > 0.0f && s <= 10.0f) ? s : kMouseSensDefault;
+}
+} // namespace
+
+extern "C" void des_mouse_look(ppu_context* ctx, uint32_t addr)
+{
+    (void)addr;
+    static int on = 0, inv_x = 0, inv_y = 0, log = 0;
+    static float sens = kMouseSensDefault;
+    PS3_KNOB(on, env_on("DES_MOUSE_LOOK"));
+    PS3_KNOB(inv_x, env_on("DES_MOUSE_INVERT_X"));
+    PS3_KNOB(inv_y, env_on("DES_MOUSE_INVERT_Y"));
+    PS3_KNOB(sens, mouse_sens());
+    PS3_KNOB(log, env_on("DES_MOUSELOG"));
+    static int was_on = 0;
+    if (on != was_on) {   /* turned on or off live: the window takes or lets go of the mouse */
+        was_on = on;
+        des_mouse_refresh();
+    }
+    const uint32_t cam = (uint32_t)ctx->gpr[3];
+    if (!on || !guest_ptr_ok(cam) || !vm_read8(cam + kCamActive)) return;
+    int dx = 0, dy = 0;
+    des_mouse_take(&dx, &dy);
+    static unsigned last_flip = 0;
+    const unsigned flip = s_flips.load(std::memory_order_relaxed);
+    const bool stale = flip - last_flip > kMouseStaleFlips;
+    last_flip = flip;
+    enum { kApplied, kStale, kSetAngle, kLookAt, kAutoTurn, kReasons };
+    const int why = stale                          ? kStale
+                    : vm_read8(cam + kCamSetAngle) ? kSetAngle
+                    : vm_read8(cam + kCamLookAt)   ? kLookAt
+                    : vm_read8(cam + kCamAutoTurn) ? kAutoTurn
+                                                   : kApplied;
+    if (why == kApplied && (dx || dy)) {
+        const float k = sens * 0.0174532925f;   /* radians per count */
+        float yaw = vm_readf(cam + kCamYaw) + (inv_x ? -1.0f : 1.0f) * (float)dx * k;
+        float pitch = vm_readf(cam + kCamPitch) + (inv_y ? -1.0f : 1.0f) * (float)dy * k;
+        yaw = (float)std::remainder((double)yaw, 6.283185307179586);
+        const float lo = vm_readf(cam + kCamPitchMin), hi = vm_readf(cam + kCamPitchMax);
+        if (lo < hi) pitch = pitch < lo ? lo : pitch > hi ? hi : pitch;
+        if (std::isfinite(yaw) && std::isfinite(pitch)) {
+            vm_writef(cam + kCamYaw, yaw);
+            vm_writef(cam + kCamPitch, pitch);
+        }
+    }
+    if (log) {
+        static long long counts[kReasons];
+        static unsigned updates;
+        counts[why] += std::abs(dx) + std::abs(dy);
+        if (++updates % 60 == 0) {
+            fprintf(stderr, "[mouse] cam %08X counts used %lld, dropped: gap %lld set-angle %lld look-at %lld "
+                    "auto-turn %lld; yaw %.3f pitch %.3f in [%.3f, %.3f], %.3f deg/count\n", cam,
+                    counts[kApplied], counts[kStale], counts[kSetAngle], counts[kLookAt], counts[kAutoTurn],
+                    vm_readf(cam + kCamYaw), vm_readf(cam + kCamPitch), vm_readf(cam + kCamPitchMin),
+                    vm_readf(cam + kCamPitchMax), sens);
+            memset(counts, 0, sizeof counts);
+        }
+    }
+}
+
 extern "C" void des_menu_sfx_init(void);   /* des_menu_sfx.cpp */
+extern "C" void des_chrins_init(void);     /* des_chrins.cpp */
 
 extern "C" void ps3_title_options_init(void)
 {
     /* First: settings.ini fills in the options not set in the environment. */
     des_ui_early_init();
+    des_aspect_init();     /* DES_ASPECT, DES_HUD: before the first camera is built */
     des_menu_sfx_init();   /* the UI's sounds through the game's menu sounds */
+    des_chrins_init();     /* the character step's handshake without its lost-kick race */
     if (env_on("DES_SKIP_INTRO")) {
         s_skip_intro = atoi(getenv("DES_SKIP_INTRO")) == 2 ? 2 : 1;
         ppu_register_function(kLogoUpdate, logo_update_skip);

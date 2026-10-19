@@ -28,9 +28,13 @@ constexpr Def kDefs[] = {
     {"DES_AUTO_CONTINUE", "0", Apply::Restart},
     {"AUDIO_MUTE", "0", Apply::Live},
     {"DES_DOF", "1", Apply::Live},             // des_dof, read each frame
+    {"RSX_AA", "0", Apply::Live},              // 0 = none, as on the PS3; 1 = FXAA before the HUD; per batch
     {"RSX_SCALE", "100", Apply::Live},         // the D3D12 backend remakes its render targets at the next batch
+    {"RSX_OUTFILTER", "0", Apply::Live},       // 0 = bilinear, as before; 1 = area down, bicubic up; next present
     {"RSX_TEXFILTER", "0", Apply::Live},       // 0 = the game's filters; the backend's sampler key, per draw
     {"RSX_ANISO", "0", Apply::Live},           // 0 = the game's own level
+    {"DES_ASPECT", "", Apply::Restart},        // "" = 16:9; des_aspect.cpp writes the cameras' aspect at start
+    {"DES_HUD", "", Apply::Restart},           // "" = centred at 16:9, "stretch"; the HUD canvas is recorded at boot
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
     {"show_start_screen", "1", Apply::UiOnly},
     {"menu_hint", "1", Apply::UiOnly},
@@ -38,6 +42,10 @@ constexpr Def kDefs[] = {
     {"pad_menu_chord", "0", Apply::UiOnly},    // 0 = L3 + R3, 1 = Select + Start
     {"PAD_MAP", "", Apply::Live},              // cellPad, gamepad buttons (controls_window.cpp)
     {"PAD_KEYS", "", Apply::Live},             // cellPad, the keyboard pad's keys
+    {"DES_MOUSE_LOOK", "0", Apply::Live},      // mouse look (des_mouse_look; port/ui/src/mouse.cpp), read each frame
+    {"DES_MOUSE_SENS", "0.09", Apply::Live},   // mouse look's degrees per mouse count
+    {"DES_MOUSE_INVERT_X", "0", Apply::Live},
+    {"DES_MOUSE_INVERT_Y", "0", Apply::Live},
 };
 
 std::map<std::string, std::string, std::less<>> sValues;

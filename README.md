@@ -64,7 +64,13 @@ The build is not yet a single command. The steps, in order:
    cmake --build port/build --target des_boot --parallel 4
    ```
    Recompiling the 14 lifted chunks takes about 15 minutes. The lift keeps a guest call stack for backtraces (`--shadow-stack`), but the build compiles it out, which is about 2% faster; configure the port with `-DDES_SHADOW_STACK=ON` to keep it for `ds_dump_shadow`.
-   For a developer build, add `-DDES_DEV=ON` to the port's configure line: it compiles in the dev cheats (god mode, attack power, movement speed and `DES_WARP`, live from a Developer tab in the settings; see `port/des_dev.cpp`). Switching it rebuilds a few files, not the lift. Never share such a build: CI fails a release that has them.
+   For a developer build, with the dev cheats compiled in (god mode, attack power, movement speed and `DES_WARP`, live from a Developer tab in the settings; see [`docs/55`](docs/55-dev-cheats.md)), configure a second folder, `port/build_dev`, with the same line plus `-DDES_DEV=ON`, and build it the same way:
+   ```
+   cmake -S port -B port/build_dev -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl \
+     -DCMAKE_BUILD_TYPE= -DCMAKE_CXX_FLAGS_DEBUG= -DCMAKE_C_FLAGS_DEBUG= -DDES_DEV=ON
+   cmake --build port/build_dev --target des_boot --parallel 4
+   ```
+   Keep it out of `port/build`: CMake keeps the option in the folder's cache, so every later build there would have the cheats, and `tools/des/build.sh` and `play.sh` use `port/build`. The new folder's first build compiles the lifted chunks too (about 15 minutes, from the same lift). Run it with `tools/des/play.sh DES_EXE=port/build_dev/des_boot.exe`. A developer build says what it is: a CMake warning when it is configured, a line after each link, "(developer build)" in the window title and a `[dev] DES-DEV-BUILD` line at the top of the log. Never share one. No CI or release workflow checks for this yet, so before you share any build, run `python tools/ci/check_release_no_dev.py <its folder or zip>`: it fails when it finds the cheats, and when it meets a file it cannot look inside.
 
 ## Running
 

@@ -11,9 +11,9 @@ Two labels are used below:
 - **Three cheats, three live knobs, all off by default.** `DES_GOD=1` keeps the player's HP, MP and stamina from dropping. `DES_ATK=<x>` multiplies the damage the player's hits do. `DES_SPEED=<x>` multiplies how far the player moves. Test scripts and the console can change them at any time, like the other `DES_*` knobs.
 - **12 instruction hooks.** All of them go through one host function, `des_dev_hook`, with the existing `--insn-hooks` list. Every hook checks that the character is the player first, because the same code runs for every enemy. Every store to the player's HP, MP and stamina in the game code was checked against them (section 2.4).
 - **Dev builds only.** A CMake option `DES_DEV` (default OFF) compiles in the cheats and a Developer tab in the settings. A release build has an empty `des_dev_hook` and nothing else. One macro guards it all.
-- **A marker for CI.** Dev builds carry the string `DES-DEV-BUILD`. A small scanner, `tools/ci/check_release_no_dev.py`, fails a release that contains it or the knob names.
+- **A marker.** Dev builds carry the string `DES-DEV-BUILD`. A small scanner, `tools/ci/check_release_no_dev.py`, fails a release that contains it or the knob names, or a file it cannot look inside. No CI runs it yet; it is run by hand (section 7).
 - **"dev" in the version.** Dev builds are to add `+dev` to the version string. That needs one input in lane 4's new `DesVersion.cmake` (port #62), so it waits for it (section 15).
-- **Cheats force offline.** The online state is decided once at start. Cheats on at start: the network knobs are cleared before the network modules start. Online at start: the cheats stay off for the whole session.
+- **Cheats force offline.** The online state is decided at start. Cheats on at start: the network knobs are cleared before the network modules start. Online at start, or the network turned on later: the cheats stay off until the next start.
 - **Effort: about 3 to 4 days**, including lane 4's part and one run (section 12).
 
 ## 1. The cheats
@@ -72,7 +72,7 @@ Each hook runs right after the instruction shown.
 |---|---|---|---|---|---|---|
 | H1 | 0x00280E64 | `lwz r0,0x14C(r28)` | ApplyDamage | god | target r27 is the player, r0 > 0: r0 = 0 | The hit's HP damage, just loaded. `neg`, `cmpwi` and the HP store follow, so HP stays as it was and the rest of the hit (reaction, sound, flags) runs as usual. (read) |
 | H2 | 0x00280F88 | `lwz r9,0x150(r28)` | ApplyDamage | god | target r27 is the player, r9 > 0: r9 = 0 | The hit's stamina damage (guarding). With 0 the `ble` after it skips the subtraction. (read) |
-| H3 | 0x0028B224 | `or r6,r27,r27` | damage handler | atk | attacker r29 is the player, rec+0x14C > 0: write back rec+0x14C × x (rounded, capped at 10,000,000) | The first instruction after the calculation returns. Attacker, target (r31) and finished damage are all known, and nothing has used the damage yet. The calculation rewrites rec+0x14C on every hit, so writing it back cannot compound. (read) |
+| H3 | 0x0028B224 | `or r6,r27,r27` | damage handler | atk | attacker r29 is the player, the record's type rec+0x28 is not 0x40, rec+0x14C > 0: write back rec+0x14C × x (rounded, capped at 10,000,000) | The first instruction after the calculation returns. Attacker, target (r31) and finished damage are all known, and nothing has used the damage yet. The calculation stores rec+0x14C on every path but one: with type 0x40 it returns from 0x00285808 before the store (0x00285AC8), and rec+0x14C keeps its old value, which could be H3's own result from an earlier hit (read, section 3). So H3 leaves type 0x40 alone and only scales a value computed on this hit, which cannot compound. |
 | H4 | 0x002818D0 | `lwz r0,0xA0(r1)` | 0x002816D0 | god | chr r31 is the player, r0 > 0: r0 = 0 | The other HP damage path, a damage worked out from a fraction. `neg` and `cmpwi` follow. Its only caller is in the movement code (0x002EBA24), so it is probably the landing damage after a fall (inferred). |
 | H5 | 0x00280724 | `cmpwi cr7,r3,0` | 0x002806D8 | god | chr r31 is the player, r3 < 0: r3 = 0, cr7 = EQ | The SpEffect HP change of this update, from 0x00379A88 (read). Poison and toxic go this way (inferred). With EQ the `beq` skips the change. Gains (r3 > 0) stay. |
 | H6 | 0x00280C78 | `lwz r9,0x80(r1)` | 0x00280A08 | god | chr r31 is the player, r9 < 0: r9 = 0 | The SpEffect MP change of this update (a percent of max MP plus a flat part, read). `cmpwi` and `beq` follow. Gains stay. |
@@ -148,6 +148,7 @@ extern "C" void des_dev_hook(ppu_context* ctx, uint32_t addr)
 For reference, if you want the multiplier earlier in the chain:
 - 0x00285678 computes the three element parts as `attack × scale × 0.01 × rate` and hands them with the defence values to 0x00223E38. The result lands at rec+0x15C.
 - 0x00418D70 (a global manager at `*(TOC-0x7E94)`, the target and the record) gives the final HP damage, stored at rec+0x14C as an int (0x00285AC8).
+- **One early exit.** The calculation keeps the record in r31 (from r5). After 0x00285430 and 0x002851E8 it loads the record's type (rec+0x28, 0x002857FC) and, when it is 0x40, branches from 0x00285808 straight to the epilogue at 0x00285AE4. That path skips the store at 0x00285AC8, so rec+0x14C keeps whatever the record held. Every other path reaches 0x00285950 and the store. Its only other branch to the epilogue (0x00285AD8, the threshold test for rec+0x137) comes after the store. Neither the calculation nor the nine functions it calls directly reads rec+0x14C or stores to +0x28 (read, in the lift; its indirect calls were not followed). The type comes from the record builder's argument; which hits use 0x40 is not known yet (section 15).
 - H3 scales the final number. Scaling the attack values instead would interact with defence non-linearly. I recommend the final number.
 
 ## 4. The build gate
@@ -155,8 +156,7 @@ For reference, if you want the multiplier earlier in the chain:
 - **CMake (`port/CMakeLists.txt`).**
   ```cmake
   # Developer builds (docs/55): the dev cheats and the settings window's Developer tab.
-  # Never for a release: the release workflow and the player setup configure with
-  # -DDES_DEV=OFF, and CI fails a release that contains the dev marker.
+  # Never for a release. Build them in a folder of their own, such as port/build_dev.
   option(DES_DEV "Developer build: dev cheats and the Developer settings tab (never in a release)" OFF)
   if(DES_DEV)
       target_sources(des_boot PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/des_dev.cpp")
@@ -174,7 +174,8 @@ For reference, if you want the multiplier earlier in the chain:
 - **Neutral comments in the hook list.** The release ships `insn_hooks.txt` for the player's own lift (docs/52). Its comments must not name the knobs, so they say "dev hook: hit HP damage" and point here.
 - **The marker stays in the binary.** `des_dev_boot()` prints it at start (`[dev] DES-DEV-BUILD: ...`), so the linker keeps it. The UI's Developer tab shows it too.
 - **Scripts fail fast.** A test script that sets a cheat knob checks the log for the `[dev]` line and stops with a clear message if the exe is not a dev build. Otherwise the knob would silently do nothing.
-- **Developers turn it on once.** `cmake -DDES_DEV=ON` in their build folder; CMake keeps it. The README's build section gets one line about it.
+- **A folder of their own.** Developers configure a second build folder, `port/build_dev`, once with `-DDES_DEV=ON`; CMake keeps the option in that folder's cache. Never `port/build`: `tools/des/build.sh` and `play.sh` use it, and every later build there would have the cheats in it. The README's build section says how, and how to run such a build (`DES_EXE=port/build_dev/des_boot.exe`).
+- **Hard to miss.** A configure with `DES_DEV=ON` prints a CMake warning, and a second one when the folder is `port/build`. A later `cmake --build` does not configure again, so each link of `des_boot` also prints "DEVELOPER BUILD (DES_DEV=ON)". The running game says "(developer build)" after the title in its window caption (`des_dev_boot` sets `PS3_TITLE` before the window opens) and prints the marker at the top of its log.
 
 ## 5. "dev" in the version
 
@@ -190,21 +191,23 @@ For reference, if you want the multiplier earlier in the chain:
 
 Cheats must never reach other players. Today the port is offline unless `PS3_NET_ONLINE` is set (docs/46). Multiplayer is planned (docs/46 stages 0 to 2), so the rule is built in now.
 
-- **Decided once, at start.** `des_dev_boot()` runs at the start of `ps3_title_options_init`. That is before `ppu_hle_init` and `ppu_sysprx_register` (read, `boot_main.cpp` lines 2085 to 2090), so before the network modules look at their knobs. The `--psnr` option is handled earlier (line 1984) and only sets the same environment variables (read).
+- **Decided at start, then checked live.** `des_dev_boot()` runs at the start of `ps3_title_options_init`. That is before `ppu_hle_init` and `ppu_sysprx_register` (read, `boot_main.cpp` lines 2085 to 2090), so before the network modules look at their knobs. The `--psnr` option is handled earlier (line 1984) and only sets the same environment variables (read).
   - **A cheat is on at start:** clear `PS3_NET_ONLINE`, `PSNR_SERVER` and `PS3_NET_HOSTS` with `ps3_setenv(name, "")`. The getenv cache stores an empty value as unset (read, `cached_setenv`). Then the host sockets are never registered (`ppu_sysprx.cpp` line 902), cellNetCtl reports no connection (`netctl_online`), and NP stays offline (`np_psnr_enabled`), all read. The session is a cheat session.
-  - **The network is on at start and no cheat is:** an online session. Every cheat stays off until the next start. `allowed()` returns false, the knobs are ignored with one log line, and the Developer tab says why.
+  - **The network is on at start (`PS3_NET_ONLINE` or `PSNR_SERVER`) and no cheat is:** an online session. Every cheat stays off until the next start. `allowed()` returns false, the knobs are ignored with one log line, and the Developer tab says why.
   - **Neither:** an offline session. A cheat can be turned on at any time. The first one sets the "cheats used" latch for the rest of the session.
 - **The UI learns the session** from `DES_DEV_SESSION` (cheats, online or offline), which `des_dev_boot()` sets. No new link between the UI library and the port.
 - **The hook point for future network code.** One function, `des_dev_cheats_used()`, true from the first cheat to the end of the session. docs/46's Network section must show Online as off while it is true. Release builds have no cheats, so there it is always false.
-- **One gap until ps3recomp has a lock.** In an offline or cheat session, the debug console could still set `PS3_NET_ONLINE` and `PSNR_SERVER` again. cellNetCtl and NP read them live (read). The host sockets would still be missing, because they are registered only at start. To close it, ps3recomp gets a sticky `ps3_net_lock_offline()`: once called, `netctl_online()`, `np_psnr_enabled()`, the sys_net host sockets and cellHttp's resolver all stay offline. The port calls it at start in a cheat session and at the latch. About half a day, best done with docs/46 stage 0, which touches the same code.
+- **Checked again where the cheats act.** In an offline or cheat session, the debug console can still set `PS3_NET_ONLINE` and `PSNR_SERVER` again, and cellNetCtl and NP read them live (read: `np_psnr_connect` reads them at each context start). So every cheat hook and `DES_WARP` checks the two knobs before it acts (any value counts, as in ps3recomp), and `des_debug_tick` checks them once a frame after any `setenv`. The first time either is seen set, the session is online until the next start: the cheats do nothing, one log line says so (and whether cheats were used before), and `DES_DEV_SESSION` becomes `online`, so the Developer tab shows the online message.
+- **What is left until ps3recomp has a lock.** When the knobs are set late, ps3recomp may still connect: the cheats are off by then, but what they changed stays (souls, items), and a knob set and cleared again between two frames, with no cheat acting meanwhile, is not seen. The host sockets would still be missing, because they are registered only at start. To close it, ps3recomp gets a sticky `ps3_net_lock_offline()`: once called, `netctl_online()`, `np_psnr_enabled()`, the sys_net host sockets and cellHttp's resolver all stay offline. The port calls it at start in a cheat session and at the latch. About half a day, best done with docs/46 stage 0, which touches the same code. `des_dev_cheats_used()` has no caller yet either; the network code of docs/46 is to call it.
 - **Saves.** A save made with cheats keeps what was gained (souls, items). The rule protects the session, not the save. Marking such saves is a question for you (section 14).
 
 ## 7. The CI check
 
-- **What it looks for.** In every file of the release, and inside zips (nested too): `DES-DEV-BUILD`, `DES_GOD`, `DES_ATK`, `DES_SPEED` and `DES_WARP`, each in ASCII and in UTF-16LE. Text documents (`.md`, `.txt`, `.html`) are skipped, because docs may name the knobs. None of these strings appear in master's sources today (read).
-- **Where it runs.** As the last step of the release workflow, on the folder or zip that is uploaded. Any hit fails the release and lists the file and offset.
-- **A self-test.** CI builds `des_ui` alone with `-DDES_DEV=ON` (it needs no game files) and runs the scanner with `--expect-dev`, which must find the marker. The same library built with OFF must pass. That proves the scanner works and the gate holds.
-- **A draft exists.** `check_release_no_dev.py`, Python standard library only, about 90 lines. It was tested on sample files: a clean folder passes, and a marker in a DLL, a UTF-16 knob name in a library and a knob name inside a zip all fail it. It also passes on today's ordinary `des_boot.exe` (about 300 MB, a few seconds), so a normal build gives no false alarm. It is in the lane's scratch folder, not in the repo. Lane 4 can take it as `tools/ci/check_release_no_dev.py`.
+- **What it looks for.** In every file of the release: `DES-DEV-BUILD`, `DES_GOD`, `DES_ATK`, `DES_SPEED` and `DES_WARP`, each in ASCII and in UTF-16LE. Zip, tar, gzip, bzip2 and xz files are opened, nested up to 8 deep, zip self-extractors included. Text documents (`.md`, `.txt`, `.html`) are not searched, because docs may name the knobs. None of these strings appear in master's sources today (read).
+- **It fails closed.** A file it cannot look inside fails the check (exit 3, each file listed) instead of passing: other archives (7z, RAR, CAB, MSI, zstd, lz4, ISO, DMG, xar, squashfs, AppImage and the like, by their first bytes or their name), installers (NSIS, Inno Setup, WiX bundles, an executable with a 7z, RAR, CAB or MSI inside), executables packed with UPX and similar packers (by their section names), archives nested deeper than 8, encrypted or damaged archive members, and files it cannot read. Such a file's bytes are still searched. After checking one another way (unpacked), `--skip PATTERN` leaves it out; each skipped file is listed.
+- **Where it runs.** Nowhere by itself yet: there is no release workflow (section 8). Run it by hand on any build before sharing it: `python tools/ci/check_release_no_dev.py <folder or zip>`. Exit 0 means nothing found, 1 dev build code found (each hit with its file and offset), 3 files not checked, 2 a usage error.
+- **A self-test.** CI builds `des_ui` alone with `-DDES_DEV=ON` (it needs no game files) and runs the scanner with `--expect-dev`, which must find the marker. The same library built with OFF must pass. That proves the scanner works and the gate holds. Not set up yet.
+- **Tested** on 30 small sample files (each format above, zips nested 8 and 9 deep, a zip self-extractor, an encrypted member, `--skip`, `--expect-dev`) and on the developer and release `des_boot.exe` of this branch (section 15).
 
 ## 8. What lane 4 must do
 
@@ -230,7 +233,7 @@ Only in dev builds (`#if DES_DEV` in `settings.cpp` and `settings_window.cpp`). 
 
 - **Not saved.** A new `Apply::Session` kind: live like `Apply::Live`, but `load_and_apply_env` skips it when reading `settings.ini` and `save()` does not write it. `describe()` still lists it, so an issue report from a dev build shows which cheats were on.
 - **The environment wins**, as for every row: a test script's `DES_GOD=1` shows the row as set from outside and disabled (existing `pinned` logic, read).
-- **Online session.** When `DES_DEV_SESSION` is `online`, the tab shows only one info row: "This session is online, so the cheats are off. Start the game without PS3_NET_ONLINE to use them."
+- **Online session.** When `DES_DEV_SESSION` is `online` (from the start, or since the network was turned on), the tab shows only one info row: "This session is online (PS3_NET_ONLINE or PSNR_SERVER is or was set), so the cheats are off until the next start. Start the game without them to use the cheats." The tab is built again each time it is shown, so it follows the session.
 - **Rows use the existing helpers** `bool_row`, `choice_row` and `info_row` (read). The tab's strings carry the marker, which the CI self-test relies on.
 
 ## 10. DES_WARP behind the gate
@@ -280,7 +283,7 @@ Open points this run settles: whether spell hits and arrows pass the player as t
 - **Spells and arrows.** If the damage handler gets no attacker for projectile hits, `DES_ATK` does not apply to them (inferred). The run checks it.
 - **Speed.** The feet slide. At x10 and 30 fps a dash step is about 2.1 m, so the physics proxy may pass through thin walls (inferred). Below about x0.2 a dash drops under the game's own 1 m/s stuck test, and the factor halves on top (read, des_move_post). Hence the 0.25 to 10 range.
 - **The lift changes.** 12 new hook calls, one full rebuild. Release builds call an empty function at those places.
-- **The console gap** in the offline rule, until the ps3recomp lock exists (section 6).
+- **What is left of the console gap** in the offline rule, until the ps3recomp lock exists: the cheats stop when the network knobs are set late, but ps3recomp may still connect (section 6).
 - **Saves.** Gains made with cheats stay in the save (section 6).
 - **False alarms in CI.** The knob names must not appear in release binaries or in the shipped hook list. Comments in `insn_hooks.txt` stay neutral (section 4).
 
@@ -322,8 +325,8 @@ The build follows sections 1 to 11, with these differences:
 - **The Developer tab's help texts** end with the knob name in brackets, as the other rows do.
 - **The frame log** (`DES_FRAMELOG`) gained HP and MP columns at the end of each line, in a separate tooling commit.
 - **The scanner** is `tools/ci/check_release_no_dev.py`. No workflow runs it yet (lane 4, section 8).
-- **Not done:** ps3recomp's `ps3_net_lock_offline()` (section 6's gap stays until then), the `+dev` version suffix (above),
-  the version resource's `PrivateBuild` field, the CI self-test job, and lane 4's steps.
+- **Not done:** ps3recomp's `ps3_net_lock_offline()` (what is left of section 6's gap stays until then), the `+dev`
+  version suffix (above), the version resource's `PrivateBuild` field, the CI self-test job, and lane 4's steps.
 
 ### First run (2026-10-19)
 
@@ -343,6 +346,31 @@ Four boots on the pinned regression save (the Tutorial), 30 fps, the cheats swit
 Not run yet: Attack power in a fight; God mode against hits, falls, poison and spells; the online refusal with a real
 connection (unattended runs stay offline); a pad or keyboard in the Developer tab (the session was locked). Section 11's
 run request covers them.
+
+### Review fixes (2026-10-19)
+
+A review of the PR found four things, fixed in separate commits:
+
+- **H3 could compound.** Its comment said the calculation rewrites rec+0x14C on every hit. It does not: a record of type
+  0x40 skips the store (section 3), so with `DES_ATK=10` such a record could have its earlier, already scaled damage
+  scaled again on each pass. H3 now leaves type 0x40 alone, so it only ever scales a value the calculation stored on
+  this hit. With `DES_DEVLOG=1` a skipped record logs "H3 hit damage left as it was (record type 0x40)".
+- **The offline rule only looked at start.** It now also checks the network knobs where the cheats act and after each
+  `setenv` (section 6).
+- **A cached `DES_DEV=ON`.** The README sent developers to configure `port/build` itself with `-DDES_DEV=ON`; CMake
+  caches the option, and `tools/des/build.sh` only builds `port/build`, so every later build there would have had the
+  cheats. Developer builds now go in `port/build_dev`, and a developer build says so at configure, at each link and in
+  its window title (section 4). The CMake comment and the README no longer mention a CI check, a release workflow or a
+  player setup, which do not exist yet.
+- **The scanner passed what it could not open.** It now fails closed and takes `--skip` (section 7).
+
+Built without `/Zi` in the lane's build folder: `-DDES_DEV=ON` (38 files rebuilt; the configure printed the new warning,
+the link printed the developer-build line), then `OFF` (37 files; neither printed). Both linked with no compiler
+warnings. The scanner passed the release exe and found the developer exe. The release exe has none of the new strings.
+
+Not run yet: whether the player's hits ever use type 0x40 records (the `DES_DEVLOG` line above shows it); the live
+refusal (set `PS3_NET_ONLINE=1` with the debug console while God mode is on: one `[dev] PS3_NET_ONLINE is set` line,
+then God mode stops, and the Developer tab shows the online message); the window title.
 
 ## Appendix A. The proposed hook lines
 

@@ -873,6 +873,25 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
 }
 
+/* A step a camera adds once a frame, cur += input * step, tuned for 30 fps:
+ * the bow's aim view zooms by 0.1 of its range a frame (ChrAimCam 0x00110608,
+ * +0x138 += input * +0x13C, then clamped to [0, 1]), so at 120 fps it zoomed
+ * four times as fast. Called after the lfs of the step (--insn-hooks); puts
+ * step * dt * 30 in the register. Main thread. DES_CAMFIX=0 turns it off with
+ * the camera eases; nothing at 30 fps or without DES_FPS. */
+extern "C" void des_cam_step(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_CAMFIX", 1) != 0);
+    if (!on || s_fps <= 0) return;
+    const uint32_t insn = vm_read32(addr);
+    if ((insn >> 26) != 48) return;   /* lfs only */
+    const int fd = (insn >> 21) & 31;
+    const float steps = vm_readf(kFrameDt) * 30.0f;
+    if (!(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
+    ctx->fpr[fd] = (float)(ctx->fpr[fd] * steps);
+}
+
 /* A factor kept once a frame, cur = base + (cur - base) * r (or cur *= r),
  * tuned for 30 fps: at 240 fps the remainder shrinks eight times as fast. Called
  * after the lfs of r (--insn-hooks); puts r' = r^(dt * 30) in the register, the

@@ -64,6 +64,7 @@ The build is not yet a single command. The steps, in order:
    cmake --build port/build --target des_boot --parallel 4
    ```
    Recompiling the 14 lifted chunks takes about 15 minutes. The lift keeps a guest call stack for backtraces (`--shadow-stack`), but the build compiles it out, which is about 2% faster; configure the port with `-DDES_SHADOW_STACK=ON` to keep it for `ds_dump_shadow`.
+   For a developer build, add `-DDES_DEV=ON` to the port's configure line: it compiles in the dev cheats (god mode, attack power, movement speed and `DES_WARP`, live from a Developer tab in the settings; see `port/des_dev.cpp`). Switching it rebuilds a few files, not the lift. Never share such a build: CI fails a release that has them.
 
 ## Running
 

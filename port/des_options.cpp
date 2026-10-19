@@ -910,12 +910,14 @@ extern "C" void des_viewer_rate(ppu_context* ctx, uint32_t addr)
 }
 
 extern "C" void des_menu_sfx_init(void);   /* des_menu_sfx.cpp */
+extern "C" void des_chrins_init(void);     /* des_chrins.cpp */
 
 extern "C" void ps3_title_options_init(void)
 {
     /* First: settings.ini fills in the options not set in the environment. */
     des_ui_early_init();
     des_menu_sfx_init();   /* the UI's sounds through the game's menu sounds */
+    des_chrins_init();     /* the character step's handshake without its lost-kick race */
     if (env_on("DES_SKIP_INTRO")) {
         s_skip_intro = atoi(getenv("DES_SKIP_INTRO")) == 2 ? 2 : 1;
         ppu_register_function(kLogoUpdate, logo_update_skip);

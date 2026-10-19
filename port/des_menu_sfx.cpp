@@ -13,6 +13,7 @@
  * DES_UI_SOUND=0 keeps the UI silent. */
 
 #include "ppu_recomp.h"
+#include "des_game_calls.h"     /* DES_SPLIT: the lifted functions below are in the game DLL */
 #include "ui/include/des_ui.h"
 #include <atomic>
 #include <chrono>
@@ -21,7 +22,9 @@
 #include <cstdlib>
 #include <cstring>
 
+#ifndef PS3_GAME_SPLIT   /* DES_SPLIT: the game DLL's (ps3emu/game_split.h) */
 extern "C" PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);
+#endif
 
 namespace {
 

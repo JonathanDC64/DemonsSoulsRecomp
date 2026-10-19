@@ -58,6 +58,7 @@
  * player's. The sites and their registers are in docs/55 section 2.4; each
  * was checked against the instructions around it. */
 #include "ppu_recomp.h"
+#include "des_game_calls.h"     /* DES_SPLIT: the lifted functions below are in the game DLL */
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include "des_dev_marker.h"
 #include <atomic>
@@ -72,7 +73,9 @@
 #error "des_dev.cpp is only for developer builds (cmake -DDES_DEV=ON)"
 #endif
 
+#ifndef PS3_GAME_SPLIT   /* DES_SPLIT: the game DLL's (ps3emu/game_split.h) */
 extern "C" PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);
+#endif
 extern "C" const char* cellGame_get_title(void);   /* PARAM.SFO's TITLE (ps3recomp libs/system/cellGame.c) */
 
 namespace {

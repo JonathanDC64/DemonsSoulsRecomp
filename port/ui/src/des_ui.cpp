@@ -689,7 +689,7 @@ extern "C" void des_ui_early_init(void) {
     sStartUp.store(sStartScreen);
     ui::mouse::set_ui_open(sStartScreen);  // (until the first frame pushes it)
 
-    sCloseAsks = !ui::settings::scripted_run();
+    sCloseAsks = !ui::settings::unattended_run();
     ui::app().quit = [] {
         sQuitConfirmed.store(true);
         if (HWND hwnd = static_cast<HWND>(rsx_d3d12_hwnd())) PostMessageW(hwnd, WM_CLOSE, 0, 0);

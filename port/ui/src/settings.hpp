@@ -56,6 +56,9 @@ std::string pinned_value(std::string_view key);
 // is scripted (DES_AUTO_CONTINUE, PAD_FILE, EXIT_AFTER_MS): no start screen there.
 bool harness_run();
 bool scripted_run();
+// scripted_run() without DES_AUTO_CONTINUE: nobody plays the run. The close button closes at once only there; a
+// play session with DES_AUTO_CONTINUE on its command line skips the start screen but still asks.
+bool unattended_run();
 
 // PS3_NO_USER_INPUT=1 (test runs; tools/des/deslib.sh sets it): the user's pads, keys and mouse do nothing. The
 // runtime reads the same variable (ps3_knob.h) for the game's pad and the window.

@@ -17,6 +17,11 @@
 // the counts not yet taken. Windows can drop the clip by itself (Ctrl+Alt+Del, a UAC prompt), so it is checked again
 // as the mouse moves.
 //
+// While the game has the mouse, its buttons and wheel go to cellPad too (cellPad_host_mouse_buttons and _wheel, from
+// the same raw input), where the keyboard layout's bindings name them (mouse1 = left click is R1, wheelup is Up, and
+// so on; settings.cpp). Letting go lets go of the buttons. So a click that brings the window to the front, or one on
+// the UI, never presses anything in the game.
+//
 // Threads: the window's thread owns the state (wndproc). The counts are atomics that the camera hook takes on the
 // game's main thread (des_mouse_take). set_ui_open and on_frame (the render thread) and des_mouse_refresh (any thread)
 // post WM_DES_MOUSE, and the window's thread then looks again.
@@ -30,6 +35,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+extern "C" {
+void cellPad_host_mouse_buttons(unsigned mask);  // ps3recomp, libs/input/cellPad.h
+void cellPad_host_mouse_wheel(int notches);
+}
 
 namespace {
 
@@ -55,6 +65,8 @@ bool sWaitButtons = false;  // the game would have the mouse, but a button is st
 RECT sClip{};               // the clip set last
 bool sAbsValid = false;     // a device that reports positions (remote desktop, tablets): its last one, in pixels
 LONG sAbsX = 0, sAbsY = 0;
+unsigned sButtons = 0;      // the buttons held as cellPad has them: bit 0 left, 1 right, 2 middle, 3 and 4 the side ones
+int sWheel = 0;             // wheel movement short of a whole notch (WHEEL_DELTA)
 
 bool env_on(const char* name) {
     const char* v = std::getenv(name);
@@ -127,9 +139,14 @@ void hold(HWND hwnd, const char* why) {
     }
 }
 
-// Shows the cursor and frees it, dropping the counts not yet taken.
+// Shows the cursor and frees it, dropping the counts not yet taken and letting go of the buttons.
 void let_go(HWND hwnd, const char* why) {
     sWaitButtons = false;
+    if (sButtons) {
+        sButtons = 0;
+        cellPad_host_mouse_buttons(0);
+    }
+    sWheel = 0;
     if (!sHeld.exchange(false)) return;
     ClipCursor(nullptr);
     sDx.store(0);
@@ -190,6 +207,28 @@ void on_input(HWND hwnd, WPARAM wp, LPARAM lp) {
     }
     if (dx) sDx.fetch_add(int(dx), std::memory_order_relaxed);
     if (dy) sDy.fetch_add(int(dy), std::memory_order_relaxed);
+    if (const USHORT f = m.usButtonFlags) {  // the buttons and the wheel, for cellPad
+        static const USHORT kDown[5] = {RI_MOUSE_BUTTON_1_DOWN, RI_MOUSE_BUTTON_2_DOWN, RI_MOUSE_BUTTON_3_DOWN,
+                                        RI_MOUSE_BUTTON_4_DOWN, RI_MOUSE_BUTTON_5_DOWN};
+        static const USHORT kUp[5] = {RI_MOUSE_BUTTON_1_UP, RI_MOUSE_BUTTON_2_UP, RI_MOUSE_BUTTON_3_UP,
+                                      RI_MOUSE_BUTTON_4_UP, RI_MOUSE_BUTTON_5_UP};
+        unsigned b = sButtons;
+        for (int i = 0; i < 5; i++) {
+            if (f & kDown[i]) b |= 1u << i;
+            if (f & kUp[i]) b &= ~(1u << i);
+        }
+        if (b != sButtons) {
+            sButtons = b;
+            cellPad_host_mouse_buttons(b);
+        }
+        if (f & RI_MOUSE_WHEEL) {  // usButtonData: signed, WHEEL_DELTA a notch, positive away from the user
+            sWheel += short(m.usButtonData);
+            if (const int notches = sWheel / WHEEL_DELTA) {
+                sWheel -= notches * WHEEL_DELTA;
+                cellPad_host_mouse_wheel(notches);
+            }
+        }
+    }
     RECT clip{};
     if (GetClipCursor(&clip) && !EqualRect(&clip, &sClip)) hold(hwnd, "clip lost");  // Windows dropped it
 }

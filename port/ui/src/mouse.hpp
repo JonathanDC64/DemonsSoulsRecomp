@@ -1,6 +1,7 @@
 // Written for Demon's Souls. Mouse look's side of the window (docs/41, section 1.3): raw mouse input on the window's
-// thread, and the cursor hidden and held in the window while the game has the mouse. The camera's side is
-// des_mouse_look in des_options.cpp, which takes the counts with des_mouse_take (des_ui.h).
+// thread, and the cursor hidden and held in the window while the game has the mouse (its buttons and wheel then go to
+// cellPad for the keyboard layout). The camera's side is des_mouse_look in des_options.cpp, which takes the counts
+// with des_mouse_take (des_ui.h).
 #pragma once
 
 namespace ui::mouse {

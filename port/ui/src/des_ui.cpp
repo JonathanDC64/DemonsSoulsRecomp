@@ -2,9 +2,10 @@
 // UI from its two hooks. Written for Demon's Souls; the shape follows FFCCEOT-Recomp's main loop (SDL events in, one
 // ui::update and draw per frame), with the window procedure and the frame hook in place of SDL.
 //
-//   wndproc (the window's message thread): F1 and Esc are always the UI's. While a document is up, the keyboard
-//     (except F9-F12, the backend's capture keys) and the mouse are queued and kept from the game window. Mouse look
-//     (mouse.cpp) sees each message first, and holds the cursor in the window while the game has the mouse.
+//   wndproc (the window's message thread): F1 is always the UI's (Esc is the game's Start in the keyboard layout,
+//     settings.cpp). While a document is up, the keyboard (except F9-F12, the backend's capture keys) and the mouse
+//     are queued and kept from the game window. Mouse look (mouse.cpp) sees each message first, holds the cursor in
+//     the window while the game has the mouse, and passes the game the mouse's buttons and wheel meanwhile.
 //   frame (the render thread, once per presented frame, before Present): drains the queue into RmlUi, reads the
 //     gamepads (they drive RmlUi only while a document is up), updates and draws. When nothing is showing (no
 //     document, no pop-up) it returns after a couple of loads: no RmlUi work, no pad reads, no GPU work. The
@@ -217,8 +218,10 @@ void push_event(const InputEvent& e) {
     sQueued.store(true, std::memory_order_release);
 }
 
+// Opens the menu over the game. Not Esc: in play it is the game's Start (the keyboard layout, settings.cpp), and it
+// reaches the UI only while a document is up, where it goes back.
 bool is_menu_key(WPARAM vk) {
-    return vk == VK_F1 || vk == VK_ESCAPE;
+    return vk == VK_F1;
 }
 
 // The back buffer is stretched over the client area: mouse positions are in back buffer pixels.
@@ -598,7 +601,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     auto* overlay = static_cast<ui::Overlay*>(ui::find_document(ui::DocumentScope::Overlay));
     const bool busy = overlay && overlay->busy();
     if (!visible && !sHold && !busy && !sReportCountdown && now - sLastVisible > kGrace) {
-        // Asleep until F1 / Esc or the chord. The chord may still read as held from before: only a new press counts.
+        // Asleep until F1 or the chord. The chord may still read as held from before: only a new press counts.
         sActive = false;
         ui::input::reset_input_state();
         sChordWasDown = (g_pad0_buttons & sChordMask) == sChordMask;

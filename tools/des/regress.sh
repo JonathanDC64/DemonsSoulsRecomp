@@ -65,7 +65,8 @@ restore() {   # as in levelcap.sh
   trap - TERM INT HUP
 }
 trap restore EXIT
-if [ -d "$REG/save" ]; then des_put_save "$REG/save" "$SAVE"
+if [ -d "$REG/save" ]; then
+  des_save_swap "$REG/save" "$SAVE" || { echo "[regress] could not put $REG/save in place"; exit 2; }
 else echo "[regress] no pinned save ($REG/save): using the current one; see pin-save"; fi
 
 tools/des/desrun.sh "${REGRESS_MAX:-600}" "$OUT" DES_SKIP_INTRO=1 DES_AUTO_CONTINUE=1 \

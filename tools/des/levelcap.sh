@@ -48,7 +48,7 @@ restore() {
 trap restore EXIT
 if [ -n "$LC_SAVE" ]; then
   [ -d "$LC_SAVE" ] || { echo "[lc] no save at $LC_SAVE"; exit 2; }
-  des_put_save "$LC_SAVE" "$SAVE"
+  des_save_swap "$LC_SAVE" "$SAVE" || { echo "[lc] could not put $LC_SAVE in place"; exit 2; }
 fi
 tools/des/desrun.sh "${LC_MAX:-600}" "$OUT" DES_SKIP_INTRO=1 \
   PAD_FILE="$(cygpath -m "$PAD")" PS3_DEBUG="$(cygpath -m "$CON")" PS3_OSK_TEXT=Aldia HLE_FIRST=1 CELLMARK_DUMP=${LC_DUMP:-100000} CELLMARK_DUMP_EVERY=${LC_EVERY:-30} CELLMARK_DUMP_CHANGED=1 CELLMARK_DUMP_MINDRAWS=1 CELLMARK_DUMP_DIR="$(cygpath -m "$SHOTS")" "$@" > "$RUN/summary.txt" 2>&1 &

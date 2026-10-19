@@ -119,6 +119,26 @@ if(NOT DES_SHADOW_STACK)
     target_compile_definitions(des_boot PRIVATE DS_NO_SHADOW_STACK)
 endif()
 
+# Developer builds (docs/55): the dev cheats and the settings window's Developer tab.
+# Never for a release: the release workflow and the player setup configure with
+# -DDES_DEV=OFF, and CI fails a release that contains the dev marker. DES_DEV is
+# always defined, as 0 or 1, but only for the port's sources that read it, so
+# switching it recompiles those few files and not the lifted chunks. The dev
+# hook lines are in insn_hooks.txt either way (one lift for both builds).
+option(DES_DEV "Developer build: dev cheats and the Developer settings tab (never in a release)" OFF)
+if(DES_DEV)
+    target_sources(des_boot PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/des_dev.cpp")
+    set(DES_DEV_VALUE 1)
+else()
+    set(DES_DEV_VALUE 0)
+endif()
+set_property(SOURCE
+    "${CMAKE_CURRENT_SOURCE_DIR}/des_options.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/des_menu_sfx.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/des_dev.cpp"
+    APPEND PROPERTY COMPILE_DEFINITIONS DES_DEV=${DES_DEV_VALUE})
+message(STATUS "DES_DEV (developer build, dev cheats): ${DES_DEV}")
+
 # Huge generated TUs need /bigobj (COFF >65k sections). NOTE: configure with an
 # empty CMAKE_BUILD_TYPE so the Debug config's /RTC1 (runtime checks: big
 # slowdown, and incompatible with /O2) is NOT added.

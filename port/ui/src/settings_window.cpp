@@ -15,6 +15,9 @@
 #include "settings.hpp"
 #include "ui.hpp"
 #include "version.hpp"
+#if DES_DEV
+#include "../../des_dev_marker.h"
+#endif
 
 #include <windows.h>
 #include <shellapi.h>
@@ -22,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <format>
 #include <string>
 #include <vector>
@@ -428,11 +432,51 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "menu.");
     });
 
+#if DES_DEV
+    // Developer builds only (cmake -DDES_DEV=ON; docs/55, des_dev.cpp). The rows are live and never saved.
+    add_tab("Developer", [this](Rml::Element* content) {
+        auto& leftPane = add_child<Pane>(content, Pane::Type::Controlled);
+        auto& rightPane = add_child<Pane>(content, Pane::Type::Uncontrolled);
+
+        // des_dev_boot decides the session once, at start: cheats, online or offline.
+        const char* session = std::getenv("DES_DEV_SESSION");
+        if (session && std::strcmp(session, "online") == 0) {
+            info_row(leftPane, rightPane, "Cheats", "Off: online session",
+                "This session is online, so the cheats are off. Start the game without PS3_NET_ONLINE to use "
+                "them.");
+            return;
+        }
+        info_row(leftPane, rightPane, "Developer build", "Cheats compiled in",
+            "This is a developer build (" DES_DEV_MARKER "). The cheats below are for testing. While one is on, "
+            "this session stays offline. They are not saved: each start begins with all of them off.");
+        bool_row(leftPane, rightPane, "God mode", "DES_GOD",
+            "Your HP, MP and stamina never drop: hits, falls, poison, spells, attacks, rolls, guarding and dashing "
+            "cost nothing. Instant deaths still kill: falling out of the level, lethal grabs and scripted deaths."
+            "<br/><br/>(DES_GOD)");
+        choice_row(leftPane, rightPane, "Attack power", "DES_ATK", {"1", "2", "5", "10", "100", "0"},
+            {"Normal", "2x", "5x", "10x", "100x", "No damage"},
+            "Multiplies the damage your hits do to others. Any other number can be set with DES_ATK."
+            "<br/><br/>(DES_ATK)");
+        choice_row(leftPane, rightPane, "Movement speed", "DES_SPEED", {"1", "1.5", "2", "3", "0.5"},
+            {"Normal", "1.5x", "2x", "3x", "Half"},
+            "Multiplies how far you move: walking, running, dashing, rolling and attack lunges. Animations keep "
+            "their speed. Very high values may let you pass through thin walls.<br/><br/>(DES_SPEED)");
+        info_row(leftPane, rightPane, "Warp (scripts)", "DES_WARP=x,y,z",
+            "For test scripts and the debug console. DES_WARP=x,y,z puts you at x, y, z the way the level scripts "
+            "place characters; each new value warps once. DES_WARP_CLEAR=m first sends the enemies within m metres "
+            "of that spot to the tutorial's start. A warp counts as a cheat: the session stays offline.");
+    });
+#endif
+
     add_tab("About", [this](Rml::Element* content) {
         auto& leftPane = add_child<Pane>(content, Pane::Type::Controlled);
         auto& rightPane = add_child<Pane>(content, Pane::Type::Uncontrolled);
 
         leftPane.add_section("This program");
+#if DES_DEV
+        info_row(leftPane, rightPane, "Developer build", "Cheats compiled in",
+            "This build has the developer cheats (the Developer tab). Never share it as a release.");
+#endif
         info_row(leftPane, rightPane, "Version", kVersion,
             "Demon's Souls, PC port: a static recompilation of the PlayStation 3 game.<br/><br/>Version " +
                 escape(kVersion) + ".",

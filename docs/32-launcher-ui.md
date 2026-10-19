@@ -29,7 +29,10 @@ licences in `port/ui/NOTICE.md`.
 While any of it is showing, the game sees neutral pads
 (`cellPad_set_host_hold(1)`) and gets the input back only once every game
 key, F1, Esc, the mouse buttons and every pad button and stick are back at
-rest, so the press that closed the menu never reaches the game.
+rest, so the press that closed the menu never reaches the game. Toasts (the
+menu hint, trophy pop-ups) are the exception: while one shows, the game
+keeps its input, Start included, and F1, Esc or the gamepad chord still
+open the menu.
 
 ## Settings
 

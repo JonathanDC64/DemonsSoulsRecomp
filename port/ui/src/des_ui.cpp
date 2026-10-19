@@ -26,6 +26,7 @@
 #include "report.hpp"
 #include "settings.hpp"
 #include "settings_window.hpp"
+#include "trophy_toasts.hpp"
 #include "ui.hpp"
 
 #include <windows.h>
@@ -500,8 +501,9 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     const bool script = !sScriptKeys.empty();
     const char* shot = sShots.empty() ? nullptr : shot_for_frame(sFrame);
     if (script) script_keys_for_frame(sFrame);
+    ui::trophies::poll_test_knob();  // DES_TROPHY_TEST
 
-    // Fast path: nothing showing, nothing queued, no chord pressed.
+    // Fast path: nothing showing, nothing queued (input, a trophy pop-up), no chord pressed.
     const unsigned mask = sChordMask;
     const bool chordDown = (g_pad0_buttons & mask) == mask;
     const bool chordEdge = chordDown && !sChordWasDown;
@@ -511,7 +513,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     const bool prework = ui::prework_running();
     if (!sActive && !sStartScreen && !chordEdge && !shot && !sQueued.load(std::memory_order_acquire) &&
         !sOpenPending && !sReportCountdown && !(prework && !sPreworkShown) && !sCloseRequested.load() &&
-        !sOskPending.load(std::memory_order_acquire)) {
+        !sOskPending.load(std::memory_order_acquire) && !ui::trophies::pending()) {
         return;
     }
 
@@ -522,6 +524,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         sStartUp.store(false);
         if (sCloseRequested.exchange(false) && ui::app().quit) ui::app().quit();  // nothing to ask with
         if (sOskPending.exchange(false)) apply_osk_request(false);
+        ui::trophies::discard();  // (the unlocks are saved; only the pop-ups are lost)
         sActive = false;
         std::lock_guard<std::mutex> lock(sQueueLock);
         sQueue.clear();
@@ -551,6 +554,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     const ui::input::PadState pad = read_pads(padNeutral);
     ui::input::update_pad(pad, chord);
     if (ui::OskWindow* osk = ui::active_osk()) osk->on_pad(pad.buttons);
+    ui::trophies::drain();
     ui::update();
     sStartUp.store(ui::is_prelaunch_open());
 
@@ -671,4 +675,5 @@ extern "C" void des_ui_early_init(void) {
     rsx_d3d12_set_overlay(&kOverlay);
     static const CellOskDialogHost kOsk = {osk_open, osk_close};
     cellOskDialog_set_host(&kOsk);
+    ui::trophies::install();
 }

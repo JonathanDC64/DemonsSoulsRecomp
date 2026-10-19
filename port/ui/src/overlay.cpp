@@ -33,8 +33,15 @@ Rml::Element* create_toast(Rml::Element* parent, const Toast& toast) {
     if (!toast.type.empty()) {
         elem->SetClass(toast.type, true);
     }
+    // With an icon: toast > toast-row > (toast-icon, toast-body > heading, message), then the progress bar.
+    Rml::Element* body = elem;
+    if (!toast.icon.empty()) {
+        auto* row = append(elem, "toast-row");
+        append(row, "toast-icon")->SetInnerRML(toast.icon);
+        body = append(row, "toast-body");
+    }
     {
-        auto* heading = append(elem, "heading");
+        auto* heading = append(body, "heading");
         if (toast.title.starts_with("<")) {
             heading->SetInnerRML(toast.title);
         } else {
@@ -46,7 +53,7 @@ Rml::Element* create_toast(Rml::Element* parent, const Toast& toast) {
         }
     }
     {
-        auto* message = append(elem, "message");
+        auto* message = append(body, "message");
         if (toast.content.starts_with("<")) {
             message->SetInnerRML(toast.content);
         } else {

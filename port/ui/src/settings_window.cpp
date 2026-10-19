@@ -334,6 +334,9 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "automatically.");
         bool_row(leftPane, rightPane, "Menu hint", "menu_hint",
             "After Play, a note at the top of the screen says how to open this menu.");
+        bool_row(leftPane, rightPane, "Trophy pop-ups", "trophy_popups",
+            "When you earn a trophy, a note at the top right shows its icon, grade and name for a few seconds. Off "
+            "hides the note only: the trophy is still earned and kept.");
         choice_row(leftPane, rightPane, "Gamepad menu buttons", "pad_menu_chord", {"0", "1"},
             {"L3 + R3", "Select + Start"},
             "The buttons that open this menu over the game, pressed together. L3 + R3 (both sticks pressed in) is "

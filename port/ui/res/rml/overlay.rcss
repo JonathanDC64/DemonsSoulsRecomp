@@ -116,6 +116,60 @@ toast icon {
     font-size: 1.2em;
 }
 
+/* A toast with an icon (a trophy): the icon left of the heading and the message. */
+toast toast-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-lg);
+}
+
+toast toast-body {
+    display: flex;
+    flex-flow: column;
+    gap: var(--space-sm);
+    max-width: 440dp;
+}
+
+toast toast-icon {
+    display: flex;
+    align-items: center;
+}
+
+toast toast-icon img,
+toast toast-icon icon {
+    width: 64dp;
+    height: 64dp;
+}
+
+toast toast-icon icon {
+    font-size: 56dp;
+}
+
+toast.trophy heading grade icon {
+    margin-right: var(--space-xs);
+}
+
+toast.trophy message {
+    font-weight: bold;
+    color: var(--color-accent);
+}
+
+toast.trophy grade.platinum {
+    color: rgb(180, 205, 225);
+}
+
+toast.trophy grade.gold {
+    color: rgb(222, 184, 84);
+}
+
+toast.trophy grade.silver {
+    color: rgb(192, 194, 198);
+}
+
+toast.trophy grade.bronze {
+    color: rgb(196, 128, 72);
+}
+
 @media (max-height: 640dp) {
     toast {
         top: 20dp;

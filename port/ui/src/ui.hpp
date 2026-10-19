@@ -36,6 +36,7 @@ struct Toast {
     Rml::String title;
     Rml::String content;
     clock::duration duration;
+    Rml::String icon;  // RML for an icon left of the title and the message (an <img> or an <icon>), or none
 };
 
 struct Insets {

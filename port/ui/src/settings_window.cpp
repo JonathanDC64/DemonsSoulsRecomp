@@ -20,6 +20,7 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <format>
 #include <string>
@@ -153,6 +154,24 @@ bool fps_is_custom() {
 int fps_custom() {
     const std::string v = fps_is_custom() ? fps_setting() : settings::get("fps_custom");
     return std::clamp(std::atoi(v.c_str()), kFpsMin, kFpsMax);
+}
+
+// Mouse sensitivity, shown as a percentage of its default (DES_MOUSE_SENS, degrees per count; des_mouse_look in
+// des_options.cpp).
+constexpr int kMouseSensMin = 5;
+constexpr int kMouseSensMax = 500;
+
+double mouse_sens_default() {
+    const settings::Def* d = settings::find("DES_MOUSE_SENS");
+    return d ? std::atof(d->def) : 0.09;
+}
+
+int mouse_sens_percent() {
+    const std::string v =
+        settings::pinned("DES_MOUSE_SENS") ? settings::pinned_value("DES_MOUSE_SENS") : settings::get("DES_MOUSE_SENS");
+    const double sens = std::atof(v.c_str());
+    if (!(sens > 0.0) || !(mouse_sens_default() > 0.0)) return 100;  // (des_mouse_look uses the default then)
+    return std::clamp(int(std::lround(sens / mouse_sens_default() * 100.0)), kMouseSensMin, kMouseSensMax);
 }
 
 // The software this program is made of (mirrors port/ui/NOTICE.md).
@@ -317,6 +336,48 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "<b>Q</b> L1 &nbsp; <b>W</b> R1 &nbsp; <b>1</b> L2 &nbsp; <b>2</b> R2<br/>"
             "<b>Enter</b> Start &nbsp; <b>Tab</b> Select<br/><br/>"
             "These are the defaults; Change Buttons changes them.");
+
+        leftPane.add_section("Mouse");
+        bool_row(leftPane, rightPane, "Mouse look", "DES_MOUSE_LOOK",
+            "Turns the camera with the mouse, as well as with the right stick. In play the cursor is hidden and "
+            "held in the window; on the title screen, in loading screens and in cutscenes it is free. Opening "
+            "this menu (F1 or Esc), switching to another window or moving the window frees it too, and the game "
+            "takes it again when you come back, once the mouse buttons are up. While locked on, the camera "
+            "follows the target and the mouse does nothing. The camera turns once a game frame, so it is "
+            "smoothest at 60 fps or more (Display, Frame rate). Applies at once: the game takes the mouse when "
+            "this menu closes.<br/><br/>(DES_MOUSE_LOOK)");
+        auto& mouseSens = leftPane.add_child<NumberButton>(NumberButton::Props{
+            .key = "Mouse sensitivity",
+            .getValue = mouse_sens_percent,
+            .setValue =
+                [](int value) {
+                    if (settings::pinned("DES_MOUSE_SENS")) {
+                        return;
+                    }
+                    settings::set("DES_MOUSE_SENS", std::format("{:g}", mouse_sens_default() * value / 100.0));
+                },
+            .isDisabled = [] { return settings::pinned("DES_MOUSE_SENS"); },
+            .isModified = [] { return !settings::is_default("DES_MOUSE_SENS"); },
+            .min = kMouseSensMin,
+            .max = kMouseSensMax,
+            .step = 5,
+            .suffix = "%",
+        });
+        leftPane.register_control(mouseSens, rightPane,
+            [helpText = with_note("DES_MOUSE_SENS",
+                 "How far the camera turns for a move of the mouse. 100% is 0.09 degrees for each count the mouse "
+                 "reports: a full turn for 4000 counts, about 13 cm at 800 dpi. From 5% to 500%; left and right "
+                 "change it by 5%, confirm to type a number. Applies at once.<br/><br/>(DES_MOUSE_SENS, in degrees "
+                 "per count)")](Pane& pane) {
+                pane.clear();
+                pane.add_rml(helpText);
+            });
+        bool_row(leftPane, rightPane, "Invert vertical", "DES_MOUSE_INVERT_Y",
+            "Off: moving the mouse forward looks up. On: forward looks down, like an aircraft's controls. Applies at "
+            "once.<br/><br/>(DES_MOUSE_INVERT_Y)");
+        bool_row(leftPane, rightPane, "Invert horizontal", "DES_MOUSE_INVERT_X",
+            "Off: moving the mouse right turns the camera right. On: it turns left. Applies at once."
+            "<br/><br/>(DES_MOUSE_INVERT_X)");
     });
 
     add_tab("Interface", [this](Rml::Element* content) {

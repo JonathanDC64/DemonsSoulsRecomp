@@ -17,6 +17,12 @@
 0x005F7394=des_cut_cam   # lvx v12: rotation in radians, before the wrap (earlier r1+0xD0, later r1+0xA0)
 0x005F743C=des_cut_cam   # lvx v2: scale (earlier r1+0x70, later r1+0xA0)
 
+# des_mouse_look (port/des_options.cpp): mouse look (docs/41). The entry of the
+# ChrExFollowCam update, after its first instruction: r3 = the camera, f1 = dt.
+# The hook adds the mouse's turn to the camera's yaw and pitch before the update
+# turns and places the camera, so they agree in the same frame.
+0x00119670=des_mouse_look   # li r0, 4080
+
 # des_cam_rate (port/des_options.cpp): loads of a per-frame ease factor k in the
 # camera code (cur += (target - cur) * k, tuned for 30 fps). Each is an lfs; the
 # hook rescales k to the frame time.

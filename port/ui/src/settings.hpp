@@ -57,6 +57,10 @@ std::string pinned_value(std::string_view key);
 bool harness_run();
 bool scripted_run();
 
+// PS3_NO_USER_INPUT=1 (test runs; tools/des/deslib.sh sets it): the user's pads, keys and mouse do nothing. The
+// runtime reads the same variable (ps3_knob.h) for the game's pad and the window.
+bool no_user_input();
+
 void save();
 
 }  // namespace ui::settings

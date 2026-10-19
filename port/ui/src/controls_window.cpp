@@ -148,6 +148,7 @@ Rml::String key_label(int vk) {
 // as the choice).
 bool input_neutral() {
     if (input::pad_buttons() != 0) return false;
+    if (settings::no_user_input()) return true;  // PS3_NO_USER_INPUT: a key held is the user's
     for (int vk = 1; vk < 0xFF; vk++) {
         if (GetAsyncKeyState(vk) & 0x8000) return false;
     }

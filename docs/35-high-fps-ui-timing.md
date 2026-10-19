@@ -4,6 +4,7 @@ With `DES_FPS` above 30, these ran fast:
 - the loading souls: the two soul icons by the small "Demon's Souls" logo, bottom left, at boot and on level loads. Fixed; see below.
 - menu text that is too long for its box and scrolls sideways, such as the key guide along the bottom of the inventory. Fixed; see "Scrolling menu text".
 - on the HUD, the soul counter rolling up after a soul gain, the bars' fill (the trail after damage or stamina use, and a heal filling the HP bar) and the bars' length when the max changes. Fixed; see "HUD effects".
+- the character creation screen's previews, which the right stick turns. Fixed; see "Character creation previews".
 
 The other HUD and menu animations that were checked already follow the frame's time.
 
@@ -162,6 +163,39 @@ A scratch field log gave each change's time and flip. The PC was busy with other
 
 Not run: the death screen, since the test save cannot die. docs/38 read its timer as dt-based. A bar's length changing in play (a level up, or going between body and soul form) uses the same code as the cap test.
 
+## Character creation previews
+
+The character creation screen shows the character in a preview that the right stick turns: the whole body from Create Profile on, and the face in Edit Appearance.
+
+- The body's step is 0x008DB170 and the face's is 0x008DA0E0. Each gets r3 = the preview and f1, f2 = the stick's x and y, which PadMan's getters 0x001B3F58 and 0x001B3F90 scale by pi/120. It adds 1.5 times the stick to the yaw (+0x154, wrapped to pi) and the pitch (+0x158, clamped to -20 to 70 degrees for the body and -30 to 70 for the face).
+- It runs once a frame and gets no dt: 2.25 degrees a frame at full tilt, 67.5 degrees a second at 30 fps and 540 at 240.
+
+### The fix
+
+`des_viewer_rate` in `port/des_options.cpp` runs after the first instruction of both steps (one `--insn-hooks` line each) and scales f1 and f2 by the frame's 30 Hz steps (kFrameDt times 30). At 30 fps it leaves them alone. `DES_UIFIX=0` turns it off live, with the other hooks here.
+
+### Measured
+
+One run per column on the pinned test save, from the title screen. A scratch driver held the right stick through the debug console (`PAD_STICK`), and a scratch log printed the preview's angles on each call.
+
+| Right stick | 30 fps | 240 fps, `DES_UIFIX=0` | 240 fps |
+|---|---|---|---|
+| Body, right for 0.5 s | +36.0 degrees, 16 calls | +274.5 degrees, 122 calls | +34.9 degrees, 124 calls |
+| Body, left for 1.0 s | -69.9 | -540.0 | -68.4 |
+| Body, down for 0.3 s | +22.5 | +90 (to the clamp) | +20.8 |
+| Face, right for 0.5 s | +36.0 | +276.7 | +34.3 |
+
+The small differences come from 30 fps rounding the stick's time to whole frames.
+
+### Screens checked
+
+The update detector and the draw logs ran at 30 and at 240 fps over:
+- the title flow: the notice, PRESS START, the title menu, the two network dialogs and the profile list;
+- character creation: Name with the on-screen keyboard, Gender and its confirm dialog, Class, Edit Appearance (Origin, Random, the Age and Gender sliders, Hairstyle, Hair Color, Details with General, Eyes and the RGB hair colour) and the discard dialog;
+- the Start menu: Inventory with its command menu and both display toggles, Equipment with an item list, Status and the Stat Guide, World Tendency, System with Options (Camera Speed), Load Profile and the Quit Game dialog, and tab changes with L2 and R2.
+
+Only the previews were frame-locked. The cursor glows, text pulses, fades and pop-ups take the same time at both rates. The sliders' hold-to-repeat goes by the frame's time too, though not exactly: it measured about 27 steps a second at 240 fps and about 20 at 30 fps with real frame times (`DES_FPS=30`).
+
 ## Scratch tools used
 
 These are kept outside the repo and rebuilt from this description:
@@ -173,6 +207,7 @@ These are kept outside the repo and rebuilt from this description:
 - `DES_FPATCH=addr=value,...`: rewrite floats at the first flip.
 - `DES_DTSCALE`: scale the step.
 - `DES_UIDTMSG`: log the movie task's message senders.
+- `DES_VIEWER_LOG=1`: log each call of the preview steps (yaw, pitch, stick, 30 Hz steps).
 - `DES_FRAMELOCK=1`: the update detector above.
 - `DES_SCROLLLOG=1`: log each scroll update call (dt, message, offset before and after).
 - `DES_PLACELOG=1`: hook slot 5 (0x00798AC8) and log the offset and the rect's x before and after each call.

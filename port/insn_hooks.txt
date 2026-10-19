@@ -44,6 +44,12 @@
 0x001FEAF4=des_slide_rate   # decay 0.65 (0x019D9C40), slide *= decay
 0x001FED50=des_slide_rate   # gain 1.0 (0x019D9C3C), slide += gravity along the slope * gain
 
+# des_viewer_rate (port/des_options.cpp): the character creation previews'
+# stick steps add the right stick to the yaw and pitch once a frame, tuned
+# for 30 fps. The hook scales the stick (f1, f2) by the frame's 30 Hz steps.
+0x008DA0E0=des_viewer_rate   # stdu r1, -0x290(r1), the first instruction: the face (Edit Appearance)
+0x008DB170=des_viewer_rate   # stdu r1, -0x290(r1), the first instruction: the body
+
 # DES_ASPECT wider than 16:9 (port/des_aspect.cpp): the HUD and menus kept 16:9
 # in the middle (unless DES_HUD=stretch). All are no-ops at 16:9.
 0x00718D84=des_hud_canvas     # stfs f13,0(r11): the menu canvas's right word (1280); widened to [-L, 1280+L]

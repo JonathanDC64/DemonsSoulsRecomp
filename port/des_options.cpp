@@ -836,7 +836,7 @@ extern "C" void des_motion_blur(ppu_context* ctx, uint32_t addr)
     (void)addr;
     static int on = 1;
     PS3_KNOB(on, ps3_env_int("DES_MOTION_BLUR", 1) != 0);
-    if (!on) ctx->cr ^= 2u;   /* cr7 is the low field; EQ = 2 */
+    if (!on) ppu_cr_set(ctx, 7, (uint8_t)(ppu_cr_get(ctx, 7) ^ 2u));   /* cr7's EQ = 2 */
 }
 
 /* The cameras ease towards their targets by a fixed fraction a frame,

@@ -69,6 +69,8 @@ constexpr uint32_t kChrMp       = 0x3CCu;        /* ints */
 constexpr uint32_t kChrStamina  = 0x3D4u;
 constexpr uint32_t kChrMove     = 0x20u;         /* the movement object */
 constexpr uint32_t kRecHpDamage = 0x14Cu;        /* a damage record's final HP damage, an int */
+constexpr uint32_t kRecType     = 0x28u;         /* a damage record's type, an int */
+constexpr int32_t  kRecTypeKept = 0x40;          /* the type the calculation leaves rec+0x14C alone for (H3) */
 constexpr float    kAtkMax      = 1000.0f;
 constexpr float    kSpeedMin    = 0.25f, kSpeedMax = 10.0f;
 constexpr double   kDamageCap   = 10000000.0;
@@ -207,7 +209,17 @@ extern "C" void des_dev_hook(ppu_context* ctx, uint32_t addr)
         const uint32_t rec = gpr32(ctx, 28);
         if (!guest_ptr_ok(rec)) break;
         const int32_t d = (int32_t)vm_read32(rec + kRecHpDamage);
-        if (d <= 0) break;   /* the calculation rewrites it on every hit, so this never compounds */
+        /* Only a damage the calculation 0x00285678 wrote on this pass is scaled, never one this hook wrote before. The
+         * calculation (record in r31) has one store to rec+0x14C, at 0x00285AC8, on every path but one: when
+         * rec+0x28 is 0x40 it branches from 0x00285808 straight to its epilogue, and rec+0x14C keeps what the record
+         * held, which may be this hook's result from an earlier hit. On that path the calculation returns right
+         * after the test, with no call in between, so the type read here is the one tested; a type that became 0x40
+         * during the calculation only leaves that hit unscaled. */
+        if ((int32_t)vm_read32(rec + kRecType) == kRecTypeKept) {
+            if (devlog && d > 0) dev_log(3, "hit damage left as it was (record type 0x40)", d, d, gpr32(ctx, 31));
+            break;
+        }
+        if (d <= 0) break;
         const double x = std::nearbyint((double)d * atk);
         const int32_t nd = (int32_t)(x > kDamageCap ? kDamageCap : x);
         vm_write32(rec + kRecHpDamage, (uint32_t)nd);

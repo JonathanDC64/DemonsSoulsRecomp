@@ -6,6 +6,8 @@ Two labels are used below:
 - **(read)**: I read it in the disassembly (`ps3recomp/tools/ppu_disasm.py --va`), in a param file or in the player's script. Constants were read from the ELF.
 - **(inferred)**: my conclusion, not yet checked in a run. Section 6 is one batched run request that checks the open points.
 
+> **Run r4 (2026-10-19) did section 6's steps 2 to 4** (section 3.6). Section 3.2's stick-to-slot reading is right. Its slot-to-move columns are wrong for all five slots. chr+0x310's bit 0x800 is not the lock flag. The sprint timer runs while locked on.
+
 ## Summary
 
 | Feature | Verdict | Effort |
@@ -18,7 +20,7 @@ Two labels are used below:
 
 - **Respec.** Function 0x0090FCD0 resets the eight stats to the class row, recomputes HP, MP and stamina, clears the level-up count and the attuned spells. It does not touch souls or items (read). A respec is: add up the souls the levels cost (0x00226778 per level), call the reset, write the souls back, then call the game's own after-level-up refresh 0x007E4248 for the live character. From SL 620 up, the refund alone is more than the 999,999,999 souls cap, so very high levels need a rule (refuse, or clamp).
 - **Several souls.** The eight "<rank> Soldier's/Hero's Soul" items (ids 1025-1032) are worth 200 to 10,000 souls each. One use plays the crush animation, then AddSoul 0x0091B888 adds the amount (read). "Use all" can sum the stacks, remove them and call AddSoul once. Boss souls stay one at a time: they also trade for spells and weapons.
-- **8-way rolls.** The stick is quantized to four directions in one place, the player's pad manipulator 0x0030E750. The script then maps five input slots to four roll states and the backstep (read). My reading of which stick direction lands in which slot contradicts the known neutral-tap backstep, so one link is misread (section 3.3). The run settles it. The plan does not depend on it: let the game pick its roll, then turn the character toward the diagonal for that roll.
+- **8-way rolls.** The stick is quantized to four directions in one place, the player's pad manipulator 0x0030E750. The script then maps five input slots to four roll states and the backstep (read). My reading of which stick direction lands in which slot contradicts the known neutral-tap backstep, so one link is misread (section 3.3). The run settles it. Run r4 did (section 3.6): the stick-to-slot reading is right and the slot-to-move link is the misread one. A diagonal starts the forward or back roll. The plan does not depend on it: let the game pick its roll, then turn the character toward the diagonal for that roll.
 - **PvP.** Local split screen is impossible (one local player). An offline duel against an AI phantom is content modding, weeks of work. Online PvP is docs/46 stage 2.
 - **All of it opt-in.** Each feature is a knob that is off by default, so the default stays the original game (`DES_RESPEC`, `DES_SOULS_ALL`, `DES_ROLL8` are suggested names).
 - **No RPCS3 patch covers any of this.** RPCS3's patch file for BLUS30443 has no lock-on, roll, stat or soul patches (read).
@@ -269,7 +271,7 @@ The walk animations follow the same axes (200 moves -z, 202 moves +x). There is 
 
 1. **Stick.** The pad manipulator's update 0x003103F8 calls 0x0030E750 each frame. That reads the left stick through 0x001B6998 and 0x001B6960 (0x001C3000 with analog ids 17 and 16; radial deadzone 0.37, see docs/41).
 2. **Four directions.** Each frame keeps only the larger axis (0x0030E8B0). A 6-frame history (manip+0x1B4 and +0x204, index +0x254; length 6 at 0x019DA308, decay 0.9 per frame) gives the strongest recent value per axis, f30 and f31. Then only the larger of those two survives (0x0030EA34; a tie keeps f30).
-3. **Sprint or roll.** While Circle is held, manip+0x1B0 counts up. Past 0.4 s (0x019DA310) it sets manip+0x168, the sprint. The count stays at 0 while chr+0x310 bit 0x800 is set or the SpEffect check 0x00271A68 (state 15) passes. That matches "no sprint while locked on", so bit 0x800 is likely the lock flag (inferred).
+3. **Sprint or roll.** While Circle is held, manip+0x1B0 counts up. Past 0.4 s (0x019DA310) it sets manip+0x168, the sprint. The count stays at 0 while chr+0x310 bit 0x800 is set or the SpEffect check 0x00271A68 (state 15) passes. That matches "no sprint while locked on", so bit 0x800 is likely the lock flag (inferred). Run r4: it is not, and the timer runs while locked on too (section 3.6).
 4. **Slot.** When bit 6 of the pad's button word +0x122 is set (tested by 0x001B9A10; inferred: Circle released), it sets manip+0x158 and one slot byte. The hold timer in step 3 uses bit 5 (0x001B9D68; inferred: Circle held). The threshold T is the float at 0x01B3FCAC, in .bss. No code stores to it. Besides 0x0030E750, only 0x00312060 loads its address, and it puts that address into a menu item it builds (inferred: a debug tunable). So T is 0.0 in retail (inferred).
 
    | Condition (read) | Slot | Script states (read) | MoveParam field | Row 0 anim |
@@ -281,6 +283,8 @@ The walk animations follow the same axes (200 moves -z, 202 moves +x). There is 
    | none of the above, and the current stick at most 0.45 (0x019DA30C) on each axis | 10 (+0x8E) | #22, #92 | escape L +0x30 | 702, along +x |
 
    Only 0x0030E750 writes these five slots.
+
+   > Run r4 measured the moves: slot 10 backstep, 15 forward roll, 16 back roll, 17 left roll, 18 right roll. The condition column is right. The last three columns are not (section 3.6).
 5. **Script.** The player's script tests the slots. Function 100 (0x002F8E60) is "slot x set and not consumed" (manip+0x84+x and +0xA7+x). Function 108 (0x002F7D68) is "slot x buffered, and its input window open", for x in 9-12 and 15-18 (script wrapper +0x8C+x and +0x3E4+x; 0x002FC9A8 closes the windows). In state #0 (inferred: standing), one transition group holds, in order: slot 15 to #187, 16 to #19, 18 to #20, 17 to #21, 10 to #22. Each also needs function 1001 > 10 (the current stamina, chr+0x3D4) and function 207 == 1 (meaning unknown). Across the whole script, slots 16, 18, 17 and 10 always lead to the same roll states (#19, #20, #21, #22, or the copies #89-#92), apart from one buffered path each back to #0. Slot 15 leads to seven states: #187, #25, #94, #34, #67, #78 and #135. I did not examine the last four.
 6. **Animation.** Each roll state plays command (2,3) with the animation from function 110 (0x002EB3E8): #19 passes 0, #20 passes 1, #21 passes 3, #22 passes 2, #25 passes 4. Function 110 takes the move-set row from ctrl+0x194 (row ids at ctrl+0x17C) and calls 0x0059FF98(row, k). That returns escape F, B, L, R or stepMove for k = 0..4 (jump table at 0x0059FFE0). Then 0x002758C8 turns it into a file id. Each roll state also runs command 1001 with -20 at the start (inferred: the stamina cost). State #187 plays command (2,4) with 72 = 0x48, the stepMove offset (inferred: "play the MoveParam field at this offset").
 
@@ -293,6 +297,8 @@ Taken together, the table says a neutral tap gives a side roll (escape L), "f30 
 The most likely place is the stick transform at 0x0030EC44-0x0030F2C0, which I did not decode. It rewrites f30, f31 and the current stick when ctrl+0x139 != 0 and manip+0x294 == 0. It builds rotations from manip+0x268 and 0x002E7420, wraps angles and multiplies 4x4 matrices. If its output is a direction rather than a scaled stick, a neutral stick could come out as a unit vector. Run step 3 in section 6 records which move each input gives, and the gate bytes.
 
 The 8-way plan below does not depend on this table. It only needs "a roll is starting, with this k, and the stick points here".
+
+> Run r4 put the misread link after the slot: in the script's transitions or in function 110's k (section 3.6). The stick transform is not the cause: M+0x139 is 00 while locked on, so it is skipped then.
 
 ### 3.4 Approaches
 
@@ -334,6 +340,40 @@ Tests:
 - The character re-faces the target after the roll.
 - Move-set rows 0-3, rolls from an input window (during an attack's recovery), 30/60/120 fps.
 
+### 3.6 Run r4 (2026-10-19)
+
+Run r4 did section 6's steps 2 to 4 at 30 fps, from the pinned regression save. It was scripted through the console, `PAD_FILE` and `PAD_STICK`, and no real input reached the game, apart from one mouse move noted below. Step 1 was not run. Each locked trial started 6 to 12 m from the target. Angles are from the camera's forward, which points at the target while locked on, and positive is to the left.
+
+**Locked on:**
+
+| Input | Slot set | Move | Distance, direction |
+|---|---|---|---|
+| neutral | 10 | backstep | 1.82 m at 177 deg |
+| up | 15 | forward roll | 3.50 to 3.92 m at 0 to 2 deg |
+| down | 16 | back roll | 3.92 m at 180 deg |
+| left | 17 | left roll | 3.44 m at +83 deg |
+| right | 18 | right roll | 2.89 m at -87 deg |
+| up-left | 15 | forward roll | 2.89 to 3.29 m at +4 to +5 deg |
+| up-right | 15 | forward roll | 3.80 m at -5 deg |
+| down-left | 16 | back roll | 3.87 m at 173 deg |
+| down-right | 16 | cut short | 1.38 m at 170 deg, moving 0.42 s instead of a roll's 1.5 s (inferred: blocked behind) |
+
+**Not locked on** (only neutral and down were run): neutral set slot 10 and gave the backstep (1.79 m, moving 0.45 s like the locked one). Down set slot 15 and rolled toward the stick (3.97 m).
+
+Each trial set one slot byte (manip+0x84+x), and its used byte (+0xA7+x) about 0.03 s later. Every roll and backstep cost 20 stamina, which confirms the -20 of command 1001 in section 3.2 step 6.
+
+What this settles:
+- **Stick to slot: section 3.2 is right.** The history bytes match the conditions: up gave +1.0 in manip+0x1B4 and slot 15, down -1.0 and slot 16, left -1.0 in +0x204 and slot 17, right +1.0 and slot 18, and neutral neither and slot 10. So +0x1B4 holds f30 and +0x204 holds f31. A diagonal gave 0.707 in +0x1B4 and 0 in +0x204: the tie keeps f30 (step 2), so a diagonal rolls forward or back.
+- **Slot to move: wrong for all five.** Measured: slot 10 backstep, 15 forward roll, 16 back roll, 17 left roll, 18 right roll. The table's last three columns give 10 escape L, 15 backstep, 16 escape F, 17 escape R and 18 escape B. So the misread link comes after the slot: in the script's transitions (step 5) or in function 110's k (step 6). Which of the two is still open.
+- **The stick transform is not the cause.** It runs only while M+0x139 is not 0 (section 3.3), and M+0x139 read 01 unlocked and 00 locked. So it is skipped while locked on. Unlocked, it fits the roll toward the stick: down set slot 15, the forward slot (inferred: the transform turns the stick into the character's frame).
+- **The lock flag is not chr+0x310's bit 0x800.** That bit is bit 0x800 of the word at chr+0x314 (the code loads +0x310 as a doubleword and masks its low word). It was clear both ways: chr+0x310 read FFFFFFFF00190050 unlocked and locked. It selects the second camera, the bow's aim view: setting it opened the aim view in docs/41's mouse-aim test (run aim1, 2026-10-19). M+0x139 changes with the lock. M+0x194 (00000001) and manip+0x294 (00) do not. The camera manager's +0x90 read 0 both ways, and the camera's +0x240 read 0 while locked (the camera's update clears +0x240, so it reads 0 from outside). r4 detected the lock by the look-at point, camera +0x230, which the game rewrites every frame while locked on.
+- **The sprint timer runs while locked on.** With Circle held for 1.2 s, manip+0x1B0 reached 1.200 both unlocked and locked, and the sprint flag manip+0x168 went from 00 to 01 both times. So step 3's "no sprint while locked on" reading is wrong. The stick was not held, so whether the character then runs was not checked.
+- **Side rolls run straight.** The left and right rolls stayed within 0.11 m of the line from start to end, and did not curve around the target (inferred: the lock turn does not turn the character during a roll, which section 3.4 (a) needs). Facing during the roll was not measured.
+- **Diagonal walk.** Locked on, the down-right walk went 3.67 m at -137 degrees for the stick's -135, so the walk follows the diagonal. Whether the legs twist cannot be told from the one screenshot. The up-left walk is void: a real mouse moved during it and switched the target.
+- **L3 does nothing, as a game without a jump would.** Demon's Souls has no jump (checked by hand in RPCS3, 2026-10-19: L3 while dashing does nothing). r4 pressed L3 during a 5.34 m/s dash. The game's pad reads saw L3 in 15 samples. The player did not rise. No byte of the slots (manip+0x84 to +0xC3) or of manip+0x150 to +0x25F changed that did not also change in the dash without L3.
+
+For the 8-way plan (section 3.4 (a)): a diagonal starts the forward or back roll today, so that roll is the one to turn 45 degrees. Step 1 of section 3.5 is done.
+
 ## 4. PvP arena
 
 ### 4.1 What the game has
@@ -356,19 +396,21 @@ Verdict: not feasible as a new mode at a sensible cost. PvP arrives with docs/46
 
 ## 5. What I could not determine
 
-1. **The stick-to-move table** (section 3.3). The transform at 0x0030EC44-0x0030F2C0 is not decoded.
-2. **The lock flag.** chr+0x310 bit 0x800 stops the sprint timer, which fits "no sprint while locked on", but it is not confirmed. What SpEffect state 15 (0x00271A68) means is unknown; perhaps "cannot sprint".
-3. **The character's yaw field,** and whether the locked facing update 0x0030F3C0 turns the character during a roll.
+1. **The stick-to-move table** (section 3.3). The transform at 0x0030EC44-0x0030F2C0 is not decoded. Run r4 measured the table (section 3.6). Still open: whether the script's transitions or function 110's k was misread. The transform runs only unlocked.
+2. **The lock flag.** chr+0x310 bit 0x800 stops the sprint timer, which fits "no sprint while locked on", but it is not confirmed. What SpEffect state 15 (0x00271A68) means is unknown; perhaps "cannot sprint". Run r4: bit 0x800 is not the lock flag (it is the aim view's), and M+0x139 changes with the lock (01 unlocked, 00 locked).
+3. **The character's yaw field,** and whether the locked facing update 0x0030F3C0 turns the character during a roll. Run r4: side rolls ran straight (inferred: no turn during a roll). The yaw field is still open.
 4. **Functions 207 and 225 in the roll conditions,** and why one backstep transition needs function 225(1) == 46.
 5. **The item decrement 0x008FD2A8** and the exact signatures of remove 0x00900A40 and find 0x00900920.
 6. **Whether the level-up screen re-reads PGD each frame,** which matters for a respec while it is open.
 7. **What the second slot count from Faith (0x008F65E8) gates.**
 8. **What sets the item-weight limit PGD+0x498** after the reset writes 100,000,000.0 there, and where the equip-load limit lives.
 9. **The exact rounding of 0x0094E508.** Round-to-nearest fits every cost I checked. Use the game's function anyway.
-10. **Diagonal walking while locked on:** the leg twist is read, but its effect on a diagonal is inferred.
+10. **Diagonal walking while locked on:** the leg twist is read, but its effect on a diagonal is inferred. Run r4: the down-right walk followed the stick's diagonal. Whether the legs twist was not seen.
 11. **The other slot-15 states** (#34, #67, #78, #135), anim 705 and the 7010-7023 sets.
 
 ## 6. Run request (one batch)
+
+> Steps 2 to 4 were run as r4 (2026-10-19). The results are in section 3.6. Step 1 was not run.
 
 Run form, through Git Bash: `tools/des/play.sh DES_SKIP_INTRO=1 PS3_SAIL_MOVIES=0 DES_AUTO_CONTINUE=1 PS3_DEBUG=<scratch>/dbg.txt PAD_FILE=<scratch>/pad.txt`. From PowerShell, in one line:
 

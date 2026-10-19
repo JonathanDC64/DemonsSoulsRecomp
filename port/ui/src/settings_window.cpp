@@ -189,6 +189,11 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "3840x2160. The picture is then fitted to the window, so a higher setting is sharper even in a smaller "
             "window. The HUD and menus are drawn at the same size. Costs GPU time: about four times the pixels at "
             "200%. Applies at once.<br/><br/>(RSX_SCALE)");
+        choice_row(leftPane, rightPane, "Scaling filter", "RSX_OUTFILTER", {"0", "1"}, {"Bilinear", "Sharp"},
+            "How the finished picture is fitted to the window. Bilinear is the plain filter used so far. Sharp "
+            "averages all the pixels the picture has under each window pixel when it is bigger than the window "
+            "(a render resolution above the window's size), so fine detail does not shimmer, and uses a bicubic "
+            "filter when it is smaller, which is crisper than bilinear. Applies at once.<br/><br/>(RSX_OUTFILTER)");
         choice_row(leftPane, rightPane, "Texture filtering", "RSX_TEXFILTER", {"0", "1", "2", "3"},
             {"Original", "Nearest", "Bilinear", "Trilinear"},
             "How the game's surface textures are smoothed. Original uses the filter the game picks for each "

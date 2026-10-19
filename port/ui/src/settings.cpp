@@ -29,6 +29,7 @@ constexpr Def kDefs[] = {
     {"AUDIO_MUTE", "0", Apply::Live},
     {"DES_DOF", "1", Apply::Live},             // des_dof, read each frame
     {"RSX_SCALE", "100", Apply::Live},         // the D3D12 backend remakes its render targets at the next batch
+    {"RSX_OUTFILTER", "0", Apply::Live},       // 0 = bilinear, as before; 1 = area down, bicubic up; next present
     {"RSX_TEXFILTER", "0", Apply::Live},       // 0 = the game's filters; the backend's sampler key, per draw
     {"RSX_ANISO", "0", Apply::Live},           // 0 = the game's own level
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent

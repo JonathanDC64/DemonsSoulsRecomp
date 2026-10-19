@@ -19,6 +19,11 @@ namespace ui::settings {
 namespace {
 
 constexpr Def kDefs[] = {
+#if DES_DEV
+    {"DES_GOD", "0", Apply::Session},          // des_dev.cpp (developer builds only): the cheats, live, never saved
+    {"DES_ATK", "1", Apply::Session},
+    {"DES_SPEED", "1", Apply::Session},
+#endif
     {"DES_FPS", "", Apply::Live},              // "" = the game's own 30 fps mode; read at each flip
     {"fps_custom", "90", Apply::UiOnly},       // Frame rate's Custom number, kept while a fixed rate is chosen
     {"DES_CUTFPS", "0", Apply::Live},          // des_options.cpp's cutfps_on, read at each flip
@@ -156,7 +161,7 @@ void load_and_apply_env() {
             value = value == "0" ? "1" : "0";
         }
         const Def* d = find(key);
-        if (!d) continue;
+        if (!d || d->apply == Apply::Session) continue;  // (a per-session value is never read from the file)
         sValues[key] = value;
         if (d->apply != Apply::UiOnly && !sPinned.count(key) && !value.empty()) {
             apply_env(key, value);
@@ -186,7 +191,8 @@ void set(std::string_view key, const std::string& value) {
     const Def* d = find(key);
     if (!d) return;
     sValues[std::string(key)] = value;
-    if (d->apply == Apply::Live && !pinned(key)) apply_env(key, value.empty() ? d->def : value);
+    if ((d->apply == Apply::Live || d->apply == Apply::Session) && !pinned(key))
+        apply_env(key, value.empty() ? d->def : value);
     save();
 }
 
@@ -210,7 +216,9 @@ void save() {
                  "# Demon's Souls PC port settings (key = value), written by the in-game menu.\n"
                  "# The option keys are the environment variables of the same name; a variable set in the\n"
                  "# environment wins over this file.\n");
-    for (const Def& d : kDefs) std::fprintf(f, "%s = %s\n", d.key, get(d.key).c_str());
+    for (const Def& d : kDefs) {
+        if (d.apply != Apply::Session) std::fprintf(f, "%s = %s\n", d.key, get(d.key).c_str());
+    }
     std::fclose(f);
     MoveFileExW(report::widen(tmp).c_str(), report::widen(file).c_str(), MOVEFILE_REPLACE_EXISTING);
 }

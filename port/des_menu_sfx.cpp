@@ -115,11 +115,15 @@ int s_test_i;
  * frame function 0x0001B8D0 on the main thread, once a frame, f1 = frame
  * time, right after the game's sound update. Its own body is only
  * `r3 = *0x01B4B114; tail-call 0x00724AD0`, redone at the end. */
-extern "C" void des_debug_tick(ppu_context* ctx);   /* des_options.cpp, DES_WARP */
+#if DES_DEV
+extern "C" void des_debug_tick(ppu_context* ctx);   /* des_dev.cpp: the warp (developer builds) */
+#endif
 
 extern "C" void des_menu_tick(ppu_context* ctx)
 {
+#if DES_DEV
     des_debug_tick(ctx);
+#endif
     if (s_test) {
         const int64_t now = now_ms();
         if (now >= s_test_next) {

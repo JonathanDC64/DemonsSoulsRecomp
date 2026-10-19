@@ -77,6 +77,13 @@ target_include_directories(des_ui PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(des_ui PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+# Developer builds (docs/55; the option is in port/CMakeLists.txt): the settings window's Developer tab. Off when the
+# UI is configured on its own without the option.
+if(DES_DEV)
+  target_compile_definitions(des_ui PRIVATE DES_DEV=1)
+else()
+  target_compile_definitions(des_ui PRIVATE DES_DEV=0)
+endif()
 if(MSVC)
   target_compile_options(des_ui PRIVATE /O2 /EHsc ${DES_DEBUG_FLAGS} /W3 /wd4100)   # DES_DEBUG_FLAGS: port/CMakeLists.txt
 endif()

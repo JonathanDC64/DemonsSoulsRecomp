@@ -8,6 +8,20 @@
 # (bne -> beq at 0x00217E7C).
 0x00217E70=des_motion_blur   # cmpwi cr7, r0 (= byte +0x1D4), 0
 
+# Dev hooks (docs/55). Every line calls des_dev_hook, which is empty in release builds.
+0x00280E64=des_dev_hook   # dev hook: hit HP damage (ApplyDamage 0x00280DC8)
+0x00280F88=des_dev_hook   # dev hook: hit stamina damage (ApplyDamage)
+0x0028B224=des_dev_hook   # dev hook: hit damage after the calculation (handler 0x0028B1D8)
+0x002818D0=des_dev_hook   # dev hook: fraction damage (0x002816D0)
+0x00280724=des_dev_hook   # dev hook: SpEffect HP change (0x002806D8)
+0x00280C78=des_dev_hook   # dev hook: SpEffect MP change (0x00280A08)
+0x0026FB20=des_dev_hook   # dev hook: AddHP
+0x0026FC48=des_dev_hook   # dev hook: SetMP
+0x0026FC98=des_dev_hook   # dev hook: SetStamina
+0x00286614=des_dev_hook   # dev hook: dash cost (0x00286020)
+0x002EDEB0=des_dev_hook   # dev hook: root-motion factor (0x002EDDA0)
+0x0027882C=des_dev_hook   # dev hook: weapon action stamina cost (0x002784C0)
+
 # des_cut_cam (port/des_options.cpp): the cutscene camera's keys (sibcam).
 # 0x005F71D0 loads the nearest of two keys 1/30 s apart (s < 0.5 ? earlier :
 # later); with DES_CUTFPS=1 the hooks blend the two by s. The first decides

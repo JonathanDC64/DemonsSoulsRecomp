@@ -19,7 +19,7 @@ The first level is playable, from boot to Boletaria (2026-10):
 Known issues:
 
 - Some transparent effects (a fog wall, the soul-form aura, fog in the first cutscene) vanish for single frames.
-- Above 30 fps, cutscenes switch back to 30 on their own: the game's cutscene manager moves things at 30 Hz, and they judder otherwise. Above 60, physics is untested (RPCS3 warns of trouble there).
+- Above 30 fps, cutscenes switch back to 30 on their own: the cutscene camera moves in 30 Hz steps, and they judder otherwise. `DES_CUTFPS=1` keeps them at the frame rate and blends the camera between its steps (opt-in). Above 60, physics is untested (RPCS3 warns of trouble there).
 - Only Demon's Souls is tested on this branch of ps3recomp.
 
 The full history, root causes and tools are in [`docs/`](docs/). Start with [`docs/28-in-game.md`](docs/28-in-game.md), which covers the current state.
@@ -75,6 +75,7 @@ tools/des/play.sh
 
 Options go after it as `NAME=value`:
 
+- `DES_CUTFPS=1`: with `DES_FPS` above 30, in-engine cutscenes stay at that frame rate instead of switching to 30, and the camera is blended between its 30 Hz keys (live).
 - `DES_DOF=0`: no depth of field (live).
 - `DES_FPS=60`: the game's 60 fps mode, with real frame times. Any other number from `31` to `500` sets the frame cap to that many frames a second, and `DES_FPS=unlocked` removes the cap (the game runs as fast as the machine allows). `DES_FPS=30` keeps 30 with real frame times.
 - `DES_MOTION_BLUR=0`: no camera motion blur (live; the same change as RPCS3's "Disable Motion Blur" patch).

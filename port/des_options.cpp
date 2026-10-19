@@ -56,11 +56,13 @@
  *   144 of them a second. Movies keep their speed (cellSail
  *   hands out the frame that is due by the clock), and the game advances by
  *   real time: the regress walk ends in the same place at ~66 fps as at 30.
- *   The in-engine cutscenes (RemoMan) stay at 30: their positions step at
- *   30 Hz while animation follows the frame time, so unlocked they judder
- *   (a 2-frame back-and-forth at 60, a 4-frame sawtooth at 120). While a
- *   RemoMan slot holds a cutscene the game is put back in 30 mode with the
- *   1/30 step and the PS3's vblank, and unlocked again when it ends.
+ *   The in-engine cutscenes (RemoMan) stay at 30: their camera takes the
+ *   nearest of keys 1/30 s apart while the characters follow the frame
+ *   time, so unlocked they judder (a 2-frame back-and-forth at 60, a
+ *   4-frame sawtooth at 120). While a RemoMan slot holds a cutscene the
+ *   game is put back in 30 mode with the 1/30 step and the PS3's vblank,
+ *   and unlocked again when it ends. DES_CUTFPS=1 leaves cutscenes
+ *   unlocked and blends the camera's keys instead (des_cut_cam).
  *   One movement test counts in 30 Hz steps too. After physics, 0x002EC2B8
  *   asks whether a character that wants to move fast (its animation asks
  *   for more than 5 m/s) moved less than 1/30 m this step, i.e. under 1 m/s
@@ -226,12 +228,21 @@ bool cutscene_playing()
     return false;
 }
 
+/* DES_CUTFPS=1: cutscenes at the DES_FPS rate, without the 30 fps lock
+ * below; des_cut_cam blends the camera's keys. Read live. */
+bool cutfps_on()
+{
+    static int on = 0;
+    PS3_KNOB(on, env_on("DES_CUTFPS"));
+    return on != 0;
+}
+
 void fps_on_flip_request()
 {
     using clock = std::chrono::steady_clock;
     static uint8_t orig60, orig_noskip;
     static uint32_t orig_dt;
-    static bool in_cutscene = false;
+    static int in_cutscene = 0;   /* 0 none, 1 at 30 (the lock), 2 unlocked (DES_CUTFPS) */
     static clock::time_point last;
     const uint32_t obj = vm_read32(kFlipModeObj);
     if (!obj) return;
@@ -260,26 +271,30 @@ void fps_on_flip_request()
             fprintf(stderr, "[des] DES_FPS off: the game's own 30 fps mode\n");
         }
         s_fps = want;
-        in_cutscene = false;
+        in_cutscene = 0;
         last = clock::time_point();
     }
     if (!s_fps) return;
     /* A cutscene plays as the game ships it: 30 mode on the PS3's vblank, so
-     * it flips every other vblank, and a fixed 1/30 step. RemoMan steps its
-     * positions at 30 Hz while animation follows the frame step, so any
-     * faster and a cutscene judders. The vblank goes back to the unlocked
-     * rate when the cutscene ends. */
-    const bool cut = s_fps > 30 && cutscene_playing();
+     * it flips every other vblank, and a fixed 1/30 step. Its camera takes
+     * the nearest of keys 1/30 s apart while everything else follows the
+     * frame step, so any faster and a cutscene judders. The vblank goes back
+     * to the unlocked rate when the cutscene ends. With DES_CUTFPS=1 a
+     * cutscene stays unlocked and des_cut_cam blends the camera's keys. */
+    const int cut = s_fps > 30 && cutscene_playing() ? (cutfps_on() ? 2 : 1) : 0;
     if (cut != in_cutscene) {
-        in_cutscene = cut;
-        vm_write8(obj + kFlipMode60, cut ? 0 : 1);
-        ps3_vblank_set_mhz(cut ? kPs3VblankMhz : fps_vblank_mhz(s_fps));
+        if ((cut == 1) != (in_cutscene == 1)) {
+            vm_write8(obj + kFlipMode60, cut == 1 ? 0 : 1);
+            ps3_vblank_set_mhz(cut == 1 ? kPs3VblankMhz : fps_vblank_mhz(s_fps));
+        }
         fprintf(stderr, "[des] DES_FPS: %s\n",
-                cut ? "cutscene, 30 fps" : "cutscene over, unlocked again");
+                cut == 1 ? "cutscene, 30 fps" : cut == 2 ? "cutscene, unlocked (DES_CUTFPS)"
+                : in_cutscene == 1 ? "cutscene over, unlocked again" : "cutscene over");
+        in_cutscene = cut;
     }
     const clock::time_point now = clock::now();
     float dt = kCutsceneDt;
-    if (!cut && last != clock::time_point()) {
+    if (cut != 1 && last != clock::time_point()) {
         dt = std::chrono::duration<float>(now - last).count();
         if (dt > kMaxFrameDt) dt = kMaxFrameDt;
     }
@@ -947,6 +962,160 @@ extern "C" void des_viewer_rate(ppu_context* ctx, uint32_t addr)
     if (!ui_fix_on() || !(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
     ctx->fpr[1] = (float)(ctx->fpr[1] * steps);
     ctx->fpr[2] = (float)(ctx->fpr[2] * steps);
+}
+
+namespace {
+
+constexpr uint32_t kCutCamKeys  = 0x005F7254u;   /* lwz r9: s, the gap and the six key indices are set */
+constexpr uint32_t kCutCamPos   = 0x005F72ECu;   /* lvx v4: earlier key at r1+0xA0, later at r1+0xB0 */
+constexpr uint32_t kCutCamRot   = 0x005F7394u;   /* lvx v12: earlier r1+0xD0, later r1+0xA0 */
+constexpr uint32_t kCutCamScale = 0x005F743Cu;   /* lvx v2: earlier r1+0x70, later r1+0xA0 */
+constexpr float    kCutMaxMove  = 2.0f;          /* m in one 1/30 s step */
+constexpr float    kCutMaxTurn  = 0.5f;          /* rad, any angle, in one step */
+constexpr float    kTwoPi       = 6.28318531f;
+
+/* The choice for the call of 0x005F71D0 running on this thread, made at
+ * kCutCamKeys before its three loads: blend them, or leave them alone. */
+PPU_THREAD_LOCAL bool s_cut_blend;
+
+uint32_t bswap32(uint32_t b)
+{
+    return (b >> 24) | ((b >> 8) & 0xFF00u) | ((b << 8) & 0xFF0000u) | (b << 24);
+}
+
+/* b - a for two angles, the short way round. */
+float angle_delta(float a, float b)
+{
+    const float d = b - a;
+    return d - kTwoPi * std::nearbyint(d / kTwoPi);
+}
+
+/* One channel's two keys, read from the track as 0x005F71D0 reads them. i0
+ * and i1 are the keys' indices; the game skips the channel when i0 is -1.
+ * The byte at h + zero makes both keys read as zero, and the word at
+ * h + 0x14 points at the 12-byte x, y, z entries the indices select.
+ * Returns 1 with the keys, 0 for a channel skipped or read as zero, and -1
+ * when only i1 is -1 (the game would read the entry before the table). */
+int cut_keys(uint32_t h, uint32_t zero, int32_t i0, int32_t i1, float k0[3], float k1[3])
+{
+    if (i0 < 0 || vm_read8(h + zero)) return 0;
+    if (i1 < 0) return -1;
+    const uint32_t table = vm_read32(h + 0x14);
+    for (uint32_t c = 0; c < 3; c++) {
+        k0[c] = vm_readf(table + 12u * (uint32_t)i0 + 4 * c);
+        k1[c] = vm_readf(table + 12u * (uint32_t)i1 + 4 * c);
+    }
+    return 1;
+}
+
+} // namespace
+
+/* DES_CUTFPS=1: the cutscene camera between its keys. A remo cut's camera
+ * track (sibcam) keys position, rotation and scale at whole frames (time =
+ * frame / 30). 0x005F71D0 finds the keys either side of the cut time t (f1),
+ * puts how far t is between them in f10 (s, 0 to 1) and their gap in f11
+ * (seconds), then for each channel copies both keys' vectors to its stack
+ * and loads one: the earlier when s < 0.5, else the later. So the camera
+ * moves 30 times a second at any frame rate, while the characters, posed at
+ * the same t, move every frame: above 30 they creep against a still
+ * background and snap back when the camera catches up (docs/40).
+ *
+ * The lifter calls this after four instructions (--insn-hooks). At
+ * kCutCamKeys, once a call and before any load, it decides: with
+ * DES_CUTFPS=1 and DES_FPS set, blend when t is strictly between keys one
+ * frame apart. Keys further apart keep the nearest key: those are holds or
+ * jumps made on purpose. So does a step that moves the camera over 2 m or
+ * turns it over 0.5 rad, a shot change inside one track. After each of the
+ * three loads it then puts the two keys blended by s in the register.
+ * Rotations are Euler angles in radians and blend the short way round; the
+ * code after the load wraps them again. A register that holds neither key
+ * is left alone. DES_CUTLOG=1 counts what it did. Main thread. */
+extern "C" void des_cut_cam(ppu_context* ctx, uint32_t addr)
+{
+    static int log = 0;
+    PS3_KNOB(log, env_on("DES_CUTLOG"));
+    static unsigned n_calls, n_blend, n_apart, n_jump, n_odd, n_neither;
+    static double widest;   /* the widest gap between keys, frames */
+    if (addr == kCutCamKeys) {
+        s_cut_blend = false;
+        if (!cutfps_on() || s_fps <= 0) return;
+        const double s = ctx->fpr[10], gap = ctx->fpr[11];
+        if (!(s > 0.0 && s < 1.0)) return;   /* t on a key: the loads are exact */
+        const uint32_t h = (uint32_t)ctx->gpr[7];
+        float p0[3], p1[3], r0[3], r1[3], k0[3], k1[3];
+        const int pos   = cut_keys(h, 0x2C, (int32_t)ctx->gpr[6], (int32_t)ctx->gpr[4], p0, p1);
+        const int rot   = cut_keys(h, 0x2F, (int32_t)ctx->gpr[29], (int32_t)ctx->gpr[31], r0, r1);
+        const int scale = cut_keys(h, 0x32, (int32_t)ctx->gpr[12], (int32_t)ctx->gpr[28], k0, k1);
+        float move = 0.0f, turn = 0.0f;
+        for (int c = 0; c < 3; c++) {
+            if (pos > 0) move += (p1[c] - p0[c]) * (p1[c] - p0[c]);
+            if (rot > 0) turn = std::fmax(turn, std::fabs(angle_delta(r0[c], r1[c])));
+        }
+        move = std::sqrt(move);
+        const bool apart = std::fabs(gap * 30.0 - 1.0) > 0.01;
+        const bool jump  = !apart && (move > kCutMaxMove || turn > kCutMaxTurn);
+        const bool odd   = pos < 0 || rot < 0 || scale < 0;
+        s_cut_blend = !apart && !jump && !odd;
+        if (log) {
+            n_calls++;
+            if (s_cut_blend) n_blend++;
+            if (apart) { n_apart++; if (gap * 30.0 > widest) widest = gap * 30.0; }
+            if (jump) n_jump++;
+            if (odd) n_odd++;
+            static uint32_t jump_h;
+            static double jump_t0 = -1.0;
+            if (jump && !(h == jump_h && ctx->fpr[12] == jump_t0)) {   /* f12: the earlier key's time */
+                jump_h = h;
+                jump_t0 = ctx->fpr[12];
+                fprintf(stderr, "[cutlog] t=%.3f s: a jump (move %.2f m, turn %.2f rad), nearest key kept\n",
+                        ctx->fpr[1], move, turn);
+            }
+            if (n_calls % 1000 == 0)
+                fprintf(stderr, "[cutlog] calls between keys %u: blended %u, keys apart %u (widest %.1f frames),"
+                        " jumps %u, one index unset %u; loads holding neither key %u\n",
+                        n_calls, n_blend, n_apart, widest, n_jump, n_odd, n_neither);
+        }
+        return;
+    }
+    if (!s_cut_blend) return;
+    const double s = ctx->fpr[10];
+    const uint32_t sp = (uint32_t)ctx->gpr[1];
+    int ch, v;       /* the channel (0 position, 1 rotation, 2 scale) and its register */
+    uint32_t a, b;   /* the earlier and the later key's vector */
+    switch (addr) {
+    case kCutCamPos:   ch = 0; v = 4;  a = sp + 0xA0; b = sp + 0xB0; break;
+    case kCutCamRot:   ch = 1; v = 12; a = sp + 0xD0; b = sp + 0xA0; break;
+    case kCutCamScale: ch = 2; v = 2;  a = sp + 0x70; b = sp + 0xA0; break;
+    default: return;
+    }
+    a &= ~0xFu;   /* as lvx and stvx address them */
+    b &= ~0xFu;
+    float x[4], y[4];
+    bool is_x = true, is_y = true;
+    for (uint32_t i = 0; i < 4; i++) {
+        const uint32_t xb = vm_read32(a + 4 * i), yb = vm_read32(b + 4 * i);
+        const uint32_t rb = bswap32(ctx->vr[v].w[i]);   /* the register holds guest bytes */
+        is_x = is_x && rb == xb;
+        is_y = is_y && rb == yb;
+        memcpy(&x[i], &xb, 4);
+        memcpy(&y[i], &yb, 4);
+    }
+    if (!is_x && !is_y) {
+        if (log) n_neither++;
+        return;
+    }
+    for (uint32_t i = 0; i < 4; i++) {
+        const float d = i == 3 ? 0.0f : ch == 1 ? angle_delta(x[i], y[i]) : y[i] - x[i];
+        const float f = x[i] + d * (float)s;
+        uint32_t fb;
+        memcpy(&fb, &f, 4);
+        ctx->vr[v].w[i] = bswap32(fb);
+    }
+    static bool said = false;
+    if (!said) {
+        said = true;
+        fprintf(stderr, "[des] DES_CUTFPS: cutscene camera keys blended (first at t=%.3f s)\n", ctx->fpr[1]);
+    }
 }
 
 extern "C" void des_menu_sfx_init(void);   /* des_menu_sfx.cpp */

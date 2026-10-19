@@ -147,8 +147,9 @@ des_cache_dir() { echo "${DES_CACHE_DIR:-$PS3_VFS_ROOT/cache}"; }
 # replaces what <to> holds, not <to> itself: while something has <to> open
 # (a shell sitting in it, say), `rm -rf <to>` empties it but cannot remove
 # it, and `cp -r <from> <to>` then puts the copy one level down, where the
-# game does not look.
+# game does not look. If <from> is missing, <to> is left alone.
 des_put_save() {
+  [ -d "$1" ] || return 1
   mkdir -p "$2" || return 1
   find "$2" -mindepth 1 -delete 2>/dev/null
   cp -r "$1/." "$2/"
@@ -158,4 +159,54 @@ des_put_save() {
 # Fails if the copy differs, so a script stops before it swaps the save.
 des_backup_save() {
   des_put_save "$1" "$2" && diff -rq "$1" "$2" > /dev/null
+}
+
+# des_restore_save <backup> <save>: put the backup back and check it.
+des_restore_save() {
+  des_put_save "$1" "$2" && diff -rq "$1" "$2" > /dev/null && return 0
+  echo "[save] could not put $1 back into $2; the backup is still there" >&2
+  return 1
+}
+
+# The save folder belongs to one test run at a time. levelcap.sh and
+# regress.sh copy the player's save aside, put another save in its place and
+# put the player's back at the end. A second run that started before the
+# first had put the save back copied the swapped-in save aside as the
+# player's, and put that back at its own end.
+#
+# des_save_lock <save>: wait until no other run holds <save>, then hold it
+# (the directory <save>.lock, with the holder's pid). Waits up to
+# DES_SAVE_LOCK_WAIT seconds (default 900, longer than a capped run). The lock
+# of a run that has gone is taken over. If that run had swapped the save and
+# not put it back (it was killed outright, or the copy back failed), its
+# backup goes back first; if that fails too, the lock stays and this fails.
+# des_save_note <save> <backup>: record in the lock that <backup> holds the
+# player's save, before the swap.
+# des_save_unlock <save>: let the folder go, once the save is back.
+des_save_lock() {
+  local lock="$1.lock" owner b i nopid=0
+  mkdir -p "$(dirname "$1")" || return 1
+  for i in $(seq 1 $(( ${DES_SAVE_LOCK_WAIT:-900} * 2 ))); do
+    if mkdir "$lock" 2>/dev/null; then echo $$ > "$lock/pid"; return 0; fi
+    owner=$(cat "$lock/pid" 2>/dev/null)
+    if [ -n "$owner" ]; then nopid=0; else nopid=$((nopid + 1)); fi
+    # Gone: its pid has exited, or it never wrote one (5 s without).
+    if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } || [ $nopid -gt 10 ]; then
+      b=$(cat "$lock/backup" 2>/dev/null)
+      if [ -n "$b" ]; then
+        echo "[save] run ${owner:-?} ended with $1 swapped out; putting back $b" >&2
+        des_restore_save "$b" "$1" || { echo "[save] leaving $lock in place" >&2; return 1; }
+      fi
+      [ "$(cat "$lock/pid" 2>/dev/null)" = "$owner" ] && rm -rf "$lock"
+    elif [ $i = 1 ]; then
+      echo "[save] waiting for run ${owner:-?} to finish with $1" >&2
+    fi
+    sleep 0.5
+  done
+  echo "[save] gave up waiting for $1 ($lock)" >&2
+  return 1
+}
+des_save_note() { realpath "$2" > "$1.lock/backup"; }
+des_save_unlock() {
+  [ "$(cat "$1.lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$1.lock"
 }

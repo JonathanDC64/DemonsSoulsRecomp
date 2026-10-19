@@ -9,7 +9,10 @@
 #   LC_SAVE     save to play from; default the pinned regression save
 #               (work/tmp/regress/save, see `regress.sh pin-save`). Set it
 #               empty to play from the current save. The current save is
-#               copied aside first and put back when the script exits.
+#               copied aside first and put back when the script exits, also
+#               on a plain kill, Ctrl+C or a closed terminal. One run at a
+#               time: a second levelcap.sh or regress.sh waits until the
+#               first has put the save back (des_save_lock in deslib.sh).
 #   LC_SETTLE   seconds to wait after the level starts loading (default 75)
 #   LC_MAX      run cap in seconds (default 600)
 #   LC_NOPRESS  set to skip pressing through the title and load screens
@@ -21,14 +24,27 @@ set -uo pipefail
 . "$(dirname "$0")/deslib.sh"
 cd "$DES_ROOT" || exit 1
 NAME=$1; CMDS=$2; shift 2
+SAVE="gamedata/dev_hdd0/home/00000001/savedata"
+des_save_lock "$SAVE" || { echo "[lc] $SAVE is not free; not starting"; exit 2; }
+trap 'des_save_unlock "$SAVE"' EXIT
 RUN="$DES_SCRATCH/lc_$NAME"; rm -rf "$RUN"; mkdir -p "$RUN/shots"; SHOTS="$RUN/shots"
 OUT="$RUN/run.txt"; PAD="$RUN/pad"; CON="$RUN/con"; : > "$PAD"; : > "$OUT"
-SAVE="gamedata/dev_hdd0/home/00000001/savedata"
 LC_SAVE="${LC_SAVE-work/tmp/regress/save}"
 if [ -d "$SAVE" ]; then
   des_backup_save "$SAVE" "$RUN/save" || { echo "[lc] could not back up $SAVE; save not swapped"; exit 2; }
+  des_save_note "$SAVE" "$RUN/save"
 fi
-restore() { des_kill_own; if [ -d "$RUN/save" ]; then des_put_save "$RUN/save" "$SAVE"; fi; }
+# bash runs the EXIT trap when a plain kill, Ctrl+C or a closed terminal ends
+# it too. Further signals are ignored until the save is back: des_put_save
+# empties the folder, then copies, and a second Ctrl+C or kill between the
+# two left it empty.
+# If the save cannot be put back, the lock stays and the next run puts it back.
+restore() {
+  trap '' TERM INT HUP
+  des_kill_own
+  if [ ! -d "$RUN/save" ] || des_restore_save "$RUN/save" "$SAVE"; then des_save_unlock "$SAVE"; fi
+  trap - TERM INT HUP
+}
 trap restore EXIT
 if [ -n "$LC_SAVE" ]; then
   [ -d "$LC_SAVE" ] || { echo "[lc] no save at $LC_SAVE"; exit 2; }

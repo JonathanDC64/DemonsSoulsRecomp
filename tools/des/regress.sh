@@ -49,15 +49,20 @@ if [ "${1:-}" = accept ]; then
 fi
 
 NAME="${1:-$(date +%Y%m%d_%H%M%S)}"; SET="$REG/$NAME"
+des_save_lock "$SAVE" || { echo "[regress] $SAVE is not free; not starting"; exit 2; }
+trap 'des_save_unlock "$SAVE"' EXIT
 RUN="$DES_SCRATCH/regress_run"; rm -rf "$RUN" "$SET"; mkdir -p "$RUN/shots" "$SET"
 OUT="$RUN/run.txt"; PAD="$RUN/pad"; CON="$RUN/con"; : > "$PAD"; : > "$OUT"
 
 if [ -d "$SAVE" ]; then
   des_backup_save "$SAVE" "$RUN/save" || { echo "[regress] could not back up $SAVE; save not swapped"; exit 1; }
+  des_save_note "$SAVE" "$RUN/save"
 fi
-restore() {
+restore() {   # as in levelcap.sh
+  trap '' TERM INT HUP
   des_kill_own
-  if [ -d "$RUN/save" ]; then des_put_save "$RUN/save" "$SAVE"; fi
+  if [ ! -d "$RUN/save" ] || des_restore_save "$RUN/save" "$SAVE"; then des_save_unlock "$SAVE"; fi
+  trap - TERM INT HUP
 }
 trap restore EXIT
 if [ -d "$REG/save" ]; then des_put_save "$REG/save" "$SAVE"

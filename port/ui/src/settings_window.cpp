@@ -253,8 +253,9 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "The others give the game the real time of each frame; 60 uses the game's 60 fps mode, and the other "
             "rates set the frame cap to the number chosen. Unlocked has no cap: the game runs as fast as the "
             "machine allows, and with V-sync on the display still shows at most its refresh rate. Custom is the "
-            "rate set in Custom frame rate, below. In-engine cutscenes stay at 30 fps, as on the PS3. Above 60 fps "
-            "the game is less tested. Applies at once.<br/><br/>(DES_FPS)",
+            "rate set in Custom frame rate, below. In-engine cutscenes play at 30 fps, as on the PS3, unless "
+            "Cutscene frame rate says otherwise. Above 60 fps the game is less tested. Applies at once."
+            "<br/><br/>(DES_FPS)",
             {}, [](Pane& pane) {
                 pane.add_button({
                                     .text = "Custom",
@@ -291,6 +292,12 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                 pane.clear();
                 pane.add_rml(helpText);
             });
+        choice_row(leftPane, rightPane, "Cutscene frame rate", "DES_CUTFPS", {"0", "1"},
+            {"30 fps (original)", "Same as Frame rate"},
+            "The frame rate of the in-engine cutscenes. Their camera moves in steps of 1/30 s, so above 30 fps they "
+            "judder; 30 fps (original) plays them at 30, as on the PS3, and goes back to Frame rate when they end. "
+            "Same as Frame rate keeps them at the frame rate and moves the camera smoothly between its steps. "
+            "Movies are not affected, and at 30 fps this does nothing. Applies at once.<br/><br/>(DES_CUTFPS)");
         bool_row(leftPane, rightPane, "V-sync", "DES_VSYNC",
             "Presents wait for the display's refresh. Off shows each frame as soon as it is drawn, with tearing: "
             "needed to see a frame rate above the display's refresh rate. Applies at once.<br/><br/>(DES_VSYNC)");

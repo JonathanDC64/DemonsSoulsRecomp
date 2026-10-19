@@ -227,7 +227,7 @@ extern "C" void des_menu_tick(ppu_context* ctx)
         uint64_t g[13]; memcpy(g, ctx->gpr, sizeof g);              // r0..r12
         double   f[14]; memcpy(f, ctx->fpr, sizeof f);              // f0..f13
         const uint64_t lr = ctx->lr, ctr = ctx->ctr;
-        const uint32_t cr = ctx->cr;
+        const uint32_t cr = ppu_cr_pack(ctx);
         const int64_t now = now_ms();
         while (t != head.load(std::memory_order_acquire)) {
             const int32_t id = q[t % kQ].id.load(std::memory_order_relaxed);
@@ -240,7 +240,7 @@ extern "C" void des_menu_tick(ppu_context* ctx)
             while (g_trampoline_fn) { auto tf = g_trampoline_fn; g_trampoline_fn = nullptr; tf(ctx); }
         }
         memcpy(ctx->gpr, g, sizeof g); memcpy(ctx->fpr, f, sizeof f);
-        ctx->lr = lr; ctx->ctr = ctr; ctx->cr = cr;
+        ctx->lr = lr; ctx->ctr = ctr; ppu_cr_unpack(ctx, cr);
     }
     // The original 0x00724E40: r3 = *0x01B4B114; tail-call 0x00724AD0 (f1 untouched).
     ctx->gpr[3] = vm_read32(kMenuSystem);

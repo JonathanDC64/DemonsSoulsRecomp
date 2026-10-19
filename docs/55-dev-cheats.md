@@ -52,7 +52,7 @@ Two labels are used below:
 ### 2.2 How the hooks work (read, `ppu_lifter.py`)
 
 - A line `0xADDR=des_dev_hook` in `port/insn_hooks.txt` makes the lifter call `des_dev_hook(ctx, 0xADDR)` right after that instruction. The instruction must not be a branch.
-- The hook can change registers. If the instruction it follows is a compare, the hook must set cr7 again after changing the compared register. The lifter's `cmpwi` writes LT 8, GT 4 or EQ 2 into the low nibble of `ctx->cr`, with no SO bit. Its `fcmpu` does the same, with 1 for unordered.
+- The hook can change registers. If the instruction it follows is a compare, the hook must set cr7 again after changing the compared register. The lifter's `cmpwi` writes LT 8, GT 4 or EQ 2 into cr7 (`ppu_cr_get(ctx, 7)`; the context keeps one byte per CR field), with no SO bit. Its `fcmpu` does the same, with 1 for unordered.
 - A new hook changes `ppu_recomp.h`, so all 14 chunks rebuild once (about 15 to 20 minutes), after a re-lift.
 - Several sites can share one host function. `des_dev_hook` switches on the address.
 
@@ -120,7 +120,7 @@ extern "C" void des_dev_hook(ppu_context* ctx, uint32_t addr)
                           ctx->gpr[4] = vm_read32(me + 0x3D4); set_cr7(ctx, (int32_t)ctx->gpr[4], -50); }
                       break;
     case 0x002EDEB0u: if (speed != 1.0f && vm_read32(me + 0x20) == gpr(31)) {
-                          ctx->fpr[0] = (float)(ctx->fpr[0] * speed); ctx->cr = (ctx->cr & ~0xFu) | 8u; }
+                          ctx->fpr[0] = (float)(ctx->fpr[0] * speed); ppu_cr_set(ctx, 7, 8u); }
                       break;
     // ... the other nine sites as in the table
     }

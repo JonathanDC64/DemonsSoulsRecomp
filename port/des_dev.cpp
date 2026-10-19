@@ -179,7 +179,7 @@ bool refused(const char* what)
 /* cr7 as the lifter's cmpwi leaves it: LT 8, GT 4 or EQ 2 in the low nibble, no SO. */
 void set_cr7(ppu_context* ctx, int32_t a, int32_t b)
 {
-    ctx->cr = (ctx->cr & ~0xFu) | (a < b ? 8u : a > b ? 4u : 2u);
+    ppu_cr_set(ctx, 7, (uint8_t)(a < b ? 8u : a > b ? 4u : 2u));
 }
 
 uint32_t gpr32(const ppu_context* ctx, int r) { return (uint32_t)ctx->gpr[r]; }
@@ -312,7 +312,7 @@ extern "C" void des_dev_hook(ppu_context* ctx, uint32_t addr)
         if (speed == 1.0f || vm_read32(me + kChrMove) != gpr32(ctx, 31)) break;
         if (devlog) dev_log(11, "step factor", ctx->fpr[0], ctx->fpr[0] * speed, me);
         ctx->fpr[0] = (float)(ctx->fpr[0] * speed);
-        ctx->cr = (ctx->cr & ~0xFu) | 8u;   /* LT: the branch that scales the step (mv+0xF0) by f0 */
+        ppu_cr_set(ctx, 7, 8u);   /* LT: the branch that scales the step (mv+0xF0) by f0 */
         break;
     case 0x0027882Cu:   /* H12, 0x002784C0: r0 = a weapon action's stamina cost (chr r28); subf follows */
         if (god && gpr32(ctx, 28) == me && sgpr32(ctx, 0) > 0) {
@@ -373,7 +373,7 @@ static void warp_chr(ppu_context* ctx, uint32_t chr, const float* p)
     uint64_t g[32]; double f[32]; uint8_t v[32][16];
     memcpy(g, ctx->gpr, sizeof g); memcpy(f, ctx->fpr, sizeof f); memcpy(v, ctx->vr, sizeof v);
     const uint64_t lr = ctx->lr, ctr = ctx->ctr;
-    const uint32_t cr = ctx->cr, xer = ctx->xer;
+    const uint32_t cr = ppu_cr_pack(ctx), xer = ctx->xer;
     uint8_t be[16] = {};
     for (int i = 0; i < 3; i++) {
         uint32_t b; memcpy(&b, &p[i], 4);
@@ -390,7 +390,7 @@ static void warp_chr(ppu_context* ctx, uint32_t chr, const float* p)
         tf(ctx);
     }
     memcpy(ctx->gpr, g, sizeof g); memcpy(ctx->fpr, f, sizeof f); memcpy(ctx->vr, v, sizeof v);
-    ctx->lr = lr; ctx->ctr = ctr; ctx->cr = cr; ctx->xer = xer;
+    ctx->lr = lr; ctx->ctr = ctr; ppu_cr_unpack(ctx, cr); ctx->xer = xer;
 }
 
 static bool chr_pos(uint32_t chr, float* p)

@@ -176,17 +176,22 @@ des_restore_save() {
 #
 # des_save_lock <save>: wait until no other run holds <save>, then hold it
 # (the directory <save>.lock, with the holder's pid). Waits up to
-# DES_SAVE_LOCK_WAIT seconds (default 900, longer than a capped run). The lock
-# of a run that has gone is taken over. If that run had swapped the save and
-# not put it back (it was killed outright, or the copy back failed), its
-# backup goes back first; if that fails too, the lock stays and this fails.
+# DES_SAVE_LOCK_WAIT seconds, a whole number (default 900, longer than a
+# capped run; 0 tries once). The lock of a run that has gone is taken over.
+# If that run had swapped the save and not put it back (it was killed
+# outright, or the copy back failed), its backup goes back first; if that
+# fails too, the lock stays and this fails.
 # des_save_note <save> <backup>: record in the lock that <backup> holds the
 # player's save, before the swap.
 # des_save_unlock <save>: let the folder go, once the save is back.
 des_save_lock() {
-  local lock="$1.lock" owner b i nopid=0
+  local lock="$1.lock" wait="${DES_SAVE_LOCK_WAIT:-900}" owner b tries i nopid=0
+  case "$wait" in ''|*[!0-9]*)
+    echo "[save] DES_SAVE_LOCK_WAIT=$wait: it takes a whole number of seconds" >&2; return 1 ;;
+  esac
   mkdir -p "$(dirname "$1")" || return 1
-  for i in $(seq 1 $(( ${DES_SAVE_LOCK_WAIT:-900} * 2 ))); do
+  tries=$(( 10#$wait * 2 )); [ "$tries" -ge 1 ] || tries=1
+  for ((i = 1; i <= tries; i++)); do
     if mkdir "$lock" 2>/dev/null; then echo $$ > "$lock/pid"; return 0; fi
     owner=$(cat "$lock/pid" 2>/dev/null)
     if [ -n "$owner" ]; then nopid=0; else nopid=$((nopid + 1)); fi
@@ -197,11 +202,13 @@ des_save_lock() {
         echo "[save] run ${owner:-?} ended with $1 swapped out; putting back $b" >&2
         des_restore_save "$b" "$1" || { echo "[save] leaving $lock in place" >&2; return 1; }
       fi
-      [ "$(cat "$lock/pid" 2>/dev/null)" = "$owner" ] && rm -rf "$lock"
+      if [ "$(cat "$lock/pid" 2>/dev/null)" = "$owner" ] && rm -rf "$lock" && mkdir "$lock" 2>/dev/null; then
+        echo $$ > "$lock/pid"; return 0
+      fi
     elif [ $i = 1 ]; then
       echo "[save] waiting for run ${owner:-?} to finish with $1" >&2
     fi
-    sleep 0.5
+    if [ $i -lt $tries ]; then sleep 0.5; fi
   done
   echo "[save] gave up waiting for $1 ($lock)" >&2
   return 1

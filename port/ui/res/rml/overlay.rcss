@@ -27,6 +27,11 @@ toast {
     border-color: var(--toast-border-color);
     top: 40dp;
     right: 40dp;
+    /* A definite width. With width auto, RmlUi takes the progress bar's 100% as the toast's max-content width and
+       stretches the toast across the screen. This one fits a trophy: the 64dp icon, the 16dp gap and toast-body's
+       440dp, plus the padding and the border (border-box sizing, global.rcss). */
+    width: 570dp;
+    max-width: 90%;
     display: flex;
     flex-flow: column;
     border-radius: var(--radius-window);
@@ -92,6 +97,7 @@ toast.menu-notification {
     right: auto;
     bottom: auto;
     left: 50%;
+    width: auto;  /* sized to its text (it has no progress bar) */
     max-width: 90%;
     transform: translateX(-50%) scale(0.9);
 }
@@ -124,6 +130,7 @@ toast toast-row {
 }
 
 toast toast-body {
+    flex: 1 1 auto;  /* the rest of the row, so the grade sits at the right edge; a long name wraps */
     display: flex;
     flex-flow: column;
     gap: var(--space-sm);
@@ -131,6 +138,7 @@ toast toast-body {
 }
 
 toast toast-icon {
+    flex: 0 0 auto;  /* keeps its 64dp when a long name fills the body */
     display: flex;
     align-items: center;
 }

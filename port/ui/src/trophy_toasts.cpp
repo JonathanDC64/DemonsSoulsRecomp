@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <map>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -64,10 +65,12 @@ struct Unlock {
 std::mutex sLock;
 std::deque<Unlock> sQueue;
 std::atomic<bool> sPending{false};
+std::atomic<unsigned> sUnlocks{0};
 
 // The game's thread, inside sceNpTrophyUnlockTrophy after the unlock is saved: copy and queue, nothing else.
 void on_unlock(const sceNpTrophyUnlockEvent* ev, void*) {
     if (!ev) return;
+    sUnlocks.fetch_add(1, std::memory_order_release);
     Unlock u{ev->trophyId, ev->grade, std::string(ev->name, strnlen(ev->name, sizeof ev->name))};
     std::lock_guard<std::mutex> lock(sLock);
     if (sQueue.size() >= kMaxQueued) return;
@@ -75,44 +78,20 @@ void on_unlock(const sceNpTrophyUnlockEvent* ev, void*) {
     sPending.store(true, std::memory_order_release);
 }
 
-struct Grade {
-    const char* css;
-    const char* label;
-};
-
-Grade grade_of(unsigned grade) {
-    switch (grade) {
-    case 1: return {"platinum", "Platinum"};
-    case 2: return {"gold", "Gold"};
-    case 3: return {"silver", "Silver"};
-    case 4: return {"bronze", "Bronze"};
-    default: return {"", ""};
-    }
-}
-
 // The trophy's icon as RML: its PNG from the trophy set, or the trophy symbol when there is none (no TROPHY.TRP).
 std::string icon_rml(int id) {
-    void* png = nullptr;
-    unsigned size = 0;
-    const bool found = sceNpTrophy_icon(id, &png, &size) == 0 && png && size;
-    std::string rml = "<icon class=\"trophy\"/>";
-    if (found) {
-        const std::string source = "trophy-icon:" + std::to_string(id);
-        host::add_png(source, png, size);
-        rml = "<img src=\"" + source + "\"/>";
-    }
-    if (png) sceNpTrophy_free(png);
-    return rml;
+    const std::string source = icon_source(id);
+    return source.empty() ? "<icon class=\"trophy\"/>" : "<img src=\"" + source + "\"/>";
 }
 
 Toast make_toast(const Unlock& u) {
-    const Grade grade = grade_of(u.grade);
     Toast t;
     t.type = "trophy";
     // (markup: create_toast reads a title or a message that starts with "<" as RML)
     t.title = "<toast-title>Trophy unlocked</toast-title>";
-    if (*grade.label) {
-        t.title += std::string("<grade class=\"") + grade.css + "\"><icon class=\"trophy\"/>" + grade.label + "</grade>";
+    if (*grade_label(u.grade)) {
+        t.title += std::string("<grade class=\"") + grade_class(u.grade) + "\"><icon class=\"trophy\"/>" +
+                   grade_label(u.grade) + "</grade>";
     }
     t.content = "<trophy-name>" + escape(u.name.empty() ? "Trophy " + std::to_string(u.id) : u.name) +
                 "</trophy-name>";
@@ -122,6 +101,43 @@ Toast make_toast(const Unlock& u) {
 }
 
 }  // namespace
+
+unsigned unlock_count() {
+    return sUnlocks.load(std::memory_order_acquire);
+}
+
+const char* grade_class(unsigned grade) {
+    switch (grade) {
+    case 1: return "platinum";
+    case 2: return "gold";
+    case 3: return "silver";
+    case 4: return "bronze";
+    default: return "";
+    }
+}
+
+const char* grade_label(unsigned grade) {
+    switch (grade) {
+    case 1: return "Platinum";
+    case 2: return "Gold";
+    case 3: return "Silver";
+    case 4: return "Bronze";
+    default: return "";
+    }
+}
+
+std::string icon_source(int id) {
+    static std::map<int, bool> sRead;  // id -> the set has its icon (the disc does not change during a run)
+    const std::string source = "trophy-icon:" + std::to_string(id);
+    if (const auto it = sRead.find(id); it != sRead.end()) return it->second ? source : std::string();
+    void* png = nullptr;
+    unsigned size = 0;
+    const bool found = sceNpTrophy_icon(id, &png, &size) == 0 && png && size;
+    if (found) host::add_png(source, png, size);
+    if (png) sceNpTrophy_free(png);
+    sRead[id] = found;
+    return found ? source : std::string();
+}
 
 void install() {
     sceNpTrophy_set_unlock_hook(on_unlock, nullptr);

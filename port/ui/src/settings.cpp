@@ -39,6 +39,7 @@ constexpr Def kDefs[] = {
     {"show_start_screen", "1", Apply::UiOnly},
     {"menu_hint", "1", Apply::UiOnly},
     {"trophy_popups", "1", Apply::UiOnly},     // trophy_toasts.cpp; off hides the toast, the unlock is still kept
+    {"trophies_show_hidden", "0", Apply::UiOnly},  // trophies_window.cpp: hidden trophies listed with their names
     {"pad_menu_chord", "0", Apply::UiOnly},    // 0 = L3 + R3, 1 = Select + Start
     {"PAD_MAP", "", Apply::Live},              // cellPad, gamepad buttons (controls_window.cpp)
     {"PAD_KEYS", "", Apply::Live},             // cellPad, the keyboard pad's keys

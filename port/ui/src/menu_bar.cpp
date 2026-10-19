@@ -6,6 +6,7 @@
 #include "host.hpp"
 #include "modal.hpp"
 #include "settings_window.hpp"
+#include "trophies_window.hpp"
 #include "ui.hpp"
 #include "window.hpp"
 
@@ -101,6 +102,8 @@ MenuBar::MenuBar()
 
 void MenuBar::build_tabs() {
     mTabBar->add_tab("Settings", [this] { push(std::make_unique<SettingsWindow>()); });
+
+    mTabBar->add_tab("Trophies", [this] { push(std::make_unique<TrophiesWindow>()); });
 
     mTabBar->add_tab("Report an issue", [this] {
         mTabBar->set_active_tab(-1);

@@ -163,19 +163,19 @@ toast.trophy message {
 }
 
 toast.trophy grade.platinum {
-    color: rgb(180, 205, 225);
+    color: var(--color-grade-platinum);
 }
 
 toast.trophy grade.gold {
-    color: rgb(222, 184, 84);
+    color: var(--color-grade-gold);
 }
 
 toast.trophy grade.silver {
-    color: rgb(192, 194, 198);
+    color: var(--color-grade-silver);
 }
 
 toast.trophy grade.bronze {
-    color: rgb(196, 128, 72);
+    color: var(--color-grade-bronze);
 }
 
 @media (max-height: 640dp) {

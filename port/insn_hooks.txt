@@ -51,8 +51,13 @@
 # pitch = base + (pitch - base) * r, tuned for 30 fps.
 0x0011C15C=des_cam_keep   # r = +0x18C (0.3): pitch return after a scripted angle
 
-# The manager's second camera (0x00110608).
-0x00110808=des_cam_rate   # k = +0x138, +0x130 towards +0x134
+# des_cam_step (port/des_options.cpp): a step a camera adds once a frame,
+# tuned for 30 fps. The hook scales it by the frame's 30 Hz steps.
+# The bow's aim view (ChrAimCam update 0x00110608): its zoom position +0x138
+# moves by the zoom input (-1, 0 or 1) times this step a frame, clamped to
+# [0, 1]. (Its field of view is lerp(+0x130, +0x134, +0x138), worked out
+# again each frame: no ease, so no des_cam_rate site.)
+0x001107C0=des_cam_step   # lfs f13, 0x13C(r31): the zoom step (0.1)
 
 # des_dof (port/des_options.cpp): DES_DOF=0 zeroes the two depth-of-field
 # strengths that the image-process update blends from the area's DOF_BANK rows.

@@ -465,12 +465,18 @@ void process_queue() {
             ctx->ProcessMouseMove(e.a, e.b, e.mods);
             break;
         case InputEvent::MouseDown:
+            if (ui::input::binding_capture()) break;  // a mouse button for a binding (controls_window.cpp reads it)
             ctx->ProcessMouseButtonDown(e.a, e.mods);
             break;
         case InputEvent::MouseUp:
+            if (ui::input::binding_capture()) break;
             ctx->ProcessMouseButtonUp(e.a, e.mods);
             break;
         case InputEvent::Wheel:
+            if (ui::input::binding_capture()) {  // a wheel notch for a binding
+                ui::input::capture_wheel(e.wheel < 0.0f ? 1 : -1);
+                break;
+            }
             ctx->ProcessMouseWheel(Rml::Vector2f(0.0f, e.wheel), e.mods);
             break;
         case InputEvent::Leave:

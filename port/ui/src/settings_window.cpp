@@ -348,7 +348,9 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             }),
             rightPane, [](Pane& pane) {
                 pane.clear();
-                pane.add_text("Choose which gamepad button or key presses each of the PS3 pad's buttons in the game.");
+                pane.add_text("Choose which gamepad button presses each of the PS3 pad's buttons in the game, and "
+                              "which keys, mouse buttons or wheel notches work each action (two each, with Shift, "
+                              "Ctrl or Alt for a chord).");
             });
         info_row(leftPane, rightPane, "Gamepads", "XInput, DualSense, DualShock 4",
             "Xbox-style (XInput) controllers, and the DualSense, DualSense Edge and DualShock 4 over USB or "

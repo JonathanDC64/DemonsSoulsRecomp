@@ -1259,7 +1259,7 @@ extern "C" void ps3_title_options_init(void)
     /* First: settings.ini fills in the options not set in the environment. */
     des_ui_early_init();
 #if DES_DEV
-    des_dev_boot();        /* developer build: the marker, and the cheats' offline rule (docs/55) */
+    des_dev_boot();        /* developer build: the marker (log, window title) and the cheats' offline rule (docs/55) */
 #endif
     des_aspect_init();     /* DES_ASPECT, DES_HUD: before the first camera is built */
     des_menu_sfx_init();   /* the UI's sounds through the game's menu sounds */

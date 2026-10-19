@@ -120,15 +120,35 @@ if(NOT DES_SHADOW_STACK)
 endif()
 
 # Developer builds (docs/55): the dev cheats and the settings window's Developer tab.
-# Never for a release: the release workflow and the player setup configure with
-# -DDES_DEV=OFF, and CI fails a release that contains the dev marker. DES_DEV is
-# always defined, as 0 or 1, but only for the port's sources that read it, so
-# switching it recompiles those few files and not the lifted chunks. The dev
-# hook lines are in insn_hooks.txt either way (one lift for both builds).
+# Never for a release. Build them in a folder of their own, such as port/build_dev,
+# not in port/build: the option is cached, so a folder configured once with
+# -DDES_DEV=ON makes a developer build at every later `cmake --build`, and
+# tools/des/build.sh and play.sh use port/build. Nothing checks a release for it
+# yet (there is no release workflow); run tools/ci/check_release_no_dev.py by hand
+# on anything before sharing it. DES_DEV is always defined, as 0 or 1, but only
+# for the port's sources that read it, so switching it recompiles those few files
+# and not the lifted chunks. The dev hook lines are in insn_hooks.txt either way
+# (one lift for both builds).
 option(DES_DEV "Developer build: dev cheats and the Developer settings tab (never in a release)" OFF)
 if(DES_DEV)
     target_sources(des_boot PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/des_dev.cpp")
     set(DES_DEV_VALUE 1)
+    message(WARNING "DES_DEV=ON: ${CMAKE_BINARY_DIR} makes DEVELOPER builds, with the cheats compiled "
+        "in, at every build until it is configured with -DDES_DEV=OFF (the option is cached). Never share "
+        "one; see docs/55.")
+    file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}" _des_bin)
+    file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/build" _des_std)
+    string(TOLOWER "${_des_bin}" _des_bin)
+    string(TOLOWER "${_des_std}" _des_std)
+    if(_des_bin STREQUAL _des_std)
+        message(WARNING "DES_DEV=ON in port/build, the folder tools/des/build.sh and play.sh use: every "
+            "des_boot.exe they build and run will have the cheats. Configure port/build with -DDES_DEV=OFF "
+            "and make developer builds in port/build_dev.")
+    endif()
+    # Each link says so too: a later `cmake --build` does not configure again, so it never shows the warning.
+    add_custom_command(TARGET des_boot POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E echo "des_boot: DEVELOPER BUILD (DES_DEV=ON), the cheats are compiled in. Never share it."
+        VERBATIM)
 else()
     set(DES_DEV_VALUE 0)
 endif()

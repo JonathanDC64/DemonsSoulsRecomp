@@ -64,6 +64,7 @@
 #endif
 
 extern "C" PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);
+extern "C" const char* cellGame_get_title(void);   /* PARAM.SFO's TITLE (ps3recomp libs/system/cellGame.c) */
 
 namespace {
 
@@ -325,7 +326,8 @@ extern "C" void des_dev_hook(ppu_context* ctx, uint32_t addr)
 }
 
 /* Called once from ps3_title_options_init, after settings.ini and before the
- * network modules start: prints the marker and decides the session. */
+ * network modules start and the window opens: prints the marker, decides the
+ * session and adds "(developer build)" to the window title. */
 extern "C" void des_dev_boot(void)
 {
     fprintf(stderr, "[dev] %s\n", DES_DEV_MARKER);
@@ -343,6 +345,16 @@ extern "C" void des_dev_boot(void)
             s == kCheats   ? " (a cheat was set at start: the network knobs are cleared)"
             : s == kOnline ? " (the network is on: the cheats stay off until the next start)"
                            : " (the first cheat turned on keeps it offline)");
+    /* The window caption says so too. boot_main opens the window after this and captions it with PS3_TITLE, else
+     * PARAM.SFO's title, else "ps3recomp"; the frame rate is added after it. */
+    const char* title = getenv("PS3_TITLE");
+    if (!title || !*title) {
+        title = cellGame_get_title();
+        if (!title || !*title || !strcmp(title, "Unknown Title")) title = "ps3recomp";
+    }
+    char caption[160];
+    snprintf(caption, sizeof caption, "%s (developer build)", title);
+    ps3_setenv("PS3_TITLE", caption);
 }
 
 /* True from the first cheat to the end of the session: future network code

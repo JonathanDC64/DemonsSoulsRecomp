@@ -1026,6 +1026,51 @@ extern "C" void des_viewer_rate(ppu_context* ctx, uint32_t addr)
     ctx->fpr[2] = (float)(ctx->fpr[2] * steps);
 }
 
+/* Particle effects (FFX). Each effect node runs a small state machine in the
+ * scene update 0x013B74B8 (main thread, once a frame from the effect manager's
+ * step 0x00515070; r31 = the node, f31 = dt). Entering a state runs its entry
+ * messages, and an emitter's messages emit a fixed number of particles. An
+ * emitter repeats by re-entering its own state once the state's time (+0x94,
+ * set to 0 on entry, stepped by dt after the test) reaches an interval; with
+ * an interval of a frame or less that is every update: 30 times a second at 30
+ * fps, 240 at 240. So the boss fog walls churn 2, 4 or 8 times as fast. The
+ * lifter calls this after each instruction that picks the next state (r0, 0
+ * for none; --insn-hooks): 0x013B75A8 for the state's own transitions, the
+ * other four on the paths of templates 0x7E4, 0x7E7, 0x835 and 0x849. A state
+ * that would re-enter itself before it has lasted 1/30 s stays as it is this
+ * update. When it does re-enter, 0x013B75D4 (the store that sets its time to
+ * 0) starts the new time with the part of a frame past 1/30 s, so the loop
+ * runs 30 times a second at any frame rate. Other transitions, and loops
+ * slower than 1/30 s, are left alone. Nothing at 30 fps or without DES_FPS.
+ * DES_FXFIX=0 turns it off live. */
+extern "C" void des_fx_state(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_FXFIX", 1) != 0);
+    static PPU_THREAD_LOCAL uint32_t carry_node;
+    static PPU_THREAD_LOCAL float carry;
+    const uint32_t node = (uint32_t)ctx->gpr[31];
+    if (addr == 0x013B75D4u) {   /* the new state's time, just set to 0 */
+        if (carry_node == node) vm_writef(node + 0x94, carry);
+        carry_node = 0;
+        return;
+    }
+    carry_node = 0;
+    const uint32_t next = (uint32_t)ctx->gpr[0];
+    if (!on || s_fps <= 0 || !next || next != vm_read32(node + 0x80)) return;
+    const float tick = 1.0f / 30.0f, dt = (float)ctx->fpr[31];
+    if (!(dt > 0.0f && dt < tick - 1e-4f)) return;
+    const float t = vm_readf(node + 0x94);
+    if (t < tick - 1e-5f) {
+        ctx->gpr[0] = 0;   /* too soon: no re-entry this update */
+        return;
+    }
+    if (t > tick && t - tick < dt) {
+        carry_node = node;
+        carry = t - tick;
+    }
+}
+
 #if !DES_DEV
 /* Release builds: the dev hook lines in insn_hooks.txt (docs/55) call this
  * empty function, and no cheat is ever used. Developer builds (cmake

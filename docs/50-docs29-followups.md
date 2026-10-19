@@ -202,6 +202,24 @@ Checked:
 master f15a4f0 plus both branches (commit 0383460). The runtime library
 builds, and all 13 ctests of that build pass. Do not open a PR from it.
 
+### Automated runs on the integration branch (2026-10-18)
+
+des_boot from test/l2-sync-lwcond (0383460) with master's port tree, then
+`tools/des/regress.sh` with the pinned save. [measured]
+
+| Run | Result |
+|---|---|
+| 30 fps (18:13) | s1 to s3 ok. s4_on flagged (41.5% changed): the walk is timed by the clock and ended elsewhere, as it sometimes does on other builds. |
+| 120 fps (18:15) | s1 and s2 flagged. The game ran slowly: 3766 flips in 190 s, and s1 caught the arrival animation (taken at 110 s; usually about 89 s). |
+| 120 fps again (21:42) | All four shots ok. 9513 flips in 111 s, s1 at 89 s, as on master builds. |
+
+- No run printed a `[SYNC]` line, so the game never hit a refused
+  sys_mutex_destroy or sys_cond_destroy on this route.
+- The same exe was normal in the re-run, so the slow 18:15 run was most
+  likely load from other programs on the PC at the time. [inferred]
+- The run request below still needs its manual steps: warp, autosave,
+  Quit Game to the title, restart.
+
 ### RPCS3 PRs against our code
 
 | RPCS3 PR | What it fixed | Ours |

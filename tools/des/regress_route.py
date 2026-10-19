@@ -30,10 +30,13 @@ A hold is the console's `setenv PAD_STICK=lx,ly,rx,ry,0,<secs>`: the runtime
 lets go of the stick itself <secs> of wall time after it picked the value up,
 so the console's latency does not stretch it. <secs> is the game time over the
 game/real rate of the last second, and is issued again with a new length when
-the rate changes during the hold. A shot is `setenv CELLMARK_DUMP_NOW=1`: the
-runtime saves the next frame with draws. The game flushes the frame log twice
-a second, so the current game time is predicted from the newest line and the
-rate, on a clock mapped to the frame log's from the times its lines arrive.
+the rate changes during the hold. The runtime times the window with
+GetTickCount64, which moves in steps of about 16 ms, so at 30 fps a hold can
+come out one frame long (240 or 241 frames for the 8 s walk). A shot is
+`setenv CELLMARK_DUMP_NOW=1`: the runtime saves the next frame with draws.
+The game flushes the frame log twice a second, so the current game time is
+predicted from the newest line and the rate, on a clock mapped to the frame
+log's from the times its lines arrive.
 
 The defaults come from a run of the clock-driven script (the one that took
 the accepted set) at 30 fps with a frame log: it took s1_spawn 35.9 s after
@@ -41,8 +44,10 @@ the opening cutscene ended, started each hold 0.8 s after the shot before it
 (GAP), and took each shot 2.6-2.9 s after the hold ended (its 2 s sleep,
 process start-ups, and up to half a second to its next periodic dump). STOP
 is a little sooner, 2.3 s, so s4_on comes 59.7 s after the cutscene, not
-61.1: in that run an enemy that follows the player into the corner was in
-front of the camera at s4_on.
+61.1. In that run an enemy that follows the player into the corner stood in
+front of the camera at s4_on; runs of this script with STOP at 2.8 s, that
+run's mean, compared fine too, so the shorter STOP is a margin, not the fix.
+The fix is that the stops no longer move.
 
 Writes the shots into --set and a timeline into --log. Exit status: 0 all
 shots taken, 1 a shot is missing, 2 the level never came up, 3 the game

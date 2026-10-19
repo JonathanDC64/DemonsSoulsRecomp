@@ -56,6 +56,17 @@ NATIVE_BLOCKS = {
 }
 
 
+# Jump-table `bi`s lifted as a switch of region gotos (spu_lifter.py --bi-switch,
+# --regions images only): image -> (image fingerprint, [ADDR=TABLE:COUNT]), applied
+# only to the exact image they were written for, like NATIVE_HOOKS.
+BI_SWITCH = {
+    # HighGraphics' ring consumer (image 2): the dispatch on each ring command's
+    # number (37 handlers, 0x47F0-0x5094) and the one in 0x7D70 (16 words, 7
+    # targets). SPU_BI_SWITCH=0 turns them off.
+    "spu_0001_at_0176C200": (0x4FBCAB40231BF72B, ["0x4758=0x475C:37", "0x81A8=0x81AC:16"]),
+}
+
+
 # Images lifted with spu_lifter.py --regions: the functions between two call
 # targets become one C body, so a direct branch among them is a goto rather than
 # a trampoline hop. Same entries and semantics; much less per-branch overhead.
@@ -115,7 +126,7 @@ def main():
             out = os.path.join(OUT_DIR, img)
             os.makedirs(out, exist_ok=True)
             print(f"lifting {img} ...", flush=True)
-            hooks, blocks = [], []
+            hooks, blocks, tables = [], [], []
             if img in NATIVE_HOOKS:
                 want, hooks = NATIVE_HOOKS[img]
                 if want is not None and want != imgs[-1][1]:
@@ -128,11 +139,18 @@ def main():
                     print(f"  {img}: fingerprint 0x{imgs[-1][1]:016X} is not the one its "
                           f"native blocks were written for; lifting without them")
                     blocks = []
+            if img in BI_SWITCH and img in REGIONS:
+                want, tables = BI_SWITCH[img]
+                if want != imgs[-1][1]:
+                    print(f"  {img}: fingerprint 0x{imgs[-1][1]:016X} is not the one its "
+                          f"jump tables were written for; lifting without them")
+                    tables = []
             r = subprocess.run([sys.executable, LIFTER, "--auto-functions", f,
                                 "--symbol-prefix", img + "_", "-o", out] +
                                (["--regions"] if img in REGIONS else []) +
                                [a for h in hooks for a in ("--native-hook", h)] +
-                               [a for h in blocks for a in ("--native-block", h)],
+                               [a for h in blocks for a in ("--native-block", h)] +
+                               [a for h in tables for a in ("--bi-switch", h)],
                                capture_output=True, text=True)
             if r.returncode != 0:
                 print(r.stdout[-2000:], r.stderr[-2000:], file=sys.stderr)

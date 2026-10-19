@@ -18,7 +18,8 @@ licences in `port/ui/NOTICE.md`.
 - **Quit** asks first ("Return to the desktop? Progress since the game last
   saved will be lost.") in a blood-red window, then posts WM_CLOSE to the
   game window. The window's close button and Alt+F4 ask the same question
-  (the UI consumes their WM_CLOSE); a scripted run's window closes at once.
+  (the UI consumes their WM_CLOSE). The window closes at once only in a run
+  nobody plays: a tools/des test run, `PAD_FILE` or `EXIT_AFTER_MS`.
 - **Settings**: tabs Display, Game, Controls, Interface, About, the left
   pane showing the value, the right pane showing the choices and help. Rows
   that only apply at the next start say so. A row whose option was set in
@@ -302,7 +303,9 @@ No start screen when the run is scripted: a tools/des test run
 (`PS3_PIDFILE` set and `DES_KIND` not `play`), `DES_AUTO_CONTINUE` on the
 command line, `PAD_FILE` or `EXIT_AFTER_MS`. `DES_AUTO_CONTINUE` from
 settings.ini keeps the start screen: its presses wait until Play
-(`des_ui_start_screen_up`). A scripted run's close button closes at once. Test runs also neither read nor write
+(`des_ui_start_screen_up`). The close button closes at once only in a test
+run, with `PAD_FILE` or with `EXIT_AFTER_MS` (`unattended_run`); with
+`DES_AUTO_CONTINUE` on the command line it still asks. Test runs also neither read nor write
 settings.ini unless `DES_SETTINGS` (or `DES_DATA_DIR`) is given, so regress,
 levelcap, exeab and friends see exactly the options they pass; they also
 keep no log and install no crash handler.

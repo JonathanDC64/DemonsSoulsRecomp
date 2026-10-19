@@ -103,13 +103,16 @@ bool harness_run() {
     return env_set("PS3_PIDFILE") && !(kind && std::strcmp(kind, "play") == 0);
 }
 
+bool unattended_run() {
+    return harness_run() || env_set("PAD_FILE") || env_set("EXIT_AFTER_MS");
+}
+
 bool scripted_run() {
     // DES_AUTO_CONTINUE counts only from the command line: from settings.ini it waits for Play instead
     // (des_ui_start_screen_up).
     const char* ac = std::getenv("DES_AUTO_CONTINUE");
     const bool auto_continue = pinned("DES_AUTO_CONTINUE") && ac && *ac && std::strcmp(ac, "0") != 0;
-    return harness_run() || auto_continue || env_set("PAD_FILE") ||
-           env_set("EXIT_AFTER_MS");
+    return unattended_run() || auto_continue;
 }
 
 bool no_user_input() {

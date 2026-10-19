@@ -412,11 +412,11 @@ void frame_log()
             reads - last_reads, empty - last_empty);
     last_reads = reads; last_empty = empty;
     if (pos) fprintf(s_framelog, " %.3f %.3f %.3f %d %.2f", x, y, z, stamina, want);
-    if (pos) {   /* the movement object's root-motion factor (see des_move_post) */
+    if (pos) {   /* the movement object's root-motion factor (see des_move_post), then HP and MP */
         const uint32_t chr = vm_read32(vm_read32(kChrMan) + 0x1BC);
         const uint32_t fb = vm_read32(vm_read32(chr + 0x20) + 0x128);
         float f; memcpy(&f, &fb, 4);
-        fprintf(s_framelog, " %.3f", f);
+        fprintf(s_framelog, " %.3f %d %d", f, (int)vm_read32(chr + 0x3C4), (int)vm_read32(chr + 0x3CC));
     }
     fputc('\n', s_framelog);
     if (pos && have_pos) {
@@ -1301,7 +1301,7 @@ extern "C" void ps3_title_options_init(void)
     if (const char* f = getenv("DES_FRAMELOG")) {
         if (*f && (s_framelog = fopen(f, "w")) != nullptr) {
             snprintf(s_framelog_path, sizeof s_framelog_path, "%s", f);
-            fprintf(s_framelog, "# t_ms interval_ms step_ms cutscene pad buttons lstick reads empty [x y z stamina want_m/s speed_factor]; SUM t fps speed m/s game/real; MARK t (F8)\n");
+            fprintf(s_framelog, "# t_ms interval_ms step_ms cutscene pad buttons lstick reads empty [x y z stamina want_m/s speed_factor hp mp]; SUM t fps speed m/s game/real; MARK t (F8)\n");
             g_gcm_flip_request_hook = on_flip_request;
             fprintf(stderr, "[des] DES_FRAMELOG: %s (F8 marks)\n", f);
         } else if (*f) {

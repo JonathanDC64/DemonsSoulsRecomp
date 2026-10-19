@@ -916,6 +916,39 @@ extern "C" void des_noise_rate(ppu_context* ctx, uint32_t addr)
     if (on && s_fps > 0) keep_rate(ctx, addr);
 }
 
+/* Character fades. A character's effect list (+0x3BC, docs/42) multiplies the
+ * model's alpha (chr+0x368) by each node's fade (+0x10, 0 to 1) every frame.
+ * Two node types move their fade by a fixed step a call, without dt: type 16
+ * (0x0025EB20, a fade-in, or a fade by distance from the player) by 0.05,
+ * loaded into f0 at 0x0025EB88 (in) and 0x0025EC14 (out); type 14
+ * (0x002654E8, a model fade with sounds) by 1/30, loaded into f13 at
+ * 0x00265C88 (in) and 0x0026558C (out). So at 240 fps a fade of 0.67 s or
+ * 1 s takes 83 or 125 ms. The lifter calls this after each of those lfs
+ * (--insn-hooks); it scales the step by the frame's 30 Hz steps (kFrameDt).
+ * The clamps to 0 and 1 come after the step, so a scaled step never
+ * overshoots. Nothing at 30 fps or without DES_FPS. DES_FADEFIX=0 turns it
+ * off live; DES_FADELOG=1 prints every step (node r31). */
+extern "C" void des_fade_rate(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1, log = 0;
+    PS3_KNOB(on, ps3_env_int("DES_FADEFIX", 1) != 0);
+    PS3_KNOB(log, env_on("DES_FADELOG"));
+    const uint32_t insn = vm_read32(addr);
+    if ((insn >> 26) != 48) return;   /* lfs only */
+    const int fd = (insn >> 21) & 31;
+    const float dt = vm_readf(kFrameDt), steps = dt * 30.0f;
+    const bool scale = on && s_fps > 0 && steps > 0.0f && steps < 30.0f && steps != 1.0f;
+    if (log) {
+        using clock = std::chrono::steady_clock;
+        static const clock::time_point t0 = clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(clock::now() - t0).count();
+        const uint32_t node = (uint32_t)ctx->gpr[31];
+        fprintf(stderr, "[fadelog] %.1f ms %08X node %08X fade %.4f step %.5f dt %.5f%s\n", ms, addr, node,
+                vm_readf(node + 0x10), ctx->fpr[fd], dt, scale ? " scaled" : "");
+    }
+    if (scale) ctx->fpr[fd] = (float)(ctx->fpr[fd] * steps);
+}
+
 /* A character proxy's slide velocity (wrapper + 0x100), in its velocity
  * update 0x001FE778 (r26 = the step, dt at +0x20). On a frame whose ground
  * probe finds a slope too steep to stand on (+0x33), the game adds gravity

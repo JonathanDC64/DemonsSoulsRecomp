@@ -92,3 +92,11 @@
 # frame (radius *= 0.99, 0x018EDC0C) in the list update 0x006A3970.
 0x006A3990=des_noise_rate   # lfs f12, the 0.99, loaded once before the loop
 0x006A2E8C=des_noise_rate   # the same in the single-entry twin 0x006A2E78 (no callers)
+
+# des_fade_rate (port/des_options.cpp): character effect nodes that fade the
+# model by a fixed step a frame (docs/42, 2.4). The hook scales the step by the
+# frame's 30 Hz steps.
+0x0025EB88=des_fade_rate   # lfs f0, 0.05 (0x018D6848): type 16 fading in
+0x0025EC14=des_fade_rate   # lfs f0, 0.05: type 16 fading out (distance mode)
+0x00265C88=des_fade_rate   # lfs f13, 1/30 (0x018D691C): type 14 fading in
+0x0026558C=des_fade_rate   # lfs f13, 1/30: type 14 fading out

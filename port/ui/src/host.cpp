@@ -10,12 +10,17 @@
 
 #include <d3d11on12.h>
 #include <d3d12.h>
+#include <objbase.h>
+#include <wincodec.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -88,6 +93,66 @@ public:
     bool LogMessage(Rml::Log::Type type, const Rml::String& message) override {
         if (type <= Rml::Log::LT_WARNING) std::fprintf(stderr, "[ui] %s\n", message.c_str());
         return true;
+    }
+};
+
+// add_png's images, by source.
+std::mutex sPngLock;
+std::map<std::string, std::vector<uint8_t>, std::less<>> sPngs;
+
+// A PNG as premultiplied RGBA (what GenerateTexture takes), through the Windows Imaging Component. Called on the
+// render thread; COM is initialised for the call if the thread has not done it already.
+bool decode_png(const std::vector<uint8_t>& png, std::vector<uint8_t>& rgba, int& width, int& height) {
+    const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    IWICImagingFactory* factory = nullptr;
+    IWICStream* stream = nullptr;
+    IWICBitmapDecoder* decoder = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* converter = nullptr;
+    UINT w = 0, h = 0;
+    bool ok = false;
+    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+        SUCCEEDED(factory->CreateStream(&stream)) &&
+        SUCCEEDED(stream->InitializeFromMemory(const_cast<BYTE*>(png.data()), DWORD(png.size()))) &&
+        SUCCEEDED(factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnDemand, &decoder)) &&
+        SUCCEEDED(decoder->GetFrame(0, &frame)) && SUCCEEDED(frame->GetSize(&w, &h)) && w && h && w <= 4096 &&
+        h <= 4096 && SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
+        SUCCEEDED(converter->Initialize(frame, GUID_WICPixelFormat32bppPRGBA, WICBitmapDitherTypeNone, nullptr, 0.0,
+                                        WICBitmapPaletteTypeCustom))) {
+        rgba.resize(size_t(w) * h * 4);
+        ok = SUCCEEDED(converter->CopyPixels(nullptr, w * 4, UINT(rgba.size()), rgba.data()));
+    }
+    release(converter);
+    release(frame);
+    release(decoder);
+    release(stream);
+    release(factory);
+    if (SUCCEEDED(co)) CoUninitialize();
+    width = int(w);
+    height = int(h);
+    return ok;
+}
+
+// RmlUi's D3D11 renderer, which reads TGA files only, plus the PNG images given to add_png.
+class Renderer final : public RenderInterface_DX11 {
+public:
+    using RenderInterface_DX11::RenderInterface_DX11;
+
+    Rml::TextureHandle LoadTexture(Rml::Vector2i& dimensions, const Rml::String& source) override {
+        std::vector<uint8_t> png;
+        {
+            std::lock_guard<std::mutex> lock(sPngLock);
+            if (const auto it = sPngs.find(source); it != sPngs.end()) png = it->second;
+        }
+        if (png.empty()) return RenderInterface_DX11::LoadTexture(dimensions, source);
+        std::vector<uint8_t> rgba;
+        int w = 0, h = 0;
+        if (!decode_png(png, rgba, w, h)) {
+            std::fprintf(stderr, "[ui] cannot decode the image %s\n", source.c_str());
+            return 0;
+        }
+        dimensions = Rml::Vector2i(w, h);
+        return GenerateTexture(Rml::Span<const Rml::byte>(rgba.data(), rgba.size()), dimensions);
     }
 };
 
@@ -239,7 +304,7 @@ bool init(void* d3d12_device, void* d3d12_queue, void* hwnd, int width, int heig
         shutdown();
         return false;
     }
-    s.renderer = std::make_unique<RenderInterface_DX11>(s.device);
+    s.renderer = std::make_unique<Renderer>(s.device);
     s.system = std::make_unique<System>();
     s.system->SetWindow(static_cast<HWND>(hwnd));
     s.hwnd = static_cast<HWND>(hwnd);
@@ -359,6 +424,13 @@ void set_input_type(InputType) {}
 bool animations_enabled() {
     static const bool enabled = !std::getenv("DES_UI_NO_ANIM");
     return enabled;
+}
+
+void add_png(const std::string& source, const void* png, size_t size) {
+    if (!png || !size) return;
+    const auto* b = static_cast<const uint8_t*>(png);
+    std::lock_guard<std::mutex> lock(sPngLock);
+    sPngs[source].assign(b, b + size);
 }
 
 }  // namespace ui::host

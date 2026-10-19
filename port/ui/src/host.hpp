@@ -5,6 +5,8 @@
 
 #include <RmlUi/Core.h>
 
+#include <cstddef>
+#include <string>
 #include <vector>
 
 namespace ui::host {
@@ -40,5 +42,10 @@ void set_input_type(InputType type);
 
 // False when DES_UI_NO_ANIM is set: documents then open and close without their transitions.
 bool animations_enabled();
+
+// Serves a PNG file's bytes (copied) as the image `source`, for an <img src="..."> such as "trophy-icon:5". RmlUi's
+// D3D11 renderer reads TGA files only; these are decoded through the Windows Imaging Component when RmlUi first draws
+// them, and RmlUi keeps the texture. Any thread.
+void add_png(const std::string& source, const void* png, size_t size);
 
 }  // namespace ui::host

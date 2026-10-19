@@ -124,8 +124,14 @@ void uncover_top_document() noexcept {
     input::sync_input_block();
 }
 
+// The focus stack first, then the passive documents (the overlay is one: des_ui.cpp asks it whether a pop-up is up).
 Document* find_document(DocumentScope scope) noexcept {
     for (auto& doc : std::views::reverse(sDocumentStack)) {
+        if (!doc->closed() && doc->scope() == scope) {
+            return doc.get();
+        }
+    }
+    for (auto& doc : sPassiveDocuments) {
         if (!doc->closed() && doc->scope() == scope) {
             return doc.get();
         }

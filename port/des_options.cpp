@@ -124,6 +124,8 @@ extern "C" void ps3_vblank_set_mhz(int mhz);   /* boot_main.cpp; 0 = VBLANK_MHZ 
 extern "C" void des_aspect_init(void);         /* des_aspect.cpp: DES_ASPECT, DES_HUD */
 extern "C" volatile unsigned g_pad0_reads, g_pad0_empty_reads, g_pad0_buttons, g_pad0_lstick;   /* cellPad.c */
 extern "C" void cellPad_host_stick(int stick, unsigned char x, unsigned char y, unsigned reads);   /* cellPad.c */
+extern "C" void cellPad_host_press(unsigned buttons, unsigned reads);                               /* cellPad.c */
+extern "C" unsigned (*g_pad_keys_hook)(unsigned buttons);                                          /* cellPad.c */
 extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vkey);   /* user32 */
 constexpr int VK_F8 = 0x77;
 
@@ -1433,6 +1435,71 @@ extern "C" void des_mouse_look(ppu_context* ctx, uint32_t addr)
     }
 }
 
+/* Jump with Space again while dashing (DES_DASH_JUMP=1, or Settings,
+ * Controls). The game jumps on L3 while dashing (Circle held while moving);
+ * in the Souls games on PC the dash key let go and pressed again at once
+ * jumps. The keyboard pad's buttons pass through dash_jump_keys
+ * (g_pad_keys_hook, cellPad.c; a gamepad's never do): when Circle, held
+ * kDashMs or more while the left stick is pushed, is let go, the game still
+ * sees it held for up to kAgainMs. Pressed again in that time, it stays held,
+ * so the dash goes on, and L3 is pressed for kJumpReads packets
+ * (cellPad_host_press). Not pressed again in time, or the stick let go, and
+ * the game sees it let go, kAgainMs late at most. A shorter press (a roll or
+ * a backstep) is never held on. Timed in milliseconds, as a person presses
+ * keys, so the same at any frame rate. Off by default: the keys are then the
+ * layout's alone (C jumps). */
+namespace {
+constexpr unsigned kPadL3 = 0x0002u, kPadCircle = 0x2000u;   /* CELL_PAD_CTRL_*, as cellPad packs them */
+constexpr long long kDashMs = 500, kAgainMs = 250;
+constexpr unsigned kJumpReads = 4;
+
+struct DashJump {
+    long long down_at = 0;       /* when Circle went down (after a jump: still when the dash's went down) */
+    long long hold_until = -1;   /* a dash's Circle let go: the game sees it held until then (-1: not) */
+    long long last = 0;          /* the last poll */
+    bool was_down = false;
+};
+
+/* One poll of the keyboard pad's buttons at `now` (ms): the buttons for the
+ * game, and *jump set on the press that jumps. */
+unsigned dash_jump_step(DashJump& s, unsigned btns, bool moving, long long now, bool* jump)
+{
+    *jump = false;
+    if (now - s.last > kDashMs) s = DashJump{};   /* no polls for a while (the window in the background) */
+    s.last = now;
+    const bool down = (btns & kPadCircle) != 0;
+    if (down && !s.was_down) {
+        *jump = s.hold_until >= 0 && now <= s.hold_until && moving;
+        if (!*jump) s.down_at = now;
+        s.hold_until = -1;
+    } else if (!down && s.was_down && moving && now - s.down_at >= kDashMs) {
+        s.hold_until = now + kAgainMs;
+    }
+    s.was_down = down;
+    if (!down && s.hold_until >= 0) {
+        if (now <= s.hold_until && moving) btns |= kPadCircle;
+        else s.hold_until = -1;
+    }
+    return btns;
+}
+
+unsigned dash_jump_keys(unsigned btns)
+{
+    static int on = 0;
+    PS3_KNOB(on, env_on("DES_DASH_JUMP"));
+    static DashJump s;
+    if (!on) return btns;
+    const unsigned st = g_pad0_lstick;   /* the last packet's left stick, x << 8 | y */
+    const int x = int((st >> 8) & 0xFF) - 128, y = int(st & 0xFF) - 128;
+    const long long now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now().time_since_epoch()).count();
+    bool jump;
+    btns = dash_jump_step(s, btns, x * x + y * y > 48 * 48, now, &jump);
+    if (jump) cellPad_host_press(kPadL3, kJumpReads);
+    return btns;
+}
+} // namespace
+
 extern "C" void des_menu_sfx_init(void);   /* des_menu_sfx.cpp */
 extern "C" void des_chrins_init(void);     /* des_chrins.cpp */
 
@@ -1492,4 +1559,5 @@ extern "C" void ps3_title_options_init(void)
         g_fs_open_hook = auto_continue_on_open;
         fprintf(stderr, "[des] DES_AUTO_CONTINUE: pressing through the menus to the last save\n");
     }
+    g_pad_keys_hook = dash_jump_keys;   /* DES_DASH_JUMP, live */
 }

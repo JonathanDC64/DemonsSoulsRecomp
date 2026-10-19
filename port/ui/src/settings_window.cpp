@@ -369,6 +369,11 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "<b>Esc</b> menu (Start) &nbsp; <b>G</b> or <b>Tab</b> Select<br/><br/>"
             "A chord works alone: Shift and the left button is a strong attack, not an attack as well. The mouse's "
             "buttons and wheel need Mouse look on. Change Buttons changes any of these.");
+        bool_row(leftPane, rightPane, "Jump with Space again", "DES_DASH_JUMP",
+            "While dashing (Space held while moving), let go of Space and press it again at once to jump, as in the "
+            "Souls games on PC. The game sees Space held through the gap, so the dash goes on, and a dash ends up to "
+            "a quarter of a second after Space is let go. Off: C jumps while dashing (L3); it still does with this "
+            "on. Works with whichever key rolls (Change Buttons). Applies at once.<br/><br/>(DES_DASH_JUMP)");
 
         leftPane.add_section("Mouse");
         bool_row(leftPane, rightPane, "Mouse look", "DES_MOUSE_LOOK",

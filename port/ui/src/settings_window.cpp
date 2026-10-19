@@ -377,8 +377,9 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "the title screen, in loading screens and in cutscenes it is free. Opening this menu (F1), switching to "
             "another window or moving the window frees it too, and the game takes it again when you come back, once "
             "the mouse buttons are up. While locked on, the camera "
-            "follows the target and the mouse does nothing. The camera turns once a game frame, so it is "
-            "smoothest at 60 fps or more (Display, Frame rate). Applies at once: the game takes the mouse when "
+            "follows the target, and a move of the mouse to the left or right switches targets (Switch targets, "
+            "below). The camera turns once a game frame, so it is smoothest at 60 fps or more (Display, Frame "
+            "rate). Applies at once: the game takes the mouse when "
             "this menu closes.<br/><br/>(DES_MOUSE_LOOK)");
         auto& mouseSens = leftPane.add_child<NumberButton>(NumberButton::Props{
             .key = "Mouse sensitivity",
@@ -412,6 +413,11 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         bool_row(leftPane, rightPane, "Invert horizontal", "DES_MOUSE_INVERT_X",
             "Off: moving the mouse right turns the camera right. On: it turns left. Applies at once."
             "<br/><br/>(DES_MOUSE_INVERT_X)");
+        choice_row(leftPane, rightPane, "Switch targets", "DES_MOUSE_FLICK", {"0", "8", "15", "30"},
+            {"Off", "Short move", "Medium move", "Long move"},
+            "While locked on, a move of the mouse to the left or right switches to the next target that way, as a "
+            "flick of the right stick does. How far the mouse has to move: as far as would turn the camera 8, 15 or "
+            "30 degrees at the sensitivity above. Applies at once.<br/><br/>(DES_MOUSE_FLICK, in degrees)");
     });
 
     add_tab("Interface", [this](Rml::Element* content) {

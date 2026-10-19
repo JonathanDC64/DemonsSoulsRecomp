@@ -46,6 +46,7 @@ constexpr Def kDefs[] = {
     {"DES_MOUSE_SENS", "0.09", Apply::Live},   // mouse look's degrees per mouse count
     {"DES_MOUSE_INVERT_X", "0", Apply::Live},
     {"DES_MOUSE_INVERT_Y", "0", Apply::Live},
+    {"DES_MOUSE_FLICK", "15", Apply::Live},    // lock-on switching: degrees of mouse movement for a flick, 0 = off
 };
 
 std::map<std::string, std::string, std::less<>> sValues;

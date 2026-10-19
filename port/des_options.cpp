@@ -123,6 +123,7 @@ extern "C" void (*g_fs_open_hook)(const char* guest_path);
 extern "C" void ps3_vblank_set_mhz(int mhz);   /* boot_main.cpp; 0 = VBLANK_MHZ */
 extern "C" void des_aspect_init(void);         /* des_aspect.cpp: DES_ASPECT, DES_HUD */
 extern "C" volatile unsigned g_pad0_reads, g_pad0_empty_reads, g_pad0_buttons, g_pad0_lstick;   /* cellPad.c */
+extern "C" void cellPad_host_stick(int stick, unsigned char x, unsigned char y, unsigned reads);   /* cellPad.c */
 extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vkey);   /* user32 */
 constexpr int VK_F8 = 0x77;
 
@@ -1246,6 +1247,15 @@ extern "C" void des_cut_cam(ppu_context* ctx, uint32_t addr)
  *   pitch, pitch kept inside its limits. The update adds the stick's turn on
  *   top, and places and draws the camera from the new angles in this frame.
  *
+ * Lock-on switching: with a look-at target the update takes no turn, and on a
+ * pad a flick of the right stick switches targets. So there the counts to the
+ * left and right add up instead, and a move of DES_MOUSE_FLICK degrees (the
+ * counts times DES_MOUSE_SENS; default 15, 0 = off) flicks the right stick
+ * that way for kFlickReads packets (cellPad_host_stick, counted in packets
+ * the game reads, so the same at any frame rate). The next flick waits
+ * kFlickRest updates, the stick back at rest in between, and a move ends when
+ * it turns back or stops for kFlickIdle updates. Up and down do nothing there.
+ *
  * Signs (from the code, and seen in runs): pitch grows as the view looks down
  * (0x00114120 works it out as -atan2(y, horizontal length) of the look
  * direction), and yaw grows as the view turns right (atan2(x, z) of it; the
@@ -1274,6 +1284,10 @@ constexpr uint32_t kCamAutoTurn  = 0x243u;
 constexpr uint32_t kCamActive    = 0x298u;
 constexpr float    kMouseSensDefault = 0.09f;   /* degrees per count; settings.cpp's default too */
 constexpr unsigned kMouseStaleFlips  = 3;
+constexpr float    kFlickDefault     = 15.0f;   /* degrees of mouse movement; settings.cpp's default too */
+constexpr unsigned kFlickReads       = 3;       /* packets the right stick is held over */
+constexpr unsigned kFlickRest        = 8;       /* camera updates from one flick to the next */
+constexpr unsigned kFlickIdle        = 4;       /* updates without a count to the side that end a move */
 
 /* The turn the entry kept for this update of camera s_turn_cam (0: none), in
  * radians, and its counts (|dx| + |dy|) for the log. */
@@ -1286,12 +1300,49 @@ int s_turn_counts = 0;
  * or dropped at the entry and why. */
 enum { kTurned, kLost, kStale, kSetAngle, kLookAt, kAutoTurn, kReasons };
 long long s_mouse_counts[kReasons];
+long long s_flicks;   /* lock-on switching's flicks, for DES_MOUSELOG */
+
+/* Lock-on switching: this move's counts to the side (left negative), the
+ * updates left before the next flick can start, and the updates since the
+ * last count to the side. */
+int s_flick_x = 0;
+unsigned s_flick_rest = 0, s_flick_idle = 0;
 
 float mouse_sens()
 {
     const char* v = getenv("DES_MOUSE_SENS");
     const float s = (v && *v) ? (float)atof(v) : kMouseSensDefault;
     return (s > 0.0f && s <= 10.0f) ? s : kMouseSensDefault;
+}
+
+float flick_degrees()
+{
+    const char* v = getenv("DES_MOUSE_FLICK");
+    const float d = (v && *v) ? (float)atof(v) : kFlickDefault;
+    return (d >= 0.0f && d <= 360.0f) ? d : kFlickDefault;
+}
+
+/* With a look-at target: an update's counts to the side (dx, inverted with
+ * DES_MOUSE_INVERT_X) towards a flick of the right stick. */
+void mouse_flick(int dx, float sens, float deg)
+{
+    if (s_flick_rest) {
+        s_flick_rest--;
+        s_flick_x = 0;
+        return;
+    }
+    if (!dx) {
+        if (++s_flick_idle >= kFlickIdle) s_flick_x = 0;
+        return;
+    }
+    s_flick_idle = 0;
+    if (s_flick_x && (dx > 0) != (s_flick_x > 0)) s_flick_x = 0;   /* turned back: a new move */
+    s_flick_x += dx;
+    if ((float)std::abs(s_flick_x) * sens < deg) return;
+    cellPad_host_stick(1, s_flick_x > 0 ? 255 : 0, 128, kFlickReads);
+    s_flicks++;
+    s_flick_x = 0;
+    s_flick_rest = kFlickRest;
 }
 
 /* 0x0011C758: the kept turn onto the angles the update just rebuilt. */
@@ -1326,11 +1377,12 @@ extern "C" void des_mouse_look(ppu_context* ctx, uint32_t addr)
     }
     if (addr != kMouseAtEntry) return;
     static int on = 0, inv_x = 0, inv_y = 0, log = 0;
-    static float sens = kMouseSensDefault;
+    static float sens = kMouseSensDefault, flick = kFlickDefault;
     PS3_KNOB(on, env_on("DES_MOUSE_LOOK"));
     PS3_KNOB(inv_x, env_on("DES_MOUSE_INVERT_X"));
     PS3_KNOB(inv_y, env_on("DES_MOUSE_INVERT_Y"));
     PS3_KNOB(sens, mouse_sens());
+    PS3_KNOB(flick, flick_degrees());
     PS3_KNOB(log, env_on("DES_MOUSELOG"));
     static int was_on = 0;
     if (on != was_on) {   /* turned on or off live: the window takes or lets go of the mouse */
@@ -1354,6 +1406,12 @@ extern "C" void des_mouse_look(ppu_context* ctx, uint32_t addr)
                     : vm_read8(cam + kCamLookAt)   ? kLookAt
                     : vm_read8(cam + kCamAutoTurn) ? kAutoTurn
                                                    : kTurned;
+    if (why == kLookAt && flick > 0.0f) {
+        mouse_flick(inv_x ? -dx : dx, sens, flick);
+    } else {
+        s_flick_x = 0;
+        s_flick_rest = s_flick_idle = 0;
+    }
     if (why != kTurned) {
         s_mouse_counts[why] += std::abs(dx) + std::abs(dy);
     } else if (dx || dy) {
@@ -1367,10 +1425,11 @@ extern "C" void des_mouse_look(ppu_context* ctx, uint32_t addr)
     if (log && ++updates % 60 == 0) {
         const long long* c = s_mouse_counts;
         fprintf(stderr, "[mouse] cam %08X counts turned %lld, lost %lld, dropped: gap %lld set-angle %lld look-at %lld "
-                "auto-turn %lld; yaw %.3f pitch %.3f in [%.3f, %.3f], %.3f deg/count\n", cam, c[kTurned], c[kLost],
-                c[kStale], c[kSetAngle], c[kLookAt], c[kAutoTurn], vm_readf(cam + kCamYaw),
+                "auto-turn %lld; flicks %lld; yaw %.3f pitch %.3f in [%.3f, %.3f], %.3f deg/count\n", cam, c[kTurned],
+                c[kLost], c[kStale], c[kSetAngle], c[kLookAt], c[kAutoTurn], s_flicks, vm_readf(cam + kCamYaw),
                 vm_readf(cam + kCamPitch), vm_readf(cam + kCamPitchMin), vm_readf(cam + kCamPitchMax), sens);
         memset(s_mouse_counts, 0, sizeof s_mouse_counts);
+        s_flicks = 0;
     }
 }
 

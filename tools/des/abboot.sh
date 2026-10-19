@@ -7,6 +7,9 @@
 #   ab_finish                  end the idle wait, so levelcap stops the run,
 #                              puts the save back and exits
 # Expects TAG set, and the extra ENV... args in "$@".
+# The levelcap.sh started here does not outlive the script that sourced this:
+# when that exits for any reason (the give-ups below, a kill), it ends that
+# levelcap.sh, and only it, and waits for it, so the save is back first.
 . "$(dirname "${BASH_SOURCE[0]}")/deslib.sh"
 cd "$DES_ROOT" || exit 1
 RUN=$DES_SCRATCH/lc_$TAG; LCLOG=$DES_SCRATCH/$TAG.lc
@@ -15,6 +18,14 @@ LC_NOPRESS=1 LC_SETTLE=1 LC_MAX=${LC_MAX:-900} LC_DUMP=0 \
   bash tools/des/levelcap.sh "$TAG" "$IDLE" PS3_PRIORITY=normal PS3_AFFINITY=all \
   PROF_DIR="$(cygpath -m "$RUN")" DES_AUTO_CONTINUE=1 "$@" > "$LCLOG" 2>&1 &
 LC=$!
+# Still our job (not yet waited for), so the pid cannot have been reused.
+# levelcap.sh's EXIT trap stops the game and puts the save back; while it
+# still waits for the save folder, it just exits.
+ab_stop() {
+  jobs -pr | grep -qx "$LC" || return 0
+  kill "$LC" 2>/dev/null; wait "$LC" 2>/dev/null
+}
+trap ab_stop EXIT
 t0=$SECONDS
 until grep -aq 'level loading' "$LCLOG" 2>/dev/null; do
   sleep 1; kill -0 $LC 2>/dev/null || { echo "[ab] run ended before the level"; exit 1; }

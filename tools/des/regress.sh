@@ -10,10 +10,16 @@
 #   s4_on      after walking on
 # then compares the set with the last accepted one (shotdiff.py) and prints
 # the per-shot summary. Exit status: 0 all ok, 1 a shot regressed or is
-# missing, 2 the run never reached the level.
+# missing, 2 the run never reached the level, 3 the save folder could not be
+# used: another run holds it (waited DES_SAVE_LOCK_WAIT s), or the player's
+# save could not be copied aside, so nothing was swapped; 4 a run that has
+# gone left the save folder swapped out, and this one did not undo it: the
+# [save] lines say what was found and what to do (DES_SAVE_TAKEOVER,
+# des_save_lock in deslib.sh).
 #
 #   regress.sh                 new set named by date+time, diffed against "good"
 #   regress.sh accept <name>   make <name> the new "good" set
+# Like a run, pin-save and accept wait for a run that holds the save folder.
 #
 # Sets live in REGRESS_DIR (default $DES_SCRATCH/regress). Screenshots are
 # game-derived: point REGRESS_DIR outside the repository and never commit them.
@@ -49,33 +55,49 @@ cd "$DES_ROOT" || exit 1
 REG="${REGRESS_DIR:-$DES_SCRATCH/regress}"; mkdir -p "$REG"
 
 SAVE="gamedata/dev_hdd0/home/00000001/savedata"
+# take_save: hold the save folder (des_save_lock) until this script exits.
+take_save() {
+  des_save_lock "$SAVE"; case $? in
+    0) ;;
+    1) echo "[regress] $SAVE is not free; not starting"; exit 3 ;;
+    *) echo "[regress] not starting: see the [save] lines above"; exit 4 ;;
+  esac
+  trap 'des_save_unlock "$SAVE"' EXIT
+}
 # The route starts wherever the save puts the character, so the run plays
 # from a pinned copy ($REG/save) and the player's own save is put back after.
 # `regress.sh pin-save [dir]` pins the current save (or dir); re-accept a set
 # after pinning a different one.
 if [ "${1:-}" = pin-save ]; then
   src="${2:-$SAVE}"; [ -d "$src" ] || { echo "no save at $src"; exit 1; }
+  take_save
   rm -rf "$REG/save"; cp -r "$src" "$REG/save"; echo "pinned $src"; exit 0
 fi
 
 if [ "${1:-}" = accept ]; then
   [ -d "$REG/${2:?set name}" ] || { echo "no set $REG/$2"; exit 1; }
+  take_save
   rm -rf "$REG/good"; cp -r "$REG/$2" "$REG/good"; echo "good = $2"; exit 0
 fi
 
 NAME="${1:-$(date +%Y%m%d_%H%M%S)}"; SET="$REG/$NAME"
+take_save
 RUN="$DES_SCRATCH/regress_run"; rm -rf "$RUN" "$SET"; mkdir -p "$RUN/shots" "$SET"
 OUT="$RUN/run.txt"; PAD="$RUN/pad"; CON="$RUN/con"; : > "$PAD"; : > "$OUT"
 
 if [ -d "$SAVE" ]; then
-  des_backup_save "$SAVE" "$RUN/save" || { echo "[regress] could not back up $SAVE; save not swapped"; exit 1; }
+  des_backup_save "$SAVE" "$RUN/save" || { echo "[regress] could not back up $SAVE; save not swapped"; exit 3; }
+  des_save_note "$SAVE" "$RUN/save" || { echo "[regress] could not note the backup in $SAVE.lock; save not swapped"; exit 3; }
 fi
-restore() {
+restore() {   # as in levelcap.sh
+  trap '' TERM INT HUP
   des_kill_own
-  if [ -d "$RUN/save" ]; then des_put_save "$RUN/save" "$SAVE"; fi
+  if [ ! -d "$RUN/save" ] || des_restore_save "$RUN/save" "$SAVE"; then des_save_unlock "$SAVE"; fi
+  trap - TERM INT HUP
 }
 trap restore EXIT
-if [ -d "$REG/save" ]; then des_put_save "$REG/save" "$SAVE"
+if [ -d "$REG/save" ]; then
+  des_save_swap "$REG/save" "$SAVE" || { echo "[regress] could not put $REG/save in place"; exit 2; }
 else echo "[regress] no pinned save ($REG/save): using the current one; see pin-save"; fi
 
 # No periodic frame dump: each shot asks for the next frame (CELLMARK_DUMP_NOW),

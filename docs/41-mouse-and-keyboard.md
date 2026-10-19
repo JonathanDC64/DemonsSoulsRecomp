@@ -8,6 +8,8 @@ Two labels are used below:
 
 ## Summary
 
+> **Correction (2026-10-18, after a run).** Approach (b) as written below does not work: writing yaw (+0x134) and pitch (+0x130) at the entry of 0x00119670 does not turn the camera. It shipped that way in port #55, and a run that fed counts in (`md1`) showed the hook taking them and writing the angles, but the update rebuilds both angles from other state every frame, so the writes are gone by the next frame. The fix PR (`fix/mouse-look-camera`) puts the turn where the update really takes it; until that section is rewritten from it, read sections 2.3 and 6's mouse look requests with this in mind.
+
 - **Mouse look: write the camera angles directly (approach b).** Add the mouse's yaw and pitch to the follow camera's angles once per game frame, just before the camera's own update runs. Hook point: the entry of the follow-camera update, 0x00119670. The game then clamps pitch and wraps yaw itself.
 - **Not a virtual right stick (approach a), except as a fallback.** The game puts a 0.37 radial deadzone on the stick. At the default camera speed it turns at most 120 deg/s, or 260 deg/s after 0.6 s at full tilt. A mouse fed through that feels slow and laggy. Keep (a) only for lock-on target switching and the aim view.
 - **Keyboard: split movement from the D-pad.** Today the arrow keys press the D-pad and also move the left stick, so walking with them also switches weapons, spells and items. Movement keys should drive the left stick only, with a walk key that shortens the deflection.
@@ -175,6 +177,8 @@ Limits (from the code above):
 What it is good for: anything that reads the right stick without the follow camera. Lock-on target switching, the aim view (if it reads the stick), and the menu model viewers.
 
 ### 2.3 Approach (b): write yaw and pitch into the camera
+
+> See the correction at the top: the angles written here are rebuilt by the update every frame.
 
 How (inferred design, using code that exists):
 - **Hook the entry of the follow-camera update, 0x00119670.** Use the lifter's insn hooks (`port/insn_hooks.txt`, as `des_cam_rate` does). The hook runs right after the first instruction (`li r0, 4080`), which leaves r3 (the camera) and f1 (dt) untouched (read). Adding a site needs a re-lift.

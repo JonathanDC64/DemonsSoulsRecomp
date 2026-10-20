@@ -14,6 +14,7 @@ SCRATCH="${DES_SCRATCH:-$PWD/work/tmp}"; mkdir -p "$SCRATCH"
 OUT="$SCRATCH/milestones_run.txt"
 [ -f tools/des/local.env ] && . tools/des/local.env
 export PS3_VFS_ROOT="${PS3_VFS_ROOT:-$PWD/work/disc}"
+export DES_ONLINE="${DES_ONLINE:-0}"   # offline, as deslib.sh's test runs (this one reads the user's settings.ini)
 for kv in "$@"; do export "$kv"; done
 . "$(dirname "$0")/deslib.sh"
 EXE="$(des_stage_exe)" || exit 1

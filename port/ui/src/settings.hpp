@@ -71,6 +71,51 @@ bool unattended_run();
 // runtime reads the same variable (ps3_knob.h) for the game's pad and the window.
 bool no_user_input();
 
+// ---- Online play (the Network tab; docs/46 A5) ----
+
+// The game servers the Server row offers. Each address is the one the server's own setup page publishes for
+// emulators (The Archstones: thearchstones.com, "serverinfo"); edit this table to add, change or drop one. The key is
+// what settings.ini stores (DES_NET_SERVER); the first entry is the default. An entry with no address is Custom: it
+// uses DES_NET_CUSTOM.
+struct NetServer {
+    const char* key;
+    const char* name;
+    const char* address;  // IPv4 or host name; "" = DES_NET_CUSTOM
+    const char* note;     // the Server row's help text for it
+};
+inline constexpr NetServer kNetServers[] = {
+    {"archstones", "The Archstones", "206.189.232.242",
+     "The community server most players use: every region and language of the game shares one pool there. It is "
+     "run by a community volunteer, not by this project."},
+    {"local", "Local test server", "127.0.0.1", "A server running on this PC, for testing."},
+    {"custom", "Custom", "", "The address in Custom server, below."},
+};
+inline constexpr const char* kNetCustomKey = "custom";
+
+// The six host names the game looks up for its servers (every server's setup guide redirects these six). Online,
+// PS3_NET_HOSTS maps each of them to the chosen server's address, and the runtime answers no other name.
+inline constexpr const char* kNetHosts[] = {
+    "ds-eu-c.scej-online.jp", "ds-eu-g.scej-online.jp", "c.demons-souls.com",
+    "g.demons-souls.com",     "cmnap.scej-online.jp",   "demons-souls.scej-online.jp",
+};
+
+inline constexpr int kNetP2pPortDefault = 3658;  // the PS3's own P2P port
+inline constexpr int kNetP2pPortMin = 1024;
+inline constexpr int kNetP2pPortMax = 65535;
+
+const NetServer* net_server(std::string_view key);  // null for a key not in the table
+bool net_address_ok(std::string_view address);       // an IPv4 address or a host name, nothing else
+bool net_name_ok(std::string_view name);             // 3-16 letters, digits, '-' or '_' (a PSN online ID)
+// The chosen server's address (DES_NET_SERVER, DES_NET_CUSTOM for Custom), or "" when there is none or it is not
+// a valid address.
+std::string net_server_address();
+// PS3_NET_HOSTS for an address: each of kNetHosts mapped to it, joined with "&&" (RPCS3's IP/Host switch form).
+std::string net_hosts(const std::string& address);
+// What load_and_apply_env decided about the network at start, for the Network tab ("Online (The Archstones)", "Off:
+// Online is off", ...). A developer build's cheat session clears the network after this (des_dev_boot); the tab
+// says so from DES_DEV_SESSION.
+const std::string& net_status();
+
 void save();
 
 }  // namespace ui::settings

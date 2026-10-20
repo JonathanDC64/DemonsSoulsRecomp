@@ -19,6 +19,7 @@ OUTDIR="$SCRATCH/repro_$$"
 mkdir -p "$OUTDIR"
 [ -f tools/des/local.env ] && . tools/des/local.env
 export PS3_VFS_ROOT="${PS3_VFS_ROOT:-$PWD/work/disc}"
+export DES_ONLINE="${DES_ONLINE:-0}"   # offline, as deslib.sh's test runs (this one reads the user's settings.ini)
 for kv in "$@"; do export "$kv"; done
 echo "[repro] $N runs x ${TIMEOUT}s, env: $* -> $OUTDIR"
 . "$(dirname "$0")/deslib.sh"

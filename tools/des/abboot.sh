@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # abboot.sh: sourced by knobab.sh and kprof.sh. Boots LC_SAVE (levelcap.sh;
 # default the pinned regression save) in the background with an idle command
-# file, waits for the level and then KAB_SETTLE seconds (default 40), and
-# defines
+# file (AB_IDLE seconds, default 1500; the run cap is LC_MAX, default 900),
+# waits for the level and then KAB_SETTLE seconds (default 40; when the
+# caller sourced perflib.sh first, a cutscene that plays meanwhile is pressed
+# through), and defines
 #   con <command> [cap-secs]   send a console command and print its reply
 #   ab_finish                  end the idle wait, so levelcap stops the run,
 #                              puts the save back and exits
@@ -13,7 +15,7 @@
 . "$(dirname "${BASH_SOURCE[0]}")/deslib.sh"
 cd "$DES_ROOT" || exit 1
 RUN=$DES_SCRATCH/lc_$TAG; LCLOG=$DES_SCRATCH/$TAG.lc
-IDLE=$DES_SCRATCH/abboot_idle.txt; echo "sleep 1500" > "$IDLE"
+IDLE=$DES_SCRATCH/abboot_idle.txt; echo "sleep ${AB_IDLE:-1500}" > "$IDLE"
 LC_NOPRESS=1 LC_SETTLE=1 LC_MAX=${LC_MAX:-900} LC_DUMP=0 \
   bash tools/des/levelcap.sh "$TAG" "$IDLE" PS3_PRIORITY=normal PS3_AFFINITY=all \
   PROF_DIR="$(cygpath -m "$RUN")" DES_AUTO_CONTINUE=1 "$@" > "$LCLOG" 2>&1 &
@@ -31,7 +33,18 @@ until grep -aq 'level loading' "$LCLOG" 2>/dev/null; do
   sleep 1; kill -0 $LC 2>/dev/null || { echo "[ab] run ended before the level"; exit 1; }
   [ $((SECONDS - t0)) -lt 300 ] || { echo "[ab] no level load"; exit 1; }
 done
-sleep "${KAB_SETTLE:-40}"
+if declare -F perf_skip_cutscene > /dev/null; then
+  # The caller sourced perflib.sh (knobab.sh): press through a cutscene that
+  # plays while the level settles, so no window lands in its 30 fps lock.
+  t1=$SECONDS
+  while [ $((SECONDS - t1)) -lt "${KAB_SETTLE:-40}" ]; do
+    perf_skip_cutscene "$RUN" 60
+    kill -0 $LC 2>/dev/null || { echo "[ab] run ended while settling"; exit 1; }
+    sleep 1
+  done
+else
+  sleep "${KAB_SETTLE:-40}"
+fi
 con() { des_console "$RUN/con" "$1" "${2:-15}"; }
 ab_finish() {
   ps -ef | awk -v p=$LC '$3==p && /sleep/ {print $2}' | xargs -r kill

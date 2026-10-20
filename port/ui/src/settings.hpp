@@ -52,6 +52,13 @@ void set(std::string_view key, const std::string& value);
 bool pinned(std::string_view key);
 std::string pinned_value(std::string_view key);
 
+// The keyboard and mouse layout (docs/41), in cellPad's PAD_KEYS form: movement on WASD, the attacks on the mouse
+// buttons, Space to roll and dash, and so on, as in the Souls games on PC. The PAD_KEYS setting, and a PAD_KEYS set in
+// the environment, hold changes to it only: cellPad gets the layout followed by them, and an action named there loses
+// the layout's bindings.
+extern const char* const kKeysLayout;
+std::string keys_with_layout(const std::string& changes);
+
 // True for a test harness run (PS3_PIDFILE set by tools/des, and not a play.sh session) and for any run whose input
 // is scripted (DES_AUTO_CONTINUE, PAD_FILE, EXIT_AFTER_MS): no start screen there.
 bool harness_run();

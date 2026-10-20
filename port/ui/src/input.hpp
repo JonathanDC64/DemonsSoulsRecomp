@@ -25,13 +25,16 @@ const char* chord_label(int chord) noexcept;
 // Whether the UI is taking the input (a document is showing): the game then gets none.
 bool input_blocked() noexcept;
 
-// A button or key is being chosen for a binding (controls_window.cpp): the pads and keys then work nothing in the
-// menus. The pads' buttons as last read (CELL_PAD_CTRL_*, the pads' own: PAD_MAP does not apply), and the last key
-// pressed during a capture (a virtual-key code, 0 = none; reading it clears it).
+// A button or key is being chosen for a binding (controls_window.cpp): the pads, keys and mouse buttons then work
+// nothing in the menus. The pads' buttons as last read (CELL_PAD_CTRL_*, the pads' own: PAD_MAP does not apply), the
+// last key pressed during a capture (a virtual-key code, 0 = none) and the wheel's notches since the last read
+// (up positive); reading either clears it.
 void set_binding_capture(bool on) noexcept;
 bool binding_capture() noexcept;
 unsigned pad_buttons() noexcept;
 void capture_key(int vk) noexcept;
 int take_captured_key() noexcept;
+void capture_wheel(int notches) noexcept;
+int take_captured_wheel() noexcept;
 
 }  // namespace ui::input

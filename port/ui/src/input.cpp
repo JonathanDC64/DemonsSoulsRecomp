@@ -48,6 +48,7 @@ bool sPrimed = false;  // the first state after a reset only records what is hel
 bool sBindingCapture = false;
 unsigned sPadButtons = 0;
 int sCapturedKey = 0;
+int sCapturedWheel = 0;
 
 double now_seconds() noexcept {
     using namespace std::chrono;
@@ -103,6 +104,7 @@ void reset_input_state() noexcept {
 void set_binding_capture(bool on) noexcept {
     sBindingCapture = on;
     sCapturedKey = 0;
+    sCapturedWheel = 0;
     reset_input_state();  // what is held when a capture starts or ends is not a press
 }
 
@@ -122,6 +124,16 @@ int take_captured_key() noexcept {
     const int vk = sCapturedKey;
     sCapturedKey = 0;
     return vk;
+}
+
+void capture_wheel(int notches) noexcept {
+    sCapturedWheel += notches;
+}
+
+int take_captured_wheel() noexcept {
+    const int n = sCapturedWheel;
+    sCapturedWheel = 0;
+    return n;
 }
 
 void update_pad(const PadState& pad, int chord) noexcept {

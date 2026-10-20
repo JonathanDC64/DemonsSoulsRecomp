@@ -342,9 +342,10 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         const Rml::String chord = input::chord_label(settings::get_int("pad_menu_chord"));
         leftPane.add_section("This menu");
         info_row(leftPane, rightPane, "Open the menu", "F1 / " + chord,
-            "Over the game, F1 or Esc on the keyboard, or " + escape(chord) +
-                " on a gamepad (Settings, Interface, changes the gamepad buttons). The game does not see the keys and "
-                "buttons while a menu is open.");
+            "Over the game, F1 on the keyboard, or " + escape(chord) +
+                " on a gamepad (Settings, Interface, changes the gamepad buttons). In play Esc is the game's own menu "
+                "(Start); in these menus it goes back. The game does not see the keys and buttons while a menu is "
+                "open.");
         info_row(leftPane, rightPane, "In the menus", "Arrows, Enter, Esc",
             "Keyboard: the arrows move, Enter chooses, Esc goes back; Page Up and Page Down change tabs. The mouse "
             "works too.<br/><br/>Gamepad: the D-pad or the left stick moves, Cross chooses, Circle goes back, L1 and "
@@ -358,27 +359,37 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             }),
             rightPane, [](Pane& pane) {
                 pane.clear();
-                pane.add_text("Choose which gamepad button or key presses each of the PS3 pad's buttons in the game.");
+                pane.add_text("Choose which gamepad button presses each of the PS3 pad's buttons in the game, and "
+                              "which keys, mouse buttons or wheel notches work each action (two each, with Shift, "
+                              "Ctrl or Alt for a chord).");
             });
         info_row(leftPane, rightPane, "Gamepads", "XInput, DualSense, DualShock 4",
             "Xbox-style (XInput) controllers, and the DualSense, DualSense Edge and DualShock 4 over USB or "
             "Bluetooth, are read directly. The game sees the first one as the PS3's pad.");
-        info_row(leftPane, rightPane, "Keyboard", "Arrows, Z X A S",
-            "Without a gamepad the keyboard is the PS3 pad:<br/>"
-            "<b>Arrows</b> D-pad (and left stick)<br/>"
-            "<b>Z</b> Cross &nbsp; <b>X</b> Circle &nbsp; <b>A</b> Square &nbsp; <b>S</b> Triangle<br/>"
-            "<b>Q</b> L1 &nbsp; <b>W</b> R1 &nbsp; <b>1</b> L2 &nbsp; <b>2</b> R2<br/>"
-            "<b>Enter</b> Start &nbsp; <b>Tab</b> Select<br/><br/>"
-            "These are the defaults; Change Buttons changes them.");
-
+        info_row(leftPane, rightPane, "Keyboard and mouse", "WASD, mouse, Space",
+            "The keyboard and mouse work as in the Souls games on PC, with a gamepad or without:<br/>"
+            "<b>W A S D</b> move &nbsp; <b>Left Alt</b> (held) walk &nbsp; <b>Mouse</b> camera (Mouse look, "
+            "below)<br/>"
+            "<b>Left button</b> attack (R1) &nbsp; <b>Shift + left button</b> strong attack (R2)<br/>"
+            "<b>Right button</b> guard (L1) &nbsp; <b>Left Ctrl</b> or <b>Shift + right button</b> parry (L2)<br/>"
+            "<b>Space</b> roll, backstep, dash (Circle) &nbsp; <b>C</b> left stick press (L3)<br/>"
+            "<b>Q</b> or <b>middle button</b> lock on (R3)<br/>"
+            "<b>E</b> action (Cross) &nbsp; <b>R</b> use item (Square) &nbsp; <b>F</b> two-hand (Triangle)<br/>"
+            "<b>Arrows</b> D-pad &nbsp; <b>Wheel up / down</b> spell / item &nbsp; <b>Shift + wheel up / down</b> "
+            "right / left hand<br/>"
+            "<b>Esc</b> menu (Start) &nbsp; <b>G</b> or <b>Tab</b> Select<br/><br/>"
+            "A chord works alone: Shift and the left button is a strong attack, not an attack as well. The mouse's "
+            "buttons and wheel need Mouse look on. Change Buttons changes any of these.");
         leftPane.add_section("Mouse");
         bool_row(leftPane, rightPane, "Mouse look", "DES_MOUSE_LOOK",
-            "Turns the camera with the mouse, as well as with the right stick. In play the cursor is hidden and "
-            "held in the window; on the title screen, in loading screens and in cutscenes it is free. Opening "
-            "this menu (F1 or Esc), switching to another window or moving the window frees it too, and the game "
-            "takes it again when you come back, once the mouse buttons are up. While locked on, the camera "
-            "follows the target and the mouse does nothing. The camera turns once a game frame, so it is "
-            "smoothest at 60 fps or more (Display, Frame rate). Applies at once: the game takes the mouse when "
+            "Turns the camera with the mouse, as well as with the right stick, and gives the game the mouse's "
+            "buttons and wheel (Keyboard and mouse, above). In play the cursor is hidden and held in the window; on "
+            "the title screen, in loading screens and in cutscenes it is free. Opening this menu (F1), switching to "
+            "another window or moving the window frees it too, and the game takes it again when you come back, once "
+            "the mouse buttons are up. While locked on, the camera "
+            "follows the target, and a move of the mouse to the left or right switches targets (Switch targets, "
+            "below). The camera turns once a game frame, so it is smoothest at 60 fps or more (Display, Frame "
+            "rate). Applies at once: the game takes the mouse when "
             "this menu closes.<br/><br/>(DES_MOUSE_LOOK)");
         auto& mouseSens = leftPane.add_child<NumberButton>(NumberButton::Props{
             .key = "Mouse sensitivity",
@@ -412,6 +423,11 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         bool_row(leftPane, rightPane, "Invert horizontal", "DES_MOUSE_INVERT_X",
             "Off: moving the mouse right turns the camera right. On: it turns left. Applies at once."
             "<br/><br/>(DES_MOUSE_INVERT_X)");
+        choice_row(leftPane, rightPane, "Switch targets", "DES_MOUSE_FLICK", {"0", "8", "15", "30"},
+            {"Off", "Short move", "Medium move", "Long move"},
+            "While locked on, a move of the mouse to the left or right switches to the next target that way, as a "
+            "flick of the right stick does. How far the mouse has to move: as far as would turn the camera 8, 15 or "
+            "30 degrees at the sensitivity above. Applies at once.<br/><br/>(DES_MOUSE_FLICK, in degrees)");
     });
 
     add_tab("Interface", [this](Rml::Element* content) {

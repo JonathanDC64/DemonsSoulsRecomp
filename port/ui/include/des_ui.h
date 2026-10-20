@@ -16,8 +16,9 @@ void des_ui_early_init(void);
  * y down) gathered on the window's thread since the last call, while the game
  * has the mouse (DES_MOUSE_LOOK on, the window in front, no document of the
  * UI open); 0 otherwise. des_mouse_look (des_options.cpp) takes them once a
- * game frame while the follow camera runs, and the game has the mouse only
- * while these calls keep coming. Any thread. */
+ * game frame while the follow camera runs, with mouse look on or off, and the
+ * game has the mouse (and its buttons and wheel) only while these calls keep
+ * coming. Any thread. */
 void des_mouse_take(int* dx, int* dy);
 
 /* Mouse look's settings changed: the window's thread takes or lets go of the

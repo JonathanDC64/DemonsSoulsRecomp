@@ -48,11 +48,13 @@ constexpr Def kDefs[] = {
     {"trophies_show_hidden", "0", Apply::UiOnly},  // trophies_window.cpp: hidden trophies listed with their names
     {"pad_menu_chord", "0", Apply::UiOnly},    // 0 = L3 + R3, 1 = Select + Start
     {"PAD_MAP", "", Apply::Live},              // cellPad, gamepad buttons (controls_window.cpp)
-    {"PAD_KEYS", "", Apply::Live},             // cellPad, the keyboard pad's keys
+    {"PAD_KEYS", "", Apply::Live},             // cellPad, changes to the keyboard and mouse layout (kKeysLayout)
+    {"keys_layout", "souls", Apply::UiOnly},   // the layout PAD_KEYS changes; a file without this line is older
     {"DES_MOUSE_LOOK", "0", Apply::Live},      // mouse look (des_mouse_look; port/ui/src/mouse.cpp), read each frame
     {"DES_MOUSE_SENS", "0.09", Apply::Live},   // mouse look's degrees per mouse count
     {"DES_MOUSE_INVERT_X", "0", Apply::Live},
     {"DES_MOUSE_INVERT_Y", "0", Apply::Live},
+    {"DES_MOUSE_FLICK", "15", Apply::Live},    // lock-on switching: degrees of mouse movement for a flick, 0 = off
 };
 
 std::map<std::string, std::string, std::less<>> sValues;
@@ -79,17 +81,34 @@ void make_dirs(const std::string& file) {
 }
 
 // The environment variables a setting drives (DES_VSYNC also sets RSX_VSYNC, which the D3D12 backend reads live;
-// DES_SKIP_INTRO_MOVIE sets PS3_SAIL_SKIP, which cellSail reads as each movie opens).
+// DES_SKIP_INTRO_MOVIE sets PS3_SAIL_SKIP, which cellSail reads as each movie opens; PAD_KEYS gives cellPad the
+// layout with the changes after it).
 void apply_env(std::string_view key, const std::string& value) {
     const std::string k(key);
-    // (an unset option stays unset; DES_FPS "" is the game's mode, PAD_MAP and PAD_KEYS "" the game's buttons)
+    // (an unset option stays unset; DES_FPS "" is the game's mode, PAD_MAP "" the game's buttons, PAD_KEYS "" the
+    // layout as it is)
     if (value.empty() && key != "DES_FPS" && key != "PAD_MAP" && key != "PAD_KEYS") return;
+    if (key == "PAD_KEYS") {
+        ps3_setenv("PAD_KEYS", keys_with_layout(value).c_str());
+        return;
+    }
     ps3_setenv(k.c_str(), value.c_str());
     if (key == "DES_VSYNC") ps3_setenv("RSX_VSYNC", value == "0" ? "0" : "1");
     if (key == "DES_SKIP_INTRO_MOVIE") ps3_setenv("PS3_SAIL_SKIP", value == "0" ? "" : "ds_advertise.pam");
 }
 
 }  // namespace
+
+const char* const kKeysLayout =
+    "ls_up=w,ls_down=s,ls_left=a,ls_right=d,walk=lalt,"
+    "circle=space,l3=c,r1=mouse1,r2=shift+mouse1,l1=mouse2,l2=lctrl|shift+mouse2,r3=q|mouse3,"
+    "cross=e,square=r,triangle=f,"
+    "up=up|wheelup,down=down|wheeldown,right=right|shift+wheelup,left=left|shift+wheeldown,"
+    "start=esc,select=g|tab";
+
+std::string keys_with_layout(const std::string& changes) {
+    return changes.empty() ? std::string(kKeysLayout) : std::string(kKeysLayout) + "," + changes;
+}
 
 const Def* find(std::string_view key) {
     for (const Def& d : kDefs) {
@@ -141,22 +160,17 @@ std::string describe() {
     return out;
 }
 
-void load_and_apply_env() {
-    for (const Def& d : kDefs) {
-        if (d.apply == Apply::UiOnly) continue;
-        if (env_set(d.key) || (std::strcmp(d.key, "DES_VSYNC") == 0 && env_set("RSX_VSYNC"))) {
-            sPinned.insert(d.key);
-            const char* v = std::getenv(d.key);
-            if (!(v && *v)) v = std::getenv("RSX_VSYNC");  // DES_VSYNC pinned through RSX_VSYNC
-            sPinnedValues[d.key] = v ? v : "";
-        }
-    }
+namespace {
+
+// Reads settings.ini, if there is one, and applies the options it sets that the environment does not.
+void load_file() {
     const std::string& file = path();
     if (file.empty()) return;
     FILE* f = _wfopen(report::widen(file).c_str(), L"r");
     if (!f) return;
     char line[512];
     int applied = 0;
+    bool layout_line = false;
     while (std::fgets(line, sizeof line, f)) {
         const std::string l = trim(line);
         if (l.empty() || l[0] == '#' || l[0] == ';') continue;
@@ -170,6 +184,7 @@ void load_and_apply_env() {
         }
         const Def* d = find(key);
         if (!d || d->apply == Apply::Session) continue;  // (a per-session value is never read from the file)
+        if (key == "keys_layout") layout_line = true;
         sValues[key] = value;
         if (d->apply != Apply::UiOnly && !sPinned.count(key) && !value.empty()) {
             apply_env(key, value);
@@ -178,6 +193,36 @@ void load_and_apply_env() {
     }
     std::fclose(f);
     std::fprintf(stderr, "[ui] settings: %s (%d option%s applied)\n", file.c_str(), applied, applied == 1 ? "" : "s");
+    // A file from before the Souls layout has no keys_layout line, and its PAD_KEYS is the old Keyboard page's: changes
+    // to the old keys, one a button, 0x00 for none. Read as changes to the layout, an old start=0x00 would leave Esc
+    // unbound and an old cross=0x20 put Space on Circle and Cross, so the keys start from the layout again
+    // (load_and_apply_env sets PAD_KEYS after this).
+    if (!layout_line && !get("PAD_KEYS").empty()) {
+        std::fprintf(stderr, "[ui] settings: PAD_KEYS from the old Keyboard page (%s) dropped: the keys are the Souls "
+                     "layout again\n", get("PAD_KEYS").c_str());
+        sValues["PAD_KEYS"] = "";
+    }
+}
+
+}  // namespace
+
+void load_and_apply_env() {
+    for (const Def& d : kDefs) {
+        if (d.apply == Apply::UiOnly) continue;
+        if (env_set(d.key) || (std::strcmp(d.key, "DES_VSYNC") == 0 && env_set("RSX_VSYNC"))) {
+            sPinned.insert(d.key);
+            const char* v = std::getenv(d.key);
+            if (!(v && *v)) v = std::getenv("RSX_VSYNC");  // DES_VSYNC pinned through RSX_VSYNC
+            sPinnedValues[d.key] = v ? v : "";
+        }
+    }
+    load_file();
+    // The keyboard and mouse layout applies with or without settings.ini; a PAD_KEYS from the environment changes it
+    // as the setting would.
+    const std::string keys = pinned("PAD_KEYS") ? pinned_value("PAD_KEYS") : get("PAD_KEYS");
+    ps3_setenv("PAD_KEYS", keys_with_layout(keys).c_str());
+    std::fprintf(stderr, "[ui] keyboard and mouse: the Souls layout%s%s\n", keys.empty() ? "" : ", changed by ",
+                 keys.c_str());
 }
 
 std::string get(std::string_view key) {

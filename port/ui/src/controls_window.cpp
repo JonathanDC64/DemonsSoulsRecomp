@@ -436,9 +436,7 @@ void ControlsWindow::build_tab(Rml::Element* content) {
         }),
         rightPane, [](Pane& pane) {
             pane.clear();
-            pane.add_text("Puts every gamepad button back to the game's own layout, and the keys and mouse buttons "
-                          "back to the Souls layout this port starts with (WASD to move, the mouse buttons to attack, "
-                          "Space to roll).");
+            pane.add_text("Puts all buttons and keys back to the defaults.");
         });
     render_page(rightPane, mPage);
 }
@@ -455,8 +453,7 @@ void ControlsWindow::render_page(Pane& pane, Page page) {
 void ControlsWindow::render_pad_page(Pane& pane) {
     if (settings::pinned("PAD_MAP")) {
         pane.add_rml("<status-badge class=\"warning\">Set to " + escape(settings::pinned_value("PAD_MAP")) +
-                     " in the environment when the game started (PAD_MAP): that value is used, and wins over "
-                     "these.</status-badge><br/>");
+                     " when the game started (PAD_MAP), so these can't change it.</status-badge><br/>");
     }
     for (const int i : kRows) {
         pane.add_select_button({
@@ -473,15 +470,13 @@ void ControlsWindow::render_pad_page(Pane& pane) {
                 start_capture(i, true, 0);
             });
     }
-    pane.add_rml("<br/>Press a row, then the gamepad button that should press it. The button it had moves to the row "
-                 "that had yours. Esc cancels.<br/><br/>(PAD_MAP)");
+    pane.add_rml("<br/>Choose a row, then press the button for it. Esc cancels.<br/><br/>(PAD_MAP)");
 }
 
 void ControlsWindow::render_key_page(Pane& pane) {
     if (settings::pinned("PAD_KEYS")) {
         pane.add_rml("<status-badge class=\"warning\">Set to " + escape(settings::pinned_value("PAD_KEYS")) +
-                     " in the environment when the game started (PAD_KEYS): those changes to the layout are used "
-                     "instead of these.</status-badge><br/>");
+                     " when the game started (PAD_KEYS), so these can't change it.</status-badge><br/>");
     }
     for (int t = 0; t < kTargetCount; t++) {
         if (kTargets[t].section) pane.add_section(kTargets[t].section);
@@ -511,11 +506,8 @@ void ControlsWindow::render_key_page(Pane& pane) {
                 });
         }
     }
-    pane.add_rml("<br/>Press a row, then the key, mouse button or wheel notch that should work it. Hold Shift, Ctrl or "
-                 "Alt with it for a chord: Shift and the left button is a strong attack, and not an attack as well. "
-                 "The input leaves any other row that had it. Delete clears the row; Esc cancels.<br/><br/>"
-                 "The mouse's buttons and wheel reach the game while mouse look holds the mouse (Settings, "
-                 "Controls, Mouse look). F1 always opens this menu; Esc is the game's Start.<br/><br/>(PAD_KEYS)");
+    pane.add_rml("<br/>Choose a row, then press a key, mouse button or wheel. Hold Shift, Ctrl or Alt for a "
+                 "combination. Delete clears the row; Esc cancels.<br/><br/>(PAD_KEYS)");
 }
 
 Rml::String ControlsWindow::pending_label() const {

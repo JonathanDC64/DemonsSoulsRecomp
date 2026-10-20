@@ -85,9 +85,8 @@ struct NetServer {
 };
 inline constexpr NetServer kNetServers[] = {
     {"archstones", "The Archstones", "206.189.232.242",
-     "The community server most players use: every region and language of the game shares one pool there. It is "
-     "run by a community volunteer, not by this project."},
-    {"local", "Local test server", "127.0.0.1", "A server running on this PC, for testing."},
+     "The community server most players use, run by a volunteer."},
+    {"local", "Local test server", "127.0.0.1", "A server on this PC, for testing."},
     {"custom", "Custom", "", "The address in Custom server, below."},
 };
 inline constexpr const char* kNetCustomKey = "custom";

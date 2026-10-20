@@ -259,15 +259,31 @@ The four cellHttp functions with wrong names (`cellHttp.c`):
 
 The settings window maps each row to an environment knob (`port/ui/src/settings.cpp`, `kDefs`). All of these need a restart, because NP and sockets start at boot.
 
-| Row | Default | Knob |
-|---|---|---|
-| Online | Off | `PS3_NET_ONLINE` |
-| Game server (host or IP) | empty; Online stays off until set | `PS3_NET_HOSTS`, built for the six names |
-| Player name (3-16 letters, digits, `-` or `_`) | empty | `PS3_NP_ONLINE_ID` |
-| Co-op server (psnr, host[:port]) | empty, which means messages and bloodstains only | `PSNR_SERVER` |
-| P2P port | 3658 | `PS3_NET_P2P_PORT` |
+Built (the Network tab, between Controls and Interface). You decided Online is on by default. `apply_network` in `settings.cpp` turns the rows into ps3recomp's knobs once at start:
 
-Text next to Online: "Co-op and PvP connect you directly to other players, who can then see your IP address." A relay avoids that where the psnr server offers one. Offline stays the default.
+| Row | Setting (default) | Knob it sets, online only |
+|---|---|---|
+| Online | `DES_ONLINE` (`1`) | `PS3_NET_ONLINE=1`. Offline sets none of the knobs, not even to `0`, since the runtime counts any value as on. |
+| Server | `DES_NET_SERVER` (`archstones`) | `PS3_NET_HOSTS`: each of the six names `=` the server's address, joined with `&&` |
+| Custom server | `DES_NET_CUSTOM` (empty) | The address for Server's Custom choice: IPv4 or a host name. With no valid address the game stays offline (fails closed). |
+| Online name | `DES_NET_NAME` (empty) | `PS3_NP_ONLINE_ID`, when it is 3-16 letters, digits, `-` or `_`. Online needs one: empty or invalid keeps the game offline, and the row says so (without an NP sign-in the game asks for the network again and again after Continue). |
+| P2P port | `DES_NET_P2P_PORT` (`3658`) | `PS3_NET_P2P_PORT` (1024-65535; anything else means 3658) |
+
+- **The servers** are one table in `settings.hpp` (`kNetServers`: key, name, address, note):
+  - The Archstones = `206.189.232.242`, the RPCS3 address its setup page publishes. It is run by a community volunteer.
+  - Local test server = `127.0.0.1`.
+  - Custom.
+- **No psnr row yet.** `PSNR_SERVER` is never set from settings.
+- **The environment wins.** A knob already set in the environment (for example `PS3_NET_HOSTS`) is left alone, as with every other row.
+- **Test runs stay offline:**
+  - `deslib.sh`'s `des_env_defaults` exports `DES_ONLINE=0` for anything but `play.sh`;
+  - `milestones.sh` and `repro.sh` do the same;
+  - `apply_network` also stays offline in a harness run (`PS3_PIDFILE` set, not `play.sh`) unless `DES_ONLINE` was given.
+- **Cheats win.** `des_dev_boot` runs after the settings are applied (both from `ps3_title_options_init`), so a cheat set at start still clears the network knobs (docs/55 section 6). The tab then shows Online as "Off: cheats used", from `DES_DEV_SESSION`.
+- **Issue reports** show only "(set)" for the online name and the custom address.
+- **The tab's note:** co-op and invasions show your IP address to the other players; summons need an RPCN account (later).
+
+The first plan, for reference: Online off by default; a free-text game server; a co-op (psnr) server row.
 
 ### A6. Legal, terms and safety
 

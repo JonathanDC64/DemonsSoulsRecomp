@@ -13,6 +13,7 @@
 #include "pane.hpp"
 #include "report.hpp"
 #include "settings.hpp"
+#include "string_button.hpp"
 #include "ui.hpp"
 #include "version.hpp"
 #if DES_DEV
@@ -176,6 +177,29 @@ int mouse_sens_percent() {
     const double sens = std::atof(v.c_str());
     if (!(sens > 0.0) || !(mouse_sens_default() > 0.0)) return 100;  // (des_mouse_look uses the default then)
     return std::clamp(int(std::lround(sens / mouse_sens_default() * 100.0)), kMouseSensMin, kMouseSensMax);
+}
+
+// The Network tab's rows (settings.hpp, "Online play"). A value in use: the environment's when set there.
+std::string net_value(const char* key) {
+    return settings::pinned(key) ? settings::pinned_value(key) : settings::get(key);
+}
+
+// A developer build's cheat session (des_dev_boot set a cheat at start and cleared the network knobs; docs/55 section
+// 6). Release builds never set DES_DEV_SESSION.
+bool net_cheat_session() {
+    const char* s = std::getenv("DES_DEV_SESSION");
+    return s && std::strcmp(s, "cheats") == 0;
+}
+
+std::string trim_spaces(const std::string& s) {
+    const size_t a = s.find_first_not_of(" \t");
+    if (a == std::string::npos) return {};
+    return s.substr(a, s.find_last_not_of(" \t") - a + 1);
+}
+
+int net_p2p_port() {
+    const int port = std::atoi(net_value("DES_NET_P2P_PORT").c_str());
+    return port < settings::kNetP2pPortMin || port > settings::kNetP2pPortMax ? settings::kNetP2pPortDefault : port;
 }
 
 // The software this program is made of (mirrors port/ui/NOTICE.md).
@@ -430,6 +454,164 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "30 degrees at the sensitivity above. Applies at once.<br/><br/>(DES_MOUSE_FLICK, in degrees)");
     });
 
+    // Online play (docs/46 A5; settings.cpp's apply_network turns the rows into the runtime's knobs at start).
+    add_tab("Network", [this](Rml::Element* content) {
+        auto& leftPane = add_child<Pane>(content, Pane::Type::Controlled);
+        auto& rightPane = add_child<Pane>(content, Pane::Type::Uncontrolled);
+
+        leftPane.add_section("Online play");
+        auto& online = leftPane.add_child<BoolButton>(BoolButton::Props{
+            .key = "Online",
+            .getValue =
+                [] {
+                    const std::string v = net_value("DES_ONLINE");
+                    return !v.empty() && v != "0";
+                },
+            .setValue =
+                [](bool value) {
+                    if (settings::pinned("DES_ONLINE") || net_cheat_session()) {
+                        return;
+                    }
+                    settings::set("DES_ONLINE", value ? "1" : "0");
+                },
+            .isDisabled = [] { return settings::pinned("DES_ONLINE") || net_cheat_session(); },
+            .isModified = [] { return !settings::is_default("DES_ONLINE"); },
+            .valueOverride = [] { return net_cheat_session() ? Rml::String("Off: cheats used") : Rml::String(); },
+        });
+        leftPane.register_control(online, rightPane, [](Pane& pane) {
+            pane.clear();
+            Rml::String help;
+            if (net_cheat_session()) {
+                help = "<status-badge class=\"warning\">Off for this session: a developer cheat was set when the game "
+                       "started, and a session with cheats stays offline (DES_DEV_SESSION=cheats). The setting is kept "
+                       "for the next start.</status-badge><br/>";
+            }
+            pane.add_rml(help + with_note("DES_ONLINE",
+                "Connects the game to the server chosen below, for messages, bloodstains, phantoms and world "
+                "tendency, as on the PS3. Off plays offline. Changing it takes effect the next time the game "
+                "starts.<br/><br/>(DES_ONLINE)"));
+        });
+
+        std::vector<Rml::String> serverValues, serverLabels;
+        Rml::String serverHelp = "The game server to connect to. ";
+        for (const settings::NetServer& s : settings::kNetServers) {
+            serverValues.push_back(s.key);
+            serverLabels.push_back(s.name);
+        }
+        serverHelp += "Each address is the one the server's own setup page gives for emulators.<br/>";
+        for (const settings::NetServer& s : settings::kNetServers) {
+            serverHelp += "<br/><b>" + escape(s.name) + "</b>" + (*s.address ? " (" + escape(s.address) + ")" : "") +
+                          ": " + escape(s.note);
+        }
+        choice_row(leftPane, rightPane, "Server", "DES_NET_SERVER", std::move(serverValues), std::move(serverLabels),
+            serverHelp + "<br/><br/>(DES_NET_SERVER)");
+
+        auto& customServer = leftPane.add_child<StringButton>(StringButton::Props{
+            .key = "Custom server",
+            .getValue = [] { return Rml::String(net_value("DES_NET_CUSTOM")); },
+            .setValue =
+                [](Rml::String value) {
+                    if (settings::pinned("DES_NET_CUSTOM")) {
+                        return;
+                    }
+                    value = trim_spaces(value);
+                    settings::set("DES_NET_CUSTOM", value);
+                    // (as Custom frame rate picks Frame rate's Custom: an address typed here picks Custom)
+                    if (!value.empty() && !settings::pinned("DES_NET_SERVER")) {
+                        settings::set("DES_NET_SERVER", settings::kNetCustomKey);
+                    }
+                },
+            .isDisabled = [] { return settings::pinned("DES_NET_CUSTOM"); },
+            .isModified = [] { return !settings::is_default("DES_NET_CUSTOM"); },
+            .maxLength = 253,
+        });
+        leftPane.register_control(customServer, rightPane, [](Pane& pane) {
+            pane.clear();
+            Rml::String help;
+            const std::string v = trim_spaces(net_value("DES_NET_CUSTOM"));
+            if (net_value("DES_NET_SERVER") == settings::kNetCustomKey && !settings::net_address_ok(v)) {
+                help = "<status-badge class=\"warning\">" +
+                       Rml::String(v.empty() ? "No address yet" : "Not an IPv4 address or a host name") +
+                       ": with Server on Custom the game stays offline.</status-badge><br/>";
+            }
+            pane.add_rml(help + with_note("DES_NET_CUSTOM",
+                "The address of a server not in the list, for Server's Custom choice: an IPv4 address "
+                "(203.0.113.5) or a host name (des.example.org), as the server's setup page gives it. Typing one "
+                "here picks Custom. Confirm to type.<br/><br/>(DES_NET_CUSTOM)"));
+        });
+
+        auto& name = leftPane.add_child<StringButton>(StringButton::Props{
+            .key = "Online name",
+            .getValue = [] { return Rml::String(net_value("DES_NET_NAME")); },
+            .setValue =
+                [](Rml::String value) {
+                    if (settings::pinned("DES_NET_NAME")) {
+                        return;
+                    }
+                    settings::set("DES_NET_NAME", trim_spaces(value));
+                },
+            .isDisabled = [] { return settings::pinned("DES_NET_NAME"); },
+            .isModified = [] { return !settings::is_default("DES_NET_NAME"); },
+            .maxLength = 16,
+        });
+        leftPane.register_control(name, rightPane, [](Pane& pane) {
+            pane.clear();
+            Rml::String help;
+            const std::string v = net_value("DES_NET_NAME");
+            if (v.empty()) {
+                help = "<status-badge class=\"info\">No name set: online play needs one, so the game stays offline "
+                       "until you set it.</status-badge><br/>";
+            } else if (!settings::net_name_ok(v)) {
+                help = "<status-badge class=\"warning\">Not valid, so the game stays offline: a name has 3 to 16 "
+                       "letters, digits, - or _.</status-badge><br/>";
+            }
+            pane.add_rml(help + with_note("DES_NET_NAME",
+                "The name other players and the server know you by, like a PSN online ID: 3 to 16 letters, digits, "
+                "- or _. The server keeps your messages and stats under it, so pick one nobody else uses. Confirm to "
+                "type.<br/><br/>(DES_NET_NAME)"));
+        });
+
+        auto& port = leftPane.add_child<NumberButton>(NumberButton::Props{
+            .key = "P2P port",
+            .getValue = net_p2p_port,
+            .setValue =
+                [](int value) {
+                    if (settings::pinned("DES_NET_P2P_PORT")) {
+                        return;
+                    }
+                    settings::set("DES_NET_P2P_PORT", std::to_string(value));
+                },
+            .isDisabled = [] { return settings::pinned("DES_NET_P2P_PORT"); },
+            .isModified = [] { return !settings::is_default("DES_NET_P2P_PORT"); },
+            .min = settings::kNetP2pPortMin,
+            .max = settings::kNetP2pPortMax,
+        });
+        leftPane.register_control(port, rightPane,
+            [helpText = with_note("DES_NET_P2P_PORT",
+                 "The UDP port the game uses to connect directly to other players, for co-op and invasions. 3658 is "
+                 "the PS3's. Change it only if another program uses it or your router forwards another one. From "
+                 "1024 to 65535; left and right change it by one, confirm to type a number.<br/><br/>"
+                 "(DES_NET_P2P_PORT)")](Pane& pane) {
+                pane.clear();
+                pane.add_rml(helpText);
+            });
+
+        leftPane.add_section("This session");
+        info_row(leftPane, rightPane, "Network", net_cheat_session() ? Rml::String("Off: cheats used") : settings::net_status(),
+            net_cheat_session()
+                ? Rml::String("A developer cheat was set when the game started, so this session is offline "
+                              "(DES_DEV_SESSION=cheats): cheats never reach other players. Start the game without "
+                              "them to go online.")
+                : "What the game started with: " + escape(settings::net_status()) +
+                      ". The rows above take effect the next time the game starts.");
+        info_row(leftPane, rightPane, "About online play", "Read first",
+            "Online play is new in this port and less tested than playing offline.<br/><br/>"
+            "Co-op and invasions connect you directly to other players, so they can see your IP address, as on a "
+            "PS3.<br/><br/>Summoning and being summoned need an RPCN account, which the port does not support yet "
+            "(coming later). Messages, bloodstains and phantoms come from the server alone.<br/><br/>"
+            "Developer builds: while a cheat is in use the session stays offline, and Online shows Off.");
+    });
+
     add_tab("Interface", [this](Rml::Element* content) {
         auto& leftPane = add_child<Pane>(content, Pane::Type::Controlled);
         auto& rightPane = add_child<Pane>(content, Pane::Type::Uncontrolled);
@@ -466,8 +648,9 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         const char* session = std::getenv("DES_DEV_SESSION");
         if (session && std::strcmp(session, "online") == 0) {
             info_row(leftPane, rightPane, "Cheats", "Off: online session",
-                "This session is online (PS3_NET_ONLINE or PSNR_SERVER is or was set), so the cheats are off "
-                "until the next start. Start the game without them to use the cheats.");
+                "This session is online (Network, Online; or PS3_NET_ONLINE or PSNR_SERVER is or was set), so the "
+                "cheats are off until the next start. Turn Online off in the Network tab and start the game again "
+                "to use the cheats.");
             return;
         }
         info_row(leftPane, rightPane, "Developer build", "Cheats compiled in",

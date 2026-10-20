@@ -575,7 +575,8 @@ void ControlsWindow::update_pad_capture() {
 // nothing else pressed, it is the choice itself.
 void ControlsWindow::update_key_capture() {
     (void)input::take_captured_key();  // (the UI's key events only keep the keys from the menus here)
-    const int wheel = input::take_captured_wheel();
+    int wheel = input::take_captured_wheel();
+    if (settings::no_user_input()) wheel = 0;  // (Windows sends the wheel to the window under the cursor, focused or not)
     if (!mArmed) {
         if (input_neutral()) {
             mArmed = true;

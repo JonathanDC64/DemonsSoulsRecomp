@@ -881,7 +881,36 @@ static double net_log_time()
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 }
 
-/* The remote's gait from its sender's own speed, for des_net_sync. The game
+/* What des_net_sync keeps about each remote player, by its NetworkManipulator
+ * (eight at most; a new one takes the slot used longest ago). Main thread. */
+struct NetRemote {
+    uint32_t m;
+    float x, z;          /* the target at the last packet */
+    float acc;           /* seconds since it */
+    float speed, gap;    /* the sender's speed, and the last gap between packets */
+    float gap_avg;       /* those gaps averaged, 0 after a long one */
+    float dir_x, dir_z;  /* the direction of the last move that went somewhere */
+    unsigned last_use;
+};
+static NetRemote s_net_rem[8];
+
+static NetRemote* net_remote(uint32_t m)
+{
+    static unsigned use;
+    NetRemote* r = nullptr;
+    for (NetRemote& e : s_net_rem)
+        if (e.m == m) { r = &e; break; }
+    if (!r) {
+        r = &s_net_rem[0];
+        for (NetRemote& e : s_net_rem)
+            if (e.last_use < r->last_use) r = &e;
+        *r = NetRemote{m, vm_readf(m + 0x1D0), vm_readf(m + 0x1D8), 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0};
+    }
+    r->last_use = ++use;
+    return r;
+}
+
+/* Once a frame, from SetMoveVector's entry: the sender's speed. The game
  * picks idle / walk / run / dash from the frame's chase move (speed below 0.01,
  * 2 and 6 m/s), and the chase restarts at each packet at distance / (1.2 *
  * the last gap) and stops dead when it reaches the last position early. With
@@ -889,40 +918,31 @@ static double net_log_time()
  * apart (a sender above 30 fps, or DES_NET_SYNC) the gaps jitter by a frame
  * or two, the chase arrives early on a fifth of the frames, and each arrival
  * shows idle for at least 0.2 s (the gait's hold): a walk that flickers into
- * idle, and a walk that reads as a run. Here, while packets come under
- * 150 ms apart and the sender moves, the gait is the sender's speed (the
- * distance between its last two positions over their gap, averaged with the
- * one before): the speed the game's chase settles to (its 1.2 lead sets only
- * how far behind it trails). A packet with
- * the same position (the sender stopped), a gap over 150 ms, or one over
- * 20 m/s (a warp) gives -1: the game's own value. Main thread. */
-static float net_remote_gait(uint32_t m, float dt)
+ * idle, and a walk that reads as a run. The sender's speed is the distance
+ * between its last two positions over their gap, averaged with the one
+ * before: the speed the game's chase settles to (its 1.2 lead sets only how
+ * far behind it trails). */
+static void net_remote_frame(NetRemote* r, float dt)
 {
-    struct Remote { uint32_t m; float x, z, acc, speed, gap; unsigned last_use; };
-    static Remote rem[8];
-    static unsigned use;
-    Remote* r = nullptr;
-    for (Remote& e : rem)
-        if (e.m == m) { r = &e; break; }
-    if (!r) {   /* a new remote takes the slot used longest ago */
-        r = &rem[0];
-        for (Remote& e : rem)
-            if (e.last_use < r->last_use) r = &e;
-        *r = Remote{m, vm_readf(m + 0x1D0), vm_readf(m + 0x1D8), 0.0f, 0.0f, 1.0f, 0};
-    }
-    r->last_use = ++use;
+    const uint32_t m = r->m;
     r->acc += dt;
-    if (vm_readf(m + 0x21C) == 0.0f) {   /* the update reset its gap timer: a packet this frame */
-        const float x = vm_readf(m + 0x1D0), z = vm_readf(m + 0x1D8);
-        const float d = std::sqrt((x - r->x) * (x - r->x) + (z - r->z) * (z - r->z));
-        const float gap = r->acc;
-        r->x = x; r->z = z; r->acc = 0.0f;
-        if (gap > 0.0f) {   /* (a second packet in the same frame: no gap to measure) */
-            r->gap = gap;
-            const float v = d / gap;
-            r->speed = (d < 0.005f || v > 20.0f) ? 0.0f : (r->speed > 0.0f ? 0.5f * (r->speed + v) : v);
-        }
+    if (vm_readf(m + 0x21C) != 0.0f) return;   /* the update resets its gap timer on a packet */
+    const float x = vm_readf(m + 0x1D0), z = vm_readf(m + 0x1D8);
+    const float d = std::sqrt((x - r->x) * (x - r->x) + (z - r->z) * (z - r->z));
+    const float gap = r->acc;
+    r->x = x; r->z = z; r->acc = 0.0f;
+    if (gap > 0.0f) {   /* (a second packet in the same frame: no gap to measure) */
+        r->gap = gap;
+        const float v = d / gap;
+        r->speed = (d < 0.005f || v > 20.0f) ? 0.0f : (r->speed > 0.0f ? 0.5f * (r->speed + v) : v);
     }
+}
+
+/* The sender's speed while packets come under 150 ms apart and it moves; -1
+ * for a packet with the same position (it stopped), a gap over 150 ms, or a
+ * jump over 20 m/s (a warp): then the game's own value stands. */
+static float net_remote_gait(const NetRemote* r)
+{
     if (r->gap > 0.15f || r->acc > 0.15f || r->speed <= 0.0f) return -1.0f;
     return r->speed;
 }
@@ -948,8 +968,22 @@ static float net_remote_gait(uint32_t m, float dt)
  * frame's move times 30 (the fmuls at 0x0030C46C): a speed only at 30 fps,
  * so above it a running remote walked. While packets come under 150 ms apart
  * the gait comes from the sender's speed (net_remote_gait); otherwise, with
- * DES_FPS set, the product is scaled by 1/(30 dt). At 30 fps with the game's
- * packet rate both leave it alone. DES_NETFIX=0 turns both off. Main thread. */
+ * DES_FPS set, the product is scaled by 1/(30 dt).
+ *
+ * With packets that close, the chase also jumps at each one: the gap the game
+ * divides by (+0x21C, 0x0030C330) is counted in the receiver's frames and is
+ * off by up to one, 20-30% of 45 ms, so the remote surges and slows 20 times
+ * a second. That gap is replaced with the average of the recent ones (an
+ * exponential average, a fifth of each new gap). And a chase that reaches the
+ * last position before the next packet (the game then moves nothing until
+ * it) handed SetMoveVector a zero move, which sets the remote's stick to
+ * zero: a frame of letting go mid-walk. While the sender moves, such a frame
+ * gets a 0.1 mm move along the last direction instead, so the stick holds.
+ * In a replay of a 110 fps log, the jumps at packets halved (p90 1.6 to 0.6
+ * m/s) and the zero frames went from 29 to none, with the same lag.
+ *
+ * At 30 fps with the game's packet rate none of this applies. DES_NETFIX=0
+ * turns it all off. Main thread. */
 extern "C" void des_net_sync(ppu_context* ctx, uint32_t addr)
 {
     const float dt = vm_readf(kFrameDt);
@@ -969,6 +1003,45 @@ extern "C" void des_net_sync(ppu_context* ctx, uint32_t addr)
         if (log) fprintf(stderr, "[netlog] %.3f send reload %u dt=%.4f\n", net_log_time(), (unsigned)ctx->gpr[0], dt);
         return;
     }
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_NETFIX", 1) != 0);
+    const bool fix = on && dt > 0.0f && dt <= kMaxFrameDt;
+    if (addr == 0x0030C330u) {   /* fmuls f0, f12, f0: OnPacket's 1.2 * gap; r31 = the manipulator */
+        if (!fix) return;
+        NetRemote* r = net_remote((uint32_t)ctx->gpr[31]);
+        const float gap = (float)ctx->fpr[12];
+        if (!(gap > 0.0f && gap < 0.15f)) {
+            r->gap_avg = 0.0f;
+            return;
+        }
+        r->gap_avg = r->gap_avg > 0.0f ? r->gap_avg + 0.2f * (gap - r->gap_avg) : gap;
+        ctx->fpr[0] = (float)(ctx->fpr[0] * (r->gap_avg / gap));
+        return;
+    }
+    if (addr == 0x0030C378u) {   /* SetMoveVector's entry: v2 = this frame's move, r3 = the manipulator */
+        if (!fix) return;
+        NetRemote* r = net_remote((uint32_t)ctx->gpr[3]);
+        net_remote_frame(r, dt);
+        float mv[3];
+        for (int i = 0; i < 3; i++) {
+            const uint32_t b = bswap32(ctx->vr[2].w[i]);   /* the register holds guest bytes */
+            memcpy(&mv[i], &b, 4);
+        }
+        const float len = std::sqrt(mv[0] * mv[0] + mv[2] * mv[2]);
+        if (len > 1e-5f) {
+            r->dir_x = mv[0] / len;
+            r->dir_z = mv[2] / len;
+        } else if (len < 1e-6f && net_remote_gait(r) >= 0.0f && (r->dir_x != 0.0f || r->dir_z != 0.0f)) {
+            const float hold[2] = {r->dir_x * 1e-4f, r->dir_z * 1e-4f};
+            for (int i = 0; i < 2; i++) {
+                uint32_t b;
+                memcpy(&b, &hold[i], 4);
+                ctx->vr[2].w[2 * i] = bswap32(b);
+            }
+            if (log) fprintf(stderr, "[netlog] %.3f m=%08X stick held\n", net_log_time(), r->m);
+        }
+        return;
+    }
     /* 0x0030C46C, fmuls f12, f0, f12: |move| * 30; r3 = the NetworkManipulator */
     if (log) {
         const uint32_t m = (uint32_t)ctx->gpr[3];
@@ -978,10 +1051,8 @@ extern "C" void des_net_sync(ppu_context* ctx, uint32_t addr)
                 vm_read8(m + 0x1CC), vm_readf(m + 0x1F0), vm_readf(m + 0x1F4), vm_readf(m + 0x1F8),
                 vm_readf(m + 0x1D0), vm_readf(m + 0x1D4), vm_readf(m + 0x1D8));
     }
-    static int on = 1;
-    PS3_KNOB(on, ps3_env_int("DES_NETFIX", 1) != 0);
-    if (!on || !(dt > 0.0f && dt <= kMaxFrameDt)) return;
-    const float gait = net_remote_gait((uint32_t)ctx->gpr[3], dt);
+    if (!fix) return;
+    const float gait = net_remote_gait(net_remote((uint32_t)ctx->gpr[3]));
     if (gait >= 0.0f) {
         ctx->fpr[12] = gait;
         return;

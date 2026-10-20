@@ -128,7 +128,12 @@ duo_start() {
 }
 
 case "$cmd" in
-  start)  for n in $(copies); do duo_start "$n" "$@" || exit 1; done ;;
+  start)  # Without PS3_SAVEDATA_ROOT (ps3recomp before #80) both copies would run on the default save folder, your own.
+          src="${DES_EXE:-$DES_ROOT/port/build/des_boot.exe}"
+          grep -aq PS3_SAVEDATA_ROOT "$src" || {
+            echo "duo: $src doesn't know PS3_SAVEDATA_ROOT; both copies would use your own save. Build it with a newer ps3recomp."
+            exit 1; }
+          for n in $(copies); do duo_start "$n" "$@" || exit 1; done ;;
   stop)   for n in $(copies); do duo_stop "$n"; echo "duo: $n stopped"; done ;;
   status) for n in a b; do
             if duo_running "$n"; then echo "== $n: running"; else echo "== $n: not running"; fi

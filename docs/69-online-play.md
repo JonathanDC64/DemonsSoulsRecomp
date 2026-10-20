@@ -42,9 +42,10 @@ but not run.
   what arrived; nothing went to any real server.
   - Online with no online name: NP stays signed out, and the game asks for the network over and over after
     Continue and never loads the level. The Network tab now keeps the game offline until a name is set.
-  - Online with a name: NP signs in, the level loads, the game creates its HTTP client, and its network service
-    thread exits at once. No request was sent. The next gap is cellHttp itself: DeS imports 10 cellHttp functions
-    (and 2 cellHttpUtil ones) we don't have. RPCS3 runs the firmware's own libhttp instead.
+  - Online with a name: NP signs in and the level loads. After the cellHttp fixes (ps3recomp #81) the game sends
+    its bootstrap, `POST /demons-souls-us/ss.info`, to `c.demons-souls.com:18000` with the user agent a PS3 sends.
+  - With a local stub answering the bootstrap, the game reads the reply and sends its encrypted login
+    (`login.spd`) to the game server address in it. That is as far as the client can go without a real server.
 
 ## 1. The servers
 
@@ -123,11 +124,11 @@ DeS imports 128 network functions; 97 have a handler (docs/46 A3; the NID map is
 | Piece | Today | Needed | Where |
 |---|---|---|---|
 | On/off | `PS3_NET_ONLINE` env only | A settings row; an offline lock for cheat sessions | Network tab PR; ps3recomp `ps3_net_lock_offline()` |
-| Host redirect | None. cellHttp used the OS resolver even offline | A fail-closed `PS3_NET_HOSTS` map in the one resolver, and cellHttp offline unless online | ps3recomp `feat/net-host-map` |
+| Host redirect | None. cellHttp used the OS resolver even offline | A fail-closed `PS3_NET_HOSTS` map in the one resolver, and cellHttp offline unless online. IPv4 literals pass: the bootstrap reply gives the game server as an IP | ps3recomp `feat/net-host-map` |
 | cellHttp | Path read at the wrong offset (every request `GET /`), POST body and receive buffer used raw guest addresses, guest pointers printed as strings | Fixed (two match upstream fixes, two are new) | same |
 | NP sign-in | ONLINE only with ps3recomp's psnr server | ONLINE with online on and a name ("local"): the game's server login can run | same |
 | Online name | Optional | Required: without an NP sign-in the game loops on the net-start dialog after Continue (run, section 4a) | Network tab PR (offline until a name is set) |
-| cellHttp coverage | 8 of DeS's 18 cellHttp imports, 1 of 3 cellHttpUtil | The other 10 (keep-alive, pool size, user agent get/set, close all, abort, status code, content length both ways, poll connections) and Base64 encode/decode. RPCS3 doesn't need them in HLE: it loads the firmware's libhttp.sprx and libnet.sprx | next ps3recomp step |
+| cellHttp coverage | 8 of DeS's 18 cellHttp imports, 1 of 3 cellHttpUtil | All 18 and all 3, with ids from 1, the firmware's error values and `ParseUri` in the SDK's layout (section 4a). RPCS3 doesn't need them in HLE: it loads the firmware's libhttp.sprx and libnet.sprx | ps3recomp #81 |
 | Identity | Read before settings.ini is applied, so a name in Settings was ignored | Read at first use | same |
 | Net-start dialog | Always "connected" | Fails when offline | same |
 | P2P | Plain UDP/TCP on 3658, no vport header | RPCN's vport framing, to talk to RPCS3 peers | stage 3 |
@@ -137,9 +138,9 @@ DeS imports 128 network functions; 97 have a handler (docs/46 A3; the NID map is
 
 ## 4. The plan, by what each step gets you
 
-1. **Groundwork (pull requests tonight).** The host map, cellHttp fixes, NP local sign-in and the Network tab. In the
-   first local run they did what they should (names mapped, NP signed in with a name), but the game didn't send its
-   login yet (section 4a). Messages, bloodstains, ghosts and world tendency need the cellHttp step after it.
+1. **Groundwork (pull requests tonight).** The host map, cellHttp, NP local sign-in and the Network tab. In local
+   runs the game now sends its bootstrap and, given a reply, its login (section 4a). Whether messages, bloodstains,
+   ghosts and world tendency then work needs a real server (step 2); not run yet.
    - Summons stay off: Matching2 refuses to start without psnr or RPCN, so the game says it can't connect for
      co-op.
 2. **Test it locally first.** dessego (MIT) on 127.0.0.1, the "Local test server" preset, two copies with
@@ -166,20 +167,28 @@ listener on 127.0.0.1:18000 (the bootstrap port) logged every request. Nothing w
 |---|---|
 | Online, no online name | `sceNpManagerGetStatus` OFFLINE, one OFFLINE callback. After Continue the game called `cellNetCtlNetStartDialogLoadAsync`/`UnloadAsync` 261 times in 4 minutes ("connected" each time) and never loaded the level. |
 | Online, name `TestA` | NP ONLINE, Matching2 context created, the level loaded. During the load the game initialised cellHttp, created a client and set it up: `ClientSetKeepAlive`, `ClientSetPerHostPoolSize`, `ClientGetUserAgent`, `ClientSetUserAgent` (all unregistered, faked as CELL_OK). It started `DSNetworkService::Thread`, which exited at once with status 0, then closed the connections and ended cellHttp. No transaction was created, no name was resolved and no request reached the listener. |
+| Same, with the cellHttp functions and ids from 1 | The game set its user agent (`PS3Application libhttp/1.0.0-000 (J-JP9000-BLUS30443_00-DS01040000000100/0000000100)`) and the thread polled twice, then still exited. A trace of the HLE calls after `ClientSetUserAgent` showed its last call: `cellHttpUtilParseUri(uri=NULL, ...)`. |
+| Same, with `ParseUri` in the SDK's layout | The bootstrap went out: `POST /demons-souls-us/ss.info`, 32-byte body, to `c.demons-souls.com:18000` (mapped to 127.0.0.1). The listener answered 404 and the game closed its client. |
+| Same, with a local stub answering the bootstrap | The stub sent back a bootstrap pointing at 127.0.0.1:18666. The game read it and sent `POST http://127.0.0.1:18666/cgi-bin/login.spd`, 64 bytes, AES-encrypted with the game's fixed key. Decrypted: `NPID=TestA&rang=language15&region=non&ver=100&`. The first try was refused because the host map blocked IPv4 literals; fixed. |
 
 What it means:
 
 - **The online name is required.** The Network tab now keeps a session offline without a valid name, and says so
   on the row and in "This session".
-- **The login stops before HTTP.** Why `DSNetworkService::Thread` returns at once is not known yet. Candidates, in
-  order:
-  1. a faked call left something unset (for example `ClientGetUserAgent` returned CELL_OK without writing the
-     string);
-  2. a check on NP data we answer differently from a PS3;
-  3. game state.
-  The thread is started from 0x005702E8 (`DSNetworkService::Thread`, created with the object at 0x00570254).
-- **Next step:** implement the missing cellHttp functions (contracts from RPCS3's `cellHttp.cpp` and the SDK
-  names), then rerun the same local test. If the thread still exits, trace its run function from that object.
+- **The client reaches the server's login.** Three runtime gaps stood in the way, each found from a run:
+  1. client id 0: the game reads 0 as "no client" (it checks at 0x00544CF8);
+  2. `cellHttpUtilParseUri`: the game calls it twice before every transaction, first with `uri` NULL to learn the
+     pool size (call site 0x0054D764), then with a pool of that size and a 24-byte `CellHttpUri`. Ours wrote its
+     own 2.7 KB struct and refused the size query;
+  3. the host map refused IPv4 literals, which is how the bootstrap names the game server.
+- **How the game's network thread works** (read: our EBOOT). `DSNetworkService` (vtable 0x018606B0) runs
+  `while (!step()) usleep(66666)` (0x0056FCA0). The step (0x00550B00) polls connections and runs the request
+  phases until its done byte is set. A poll error other than "no connection" (0x80710012) ends it.
+- **The stub is not a server.** It answers the bootstrap and logs what follows. Past the login, testing needs
+  dessego or DeSSE running locally, or Archstones (decisions 1 and 3).
+- **For the port, after merging ps3recomp #81:** regenerate the lift's HLE NID table
+  (`python ps3recomp/tools/gen_hle_nids.py --all --out <lift>/hle_nid_table.cpp`). Without that the 13 new
+  functions stay unregistered and are faked as CELL_OK, and the game's network thread quits as before.
 
 ## 5. Password or friends-only matchmaking
 
@@ -243,11 +252,15 @@ it can be filtered there without touching game code (inferred).
 2. **RPCN:** ask RPCN's maintainers (RipleyTom) whether a third-party client may use `np.rpcs3.net` (docs/70
    section 2). Nothing in stage 4 should start before that answer.
 3. **A local test server:** install Go to run dessego (MIT) on 127.0.0.1, or Python 2.7 and pycrypto for DeSSE (no
-   licence; local use only)? Recommended: Go and dessego.
+   licence; local use only)? Recommended: Go and dessego. The client now reaches the login (section 4a), so this
+   is the next test.
 4. **Password matchmaking:** the client-side friends filter with the RPCN client, plus a request to Yuvi for a
    keyword filter (section 5)?
 5. **Region:** the port is BLUS30443 only today. All six hostnames are mapped anyway, so EU and JP discs would work
    too once supported.
+6. **The bootstrap stub:** keep it as a tooling script (`tools/des/net_stub.py` with the local host test), or leave
+   it in scratch? It answers only the bootstrap and logs the rest, so it is not a server. Recommended: commit it;
+   it checks the client side in a minute without any install.
 
 ## Sources
 

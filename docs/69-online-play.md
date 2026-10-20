@@ -1,0 +1,261 @@
+# Online play on the community servers (research and plan, 2026-10-19)
+
+Status: research, with the first pieces in pull requests. No traffic was sent to any game server or to RPCN while
+writing this, and no account was made.
+
+This updates docs/46 (Part A) for the goal you set: play online on the private servers that already exist, with
+online on by default, rather than writing a server. docs/46's stage plan still holds; what changed is which stage
+matters most. RPCN, docs/46's optional stage 3, is the only way to be summoned by, or invade, the players who are
+online today, because they all play through RPCS3 and RPCN. docs/70 covers the RPCN account flow in our UI.
+
+Labels: **read** means seen in source code, the live page, our EBOOT or the disc data. **Inferred** means worked out
+but not run.
+
+## Summary
+
+- **Servers.** One public Demon's Souls server is up today: **The Archstones**, run by a volunteer (Yuvi). It is
+  closed source, publishes no terms, and serves RPCS3 players from one address in a cross-region pool. Every other
+  server is code you run yourself: DeSSE (no licence, Python 2, inactive since 2018), dessego (MIT, Go, 2021) and a
+  few dead proofs of concept. DeS Seamless Co-op (GPL-3.0, active) runs a private party server per host.
+- **What the game needs from the server.** Plain HTTP; there's no TLS and no NP ticket. The game reaches the server
+  through six hostnames that every guide redirects to the server's address. The server handles the shared world:
+  messages, bloodstains, ghosts, the sign lists and world tendency.
+- **What the game needs besides the server.** A summon or an invasion is brokered by the server, but the session
+  itself is an NP Matching2 room plus NP signalling. On RPCS3 both run on **RPCN** (`np.rpcs3.net`), and gameplay
+  then flows peer to peer over UDP. So messages and bloodstains need only the server; co-op and PvP with RPCS3
+  players need an RPCN client too.
+- **What our runtime is missing** (docs/46 A3, re-checked tonight):
+  - a host map for the six names;
+  - working cellHttp (four guest-pointer bugs, so every request was wrong);
+  - NP signed in without ps3recomp's own psnr server;
+  - an offline lock for the developer cheats;
+  - and, for summons, an RPCN client, RPCN's P2P framing on port 3658, and Matching2 and signalling over RPCN.
+- **Password matchmaking.** No server has it. A client-only filter can hide signs from anyone outside your RPCN
+  friends list, and refuse summons from them, but it can't stop others from seeing your sign. A real password
+  needs the server: a few lines in `getSosData`, which only Yuvi can add to Archstones. Recommendation in section 5.
+- **Built tonight (pull requests):**
+  - the ps3recomp network groundwork (host map, cellHttp fixes, NP local sign-in, offline lock);
+  - the Network tab in Settings, online on by default (online needs an online name; see below);
+  - per-copy save and cache folders, and `tools/des/duo.sh` for two copies at once;
+  - `DES_GIVE` (developer builds), `tools/des/online_save.sh` and a test save with every multiplayer item.
+- **First run in the game, local only** (section 4a). The six names went to 127.0.0.1, where a listener logged
+  what arrived; nothing went to any real server.
+  - Online with no online name: NP stays signed out, and the game asks for the network over and over after
+    Continue and never loads the level. The Network tab now keeps the game offline until a name is set.
+  - Online with a name: NP signs in, the level loads, the game creates its HTTP client, and its network service
+    thread exits at once. No request was sent. The next gap is cellHttp itself: DeS imports 10 cellHttp functions
+    (and 2 cellHttpUtil ones) we don't have. RPCS3 runs the firmware's own libhttp instead.
+
+## 1. The servers
+
+| Server | State | Source and licence | Notes |
+|---|---|---|---|
+| The Archstones (thearchstones.com) | Website up (page dated 2022-12-01). Game ports not probed. Likely up: every 2025-2026 guide points to it. | Closed. Only the admin tool (Yu-Dessmt) is public, MIT. | RPCS3 pool at 206.189.232.242, cross-region. PS3 players use the DNS server 142.93.245.186 and are split NA/EU/JP. Donation-funded. No terms published; the Demon's Souls Discord is the contact. |
+| DeSSE (github.com/ymgve/desse) | Code only | **No licence** (all rights reserved) | Python 2.6/2.7 and pycrypto. US, EU and JP on ports 18666, 18667, 18668; bootstrap on 18000. The reference every other server follows. |
+| dessego (github.com/danmrichards/dessego) | Code only, 2021 | MIT | DeSSE in Go with SQLite. The best base for a local test server. |
+| DeS Seamless Co-op (github.com/himingal/des-seamless-coop) | Active (September 2026) | GPL-3.0 | .NET app for RPCS3. Each host runs a private server; a friend joins with party name and password, through a relay if needed. Merges the three regions. |
+| Others | Dead | Mostly MIT | Asapin (Java, EU), Przytua (Swift), moefh (Go), jpdante (C#), desse-docker |
+
+**What the client needs (read: DeSSE and dessego source, our EBOOT).**
+- **Hostnames.** `c.demons-souls.com` (US bootstrap), `g.demons-souls.com`, `ds-eu-c.scej-online.jp`,
+  `ds-eu-g.scej-online.jp`, `cmnap.scej-online.jp` (EU bootstrap, per the Asapin README) and
+  `demons-souls.scej-online.jp` (JP, inferred). Our EBOOT (BLUS30443) has the US bootstrap
+  `c.demons-souls.com:18000`, path `demons-souls-us/ss.info`, and the formats `http://%s/%s` and `%s%s.spd`.
+- **Protocol.** The bootstrap returns `ss.info`, which points the game at `http://<ip>:18666/cgi-bin/` for the US.
+  Requests are POSTs to `<name>.spd`. The body is AES-256-CBC with a fixed key and the IV in front, done by the game's
+  own code. Replies are base64 of `[cmd u8][len u32][data]`.
+  - Endpoints: login, character, messages, replays (ghosts), wandering ghosts, sign lists (`addSosData`,
+    `getSosData`, `checkSosData`), `summonOtherCharacter`, `summonBlackGhost`, multiplayer start and finish, and
+    grades.
+- **Identity.** No server checks a ticket, and the game imports no `sceNpManagerRequestTicket`. Players are known
+  by the plaintext character ID, built from the NPID plus a slot digit. Closed Archstones may do more; unknown.
+- **Regions.** RPCN maps DeS's communication IDs (`NPWR00881` US, `NPWR00245`) to the EU one (`NPWR01249`), so all
+  regions meet in one Matching2 pool (read: RPCN's `server_redirs.cfg`).
+
+**Summons, step by step (read: DeSSE `SOSManager.py`; inferred for the room part).**
+1. A player with a Blue Eye Stone posts a sign: `addSosData` (block, position, level, message, type).
+2. Another player in the same block lists signs (`getSosData`) and touches one. Their game creates a Matching2 room
+   and sends its room ID with `summonOtherCharacter`.
+3. The sign's owner picks the room ID up through `checkSosData`, polled every few seconds, and joins the room.
+4. NP signalling connects the two, and the game's own UDP P2P carries the session. Invasions (Black Eye Stone) and
+   the Old Monk's summon (`summonBlackGhost`) run the same way.
+
+Steps 1-3 talk to the private server; step 4 and the room in step 2 go to RPCN.
+
+**How RPCS3 players set it up (Archstones' Server Info page, quoted).**
+1. In a custom game config: "Set Network Status to Connected", "Set PSN Status to RPCN", "Set DNS to 8.8.8.8".
+2. Set "IP/Host Switch" to the six names `=206.189.232.242`, joined by `&&`.
+3. In Configuration > RPCN: host `np.rpcs3.net`, create an account, and enter the emailed token.
+
+Your RPCS3 config for BLUS30443 already has this exact switch string, with PSN status Disconnected.
+
+## 2. How RPCS3 connects (read: RPCS3 source, contracts only)
+
+RPCS3 is GPL-2.0, so nothing is copied; this lists what a compatible client must do.
+
+- **Host overrides.** `IP swap list` takes `host=ipv4&&host=ipv4`. Names match case-insensitively, `*` is a
+  wildcard, and the first match wins.
+  - RPCS3 runs the console's own libnet and libhttp, so it catches the game's DNS queries at the socket level: UDP
+    to port 53, answered with a made-up A record.
+  - Our runtime implements libnet and libhttp itself, and resolves names with the host OS (sys_net
+    `gethostbyname` and cellHttp). The map goes into that one resolver instead; no DNS packets need faking.
+- **NP sign-in.** "Online" means the network is enabled and the RPCN login succeeded.
+  - The NPID is the RPCN username.
+  - The public address comes from RPCN's UDP echo on port 3657, sent from the P2P socket.
+  - Status is ONLINE or OFFLINE; offline, the manager calls return `SCE_NP_ERROR_OFFLINE`.
+- **P2P.** Every P2P socket the game opens shares one UDP socket on port 3658. Each datagram carries a 6-byte
+  header: destination vport, source vport, flags. Vport 0 carries RPCN's address replies and signalling.
+- **Signalling.** RPCN tells each member the others' addresses, in the join reply and in "user joined"
+  notifications.
+  - Peers then shake hands directly: a `SIGN` v3 packet with CONNECT, CONNECT_ACK and CONFIRM, repeated every
+    200 ms.
+  - They ping every 10 s, and a peer counts as gone after 60 s without traffic.
+- **Matching2.** Every request (create, join, search, room data, leave) becomes an RPCN command, and the reply comes
+  back as an event the game reads.
+  - RPCS3 stubs KickoutRoomMember and GrantRoomOwner; DeS imports both.
+- **RPCN.** docs/70 has the protocol in full: TLS on 31313, protocol version 32, a 15-byte header, and a password
+  derived with PBKDF2-SHA3-256.
+
+## 3. What our runtime has and lacks
+
+DeS imports 128 network functions; 97 have a handler (docs/46 A3; the NID map is re-checked).
+
+| Piece | Today | Needed | Where |
+|---|---|---|---|
+| On/off | `PS3_NET_ONLINE` env only | A settings row; an offline lock for cheat sessions | Network tab PR; ps3recomp `ps3_net_lock_offline()` |
+| Host redirect | None. cellHttp used the OS resolver even offline | A fail-closed `PS3_NET_HOSTS` map in the one resolver, and cellHttp offline unless online | ps3recomp `feat/net-host-map` |
+| cellHttp | Path read at the wrong offset (every request `GET /`), POST body and receive buffer used raw guest addresses, guest pointers printed as strings | Fixed (two match upstream fixes, two are new) | same |
+| NP sign-in | ONLINE only with ps3recomp's psnr server | ONLINE with online on and a name ("local"): the game's server login can run | same |
+| Online name | Optional | Required: without an NP sign-in the game loops on the net-start dialog after Continue (run, section 4a) | Network tab PR (offline until a name is set) |
+| cellHttp coverage | 8 of DeS's 18 cellHttp imports, 1 of 3 cellHttpUtil | The other 10 (keep-alive, pool size, user agent get/set, close all, abort, status code, content length both ways, poll connections) and Base64 encode/decode. RPCS3 doesn't need them in HLE: it loads the firmware's libhttp.sprx and libnet.sprx | next ps3recomp step |
+| Identity | Read before settings.ini is applied, so a name in Settings was ignored | Read at first use | same |
+| Net-start dialog | Always "connected" | Fails when offline | same |
+| P2P | Plain UDP/TCP on 3658, no vport header | RPCN's vport framing, to talk to RPCS3 peers | stage 3 |
+| Matching2 and signalling | Over psnr only | Over RPCN, with GrantRoomOwner and Kickout | stage 3 |
+| RPCN client | None | TLS, version 32, account commands, UDP echo, friends, presence | stage 3; docs/70 |
+| Scores, Avc2 voice | Partly stubbed | Not needed to play | later |
+
+## 4. The plan, by what each step gets you
+
+1. **Groundwork (pull requests tonight).** The host map, cellHttp fixes, NP local sign-in and the Network tab. In the
+   first local run they did what they should (names mapped, NP signed in with a name), but the game didn't send its
+   login yet (section 4a). Messages, bloodstains, ghosts and world tendency need the cellHttp step after it.
+   - Summons stay off: Matching2 refuses to start without psnr or RPCN, so the game says it can't connect for
+     co-op.
+2. **Test it locally first.** dessego (MIT) on 127.0.0.1, the "Local test server" preset, two copies with
+   `tools/des/duo.sh`. Needs Go (not installed; your call).
+3. **Then Archstones**, after asking Yuvi (section 6).
+4. **Co-op with RPCS3 players: an RPCN client** in ps3recomp, clean-room from the contracts above, about 20-40 days
+   (docs/46 stage 3). Order:
+   1. login and the UDP echo;
+   2. the vport framing on 3658;
+   3. Matching2 create, join, search and leave, and the notifications;
+   4. SIGN v3 signalling;
+   5. friends and presence.
+   It needs RPCN's maintainers to agree to another client on `np.rpcs3.net` (docs/70 section 2).
+5. **Stage 2 of docs/46 (psnr co-op among port players only)** becomes a fallback, not a step. It would split the
+   few players there are, and an RPCS3 player touching a port player's sign would hand over a room psnr can't find.
+
+## 4a. The first local run (read: logs of runs on this PC, 2026-10-19 night)
+
+The combined build (both ps3recomp branches, the Network tab, `DES_GIVE`) ran on a copy of the test save. All six
+names were mapped to 127.0.0.1 with `PS3_NET_HOSTS`; any other name was refused by the fail-closed map. A small
+listener on 127.0.0.1:18000 (the bootstrap port) logged every request. Nothing was sent to The Archstones or RPCN.
+
+| Run | What happened |
+|---|---|
+| Online, no online name | `sceNpManagerGetStatus` OFFLINE, one OFFLINE callback. After Continue the game called `cellNetCtlNetStartDialogLoadAsync`/`UnloadAsync` 261 times in 4 minutes ("connected" each time) and never loaded the level. |
+| Online, name `TestA` | NP ONLINE, Matching2 context created, the level loaded. During the load the game initialised cellHttp, created a client and set it up: `ClientSetKeepAlive`, `ClientSetPerHostPoolSize`, `ClientGetUserAgent`, `ClientSetUserAgent` (all unregistered, faked as CELL_OK). It started `DSNetworkService::Thread`, which exited at once with status 0, then closed the connections and ended cellHttp. No transaction was created, no name was resolved and no request reached the listener. |
+
+What it means:
+
+- **The online name is required.** The Network tab now keeps a session offline without a valid name, and says so
+  on the row and in "This session".
+- **The login stops before HTTP.** Why `DSNetworkService::Thread` returns at once is not known yet. Candidates, in
+  order:
+  1. a faked call left something unset (for example `ClientGetUserAgent` returned CELL_OK without writing the
+     string);
+  2. a check on NP data we answer differently from a PS3;
+  3. game state.
+  The thread is started from 0x005702E8 (`DSNetworkService::Thread`, created with the object at 0x00570254).
+- **Next step:** implement the missing cellHttp functions (contracts from RPCS3's `cellHttp.cpp` and the SDK
+  names), then rerun the same local test. If the thread still exits, trace its run function from that object.
+
+## 5. Password or friends-only matchmaking
+
+| Option | Feasible? | What it does | What it can't do |
+|---|---|---|---|
+| A server with it today | No: none has it | | |
+| Server-side filter on Archstones | Technically small: `getSosData` would return a sign only to players who posted the same keyword, for example an agreed message ID. Archstones already treats some message templates as commands, so the hook exists. | Real privacy for signs | Only Yuvi can add it (closed source) |
+| PR to an open server (dessego) | Easy to write | Same, on a server that runs dessego | Nobody runs dessego publicly, so it only helps a server you or a friend host |
+| Client-only, in our port | Yes | Hide signs whose character ID isn't on your friends list (RPCN friends once the client exists, or a list in Settings). Refuse a summon whose room has strangers in it. Optionally post signs only with an agreed message, as a soft keyword. | Others still see your sign and can touch it; you'd refuse, which costs them a failed summon |
+| Private party server (Seamless Co-op's model) | Yes, but it's a new server per host | Full privacy | You said no new server; the players would also leave the shared world |
+
+**Recommendation.**
+- Build the **client-side friends filter** when the RPCN client lands. It uses RPCN's friends list, needs nobody's
+  permission, and covers the common case of two friends playing together.
+- Separately, **ask Yuvi** whether Archstones would add a keyword filter in `getSosData`. That's the only way to keep
+  strangers off your sign.
+- A PR to dessego is only worth it if someone hosts it.
+
+The filter goes where the game parses the `getSosData` reply. That reply is plain base64 inside our own cellHttp, so
+it can be filtered there without touching game code (inferred).
+
+## 6. Safety, consent and defaults
+
+- **Online on by default** (your decision). Test runs stay offline: `deslib.sh` sets `DES_ONLINE=0` for every test
+  kind, and a developer-cheat session clears the network knobs, as before.
+- **Default server.** The Archstones is the first preset, so a fresh install that goes online talks to Yuvi's
+  donation-funded server. docs/46 A6 suggested asking first; that's decision 1 below.
+- **IP addresses.** P2P shares your public IP with the players you meet, as on a PS3 and on RPCS3. The Network tab
+  says so.
+- **Cheats.** docs/55's offline rule now has the ps3recomp lock it was missing: once cheats are used, the network
+  stays off for the session in every module.
+
+## 7. Test tools made tonight
+
+- **Two copies at once:** `tools/des/duo.sh start` (section 4 of its header has the knobs). Each copy gets its own
+  saves (`PS3_SAVEDATA_ROOT`), HDD cache (`PS3_HDD1_ROOT`), shader cache, settings.ini and so its own Network
+  settings and later its own RPCN account, logs, console file and P2P port (3658 and 3659). The cores are split
+  between them. They share the controllers, so give one no pad (`B_PS3_NO_USER_INPUT=1`) or play it with
+  keyboard and mouse.
+- **The test save.** `DES_GIVE=online` (developer builds) adds, through the game's own add-item (0x008FB4F0):
+  - 10 Stones of Ephemeral Eyes (goods 1021);
+  - the Black, Red, Blue and White Eye Stones (9995, 9996, 9997, 9999);
+  - the "Kick Item" (9998), which sends phantoms home;
+  - the Friend's and Foe's Rings (rings 114, 115).
+
+  IDs read from the disc's goods table and names. The give waits until the character's stats are loaded and no
+  cutscene runs, then asks the game to save through its own SaveRequest script function (0x004418B8).
+  `tools/des/online_save.sh` does the whole thing on a scratch copy of the pinned regression save. The result is at
+  `work/tmp/online/save`, apart from your save and the pinned save. Checked: all eight items in the save file the
+  game wrote, and a fresh boot of a copy loads that file.
+- **Two copies, checked:** `DUO_TEST=1 DUO_SAVE=work/tmp/online/save tools/des/duo.sh start` started both copies on
+  separate cores. Each loaded the test save from its own folder and reached the level. `duo.sh stop` stopped only
+  those two. Each copy has to run from the repository folder, because the runtime reads some files relative to it
+  (`work/libsre/libsre_image.bin`).
+
+## 8. Decisions for you
+
+1. **Archstones as the default server:** ask Yuvi first (Demon's Souls Discord), or ship the preset now?
+   Recommended: ask first, and until he answers keep the preset but default to **no server**, so a fresh install
+   doesn't connect anywhere. That partly undoes "online on by default".
+2. **RPCN:** ask RPCN's maintainers (RipleyTom) whether a third-party client may use `np.rpcs3.net` (docs/70
+   section 2). Nothing in stage 4 should start before that answer.
+3. **A local test server:** install Go to run dessego (MIT) on 127.0.0.1, or Python 2.7 and pycrypto for DeSSE (no
+   licence; local use only)? Recommended: Go and dessego.
+4. **Password matchmaking:** the client-side friends filter with the RPCN client, plus a request to Yuvi for a
+   keyword filter (section 5)?
+5. **Region:** the port is BLUS30443 only today. All six hostnames are mapped anyway, so EU and JP discs would work
+   too once supported.
+
+## Sources
+
+- docs/46 Part A; docs/55 section 6; docs/47 (the inventory).
+- github.com/ymgve/desse, github.com/danmrichards/dessego, github.com/himingal/des-seamless-coop,
+  github.com/Asapin/ds-server-PoC.
+- thearchstones.com and its serverinfo page; demonssouls.com "Online Play in 2021"; nexusmods.com demonssouls mod 189.
+- github.com/RipleyTom/rpcn (`server_redirs.cfg`; AGPL-3.0).
+- RPCS3 source (local reference checkout, HEAD 065b490): `Emu/NP/np_dnshook.cpp`, `np_handler.cpp`,
+  `rpcn_client.cpp`, `signaling_handler.cpp`, `Emu/Cell/lv2/sys_net/*`, `Emu/Cell/Modules/sceNp*.cpp`,
+  `cellNetCtl.cpp`, `rpcs3qt/rpcn_settings_dialog.cpp`.

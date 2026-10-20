@@ -874,6 +874,51 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
 }
 
+/* DES_PHYS_HZ=<n> (default 30; 0 = step every frame): at most n Havok steps
+ * a second. The physics update 0x001D1E30 steps the world once a frame with
+ * the frame's dt (f31). Havok counts its solver passes and its sleep checks
+ * in steps, so at 400 fps a ragdoll gets 13 times the passes and 1/13 of the
+ * time to settle: corpses twitch after death and sink through the floor when
+ * touched. The hook runs after 0x001D1E64 (lbz r28, 0x14(r31), the update's
+ * own skip byte). Frames shorter than 1/n add up; the world steps 1/n each
+ * time they reach it and skips the step (r28 = 1) otherwise. A frame of 1/n
+ * or longer steps its own dt, so 30 fps is the game as it was. */
+static int phys_hz()
+{
+    static int hz = 30;
+    PS3_KNOB(hz, ps3_env_int("DES_PHYS_HZ", 30));
+    return hz;
+}
+extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
+{
+    const int hz = phys_hz();
+    static double acc = 0.0;
+    if (hz <= 0 || ctx->gpr[28] != 0) { acc = 0.0; return; }
+    const double dt = ctx->fpr[31], h = 1.0 / hz;
+    if (!(dt > 0.0) || dt >= h) { acc = 0.0; return; }
+    acc += dt;
+    if (acc < h) {
+        ctx->gpr[28] = 1;              /* skip this frame's step */
+        return;
+    }
+    ctx->fpr[31] = (float)h;
+    acc -= h;
+    if (acc >= h) acc = 0.0;
+}
+
+/* With DES_PHYS_HZ: the passes that drive a character's bodies to its
+ * animation pose (0x001EF670, 0x001DF7C0, through Havok's hard keyframe
+ * 0x0131BAF8) set each body's velocity to the distance to the pose times
+ * 1/dt. Under the cap the world steps 1/n, so a frame's 1/dt would carry the
+ * body n*dt times too far. The hook runs after their fdivs f31, f0, f1 and
+ * makes 1/dt n when the frame is shorter than 1/n. */
+extern "C" void des_phys_kf(ppu_context* ctx, uint32_t)
+{
+    const int hz = phys_hz();
+    if (hz <= 0 || !(ctx->fpr[1] > 0.0) || ctx->fpr[1] >= 1.0 / hz) return;
+    ctx->fpr[31] = (float)(ctx->fpr[0] * hz);
+}
+
 /* DES_NETLOG=1: seconds since the first line, for des_net_sync's log. */
 static double net_log_time()
 {

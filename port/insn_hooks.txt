@@ -104,6 +104,12 @@
 0x001FEAF4=des_slide_rate   # decay 0.65 (0x019D9C40), slide *= decay
 0x001FED50=des_slide_rate   # gain 1.0 (0x019D9C3C), slide += gravity along the slope * gain
 
+# des_phys_rate (port/des_options.cpp): DES_PHYS_HZ caps Havok steps a second
+# (default 30); des_phys_kf gives the pose passes the same step.
+0x001D1E64=des_phys_rate  # lbz r28, 0x14(r31): the physics update's skip byte, dt in f31
+0x001EF6D0=des_phys_kf    # fdivs f31, f0, f1: 1/dt for driving bodies to the pose
+0x001DF83C=des_phys_kf    # fdivs f31, f0, f1: the same, second caller
+
 # des_viewer_rate (port/des_options.cpp): the character creation previews'
 # stick steps add the right stick to the yaw and pitch once a frame, tuned
 # for 30 fps. The hook scales the stick (f1, f2) by the frame's 30 Hz steps.

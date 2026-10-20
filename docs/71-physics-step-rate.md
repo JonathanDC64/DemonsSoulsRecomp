@@ -25,7 +25,14 @@ walks into them. RPCS3's DeS FPS patch has the same warning: above 60 fps "users
   (distance to the pose) times 1/dt. Under the cap the world steps 1/n, so the hook sets 1/dt to n. Without it, a
   velocity sized for a 2.5 ms frame is carried for 33 ms and the bones shoot ahead (one test hit 1222 m/s).
 - The player's position still changes every frame (the step does not move it), so walking is not choppy.
-  Ragdolls and other physics objects move 30 times a second.
+- `DES_RAGINTERP` (default 1): ragdolls are drawn between steps. Havok's ragdoll pose readers (`0x012D85E8`,
+  `0x012D9288`) turn each bone's body transform into a position and rotation (`0x0109FB30`). Hooks after that call
+  (`0x012D86C4`, `0x012D9354`) put in the pose between the start and end of the body's last step, from its swept
+  transform (centre of mass at +0x120 and +0x130, rotations at +0x140 and +0x150, local centre of mass at +0x160).
+  The blend is the game time since the body got a new step over the step length, so the drawn pose runs one step
+  (33 ms) behind. A body that sleeps shows its own transform. `DES_RAGINTERP_LOG=1` checks the swept end against
+  the transform (they matched for every body tested).
+- Other physics objects (breakables, debris) may still move 30 times a second (not checked).
 - `DES_PHYS_HZ=0` steps every frame (the old behaviour above 30 fps). Other values set the cap; 60 was tried and
   is worse than 30 (below).
 
@@ -44,9 +51,11 @@ All runs use a scratch probe that warps the player next to an enemy. Unlocked is
 - Walking into corpses is noisy at every rate. One capped run sank a corpse 2 m. The warp test also sinks corpses
   at 30 fps, so the original game does this too, less often.
 - At level load, 30-40 bodies drop for a few seconds and settle the same way at 30 fps and unlocked.
+- Drawn pose of a soldier's pelvis after death, unlocked: without `DES_RAGINTERP` it holds for 4-5 frames and then
+  jumps (up to 5.7 cm in a frame); with it, it moves every frame (at most 0.75 cm).
 
 ## Open
 
-- Ragdolls move at 30 Hz on a high refresh display. Smoothing them would need the bone poses blended between steps.
+- Breakables and debris were not checked; if they draw from their body transforms directly, they move at 30 Hz.
 - Per-body settings (damping, quality type, max speeds) come from the game data and were not read.
 - The Havok inactivity test and TOI code run on the SPU and were not read.

@@ -9,6 +9,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # The ps3recomp checkout and the (gitignored) generated/derived tree.
 set(PS3RECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ps3recomp" CACHE PATH "ps3recomp checkout")
 set(RECOMP_DIR    "${CMAKE_CURRENT_SOURCE_DIR}/../work/recomp" CACHE PATH "lifted output dir")
+# The ps3recomp commit this revision needs (ps3recomp.pin, docs/54): warns when the checkout lacks it;
+# -DDES_REQUIRE_PIN=ON (releases) requires exactly that commit.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ps3recompPin.cmake")
 
 # --- Prebuilt runtime library ----------------------------------------------
 add_library(ps3recomp_runtime STATIC IMPORTED GLOBAL)

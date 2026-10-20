@@ -1,0 +1,10 @@
+# The ps3recomp this port builds with (docs/54): one exact commit of the fork, never a branch.
+#   repo=    the fork
+#   tag=     for a release, the fork's tag on that commit (des-<upstream version>-<n>); "none" between releases
+#   commit=  the full commit hash
+# Between releases the commit is the oldest ps3recomp this revision of the port works with. A port change
+# that needs a newer one moves it forward in the same pull request; the commit has to be on the fork's
+# master, so the ps3recomp pull request merges first. Change it with tools/release/pin_ps3recomp.py.
+repo=https://github.com/JonathanDC64/ps3recomp
+tag=none
+commit=a8d6751921134f51be120fecd494a7e8cfa62aba

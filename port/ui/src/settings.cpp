@@ -50,6 +50,7 @@ constexpr Def kDefs[] = {
     {"DES_NET_NAME", "", Apply::Restart},      // the online name (PS3_NP_ONLINE_ID); "" = no NP identity
     {"DES_NET_P2P_PORT", "3658", Apply::Restart},  // PS3_NET_P2P_PORT, 1024-65535
     {"DES_NET_PASSWORD", "", Apply::Restart},  // matchmaking password; a hash of it goes to the server; "" = everyone
+    {"DES_NET_TENDENCY", "", Apply::Live},     // des_qwc_local: "" = the server's mixed in (the game's), "own" = yours only
     {"DES_NET_SYNC", "", Apply::Live},         // des_net_sync: position packets a second; "" = every 6th frame
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
     {"show_start_screen", "1", Apply::UiOnly},

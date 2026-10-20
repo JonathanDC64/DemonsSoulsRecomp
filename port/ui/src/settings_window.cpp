@@ -597,6 +597,14 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                 pane.add_rml(helpText);
             });
 
+        choice_row(leftPane, rightPane, "World tendency", "DES_NET_TENDENCY", {"", "own"},
+            {"With the server's", "Yours only"},
+            "Online, the game mixes the server's world tendency, the average of its players, into yours: half and "
+            "half each time you load your game, and the server's alone for a new character. Yours only keeps the "
+            "server out of it, as offline: only what you do changes your world. Your tendency still goes to the "
+            "server for the others' average, and as a phantom you still see your host's world. A mix already "
+            "saved stays. Applies from the next load.<br/><br/>(DES_NET_TENDENCY)");
+
         auto& port = leftPane.add_child<NumberButton>(NumberButton::Props{
             .key = "P2P port",
             .getValue = net_p2p_port,

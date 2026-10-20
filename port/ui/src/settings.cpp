@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -48,6 +49,7 @@ constexpr Def kDefs[] = {
     {"DES_NET_CUSTOM", "", Apply::Restart},    // Custom's address: IPv4 or a host name
     {"DES_NET_NAME", "", Apply::Restart},      // the online name (PS3_NP_ONLINE_ID); "" = no NP identity
     {"DES_NET_P2P_PORT", "3658", Apply::Restart},  // PS3_NET_P2P_PORT, 1024-65535
+    {"DES_NET_PASSWORD", "", Apply::Restart},  // matchmaking password; a hash of it goes to the server; "" = everyone
     {"DES_NET_SYNC", "", Apply::Live},         // des_net_sync: position packets a second; "" = every 6th frame
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
     {"show_start_screen", "1", Apply::UiOnly},
@@ -162,7 +164,8 @@ std::string describe() {
     std::string out;
     for (const Def& d : kDefs) {
         // (an issue report leaves out the online name and the custom server's address: only whether one is set)
-        const bool hide = std::strcmp(d.key, "DES_NET_NAME") == 0 || std::strcmp(d.key, "DES_NET_CUSTOM") == 0;
+        const bool hide = std::strcmp(d.key, "DES_NET_NAME") == 0 || std::strcmp(d.key, "DES_NET_CUSTOM") == 0 ||
+                          std::strcmp(d.key, "DES_NET_PASSWORD") == 0;
         const auto shown = [hide](const std::string& v) { return hide && !v.empty() ? std::string("(set)") : v; };
         out += std::string(d.key) + " = " + shown(get(d.key));
         if (pinned(d.key)) out += "    # set in the environment: " + shown(pinned_value(d.key));
@@ -216,6 +219,53 @@ void load_file() {
 }
 
 std::string sNetStatus = "Off";
+
+// SHA-256 (FIPS 180-4) of a string, as 64 lowercase hex digits: the matchmaking group the server sees instead of the
+// password. (Here rather than from ps3recomp: CI builds the UI on its own.)
+std::string sha256_hex(const std::string& text) {
+    static const uint32_t k[64] = {
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
+        0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
+        0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8,
+        0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+        0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819,
+        0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
+        0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2};
+    uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    std::string m = text;
+    const uint64_t bits = (uint64_t)text.size() * 8;
+    m += (char)0x80;
+    while (m.size() % 64 != 56) m += (char)0;
+    for (int i = 7; i >= 0; i--) m += (char)(bits >> (8 * i));
+    const auto rotr = [](uint32_t x, int n) { return (x >> n) | (x << (32 - n)); };
+    for (size_t off = 0; off < m.size(); off += 64) {
+        uint32_t w[64];
+        for (int i = 0; i < 16; i++) {
+            const auto* b = (const unsigned char*)m.data() + off + 4 * i;
+            w[i] = (uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint32_t)b[2] << 8 | b[3];
+        }
+        for (int i = 16; i < 64; i++) {
+            const uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+            const uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+        }
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+        for (int i = 0; i < 64; i++) {
+            const uint32_t t1 = hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + k[i] + w[i];
+            const uint32_t t2 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+            hh = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
+    }
+    std::string out;
+    char hex[9];
+    for (uint32_t v : h) {
+        std::snprintf(hex, sizeof hex, "%08x", v);
+        out += hex;
+    }
+    return out;
+}
 
 // A setting's value in use: the environment's when it was set there, else settings.ini's or the default.
 std::string effective(std::string_view key) {
@@ -279,14 +329,21 @@ void apply_network() {
     int port = std::atoi(effective("DES_NET_P2P_PORT").c_str());
     if (port < kNetP2pPortMin || port > kNetP2pPortMax) port = kNetP2pPortDefault;
     set_net_knob("PS3_NET_P2P_PORT", std::to_string(port));
+    // Options for a server that reads them (dessego's X-DeS-Options; others ignore the header): group=<hash> puts
+    // signs, invasions and the Old Monk in the password's group. The password itself never leaves the PC.
+    std::string options;
+    const std::string password = trim(effective("DES_NET_PASSWORD"));
+    if (!password.empty()) options += "group=" + sha256_hex("des-match-group:" + password).substr(0, 32);
+    if (!options.empty()) set_net_knob("PS3_HTTP_HEADER", "X-DeS-Options: " + options);
     // (what is in use, the environment's values included)
     const NetServer* s = net_server(effective("DES_NET_SERVER"));
     sNetStatus = "Online (" + std::string(hosts_pinned        ? "PS3_NET_HOSTS from the environment"
                                           : s && *s->address ? s->name
                                                              : address) + ")";
-    std::fprintf(stderr, "[ui] network: online, server %s, P2P port %s, %s\n",
+    std::fprintf(stderr, "[ui] network: online, server %s, P2P port %s, %s%s\n",
                  hosts_pinned ? "from PS3_NET_HOSTS" : address.c_str(), std::getenv("PS3_NET_P2P_PORT"),
-                 env_set("PS3_NP_ONLINE_ID") ? "with an online name" : "no online name");
+                 env_set("PS3_NP_ONLINE_ID") ? "with an online name" : "no online name",
+                 password.empty() ? "" : ", a matchmaking password");
 }
 
 }  // namespace

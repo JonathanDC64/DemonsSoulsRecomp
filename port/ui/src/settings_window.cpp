@@ -571,6 +571,32 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                 "type.<br/><br/>(DES_NET_NAME)"));
         });
 
+        auto& password = leftPane.add_child<StringButton>(StringButton::Props{
+            .key = "Matchmaking password",
+            .getValue = [] { return Rml::String(net_value("DES_NET_PASSWORD")); },
+            .setValue =
+                [](Rml::String value) {
+                    if (settings::pinned("DES_NET_PASSWORD")) {
+                        return;
+                    }
+                    settings::set("DES_NET_PASSWORD", trim_spaces(value));
+                },
+            .isDisabled = [] { return settings::pinned("DES_NET_PASSWORD"); },
+            .isModified = [] { return !settings::is_default("DES_NET_PASSWORD"); },
+            .maxLength = 32,
+        });
+        leftPane.register_control(password, rightPane,
+            [helpText = with_note("DES_NET_PASSWORD",
+                 "Plays only with the players who set the same password: you see only their summon signs and they "
+                 "see only yours, and invasions and the Old Monk match only within the group. Messages, "
+                 "bloodstains, ghosts and world tendency stay shared with everyone on the server. Empty plays with "
+                 "everyone, as on the PS3. The password stays on this PC: the server gets a hash of it. Only "
+                 "servers that support it (dessego with matchmaking groups) use it; others match everyone. Takes "
+                 "effect the next time the game starts. Confirm to type.<br/><br/>(DES_NET_PASSWORD)")](Pane& pane) {
+                pane.clear();
+                pane.add_rml(helpText);
+            });
+
         auto& port = leftPane.add_child<NumberButton>(NumberButton::Props{
             .key = "P2P port",
             .getValue = net_p2p_port,

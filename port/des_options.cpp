@@ -874,6 +874,13 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
 }
 
+/* DES_NETLOG=1: seconds since the first line, for des_net_sync's log. */
+static double net_log_time()
+{
+    static const auto start = std::chrono::steady_clock::now();
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
+
 /* Remote players (docs/69, "Remote players"). The local player's position
  * goes to the other players in a type-1 packet every 6 game frames:
  * PadManipulator counts +0x198 down once a frame, sends at 0, and reloads it
@@ -887,7 +894,9 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
  * a reload of 0 would never send); 15 at 30 fps is every other frame, and the
  * tail on the other copies shrinks with the gap. It changes what this copy
  * sends, so it smooths this player on the others' screens. Unset = the
- * game's 6 frames. Live.
+ * game's 6 frames, and never less often than those (above 30 fps they are
+ * more than 5 a second). DES_NETLOG=1 logs each reload and, each frame, each
+ * remote's chase (move, gait, timers, velocity, target). Live.
  *
  * SetMoveVector (0x0030C378) picks the remote's walk, run or dash from the
  * frame's move times 30 (the fmuls at 0x0030C46C): a speed only at 30 fps,
@@ -896,16 +905,32 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
 extern "C" void des_net_sync(ppu_context* ctx, uint32_t addr)
 {
     const float dt = vm_readf(kFrameDt);
+    static int log = 0;
+    PS3_KNOB(log, env_on("DES_NETLOG"));
     if (addr == 0x00313B24u) {   /* li r0, 5: the send counter's reload */
         static int hz = 0;
         PS3_KNOB(hz, ps3_env_int("DES_NET_SYNC", 0));
-        if (hz <= 0 || !(dt > 0.0f)) return;
-        int frames = (int)(1.0f / ((float)hz * dt) + 0.5f);
-        if (frames < 2) frames = 2;
-        ctx->gpr[0] = (uint64_t)(frames - 1);
+        if (hz > 0 && dt > 0.0f) {
+            /* never less often than the game's 6 frames: above 30 fps those
+             * are already more than 5 a second */
+            int frames = (int)(1.0f / ((float)hz * dt) + 0.5f);
+            if (frames < 2) frames = 2;
+            if (frames > 6) frames = 6;
+            ctx->gpr[0] = (uint64_t)(frames - 1);
+        }
+        if (log) fprintf(stderr, "[netlog] %.3f send reload %u dt=%.4f\n", net_log_time(), (unsigned)ctx->gpr[0], dt);
         return;
     }
-    static int on = 1;   /* 0x0030C46C, fmuls f12, f0, f12: |move| * 30 */
+    /* 0x0030C46C, fmuls f12, f0, f12: |move| * 30; r3 = the NetworkManipulator */
+    if (log) {
+        const uint32_t m = (uint32_t)ctx->gpr[3];
+        fprintf(stderr, "[netlog] %.3f m=%08X mv=%.5f dt=%.4f cat=%u tmr=%.3f since=%.4f snap=%u "
+                        "vel=%.3f,%.3f,%.3f tgt=%.3f,%.3f,%.3f\n",
+                net_log_time(), m, ctx->fpr[0], dt, vm_read8(m + 0x224), vm_readf(m + 0x220), vm_readf(m + 0x21C),
+                vm_read8(m + 0x1CC), vm_readf(m + 0x1F0), vm_readf(m + 0x1F4), vm_readf(m + 0x1F8),
+                vm_readf(m + 0x1D0), vm_readf(m + 0x1D4), vm_readf(m + 0x1D8));
+    }
+    static int on = 1;
     PS3_KNOB(on, ps3_env_int("DES_NETFIX", 1) != 0);
     if (!on || s_fps <= 0 || !(dt > 0.0f && dt <= kMaxFrameDt)) return;
     ctx->fpr[12] = (float)(ctx->fpr[12] / (30.0 * dt));

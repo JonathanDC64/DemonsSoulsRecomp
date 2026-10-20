@@ -19,6 +19,11 @@ cd "$DES_ROOT" || exit 1
 SRC="${ONLINE_SAVE_SRC:-$DES_ROOT/work/tmp/regress/save}"
 DST="${1:-$DES_ROOT/work/tmp/online/save}"
 [ -d "$SRC" ] || { echo "online_save: no source save at $SRC"; exit 2; }
+# A runtime without PS3_SAVEDATA_ROOT (ps3recomp before #80) would run on the default save folder, your own save.
+EXE_SRC="${DES_EXE:-$DES_ROOT/port/build/des_boot.exe}"
+grep -aq PS3_SAVEDATA_ROOT "$EXE_SRC" || {
+  echo "online_save: $EXE_SRC doesn't know PS3_SAVEDATA_ROOT; it would use your own save. Build it with a newer ps3recomp."
+  exit 2; }
 RUN="$DES_SCRATCH/online_save"; ROOT="$RUN/saves"; OUT="$RUN/run.txt"
 rm -rf "$RUN"; mkdir -p "$ROOT"; : > "$OUT"
 cp -a "$SRC/." "$ROOT/" || exit 2

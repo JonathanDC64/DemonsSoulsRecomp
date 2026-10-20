@@ -59,6 +59,7 @@ typedef struct rsx_d3d12_overlay {
     void (*release)(void* user);
 } rsx_d3d12_overlay;
 void rsx_d3d12_set_overlay(const rsx_d3d12_overlay* overlay);
+void rsx_d3d12_overlay_repaint(int on);
 void* rsx_d3d12_device(void);
 void* rsx_d3d12_queue(void);
 void* rsx_d3d12_hwnd(void);
@@ -120,6 +121,7 @@ bool sPadIdle = false;  // awake with no document up: the pads are not fed to Rm
 bool sHold = false;
 bool sChordWasDown = false;
 clock_type::time_point sLastVisible{};
+bool sRepaint = false;  // rsx_d3d12_overlay_repaint is on
 unsigned long long sFrame = 0;
 int sReportCountdown = 0;     // "Report an issue": frames until the game's picture is taken (report.cpp)
 bool sInitFailed = false;
@@ -595,6 +597,14 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     const auto now = clock_type::now();
     if (visible) sLastVisible = now;
     sCapturing.store(visible, std::memory_order_release);
+    // While a document is up (and through its closing fade), the UI moves at the display's refresh rate: between
+    // the game's frames the runtime shows the last one again and calls this hook for it. Not in scripted runs,
+    // whose keys and screenshots count frames.
+    const bool repaint = now - sLastVisible <= kGrace && !script && sShots.empty();
+    if (repaint != sRepaint) {
+        sRepaint = repaint;
+        rsx_d3d12_overlay_repaint(repaint ? 1 : 0);
+    }
     ui::mouse::set_ui_open(visible);  // (the cursor is the UI's while a document is up)
 
     if (visible && !sHold) {

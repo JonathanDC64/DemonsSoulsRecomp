@@ -43,13 +43,14 @@ constexpr Def kDefs[] = {
     {"RSX_ANISO", "0", Apply::Live},           // 0 = the game's own level
     {"DES_ASPECT", "", Apply::Restart},        // "" = 16:9; des_aspect.cpp writes the cameras' aspect at start
     {"DES_HUD", "", Apply::Restart},           // "" = centred at 16:9, "stretch"; the HUD canvas is recorded at boot
-    // Online play (apply_network): the runtime registers its sockets and NP at boot, so all of these need a restart.
+    // Online play (apply_network): the runtime registers its sockets and NP at boot, so all of these but the password
+    // need a restart.
     {"DES_ONLINE", "1", Apply::Restart},       // "1" = online (the default), "0" = offline
     {"DES_NET_SERVER", kNetServers[0].key, Apply::Restart},  // a kNetServers key
     {"DES_NET_CUSTOM", "", Apply::Restart},    // Custom's address: IPv4 or a host name
     {"DES_NET_NAME", "", Apply::Restart},      // the online name (PS3_NP_ONLINE_ID); "" = no NP identity
     {"DES_NET_P2P_PORT", "3658", Apply::Restart},  // PS3_NET_P2P_PORT, 1024-65535
-    {"DES_NET_PASSWORD", "", Apply::Restart},  // matchmaking password; a hash of it goes to the server; "" = everyone
+    {"DES_NET_PASSWORD", "", Apply::Live},     // matchmaking password; a hash of it goes to the server; "" = everyone
     {"DES_NET_TENDENCY", "", Apply::Live},     // des_qwc_local: "" = the server's mixed in (the game's), "own" = yours only
     {"DES_NET_SYNC", "", Apply::Live},         // des_net_sync: position packets a second; "" = every 6th frame
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
@@ -99,6 +100,7 @@ void apply_env(std::string_view key, const std::string& value) {
     // (an unset option stays unset; DES_FPS "" is the game's mode, PAD_MAP "" the game's buttons, PAD_KEYS "" the
     // layout as it is)
     if (value.empty() && key != "DES_FPS" && key != "PAD_MAP" && key != "PAD_KEYS") return;
+    if (key == "DES_NET_PASSWORD") return;  // (only its hash is used, in PS3_HTTP_HEADER: apply_match_group)
     if (key == "PAD_KEYS") {
         ps3_setenv("PAD_KEYS", keys_with_layout(value).c_str());
         return;
@@ -220,6 +222,8 @@ void load_file() {
 }
 
 std::string sNetStatus = "Off";
+bool sNetOnline = false;  // apply_network went online: the matchmaking group can then change live
+bool sHeaderPinned = false;  // PS3_HTTP_HEADER came from the environment (it wins over the password)
 
 // SHA-256 (FIPS 180-4) of a string, as 64 lowercase hex digits: the matchmaking group the server sees instead of the
 // password. (Here rather than from ps3recomp: CI builds the UI on its own.)
@@ -285,6 +289,15 @@ void set_net_knob(const char* name, const std::string& value) {
     ps3_setenv(name, value.c_str());
 }
 
+// The header for a server that reads it (dessego's X-DeS-Options; others ignore it), "" for none: group=<hash> puts
+// signs, invasions and the Old Monk in the password's group. The password itself never leaves the PC.
+std::string net_options_header() {
+    std::string options;
+    const std::string password = trim(effective("DES_NET_PASSWORD"));
+    if (!password.empty()) options += "group=" + sha256_hex("des-match-group:" + password).substr(0, 32);
+    return options.empty() ? std::string() : "X-DeS-Options: " + options;
+}
+
 // The network rows -> the runtime's knobs, once at start (the sockets and NP are set up after this, at boot):
 //   online: PS3_NET_ONLINE=1, PS3_NET_HOSTS=<the six names>=<server>, PS3_NP_ONLINE_ID=<name>,
 //           PS3_NET_P2P_PORT=<port>; online needs a valid online name (this row's, or PS3_NP_ONLINE_ID's);
@@ -330,12 +343,10 @@ void apply_network() {
     int port = std::atoi(effective("DES_NET_P2P_PORT").c_str());
     if (port < kNetP2pPortMin || port > kNetP2pPortMax) port = kNetP2pPortDefault;
     set_net_knob("PS3_NET_P2P_PORT", std::to_string(port));
-    // Options for a server that reads them (dessego's X-DeS-Options; others ignore the header): group=<hash> puts
-    // signs, invasions and the Old Monk in the password's group. The password itself never leaves the PC.
-    std::string options;
-    const std::string password = trim(effective("DES_NET_PASSWORD"));
-    if (!password.empty()) options += "group=" + sha256_hex("des-match-group:" + password).substr(0, 32);
-    if (!options.empty()) set_net_knob("PS3_HTTP_HEADER", "X-DeS-Options: " + options);
+    const std::string header = net_options_header();
+    sHeaderPinned = env_set("PS3_HTTP_HEADER");
+    if (!header.empty()) set_net_knob("PS3_HTTP_HEADER", header);
+    sNetOnline = true;
     // (what is in use, the environment's values included)
     const NetServer* s = net_server(effective("DES_NET_SERVER"));
     sNetStatus = "Online (" + std::string(hosts_pinned        ? "PS3_NET_HOSTS from the environment"
@@ -344,7 +355,16 @@ void apply_network() {
     std::fprintf(stderr, "[ui] network: online, server %s, P2P port %s, %s%s\n",
                  hosts_pinned ? "from PS3_NET_HOSTS" : address.c_str(), std::getenv("PS3_NET_P2P_PORT"),
                  env_set("PS3_NP_ONLINE_ID") ? "with an online name" : "no online name",
-                 password.empty() ? "" : ", a matchmaking password");
+                 header.empty() ? "" : ", a matchmaking password");
+}
+
+// A changed password, online: the next request has the new group (cellHttp reads PS3_HTTP_HEADER for each one). A
+// sign already down stays in the old group until it is gone; a PS3_HTTP_HEADER from the environment wins.
+void apply_match_group() {
+    if (!sNetOnline || sHeaderPinned) return;
+    const std::string header = net_options_header();
+    ps3_setenv("PS3_HTTP_HEADER", header.c_str());  // ("" unsets it)
+    std::fprintf(stderr, "[ui] network: matchmaking password %s\n", header.empty() ? "cleared" : "changed");
 }
 
 }  // namespace
@@ -390,6 +410,7 @@ void set(std::string_view key, const std::string& value) {
     sValues[std::string(key)] = value;
     if ((d->apply == Apply::Live || d->apply == Apply::Session) && !pinned(key))
         apply_env(key, value.empty() ? d->def : value);
+    if (key == "DES_NET_PASSWORD" && !pinned(key)) apply_match_group();
     save();
 }
 

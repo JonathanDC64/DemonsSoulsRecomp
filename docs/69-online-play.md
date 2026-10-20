@@ -190,25 +190,69 @@ What it means:
   (`python ps3recomp/tools/gen_hle_nids.py --all --out <lift>/hle_nid_table.cpp`). Without that the 13 new
   functions stay unregistered and are faked as CELL_OK, and the game's network thread quits as before.
 
-## 5. Password or friends-only matchmaking
+## 5. Password matchmaking and world tendency (built 2026-10-20)
 
-| Option | Feasible? | What it does | What it can't do |
-|---|---|---|---|
-| A server with it today | No: none has it | | |
-| Server-side filter on Archstones | Technically small: `getSosData` would return a sign only to players who posted the same keyword, for example an agreed message ID. Archstones already treats some message templates as commands, so the hook exists. | Real privacy for signs | Only Yuvi can add it (closed source) |
-| PR to an open server (dessego) | Easy to write | Same, on a server that runs dessego | Nobody runs dessego publicly, so it only helps a server you or a friend host |
-| Client-only, in our port | Yes | Hide signs whose character ID isn't on your friends list (RPCN friends once the client exists, or a list in Settings). Refuse a summon whose room has strangers in it. Optionally post signs only with an agreed message, as a soft keyword. | Others still see your sign and can touch it; you'd refuse, which costs them a failed summon |
-| Private party server (Seamless Co-op's model) | Yes, but it's a new server per host | Full privacy | You said no new server; the players would also leave the shared world |
+Online play runs on a server of our own (dessego), so both are ours to add.
 
-**Recommendation.**
-- Build the **client-side friends filter** when the RPCN client lands. It uses RPCN's friends list, needs nobody's
-  permission, and covers the common case of two friends playing together.
-- Separately, **ask Yuvi** whether Archstones would add a keyword filter in `getSosData`. That's the only way to keep
-  strangers off your sign.
-- A PR to dessego is only worth it if someone hosts it.
+### Matchmaking password
 
-The filter goes where the game parses the `getSosData` reply. That reply is plain base64 inside our own cellHttp, so
-it can be filtered there without touching game code (inferred).
+The Network tab's **Matchmaking password** (DES_NET_PASSWORD) puts the player in a group with everyone who set the
+same password:
+- **Matched within the group:** summon signs, invasions (a Black Eye stone puts down a hidden black sign that hosts'
+  games summon) and the Old Monk.
+- **Shared with everyone, as before:** messages, bloodstains, ghosts, replays and the world tendency average.
+- **Empty** (the default) is the public group, the game's own behaviour.
+
+How it works:
+- **Sending.** At start, `apply_network` (port/ui/src/settings.cpp) sets ps3recomp's `PS3_HTTP_HEADER` to
+  `X-DeS-Options: group=<hash>`. cellHttp adds that header to every request. The hash is the first 128 bits of
+  SHA-256("des-match-group:" + password), so the password never leaves the PC. The header is key=value pairs
+  separated by `;`, so later options can join it.
+- **Live.** A changed password applies at once: `apply_match_group` sets the new header, and cellHttp reads
+  `PS3_HTTP_HEADER` for each request. A sign already down moves along: its owner's game keeps asking
+  `checkSosData` while the sign is down, and dessego moves the sign to the group that request carries (a summon
+  agreed in the old group is dropped). A `PS3_HTTP_HEADER` from the environment wins over the row.
+- **Matching.** Our dessego fork (JonathanDC64/dessego) reads `group=` and keeps it with each sign. `getSosData`
+  lists only the requester's group, and `summonOtherCharacter` and `summonBlackGhost` match only within it. A client
+  without the header (RPCS3, a PS3, an older port) is in the public group.
+- **Other servers** ignore the header, and everyone matches as before.
+
+A hash only keeps the password itself off the server. Anyone who guesses the password joins the group, so it keeps
+strangers out; it is not a secret against someone who knows it.
+
+### World tendency
+
+The Network tab's **World tendency** (DES_NET_TENDENCY): "With the server's" (the default) or "Yours only".
+Addresses are from the EBOOT (static analysis, 2026-10-20):
+- The game's QWC object (`*(*0x01B4EF9C + 0x24)`) keeps the player's own value per area at +0x48 + 8 * (area - 1),
+  two floats (white/black, left/right).
+- **Once per load:** 0x009204A0, online, sets each area to (1 - 0.5) * own + 0.5 * server and stores that as the
+  own value, so the mix is saved. The rate is +0x108 (0.5).
+- **New character, and after the login:** 0x00920FC8 sets each area to the server's value.
+- **Offline:** both use the own values alone.
+- **The hook.** Both read the server's values from the `getQWCData` reply through 0x00567E98 (r4 = out, r5 = area).
+  `des_qwc_local`, after the `mflr` at 0x00567E9C, writes the own values to out and clears r4, so the reply is
+  skipped. With server = own, both functions give the offline result.
+- **Unchanged:** the player's own values still go to the server (`addQWCData`). As a phantom, the host's world comes
+  over P2P (0x00525750) and is untouched. A mix saved earlier stays.
+
+Not settled statically: when the event script calls the once-per-load blend. Whether 0x00920FC8 can run after a save
+has loaded is also open.
+
+### Message ratings
+
+A rating reaches its message's author late, by design of the client (read: EBOOT disassembly, 2026-10-20):
+- **The author.** Only the `getBloodMessageGrade` reply (the player's total rating) tells the game. A step that runs
+  each frame (0x0049BFF8) compares the total with the one it saw last. When it went up, the game heals the player
+  and shows that a message was rated. The `getBloodMessage` reply never feeds that check.
+- **When it asks.** The network scheduler (0x0054E7E8) asks at the login, on its first tick, then every 300 s (the
+  0x12C at 0x0054E938). An area change fetches messages again but not the grade. The server cannot push anything:
+  the client only acts on replies to its own requests. So on the PS3 too, a rating showed up to 5 minutes later.
+- **The rater.** Rating a message adds 1 to the game's own copy (0x003863E0) and sends `updateBloodMessageGrade`.
+  A message already open on screen keeps the number it opened with; read again, it shows the new one.
+- **The option.** The Network tab's **Message ratings** (DES_NET_RATING_POLL): "Every 5 minutes" (the game's) or
+  "Every 30 seconds". `des_net_grade_poll`, after the `subf` at 0x0054E934 (r0 = seconds since the last ask),
+  makes the scheduler ask from that many seconds on. Live.
 
 ## 6. Safety, consent and defaults
 

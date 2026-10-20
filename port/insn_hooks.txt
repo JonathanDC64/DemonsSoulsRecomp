@@ -131,6 +131,14 @@
 0x0030C378=des_net_sync   # addi r5, r1, -0xC0: NetworkManipulator SetMoveVector's entry, v2 = the frame's move
 0x0030C46C=des_net_sync   # fmuls f12, f0, f12: |move| * 30 in NetworkManipulator's SetMoveVector, tested against 0.01/2/6
 
+# des_qwc_local (port/des_options.cpp): DES_NET_TENDENCY=own, the server's world tendency
+# replaced with the player's own (docs/69, "World tendency").
+0x00567E9C=des_qwc_local  # mflr r0: the getQWCData reply's per-area reader (r4 = out, r5 = area), before r4 is tested
+
+# des_net_grade_poll (port/des_options.cpp): DES_NET_RATING_POLL, how often the game asks
+# whether the player's messages were rated (300 s; docs/69, "Message ratings").
+0x0054E934=des_net_grade_poll  # subf r0, r0, r29: seconds since the last getBloodMessageGrade, tested against 300
+
 # des_fx_state (port/des_options.cpp): particle effect (FFX) nodes' state
 # machine in the scene update 0x013B74B8. An emitter repeats by re-entering its
 # own state, at most once an update: 30 times a second at 30 fps, 240 at 240.

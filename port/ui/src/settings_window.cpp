@@ -571,6 +571,48 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                 "type.<br/><br/>(DES_NET_NAME)"));
         });
 
+        auto& password = leftPane.add_child<StringButton>(StringButton::Props{
+            .key = "Matchmaking password",
+            .getValue = [] { return Rml::String(net_value("DES_NET_PASSWORD")); },
+            .setValue =
+                [](Rml::String value) {
+                    if (settings::pinned("DES_NET_PASSWORD")) {
+                        return;
+                    }
+                    settings::set("DES_NET_PASSWORD", trim_spaces(value));
+                },
+            .isDisabled = [] { return settings::pinned("DES_NET_PASSWORD"); },
+            .isModified = [] { return !settings::is_default("DES_NET_PASSWORD"); },
+            .maxLength = 32,
+        });
+        leftPane.register_control(password, rightPane,
+            [helpText = with_note("DES_NET_PASSWORD",
+                 "Plays only with the players who set the same password: you see only their summon signs and they "
+                 "see only yours, and invasions and the Old Monk match only within the group. Messages, "
+                 "bloodstains, ghosts and world tendency stay shared with everyone on the server. Empty plays with "
+                 "everyone, as on the PS3. The password stays on this PC: the server gets a hash of it. Only "
+                 "servers that support it (dessego with matchmaking groups) use it; others match everyone. Applies at "
+                 "once, and a sign you already put down moves along within about 20 seconds. Confirm to type.<br/><br/>"
+                 "(DES_NET_PASSWORD)")](Pane& pane) {
+                pane.clear();
+                pane.add_rml(helpText);
+            });
+
+        choice_row(leftPane, rightPane, "World tendency", "DES_NET_TENDENCY", {"", "own"},
+            {"With the server's", "Yours only"},
+            "Online, the game mixes the server's world tendency, the average of its players, into yours: half and "
+            "half each time you load your game, and the server's alone for a new character. Yours only keeps the "
+            "server out of it, as offline: only what you do changes your world. Your tendency still goes to the "
+            "server for the others' average, and as a phantom you still see your host's world. A mix already "
+            "saved stays. Applies from the next load.<br/><br/>(DES_NET_TENDENCY)");
+
+        choice_row(leftPane, rightPane, "Message ratings", "DES_NET_RATING_POLL", {"", "30"},
+            {"Every 5 minutes", "Every 30 seconds"},
+            "How often the game asks the server whether someone rated one of your messages. When someone has, you "
+            "are healed and told so. The game asks every 5 minutes, as on the PS3, so a rating can show up to 5 "
+            "minutes late. Every 30 seconds sends one small request more every 30 seconds. Applies at once."
+            "<br/><br/>(DES_NET_RATING_POLL)");
+
         auto& port = leftPane.add_child<NumberButton>(NumberButton::Props{
             .key = "P2P port",
             .getValue = net_p2p_port,

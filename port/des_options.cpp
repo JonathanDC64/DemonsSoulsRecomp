@@ -1067,6 +1067,62 @@ extern "C" void des_net_sync(ppu_context* ctx, uint32_t addr)
     if (s_fps > 0) ctx->fpr[12] = (float)(ctx->fpr[12] / (30.0 * dt));
 }
 
+/* DES_NET_TENDENCY=own: the server stops changing this player's world
+ * tendency (docs/69, "World tendency"). The game's QWC object (*(*0x01B4EF9C
+ * + 0x24)) keeps the player's own value per area at +0x48 + 8 * (area - 1),
+ * two floats, white/black then left/right. Online, two functions read the
+ * server's per-area values from the getQWCData reply through 0x00567E98
+ * (out = r4, area 1-7 = r5): 0x009204A0, once per load, sets the area and
+ * own values to (1 - 0.5) * own + 0.5 * server, and 0x00920FC8 (a new
+ * character, and after the login) sets them to the server's. Offline both
+ * use the own values alone. Called after the mflr at 0x00567E9C, before r4
+ * is tested: it writes the own values to out and clears r4, so the reader
+ * skips the reply, both functions see server = own, and the result is the
+ * offline one. The player's own values still go to the server (addQWCData).
+ * Blends saved before stay. Live: from the next load. Main thread. */
+extern "C" void des_qwc_local(ppu_context* ctx, uint32_t)
+{
+    static int own = 0;
+    PS3_KNOB(own, [] {
+        const char* e = std::getenv("DES_NET_TENDENCY");
+        return e && std::strcmp(e, "own") == 0 ? 1 : 0;
+    }());
+    if (!own) return;
+    const uint32_t out = (uint32_t)ctx->gpr[4], area = (uint32_t)ctx->gpr[5];
+    if (!guest_ptr_ok(out) || area < 1 || area > 7) return;
+    uint32_t q = vm_read32(0x01B4EF9Cu);
+    if (!guest_ptr_ok(q) || !guest_ptr_ok(q = vm_read32(q + 0x24))) return;
+    const uint32_t own_at = q + 0x48 + 8 * (area - 1);
+    vm_write32(out, vm_read32(own_at));
+    vm_write32(out + 4, vm_read32(own_at + 4));
+    ctx->gpr[4] = 0;
+    if (area == 1) {
+        float bw, lr;
+        const uint32_t b0 = vm_read32(own_at), b1 = vm_read32(own_at + 4);
+        std::memcpy(&bw, &b0, 4);
+        std::memcpy(&lr, &b1, 4);
+        std::fprintf(stderr, "[des] world tendency: yours only (the server's skipped; area 1 %.0f / %.0f)\n", bw, lr);
+    }
+}
+
+/* DES_NET_RATING_POLL=<seconds>, 30-299: how often the game asks the server
+ * whether the player's messages were rated (docs/69, "Message ratings"). The
+ * game asks for the player's total rating (getBloodMessageGrade) every 300
+ * s: its network scheduler 0x0054E7E8 tests the seconds since the last ask
+ * against 0x12C at 0x0054E938. When the total has gone up, a step that runs
+ * each frame (0x0049BFF8) heals the player and shows that a message was
+ * rated. So a rating showed up to 5 minutes late, as on the PS3; the server
+ * cannot push it. Called after the subf at 0x0054E934 (r0 = the seconds
+ * since the last ask): from the knob's seconds on, r0 becomes 301. "" (the
+ * default) leaves the game's 300 s. Main thread. */
+extern "C" void des_net_grade_poll(ppu_context* ctx, uint32_t)
+{
+    static int every = 0;
+    PS3_KNOB(every, ps3_env_int("DES_NET_RATING_POLL", 0));
+    if (every < 30 || every >= 300) return;
+    if (ctx->gpr[0] >= (uint64_t)every) ctx->gpr[0] = 0x12D;
+}
+
 /* A step a camera adds once a frame, cur += input * step, tuned for 30 fps:
  * the bow's aim view zooms by 0.1 of its range a frame (ChrAimCam 0x00110608,
  * +0x138 += input * +0x13C, then clamped to [0, 1]), so at 120 fps it zoomed

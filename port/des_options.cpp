@@ -894,6 +894,13 @@ struct NetRemote {
 };
 static NetRemote s_net_rem[8];
 
+/* A vector register's word as the guest's float bits, and back (the register
+ * holds guest bytes). */
+static uint32_t net_swap(uint32_t b)
+{
+    return (b >> 24) | ((b >> 8) & 0xFF00u) | ((b << 8) & 0xFF0000u) | (b << 24);
+}
+
 static NetRemote* net_remote(uint32_t m)
 {
     static unsigned use;
@@ -1024,7 +1031,7 @@ extern "C" void des_net_sync(ppu_context* ctx, uint32_t addr)
         net_remote_frame(r, dt);
         float mv[3];
         for (int i = 0; i < 3; i++) {
-            const uint32_t b = bswap32(ctx->vr[2].w[i]);   /* the register holds guest bytes */
+            const uint32_t b = net_swap(ctx->vr[2].w[i]);
             memcpy(&mv[i], &b, 4);
         }
         const float len = std::sqrt(mv[0] * mv[0] + mv[2] * mv[2]);
@@ -1036,7 +1043,7 @@ extern "C" void des_net_sync(ppu_context* ctx, uint32_t addr)
             for (int i = 0; i < 2; i++) {
                 uint32_t b;
                 memcpy(&b, &hold[i], 4);
-                ctx->vr[2].w[2 * i] = bswap32(b);
+                ctx->vr[2].w[2 * i] = net_swap(b);
             }
             if (log) fprintf(stderr, "[netlog] %.3f m=%08X stick held\n", net_log_time(), r->m);
         }

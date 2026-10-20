@@ -17,11 +17,11 @@ jobs:
     name: Wrapper UI (Windows, clang-cl)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # clang-cl compiles, but needs the MSVC headers, libraries and the Windows SDK on the path.
       - name: Set up MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:
           arch: x64
 
@@ -59,10 +59,10 @@ jobs:
     name: Scripts (syntax, icon step)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # A fixed version, so a runner image update does not change what "compiles" means.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
 

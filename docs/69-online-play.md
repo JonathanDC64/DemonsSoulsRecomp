@@ -254,6 +254,24 @@ A rating reaches its message's author late, by design of the client (read: EBOOT
   "Every 30 seconds". `des_net_grade_poll`, after the `subf` at 0x0054E934 (r0 = seconds since the last ask),
   makes the scheduler ask from that many seconds on. Live.
 
+### Showing messages, bloodstains and ghosts
+
+The Network tab's **In your world** rows (DES_NET_MESSAGES, DES_NET_BLOODSTAINS, DES_NET_GHOSTS, all on by
+default) hide what other players put in your world. Read from the EBOOT, 2026-10-20:
+- **What is hidden.** The requests and uploads go on as before; `des_net_show` takes the lists as empty:
+  - messages: the `getBloodMessage` parser 0x00562A98, its entry count in r21 (0x00562BC4). The player's own
+    messages are hidden too (a keep-own filter needs three hooks with condition-register edits; not worth it);
+  - bloodstains: the `getReplayList` parser 0x005607D0, its count in r18 (0x00560904). The soul bloodstain is
+    the game's own (GameDataMan) and stays;
+  - ghosts: the ghost tick 0x003A5808's "start a ghost" flag (r29 at 0x003A5CA8). Ghosts already walking finish.
+- **Empty is the game's own path.** A zero count removes the records shown before, through the same removal lists
+  the game uses when the server's list changes. An empty list is cached under the key -1, so the block's real list
+  stays cached and comes back when the row is switched on.
+- **At once.** Both lists have a per-block cache that lasts 30 minutes, and the scheduler parses them again every
+  300 s and at area changes, from that cache while it is fresh (so the "An area change fetches messages again"
+  above is from the cache). When a row changes, the hook zeroes that list's last time in the scheduler (0x0054E8C0
+  bloodstains, 0x0054E8F8 messages), so it is parsed again on the next tick.
+
 ## 6. Safety, consent and defaults
 
 - **Online on by default** (your decision). Test runs stay offline: `deslib.sh` sets `DES_ONLINE=0` for every test

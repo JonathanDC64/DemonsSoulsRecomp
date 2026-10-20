@@ -53,6 +53,9 @@ constexpr Def kDefs[] = {
     {"DES_NET_PASSWORD", "", Apply::Live},     // matchmaking password; a hash of it goes to the server; "" = everyone
     {"DES_NET_TENDENCY", "", Apply::Live},     // des_qwc_local: "" = the server's mixed in (the game's), "own" = yours only
     {"DES_NET_RATING_POLL", "", Apply::Live},  // des_net_grade_poll: seconds between rating checks; "" = the game's 300
+    {"DES_NET_MESSAGES", "1", Apply::Live},    // des_net_show: 0 hides other players' messages
+    {"DES_NET_BLOODSTAINS", "1", Apply::Live}, // des_net_show: 0 hides other players' bloodstains
+    {"DES_NET_GHOSTS", "1", Apply::Live},      // des_net_show: 0 hides wandering ghosts
     {"DES_NET_SYNC", "", Apply::Live},         // des_net_sync: position packets a second; "" = every 6th frame
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
     {"show_start_screen", "1", Apply::UiOnly},

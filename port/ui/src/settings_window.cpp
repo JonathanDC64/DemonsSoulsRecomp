@@ -647,6 +647,15 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "smooths you on their screens; they need it for you to see them smoother. Under 1 KB a second "
             "more. Applies at once.<br/><br/>(DES_NET_SYNC)");
 
+        leftPane.add_section("In your world");
+        bool_row(leftPane, rightPane, "Messages", "DES_NET_MESSAGES",
+            "Messages from other players. Off hides all of them, yours too.<br/><br/>(DES_NET_MESSAGES)");
+        bool_row(leftPane, rightPane, "Bloodstains", "DES_NET_BLOODSTAINS",
+            "Other players' bloodstains. Your own bloodstain with your souls always shows.<br/><br/>"
+            "(DES_NET_BLOODSTAINS)");
+        bool_row(leftPane, rightPane, "Ghosts", "DES_NET_GHOSTS",
+            "Other players' ghosts walking through your world.<br/><br/>(DES_NET_GHOSTS)");
+
         leftPane.add_section("This session");
         info_row(leftPane, rightPane, "Network", net_cheat_session() ? Rml::String("Off: cheats used") : settings::net_status(),
             net_cheat_session()

@@ -1123,6 +1123,62 @@ extern "C" void des_net_grade_poll(ppu_context* ctx, uint32_t)
     if (ctx->gpr[0] >= (uint64_t)every) ctx->gpr[0] = 0x12D;
 }
 
+/* DES_NET_MESSAGES / DES_NET_BLOODSTAINS / DES_NET_GHOSTS = 0: hide what
+ * other players put in your world through the server (docs/69, "Showing
+ * messages, bloodstains and ghosts"). Each is on (1) by default, the game as
+ * it is. The requests and uploads go on as before; only the lists are taken
+ * as empty:
+ * - messages: the getBloodMessage parser 0x00562A98 reads the entry count
+ *   into r21 (0x00562BC4). 0 takes the game's own empty-reply path: the
+ *   messages shown are removed, the player's own too. An empty list is
+ *   cached under the key -1, so the real list comes back when switched on.
+ * - bloodstains: the getReplayList parser 0x005607D0, the count in r18
+ *   (0x00560904), the same way. The soul bloodstain is the game's own and
+ *   stays.
+ * - ghosts: the ghost tick 0x003A5808 sets r29 = 1 to start the next ghost
+ *   (0x003A5CA8); 0 starts none, and those walking finish their path.
+ * A switch applies at once: the network scheduler 0x0054E7E8 loads each
+ * list's last time (bloodstains +0xC8 at 0x0054E8C0, messages +0xD0 at
+ * 0x0054E8F8), and a 0 there makes it parse the list again, from its cache.
+ * Main thread. */
+extern "C" void des_net_show(ppu_context* ctx, uint32_t addr)
+{
+    static int msgs = 1, stains = 1, ghosts = 1;
+    PS3_KNOB(msgs, ps3_env_int("DES_NET_MESSAGES", 1) != 0);
+    PS3_KNOB(stains, ps3_env_int("DES_NET_BLOODSTAINS", 1) != 0);
+    PS3_KNOB(ghosts, ps3_env_int("DES_NET_GHOSTS", 1) != 0);
+    static int msgs_seen = 1, stains_seen = 1;
+    switch (addr) {
+    case 0x00562BC4u:   /* mr r21, r3: the message count */
+        if (!msgs && ctx->gpr[21]) {
+            fprintf(stderr, "[des] messages hidden (%u from the server)\n", (unsigned)ctx->gpr[21]);
+            ctx->gpr[21] = 0;
+        }
+        break;
+    case 0x00560904u:   /* mr r18, r3: the bloodstain count */
+        if (!stains && ctx->gpr[18]) {
+            fprintf(stderr, "[des] bloodstains hidden (%u from the server)\n", (unsigned)ctx->gpr[18]);
+            ctx->gpr[18] = 0;
+        }
+        break;
+    case 0x003A5CA8u:   /* li r29, 1: start a ghost */
+        if (!ghosts) ctx->gpr[29] = 0;
+        break;
+    case 0x0054E8C0u:   /* ld r0, 0xc8(r31): the bloodstain list's last time */
+        if (stains != stains_seen) {
+            stains_seen = stains;
+            ctx->gpr[0] = 0;
+        }
+        break;
+    case 0x0054E8F8u:   /* ld r0, 0xd0(r31): the message list's last time */
+        if (msgs != msgs_seen) {
+            msgs_seen = msgs;
+            ctx->gpr[0] = 0;
+        }
+        break;
+    }
+}
+
 /* A step a camera adds once a frame, cur += input * step, tuned for 30 fps:
  * the bow's aim view zooms by 0.1 of its range a frame (ChrAimCam 0x00110608,
  * +0x138 += input * +0x13C, then clamped to [0, 1]), so at 120 fps it zoomed

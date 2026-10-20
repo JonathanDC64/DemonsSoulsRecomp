@@ -294,6 +294,7 @@ issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
 | `DES_UI_SHOT=<a.bmp>[,frame][;<b.bmp>,frame...]` | Write the back buffer, UI included, at that presented frame (default 300). |
 | `DES_UI_KEYS=<frame>:<KEY>[,...]` | Press keys at presented frames: F1 ESC UP DOWN LEFT RIGHT ENTER PGUP PGDN TAB SPACE. OSK opens the on-screen keyboard as the game would, and a digit (0-9) is typed, for a number field. With DES_UI_SHOT, a test can walk the menus. |
 | `DES_UI_NO_ANIM=1` | No transitions. |
+| `RSX_OVERLAY_REPAINT=0` | The UI moves only with the game's frames, not at the display's refresh rate (live; "The UI's frame rate" below). |
 | `DES_UI_SOUND=0` | No UI sounds. |
 | `DES_PRECOMPILE=0` / `force` | No startup shader pass / one whatever the stamp says (above). |
 | `DES_TROPHY_TEST=<id>` | Unlock trophy `<id>` (0-127) through the sceNpTrophy HLE as the game would (unlock file, platinum rule, pop-up), once the game has registered its trophies. Also live: the debug console's `setenv DES_TROPHY_TEST=<id>`; each new value unlocks once. It is a real unlock in the unlock file, so point `PS3_TROPHY_DIR=<folder>` at a scratch folder. |
@@ -391,6 +392,42 @@ first frame when the start screen shows).
 
 Measured with `levelcap` A/B (the same exe, `DES_UI=0` against the UI
 installed and hidden), see the end of this file.
+
+### The UI's frame rate
+
+The UI is drawn in the overlay's `frame` hook, so on its own it would move only
+when the game presents a frame: 30 times a second at the original frame rate,
+and not at all through a hitch. While a document is up (and through its
+closing fade), `frame` turns on `rsx_d3d12_overlay_repaint` (ps3recomp): the
+render thread then shows the last game frame again between the game's own,
+with the UI drawn on it, so the menu moves at the display's refresh rate.
+This is what FFCCEOT-Recomp does as well: its game thread presents once per
+display refresh, with the 3D blended between emulated frames, and the UI is
+drawn on every present.
+
+How the runtime does it:
+
+- Each frame the game presents is copied to a held texture before it is
+  scaled into the window (one copy per game frame, only while repaints are on).
+- At the render thread's idle point (the ticker, between FIFO drains) a
+  repaint is made when a refresh has no frame yet and is at least half over,
+  and the swap chain has no frame waiting to be shown. A frame the game
+  presents earlier in that refresh shows instead, so the game's frames are
+  never held back. The refresh period and phase come from DWM
+  (`DwmGetCompositionTimingInfo`), else from the display mode.
+- A repaint does not count as a game frame: not in the title bar's FPS, not
+  in `FRAME_LOG`, not in `RSX_CAP`'s frame numbers. `GCM_RATES=1` prints
+  them as `repaints=` per second.
+- `RSX_OVERLAY_REPAINT=0` (live) turns repaints off. Scripted UI runs
+  (`DES_UI_KEYS`, `DES_UI_SHOT`) leave them off, as they count frames.
+
+A hitch on the render thread itself (a shader compiled there) still stops
+the UI; a hitch anywhere else (the game's threads, loading) does not.
+
+Measured 2026-10-20 on a 144 Hz display, the Settings window open
+(`DES_UI_OPEN=settings`, `GCM_RATES=1`): at 30 fps, 30 presents and about
+114 repaints a second; at `DES_FPS=120`, 120 and 24. The game's rate was
+the same with repaints off.
 
 ### Gamepad chord
 

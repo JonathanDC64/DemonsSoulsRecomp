@@ -238,6 +238,21 @@ Addresses are from the EBOOT (static analysis, 2026-10-20):
 Not settled statically: when the event script calls the once-per-load blend. Whether 0x00920FC8 can run after a save
 has loaded is also open.
 
+### Message ratings
+
+A rating reaches its message's author late, by design of the client (read: EBOOT disassembly, 2026-10-20):
+- **The author.** Only the `getBloodMessageGrade` reply (the player's total rating) tells the game. A step that runs
+  each frame (0x0049BFF8) compares the total with the one it saw last. When it went up, the game heals the player
+  and shows that a message was rated. The `getBloodMessage` reply never feeds that check.
+- **When it asks.** The network scheduler (0x0054E7E8) asks at the login, on its first tick, then every 300 s (the
+  0x12C at 0x0054E938). An area change fetches messages again but not the grade. The server cannot push anything:
+  the client only acts on replies to its own requests. So on the PS3 too, a rating showed up to 5 minutes later.
+- **The rater.** Rating a message adds 1 to the game's own copy (0x003863E0) and sends `updateBloodMessageGrade`.
+  A message already open on screen keeps the number it opened with; read again, it shows the new one.
+- **The option.** The Network tab's **Message ratings** (DES_NET_RATING_POLL): "Every 5 minutes" (the game's) or
+  "Every 30 seconds". `des_net_grade_poll`, after the `subf` at 0x0054E934 (r0 = seconds since the last ask),
+  makes the scheduler ask from that many seconds on. Live.
+
 ## 6. Safety, consent and defaults
 
 - **Online on by default** (your decision). Test runs stay offline: `deslib.sh` sets `DES_ONLINE=0` for every test

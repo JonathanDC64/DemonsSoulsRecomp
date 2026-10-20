@@ -52,6 +52,7 @@ constexpr Def kDefs[] = {
     {"DES_NET_P2P_PORT", "3658", Apply::Restart},  // PS3_NET_P2P_PORT, 1024-65535
     {"DES_NET_PASSWORD", "", Apply::Live},     // matchmaking password; a hash of it goes to the server; "" = everyone
     {"DES_NET_TENDENCY", "", Apply::Live},     // des_qwc_local: "" = the server's mixed in (the game's), "own" = yours only
+    {"DES_NET_RATING_POLL", "", Apply::Live},  // des_net_grade_poll: seconds between rating checks; "" = the game's 300
     {"DES_NET_SYNC", "", Apply::Live},         // des_net_sync: position packets a second; "" = every 6th frame
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
     {"show_start_screen", "1", Apply::UiOnly},
@@ -98,8 +99,10 @@ void make_dirs(const std::string& file) {
 void apply_env(std::string_view key, const std::string& value) {
     const std::string k(key);
     // (an unset option stays unset; DES_FPS "" is the game's mode, PAD_MAP "" the game's buttons, PAD_KEYS "" the
-    // layout as it is)
-    if (value.empty() && key != "DES_FPS" && key != "PAD_MAP" && key != "PAD_KEYS") return;
+    // layout as it is, and the two online rows' "" the game's behaviour again)
+    if (value.empty() && key != "DES_FPS" && key != "PAD_MAP" && key != "PAD_KEYS" && key != "DES_NET_TENDENCY" &&
+        key != "DES_NET_RATING_POLL")
+        return;
     if (key == "DES_NET_PASSWORD") return;  // (only its hash is used, in PS3_HTTP_HEADER: apply_match_group)
     if (key == "PAD_KEYS") {
         ps3_setenv("PAD_KEYS", keys_with_layout(value).c_str());

@@ -1105,6 +1105,24 @@ extern "C" void des_qwc_local(ppu_context* ctx, uint32_t)
     }
 }
 
+/* DES_NET_RATING_POLL=<seconds>, 30-299: how often the game asks the server
+ * whether the player's messages were rated (docs/69, "Message ratings"). The
+ * game asks for the player's total rating (getBloodMessageGrade) every 300
+ * s: its network scheduler 0x0054E7E8 tests the seconds since the last ask
+ * against 0x12C at 0x0054E938. When the total has gone up, a step that runs
+ * each frame (0x0049BFF8) heals the player and shows that a message was
+ * rated. So a rating showed up to 5 minutes late, as on the PS3; the server
+ * cannot push it. Called after the subf at 0x0054E934 (r0 = the seconds
+ * since the last ask): from the knob's seconds on, r0 becomes 301. "" (the
+ * default) leaves the game's 300 s. Main thread. */
+extern "C" void des_net_grade_poll(ppu_context* ctx, uint32_t)
+{
+    static int every = 0;
+    PS3_KNOB(every, ps3_env_int("DES_NET_RATING_POLL", 0));
+    if (every < 30 || every >= 300) return;
+    if (ctx->gpr[0] >= (uint64_t)every) ctx->gpr[0] = 0x12D;
+}
+
 /* A step a camera adds once a frame, cur += input * step, tuned for 30 fps:
  * the bow's aim view zooms by 0.1 of its range a frame (ChrAimCam 0x00110608,
  * +0x138 += input * +0x13C, then clamped to [0, 1]), so at 120 fps it zoomed

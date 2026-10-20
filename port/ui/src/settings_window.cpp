@@ -605,6 +605,13 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "server for the others' average, and as a phantom you still see your host's world. A mix already "
             "saved stays. Applies from the next load.<br/><br/>(DES_NET_TENDENCY)");
 
+        choice_row(leftPane, rightPane, "Message ratings", "DES_NET_RATING_POLL", {"", "30"},
+            {"Every 5 minutes", "Every 30 seconds"},
+            "How often the game asks the server whether someone rated one of your messages. When someone has, you "
+            "are healed and told so. The game asks every 5 minutes, as on the PS3, so a rating can show up to 5 "
+            "minutes late. Every 30 seconds sends one small request more every 30 seconds. Applies at once."
+            "<br/><br/>(DES_NET_RATING_POLL)");
+
         auto& port = leftPane.add_child<NumberButton>(NumberButton::Props{
             .key = "P2P port",
             .getValue = net_p2p_port,

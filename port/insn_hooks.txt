@@ -123,6 +123,12 @@
 0x00265C88=des_fade_rate   # lfs f13, 1/30 (0x018D691C): type 14 fading in
 0x0026558C=des_fade_rate   # lfs f13, 1/30: type 14 fading out
 
+# des_net_sync (port/des_options.cpp): remote players (docs/69, "Remote
+# players"). The send counter's reload sets how often this player's position
+# goes out; the move-times-30 product picks a remote's walk or run.
+0x00313B24=des_net_sync   # li r0, 5: PadManipulator's type-1 send counter (+0x198) reload, one packet per 6 frames
+0x0030C46C=des_net_sync   # fmuls f12, f0, f12: |move| * 30 in NetworkManipulator's SetMoveVector, tested against 0.01/2/6
+
 # des_fx_state (port/des_options.cpp): particle effect (FFX) nodes' state
 # machine in the scene update 0x013B74B8. An emitter repeats by re-entering its
 # own state, at most once an update: 30 times a second at 30 fps, 240 at 240.

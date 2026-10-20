@@ -596,6 +596,15 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                 pane.add_rml(helpText);
             });
 
+        choice_row(leftPane, rightPane, "Your movement updates", "DES_NET_SYNC", {"", "15"},
+            {"Original (every 6th frame)", "Smoother (15 a second)"},
+            "How often the game sends your position to the players in your world. The original sends it every "
+            "sixth frame, 5 times a second at 30 fps, and the other players' games chase the last position they "
+            "got: when you stop, they see you walk on for most of a second. Smoother sends it 15 times a second, "
+            "so they see you stop within about a quarter of a second. It changes what your game sends, so it "
+            "smooths you on their screens; they need it for you to see them smoother. Under 1 KB a second "
+            "more. Applies at once.<br/><br/>(DES_NET_SYNC)");
+
         leftPane.add_section("This session");
         info_row(leftPane, rightPane, "Network", net_cheat_session() ? Rml::String("Off: cheats used") : settings::net_status(),
             net_cheat_session()

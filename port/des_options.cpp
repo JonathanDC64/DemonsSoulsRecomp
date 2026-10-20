@@ -874,6 +874,43 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
 }
 
+/* Remote players (docs/69, "Remote players"). The local player's position
+ * goes to the other players in a type-1 packet every 6 game frames:
+ * PadManipulator counts +0x198 down once a frame, sends at 0, and reloads it
+ * with `li r0, 5` at 0x00313B24, so 5 packets a second at 30 fps. The
+ * packet holds the position and nothing about time or speed. The receiving
+ * NetworkManipulator (OnPacket 0x0030C090) chases the last position at
+ * distance / (1.2 * the gap since the previous packet), so after a stop the
+ * other copy shows the walk dying out over about 0.7 s, as on a PS3.
+ *
+ * DES_NET_SYNC=<n>: send n packets a second (every second frame at most, as
+ * a reload of 0 would never send); 15 at 30 fps is every other frame, and the
+ * tail on the other copies shrinks with the gap. It changes what this copy
+ * sends, so it smooths this player on the others' screens. Unset = the
+ * game's 6 frames. Live.
+ *
+ * SetMoveVector (0x0030C378) picks the remote's walk, run or dash from the
+ * frame's move times 30 (the fmuls at 0x0030C46C): a speed only at 30 fps,
+ * so above it a running remote walks. That product is scaled by 1/(30 dt);
+ * nothing at 30 fps or without DES_FPS, off with DES_NETFIX=0. Main thread. */
+extern "C" void des_net_sync(ppu_context* ctx, uint32_t addr)
+{
+    const float dt = vm_readf(kFrameDt);
+    if (addr == 0x00313B24u) {   /* li r0, 5: the send counter's reload */
+        static int hz = 0;
+        PS3_KNOB(hz, ps3_env_int("DES_NET_SYNC", 0));
+        if (hz <= 0 || !(dt > 0.0f)) return;
+        int frames = (int)(1.0f / ((float)hz * dt) + 0.5f);
+        if (frames < 2) frames = 2;
+        ctx->gpr[0] = (uint64_t)(frames - 1);
+        return;
+    }
+    static int on = 1;   /* 0x0030C46C, fmuls f12, f0, f12: |move| * 30 */
+    PS3_KNOB(on, ps3_env_int("DES_NETFIX", 1) != 0);
+    if (!on || s_fps <= 0 || !(dt > 0.0f && dt <= kMaxFrameDt)) return;
+    ctx->fpr[12] = (float)(ctx->fpr[12] / (30.0 * dt));
+}
+
 /* A step a camera adds once a frame, cur += input * step, tuned for 30 fps:
  * the bow's aim view zooms by 0.1 of its range a frame (ChrAimCam 0x00110608,
  * +0x138 += input * +0x13C, then clamped to [0, 1]), so at 120 fps it zoomed

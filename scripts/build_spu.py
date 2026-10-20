@@ -51,8 +51,10 @@ NATIVE_HOOKS = {
 NATIVE_BLOCKS = {
     # HighGraphics' ring consumer (image 2): the step that takes each ring
     # command, its GETLLAR and unchanged PUTLLC as one read when the ring
-    # already holds a command. SPU_NATIVE_RING=0 turns it off.
-    "spu_0001_at_0176C200": (0x4FBCAB40231BF72B, ["0x4618-0x4730=spu_hook_ring_fetch"]),
+    # already holds a command. SPU_NATIVE_RING=0 turns it off. And the end of
+    # each command, the call to 0x3C90 that stores the next output position,
+    # while the buffer has room. SPU_NATIVE_POST=0 turns it off.
+    "spu_0001_at_0176C200": (0x4FBCAB40231BF72B, ["0x4618-0x4730=spu_hook_ring_fetch", "0x4808-0x4818=spu_hook_ring_post"]),
 }
 
 

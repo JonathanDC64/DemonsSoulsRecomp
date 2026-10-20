@@ -244,6 +244,59 @@ it can be filtered there without touching game code (inferred).
   those two. Each copy has to run from the repository folder, because the runtime reads some files relative to it
   (`work/libsre/libsre_image.bin`).
 
+## 7a. Remote players: why a stop shows late (read: EBOOT disassembly and two-copy traces, 2026-10-20)
+
+In co-op between two local copies, a player who stops keeps walking on the other screen for most of a second. The
+transport is not the cause: in a traced run every datagram arrived within about 10 ms, with 13 of 3014 lost. The
+game's own sync makes the delay. The addresses below come from static analysis of the EBOOT, and the send rate was
+checked against the trace.
+
+**Sending.** The local player's PadManipulator sends a type-1 packet with its position, rotation and HP
+(0x00313AD0, through 0x00525B70). The packet has no timestamp, no speed and no animation state. A counter at +0x198
+counts down once a frame, sends at 0, and reloads with `li r0, 5` at 0x00313B24. One packet goes out every 6 frames:
+5 a second at 30 fps. The trace agrees: the 52-byte datagrams left 200 ms apart.
+
+**Receiving.** The NetworkManipulator update (0x0030C870) drains every queued type-1 packet each frame. For each one
+(0x0030C090) it sets the chase speed to the distance left divided by 1.2 times the time since the previous packet,
+counted with its own frame times. A jump faster than 20 m/s, or a gap over 2 s, snaps instead. Each frame the body
+moves at that speed toward the last position, and lands on it only when one more step would pass it. So it covers
+5/6 of each gap's distance before the next packet arrives.
+
+**The animation.** SetMoveVector (0x0030C378) picks idle, walk, run or dash from the frame's move times 30 (the
+fmuls at 0x0030C46C), against 0.01, 2 and 6. When the sender stops, the stop is seen with the next packet, up to
+200 ms later. Each later packet then leaves a sixth of the distance, and the walk plays until the chase drops under
+0.01 m/s: about 0.7 s for a walk and 0.8 s for a run, by a simple model. This is the game's behaviour on a PS3 too,
+inferred from the code; it was not compared with a PS3.
+
+**What the port changes** (`des_net_sync`, port/des_options.cpp):
+- **DES_NET_SYNC=n** (Network tab, "Your movement updates"): this copy sends n packets a second, at most every
+  second frame. 15 at 30 fps is every other frame, and the tail on the other screen drops to about a quarter of a
+  second. It changes what this copy sends, so each player needs it for the others to see them smoother. Off by
+  default (the original rate). Receivers take any rate, since they time the gap themselves.
+- **Above 30 fps** the move-times-30 product is not a speed: a running remote showed the walk. With DES_FPS set, the
+  hook scales it by 1/(30 dt). It does nothing at 30 fps.
+- **Packets under 150 ms apart** (a sender above 30 fps, or DES_NET_SYNC) broke the game's chase in three ways, all
+  seen in a two-copy log at 110 fps with packets about 45 ms apart:
+  - *The gait flickered.* The receiver counts each gap in its own frames, so a gap is off by up to one frame:
+    20-30% of 45 ms. The chase speed then jumps at every packet, and an early arrival drops the move under 0.01
+    for a frame, which picks idle at once (the other gaits wait 0.2 s). While packets come that often and the
+    sender moves, the gait comes from the sender's own speed instead: the distance between its last two positions
+    over their gap, averaged with the one before. That is the speed the chase settles to.
+  - *The speed surged.* The gap the chase divides by (+0x21C, at 0x0030C330) is replaced with an exponential
+    average of the recent gaps (a fifth of each new one).
+  - *The stick let go.* A chase that reaches the last position before the next packet moves nothing until it, and
+    SetMoveVector turns a zero move into a zero stick. While the sender moves, such a frame gets a 0.1 mm move
+    along the last direction, so the stick holds.
+
+  In a replay of that log, the speed jumps at packets fell from p90 1.6 m/s to 0.6, and the zero-move frames from
+  29 to none, with the same lag (5 cm on average). At the game's own rate (30 fps, 200 ms) none of this applies.
+  DES_NETFIX=0 turns all of the receiving side off. DES_NETLOG=1 logs each remote's chase every frame.
+- A copy running below 30 fps sends less often, and the others see it stop later. This is why one slow copy on a
+  shared PC looks laggier than the other.
+
+Not settled: which thread polls the socket, and whether the remote body moves by the move vector or by root motion
+(the design suggests the move vector).
+
 ## 8. Decisions for you
 
 1. **Archstones as the default server:** ask Yuvi first (Demon's Souls Discord), or ship the preset now?

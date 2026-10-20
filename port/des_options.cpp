@@ -874,6 +874,199 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
 }
 
+/* DES_NETLOG=1: seconds since the first line, for des_net_sync's log. */
+static double net_log_time()
+{
+    static const auto start = std::chrono::steady_clock::now();
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
+
+/* What des_net_sync keeps about each remote player, by its NetworkManipulator
+ * (eight at most; a new one takes the slot used longest ago). Main thread. */
+struct NetRemote {
+    uint32_t m;
+    float x, z;          /* the target at the last packet */
+    float acc;           /* seconds since it */
+    float speed, gap;    /* the sender's speed, and the last gap between packets */
+    float gap_avg;       /* those gaps averaged, 0 after a long one */
+    float dir_x, dir_z;  /* the direction of the last move that went somewhere */
+    unsigned last_use;
+};
+static NetRemote s_net_rem[8];
+
+/* A vector register's word as the guest's float bits, and back (the register
+ * holds guest bytes). */
+static uint32_t net_swap(uint32_t b)
+{
+    return (b >> 24) | ((b >> 8) & 0xFF00u) | ((b << 8) & 0xFF0000u) | (b << 24);
+}
+
+static NetRemote* net_remote(uint32_t m)
+{
+    static unsigned use;
+    NetRemote* r = nullptr;
+    for (NetRemote& e : s_net_rem)
+        if (e.m == m) { r = &e; break; }
+    if (!r) {
+        r = &s_net_rem[0];
+        for (NetRemote& e : s_net_rem)
+            if (e.last_use < r->last_use) r = &e;
+        *r = NetRemote{m, vm_readf(m + 0x1D0), vm_readf(m + 0x1D8), 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0};
+    }
+    r->last_use = ++use;
+    return r;
+}
+
+/* Once a frame, from SetMoveVector's entry: the sender's speed. The game
+ * picks idle / walk / run / dash from the frame's chase move (speed below 0.01,
+ * 2 and 6 m/s), and the chase restarts at each packet at distance / (1.2 *
+ * the last gap) and stops dead when it reaches the last position early. With
+ * packets 200 ms apart (30 fps, the game's rate) that holds steady; 40-60 ms
+ * apart (a sender above 30 fps, or DES_NET_SYNC) the gaps jitter by a frame
+ * or two, the chase arrives early on a fifth of the frames, and each arrival
+ * shows idle for at least 0.2 s (the gait's hold): a walk that flickers into
+ * idle, and a walk that reads as a run. The sender's speed is the distance
+ * between its last two positions over their gap, averaged with the one
+ * before: the speed the game's chase settles to (its 1.2 lead sets only how
+ * far behind it trails). */
+static void net_remote_frame(NetRemote* r, float dt)
+{
+    const uint32_t m = r->m;
+    r->acc += dt;
+    if (vm_readf(m + 0x21C) != 0.0f) return;   /* the update resets its gap timer on a packet */
+    const float x = vm_readf(m + 0x1D0), z = vm_readf(m + 0x1D8);
+    const float d = std::sqrt((x - r->x) * (x - r->x) + (z - r->z) * (z - r->z));
+    const float gap = r->acc;
+    r->x = x; r->z = z; r->acc = 0.0f;
+    if (gap > 0.0f) {   /* (a second packet in the same frame: no gap to measure) */
+        r->gap = gap;
+        const float v = d / gap;
+        r->speed = (d < 0.005f || v > 20.0f) ? 0.0f : (r->speed > 0.0f ? 0.5f * (r->speed + v) : v);
+    }
+}
+
+/* The sender's speed while packets come under 150 ms apart and it moves; -1
+ * for a packet with the same position (it stopped), a gap over 150 ms, or a
+ * jump over 20 m/s (a warp): then the game's own value stands. */
+static float net_remote_gait(const NetRemote* r)
+{
+    if (r->gap > 0.15f || r->acc > 0.15f || r->speed <= 0.0f) return -1.0f;
+    return r->speed;
+}
+
+/* Remote players (docs/69, "Remote players"). The local player's position
+ * goes to the other players in a type-1 packet every 6 game frames:
+ * PadManipulator counts +0x198 down once a frame, sends at 0, and reloads it
+ * with `li r0, 5` at 0x00313B24, so 5 packets a second at 30 fps. The
+ * packet holds the position and nothing about time or speed. The receiving
+ * NetworkManipulator (OnPacket 0x0030C090) chases the last position at
+ * distance / (1.2 * the gap since the previous packet), so after a stop the
+ * other copy shows the walk dying out over about 0.7 s, as on a PS3.
+ *
+ * DES_NET_SYNC=<n>: send n packets a second (every second frame at most, as
+ * a reload of 0 would never send); 15 at 30 fps is every other frame, and the
+ * tail on the other copies shrinks with the gap. It changes what this copy
+ * sends, so it smooths this player on the others' screens. Unset = the
+ * game's 6 frames, and never less often than those (above 30 fps they are
+ * more than 5 a second). DES_NETLOG=1 logs each reload and, each frame, each
+ * remote's chase (move, gait, timers, velocity, target). Live.
+ *
+ * SetMoveVector (0x0030C378) picks the remote's walk, run or dash from the
+ * frame's move times 30 (the fmuls at 0x0030C46C): a speed only at 30 fps,
+ * so above it a running remote walked. While packets come under 150 ms apart
+ * the gait comes from the sender's speed (net_remote_gait); otherwise, with
+ * DES_FPS set, the product is scaled by 1/(30 dt).
+ *
+ * With packets that close, the chase also jumps at each one: the gap the game
+ * divides by (+0x21C, 0x0030C330) is counted in the receiver's frames and is
+ * off by up to one, 20-30% of 45 ms, so the remote surges and slows 20 times
+ * a second. That gap is replaced with the average of the recent ones (an
+ * exponential average, a fifth of each new gap). And a chase that reaches the
+ * last position before the next packet (the game then moves nothing until
+ * it) handed SetMoveVector a zero move, which sets the remote's stick to
+ * zero: a frame of letting go mid-walk. While the sender moves, such a frame
+ * gets a 0.1 mm move along the last direction instead, so the stick holds.
+ * In a replay of a 110 fps log, the jumps at packets halved (p90 1.6 to 0.6
+ * m/s) and the zero frames went from 29 to none, with the same lag.
+ *
+ * At 30 fps with the game's packet rate none of this applies. DES_NETFIX=0
+ * turns it all off. Main thread. */
+extern "C" void des_net_sync(ppu_context* ctx, uint32_t addr)
+{
+    const float dt = vm_readf(kFrameDt);
+    static int log = 0;
+    PS3_KNOB(log, env_on("DES_NETLOG"));
+    if (addr == 0x00313B24u) {   /* li r0, 5: the send counter's reload */
+        static int hz = 0;
+        PS3_KNOB(hz, ps3_env_int("DES_NET_SYNC", 0));
+        if (hz > 0 && dt > 0.0f) {
+            /* never less often than the game's 6 frames: above 30 fps those
+             * are already more than 5 a second */
+            int frames = (int)(1.0f / ((float)hz * dt) + 0.5f);
+            if (frames < 2) frames = 2;
+            if (frames > 6) frames = 6;
+            ctx->gpr[0] = (uint64_t)(frames - 1);
+        }
+        if (log) fprintf(stderr, "[netlog] %.3f send reload %u dt=%.4f\n", net_log_time(), (unsigned)ctx->gpr[0], dt);
+        return;
+    }
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_NETFIX", 1) != 0);
+    const bool fix = on && dt > 0.0f && dt <= kMaxFrameDt;
+    if (addr == 0x0030C330u) {   /* fmuls f0, f12, f0: OnPacket's 1.2 * gap; r31 = the manipulator */
+        if (!fix) return;
+        NetRemote* r = net_remote((uint32_t)ctx->gpr[31]);
+        const float gap = (float)ctx->fpr[12];
+        if (!(gap > 0.0f && gap < 0.15f)) {
+            r->gap_avg = 0.0f;
+            return;
+        }
+        r->gap_avg = r->gap_avg > 0.0f ? r->gap_avg + 0.2f * (gap - r->gap_avg) : gap;
+        ctx->fpr[0] = (float)(ctx->fpr[0] * (r->gap_avg / gap));
+        return;
+    }
+    if (addr == 0x0030C378u) {   /* SetMoveVector's entry: v2 = this frame's move, r3 = the manipulator */
+        if (!fix) return;
+        NetRemote* r = net_remote((uint32_t)ctx->gpr[3]);
+        net_remote_frame(r, dt);
+        float mv[3];
+        for (int i = 0; i < 3; i++) {
+            const uint32_t b = net_swap(ctx->vr[2].w[i]);
+            memcpy(&mv[i], &b, 4);
+        }
+        const float len = std::sqrt(mv[0] * mv[0] + mv[2] * mv[2]);
+        if (len > 1e-5f) {
+            r->dir_x = mv[0] / len;
+            r->dir_z = mv[2] / len;
+        } else if (len < 1e-6f && net_remote_gait(r) >= 0.0f && (r->dir_x != 0.0f || r->dir_z != 0.0f)) {
+            const float hold[2] = {r->dir_x * 1e-4f, r->dir_z * 1e-4f};
+            for (int i = 0; i < 2; i++) {
+                uint32_t b;
+                memcpy(&b, &hold[i], 4);
+                ctx->vr[2].w[2 * i] = net_swap(b);
+            }
+            if (log) fprintf(stderr, "[netlog] %.3f m=%08X stick held\n", net_log_time(), r->m);
+        }
+        return;
+    }
+    /* 0x0030C46C, fmuls f12, f0, f12: |move| * 30; r3 = the NetworkManipulator */
+    if (log) {
+        const uint32_t m = (uint32_t)ctx->gpr[3];
+        fprintf(stderr, "[netlog] %.3f m=%08X mv=%.5f dt=%.4f cat=%u tmr=%.3f since=%.4f snap=%u "
+                        "vel=%.3f,%.3f,%.3f tgt=%.3f,%.3f,%.3f\n",
+                net_log_time(), m, ctx->fpr[0], dt, vm_read8(m + 0x224), vm_readf(m + 0x220), vm_readf(m + 0x21C),
+                vm_read8(m + 0x1CC), vm_readf(m + 0x1F0), vm_readf(m + 0x1F4), vm_readf(m + 0x1F8),
+                vm_readf(m + 0x1D0), vm_readf(m + 0x1D4), vm_readf(m + 0x1D8));
+    }
+    if (!fix) return;
+    const float gait = net_remote_gait(net_remote((uint32_t)ctx->gpr[3]));
+    if (gait >= 0.0f) {
+        ctx->fpr[12] = gait;
+        return;
+    }
+    if (s_fps > 0) ctx->fpr[12] = (float)(ctx->fpr[12] / (30.0 * dt));
+}
+
 /* A step a camera adds once a frame, cur += input * step, tuned for 30 fps:
  * the bow's aim view zooms by 0.1 of its range a frame (ChrAimCam 0x00110608,
  * +0x138 += input * +0x13C, then clamped to [0, 1]), so at 120 fps it zoomed

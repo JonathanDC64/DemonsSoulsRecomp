@@ -297,6 +297,21 @@ inferred from the code; it was not compared with a PS3.
 Not settled: which thread polls the socket, and whether the remote body moves by the move vector or by root motion
 (the design suggests the move vector).
 
+## 7b. Wandering ghosts at high frame rates (read: EBOOT disassembly, 2026-10-20)
+
+Online, other players' ghosts walked far too fast above 30 fps.
+- **Recording** (the sender) runs on dt: ReplayRecorder (PlayerIns + 0x640, 0x002E4C68) adds a sample once 1/3 s
+  has passed. A sample is 32 bytes (position, rotation, two state ids) with no time in it, and a blob holds up to 27.
+  At 144 fps the samples are 0.340 s apart instead of 0.367 s, so uploads stay as on the PS3.
+- **Playback** (the receiver) runs on frames: ReplayManipulator's Update (0x00314C80) moves on to the next sample
+  every 10 frames (0x00315030), and 0x003146F0 splits the move and the turn to it into 10 per-frame steps (the 10.0
+  at 0x003147EC). SetMoveVector picks walk or run from the step times 30 (0x00314ABC).
+- **The fix**, `des_ghost_rate`: with DES_FPS set, N = 1/(3 dt) frames a sample, N as the divisor and 3 N as the
+  speed factor. All three are 10, 10 and 30 at 30 fps. DES_GHOSTFIX=0 turns it off. The constants are not patched in
+  place: the same 10.0 is also a distance test at 0x00314DC0.
+- Bloodstain replays and the `BeginReplayGhost` event most likely play through the same pair (ReplayGhostIns calls
+  SetReplay 0x003145D8), so they get the same fix. Not checked in a run.
+
 ## 8. Decisions for you
 
 1. **Archstones as the default server:** ask Yuvi first (Demon's Souls Discord), or ship the preset now?

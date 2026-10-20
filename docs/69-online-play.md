@@ -274,7 +274,23 @@ inferred from the code; it was not compared with a PS3.
   second. It changes what this copy sends, so each player needs it for the others to see them smoother. Off by
   default (the original rate). Receivers take any rate, since they time the gap themselves.
 - **Above 30 fps** the move-times-30 product is not a speed: a running remote showed the walk. With DES_FPS set, the
-  hook scales it by 1/(30 dt). It is on by default (DES_NETFIX=0 turns it off) and does nothing at 30 fps.
+  hook scales it by 1/(30 dt). It does nothing at 30 fps.
+- **Packets under 150 ms apart** (a sender above 30 fps, or DES_NET_SYNC) broke the game's chase in three ways, all
+  seen in a two-copy log at 110 fps with packets about 45 ms apart:
+  - *The gait flickered.* The receiver counts each gap in its own frames, so a gap is off by up to one frame:
+    20-30% of 45 ms. The chase speed then jumps at every packet, and an early arrival drops the move under 0.01
+    for a frame, which picks idle at once (the other gaits wait 0.2 s). While packets come that often and the
+    sender moves, the gait comes from the sender's own speed instead: the distance between its last two positions
+    over their gap, averaged with the one before. That is the speed the chase settles to.
+  - *The speed surged.* The gap the chase divides by (+0x21C, at 0x0030C330) is replaced with an exponential
+    average of the recent gaps (a fifth of each new one).
+  - *The stick let go.* A chase that reaches the last position before the next packet moves nothing until it, and
+    SetMoveVector turns a zero move into a zero stick. While the sender moves, such a frame gets a 0.1 mm move
+    along the last direction, so the stick holds.
+
+  In a replay of that log, the speed jumps at packets fell from p90 1.6 m/s to 0.6, and the zero-move frames from
+  29 to none, with the same lag (5 cm on average). At the game's own rate (30 fps, 200 ms) none of this applies.
+  DES_NETFIX=0 turns all of the receiving side off. DES_NETLOG=1 logs each remote's chase every frame.
 - A copy running below 30 fps sends less often, and the others see it stop later. This is why one slow copy on a
   shared PC looks laggier than the other.
 

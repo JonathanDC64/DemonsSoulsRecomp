@@ -4,6 +4,7 @@
 
 #include "host.hpp"
 #include "settings.hpp"
+#include "version.hpp"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -28,10 +29,6 @@
 #include <regex>
 #include <sstream>
 #include <thread>
-
-#ifndef DES_VERSION
-#define DES_VERSION "dev"
-#endif
 
 extern "C" void ps3_setenv(const char* name, const char* value);  // boot_main.cpp: through the getenv cache
 
@@ -481,7 +478,7 @@ void set_data_dir(const std::filesystem::path& dir) {
 
 std::filesystem::path log_path() { return g_log_path; }
 
-std::string version() { return DES_VERSION; }
+std::string version() { return kVersion; }
 
 std::string timestamp() {
     const std::time_t t = std::time(nullptr);
@@ -521,6 +518,8 @@ std::string system_info() {
     o << "Developer build (cheats compiled in)\n";
 #endif
     o << "DemonsSoulsRecomp " << version() << "\n";
+    o << "ps3recomp: " << kPs3recompVersion << "\n";
+    o << "Game dump (EBOOT.ELF SHA-256): " << (*kDumpSha256 ? kDumpSha256 : "unknown") << "\n";
     {
         using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);
         OSVERSIONINFOW v{};

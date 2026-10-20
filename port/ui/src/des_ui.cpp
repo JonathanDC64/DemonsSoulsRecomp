@@ -32,6 +32,7 @@
 #include "trophies_window.hpp"
 #include "trophy_toasts.hpp"
 #include "ui.hpp"
+#include "version.hpp"
 
 #include <windows.h>
 #include <windowsx.h>
@@ -675,6 +676,8 @@ App& app() {
 extern "C" int des_ui_start_screen_up(void) { return sStartUp.load() ? 1 : 0; }
 
 extern "C" void des_ui_early_init(void) {
+    std::fprintf(stderr, "[des] DemonsSoulsRecomp %s, ps3recomp %s, game dump %.12s\n", ui::kVersion,
+                 ui::kPs3recompVersion, *ui::kDumpSha256 ? ui::kDumpSha256 : "unknown");
     ui::crash_report::install();  // (with DES_UI=0 too; nothing in a test run)
     if (const char* v = std::getenv("DES_UI"); v && !std::strcmp(v, "0")) {
         return;

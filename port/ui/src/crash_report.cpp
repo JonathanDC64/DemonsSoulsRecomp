@@ -6,6 +6,7 @@
 #include "crash_dialog.hpp"
 #include "mouse.hpp"
 #include "report.hpp"
+#include "version.hpp"
 
 #include <windows.h>
 // (after windows.h)
@@ -138,8 +139,9 @@ void write_report(const char* what, CONTEXT* context, EXCEPTION_POINTERS* info) 
         }
     }
     out("\n=== CRASH: %s ===\n", what);
-    out("version %s, last HLE call 0x%08X (%s), thread %lu\n", report::version().c_str(), g_last_hle_nid,
+    out("version %s, last HLE call 0x%08X (%s), thread %lu\n", kVersion, g_last_hle_nid,
         g_last_hle_name ? g_last_hle_name : "", GetCurrentThreadId());
+    out("ps3recomp %s, game dump %s\n", kPs3recompVersion, *kDumpSha256 ? kDumpSha256 : "unknown");
     const HANDLE process = GetCurrentProcess();
     SymRefreshModuleList(process);  // (the modules loaded since install)
     CONTEXT ctx = *context;

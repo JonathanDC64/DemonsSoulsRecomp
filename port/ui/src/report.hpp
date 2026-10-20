@@ -25,9 +25,10 @@ struct File {
 const std::filesystem::path& data_dir();
 void set_data_dir(const std::filesystem::path& dir);  // (the crash dialog process: the crashed game's)
 
-// "a1b2c3d" (the git commit the program was built from).
+// The port's version (version.hpp): "0.1.0", or "0.1.0-dev.<commits>+g<commit>" between releases.
 std::string version();
-// The operating system, processor, memory, graphics adapters and displays, one fact per line.
+// The port's version, the ps3recomp and the game dump it was built with, then the operating system, processor,
+// memory, graphics adapters and displays, one fact per line.
 std::string system_info();
 // Hides the user's name, profile folder, computer name, PSN name, e-mail addresses and the folders of this PC from
 // text that is going to be posted.

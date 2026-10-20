@@ -208,6 +208,9 @@ How it works:
   `X-DeS-Options: group=<hash>`. cellHttp adds that header to every request. The hash is the first 128 bits of
   SHA-256("des-match-group:" + password), so the password never leaves the PC. The header is key=value pairs
   separated by `;`, so later options can join it.
+- **Live.** A changed password applies at once: `apply_match_group` sets the new header, and cellHttp reads
+  `PS3_HTTP_HEADER` for each request. A sign already down stays in the old group until it is gone. A
+  `PS3_HTTP_HEADER` from the environment wins over the row.
 - **Matching.** Our dessego fork (JonathanDC64/dessego) reads `group=` and keeps it with each sign. `getSosData`
   lists only the requester's group, and `summonOtherCharacter` and `summonBlackGhost` match only within it. A client
   without the header (RPCS3, a PS3, an older port) is in the public group.

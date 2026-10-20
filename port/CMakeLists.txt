@@ -14,9 +14,11 @@ set(RECOMP_DIR    "${CMAKE_CURRENT_SOURCE_DIR}/../work/recomp" CACHE PATH "lifte
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ps3recompPin.cmake")
 
 # --- Prebuilt runtime library ----------------------------------------------
+# Where ps3recomp_runtime.lib is built. A second runtime build (tools/pgo/pgo.sh's) links from its own folder.
+set(PS3RECOMP_BUILD_DIR "${PS3RECOMP_DIR}/build" CACHE PATH "ps3recomp runtime build dir")
 add_library(ps3recomp_runtime STATIC IMPORTED GLOBAL)
 set_target_properties(ps3recomp_runtime PROPERTIES
-    IMPORTED_LOCATION "${PS3RECOMP_DIR}/build/ps3recomp_runtime.lib")
+    IMPORTED_LOCATION "${PS3RECOMP_BUILD_DIR}/ps3recomp_runtime.lib")
 
 # --- Lifted game code (generated PPU chunks) -------------------------------
 file(GLOB RECOMP_CHUNKS CONFIGURE_DEPENDS "${RECOMP_DIR}/ppu_recomp_*.cpp")

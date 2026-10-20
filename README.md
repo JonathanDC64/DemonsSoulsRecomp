@@ -110,6 +110,8 @@ The frame is a chain of host threads: HighGraphics (a PPU thread) fills a comman
 
 The scripts in `tools/des/` measure a change: `knobab.sh` alternates a live knob within one run, `exeab.sh` alternates two builds, `kprof.sh` profiles named threads, and `soak.sh` runs about six minutes at `DES_FPS=120` (the check before any change to the atomics).
 
+For measurements there is also a profile-guided (PGO) build, a developer tool: `tools/pgo/pgo.sh` makes one beside the normal build (an instrumented build, a short play session on it, then the optimized build), and it runs the Palace 6 to 8% faster. Players do not get it: no profile is shipped or downloaded, and setup has no profile step. The profile comes from running the game, so it stays in `work/pgo/`, out of git. Details in [`docs/58`](docs/58-pgo-builds.md).
+
 ## Layout
 
 ```
@@ -118,6 +120,7 @@ port/       the Demon's Souls glue: CMake, heap shim, options, stubs
 scripts/    lift, patch and build helpers
 tools/des/  run, regression, capture and analysis scripts
 tools/ghidra/  headless Ghidra helpers for reading the game's code
+tools/pgo/  profile-guided (PGO) builds, a developer tool
 ps3recomp/  the recompiler and runtime (separate repository, not tracked here)
 work/       your decrypted executable, lifted code and logs (gitignored)
 gamedata/   the emulated hard drive, with your saves (gitignored)

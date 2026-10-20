@@ -1,0 +1,235 @@
+/* The Trophies window (trophies_window.cpp): the summary above the list. Laid out like window.rcss's panes (Dusklight,
+   CC0, by way of FFCCEOT-Recomp); the colours come from theme.rcss. */
+
+/* (this window's document only) the summary on top, the list under it */
+#content {
+    flex-flow: column;
+}
+
+trophy-summary {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--space-lg);
+    padding: var(--space-lg) var(--space-xl);
+    border-bottom-width: 1dp;
+    border-bottom-color: var(--color-border);
+    background-color: rgba(var(--color-neutral-rgb), 4%);
+}
+
+summary-icon {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+}
+
+summary-icon img {
+    height: 72dp;  /* the set's icon is 320 x 176 */
+}
+
+summary-icon icon {
+    font-size: 56dp;
+    color: var(--color-border);
+}
+
+summary-text {
+    display: flex;
+    flex-flow: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: var(--space-xs);
+}
+
+summary-title {
+    display: block;
+    font-family: var(--font-family-heading);
+    font-weight: bold;
+    font-size: var(--font-size-xl);
+    text-transform: uppercase;
+    color: var(--color-accent);
+}
+
+summary-line {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: var(--font-size-2xl);
+}
+
+summary-percent {
+    font-weight: bold;
+    color: var(--color-accent);
+}
+
+trophy-summary progress {
+    margin: var(--space-2xs) 0;
+}
+
+grade-counts {
+    display: flex;
+    flex-flow: row wrap;
+    gap: var(--space-xs) var(--space-lg);
+    font-size: var(--font-size-md);
+}
+
+grade {
+    white-space: nowrap;
+}
+
+grade icon {
+    margin-right: var(--space-xs);
+}
+
+grade.platinum {
+    color: var(--color-grade-platinum);
+}
+
+grade.gold {
+    color: var(--color-grade-gold);
+}
+
+grade.silver {
+    color: var(--color-grade-silver);
+}
+
+grade.bronze {
+    color: var(--color-grade-bronze);
+}
+
+grade.hidden {
+    color: rgba(var(--color-text-rgb), 62%);
+}
+
+/* One trophy: icon, name and description, then the grade and the date */
+trophy-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-lg);
+    padding: var(--space-sm) var(--space-lg) var(--space-sm) var(--space-sm);
+    border-radius: var(--radius-window);
+    background-color: var(--button-background);
+    box-shadow: rgba(var(--color-border-rgb), 25%) 0 0 0 1dp;
+    focus: auto;
+    transition: background-color 0.1s linear-in-out;
+}
+
+trophy-row:hover,
+trophy-row:focus-visible {
+    background-color: var(--button-background-hover);
+    box-shadow: rgba(var(--color-interactive-rgb), 70%) 0 0 0 1dp;
+}
+
+trophy-row.can-reveal {
+    cursor: pointer;
+}
+
+trophy-icon {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 64dp;
+    height: 64dp;
+}
+
+trophy-icon img {
+    width: 64dp;
+    height: 64dp;
+}
+
+/* A locked trophy's icon, dimmed (a tint, not a filter: a filter would draw each row through its own layer) */
+trophy-row.locked trophy-icon img {
+    image-color: rgba(var(--color-white-rgb), 35%);
+}
+
+trophy-icon icon {
+    font-size: 40dp;
+    color: rgba(var(--color-text-rgb), 45%);
+}
+
+trophy-row.concealed trophy-icon {
+    border-width: 1dp;
+    border-color: rgba(var(--color-border-rgb), 40%);
+    border-radius: var(--radius-control);
+    background-color: rgba(var(--color-neutral-rgb), 6%);
+}
+
+trophy-text {
+    display: flex;
+    flex-flow: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: var(--space-2xs);
+}
+
+trophy-name {
+    display: block;
+    font-weight: bold;
+    font-size: var(--font-size-2xl);
+    color: var(--color-accent);
+}
+
+trophy-row.locked trophy-name {
+    color: rgba(var(--color-text-rgb), 80%);
+}
+
+trophy-detail {
+    display: block;
+    font-size: var(--font-size-md);
+    color: rgba(var(--color-text-rgb), 72%);
+}
+
+trophy-row.concealed trophy-detail {
+    color: rgba(var(--color-text-rgb), 50%);
+}
+
+trophy-tag {
+    display: inline-block;
+    margin-left: var(--space-sm);
+    padding: 0 var(--space-xs);
+    border-width: 1dp;
+    border-color: rgba(var(--color-border-rgb), 60%);
+    border-radius: var(--radius-small);
+    font-size: var(--font-size-2xs);
+    font-weight: normal;
+    text-transform: uppercase;
+    vertical-align: middle;
+    color: rgba(var(--color-text-rgb), 70%);
+}
+
+trophy-meta {
+    display: flex;
+    flex-flow: column;
+    flex: 0 0 auto;
+    align-items: flex-end;
+    gap: var(--space-2xs);
+    font-size: var(--font-size-md);
+}
+
+trophy-date {
+    display: block;
+    white-space: nowrap;
+    color: rgba(var(--color-text-rgb), 80%);
+}
+
+trophy-date.locked {
+    color: rgba(var(--color-text-rgb), 45%);
+}
+
+trophy-date icon {
+    margin-right: var(--space-xs);
+}
+
+trophy-note {
+    display: block;
+    font-size: var(--font-size-md);
+    color: rgba(var(--color-text-rgb), 62%);
+}
+
+icon.trophy-hidden {
+    decorator: text("&#xe8f5;" center center);  /* visibility_off */
+}
+
+icon.lock {
+    decorator: text("&#xe897;" center center);
+}

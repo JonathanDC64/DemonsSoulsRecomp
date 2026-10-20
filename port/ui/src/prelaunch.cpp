@@ -9,6 +9,7 @@
 #include "modal.hpp"
 #include "settings.hpp"
 #include "settings_window.hpp"
+#include "trophies_window.hpp"
 #include "ui.hpp"
 #include "version.hpp"
 
@@ -93,9 +94,16 @@ void Prelaunch::build_menu_buttons() {
     });
     apply_intro_animation(mMenuButtons.back()->root(), "delay-2");
 
+    mMenuButtons.push_back(std::make_unique<Button>(menuList, "Trophies"));
+    mMenuButtons.back()->on_pressed([this] {
+        play_sound(kSoundWindowOpen);
+        push(std::make_unique<TrophiesWindow>());
+    });
+    apply_intro_animation(mMenuButtons.back()->root(), "delay-3");
+
     mMenuButtons.push_back(std::make_unique<Button>(menuList, "Quit"));
     mMenuButtons.back()->on_pressed([] { request_quit_confirm(); });
-    apply_intro_animation(mMenuButtons.back()->root(), "delay-3");
+    apply_intro_animation(mMenuButtons.back()->root(), "delay-4");
 }
 
 // Play: the game is already running behind this screen; hide it and hand over the input.

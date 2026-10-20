@@ -19,7 +19,7 @@ The first level is playable, from boot to Boletaria (2026-10):
 Known issues:
 
 - Some transparent effects (a fog wall, the soul-form aura, fog in the first cutscene) vanish for single frames.
-- Above 30 fps, cutscenes switch back to 30 on their own: the cutscene camera moves in 30 Hz steps, and they judder otherwise. `DES_CUTFPS=1` keeps them at the frame rate and blends the camera between its steps (opt-in). Above 60, physics is untested (RPCS3 warns of trouble there).
+- Above 30 fps, cutscenes switch back to 30 on their own: the cutscene camera moves in 30 Hz steps, and they judder otherwise. Settings, Display, Cutscene frame rate (or `DES_CUTFPS=1`) keeps them at the frame rate and blends the camera between its steps (opt-in). Above 60, physics is untested (RPCS3 warns of trouble there).
 - Only Demon's Souls is tested on this branch of ps3recomp.
 
 The full history, root causes and tools are in [`docs/`](docs/). Start with [`docs/28-in-game.md`](docs/28-in-game.md), which covers the current state.
@@ -64,6 +64,13 @@ The build is not yet a single command. The steps, in order:
    cmake --build port/build --target des_boot --parallel 4
    ```
    Recompiling the 14 lifted chunks takes about 15 minutes. The lift keeps a guest call stack for backtraces (`--shadow-stack`), but the build compiles it out, which is about 2% faster; configure the port with `-DDES_SHADOW_STACK=ON` to keep it for `ds_dump_shadow`.
+   For a developer build, with the dev cheats compiled in (god mode, attack power, movement speed and `DES_WARP`, live from a Developer tab in the settings; see [`docs/55`](docs/55-dev-cheats.md)), configure a second folder, `port/build_dev`, with the same line plus `-DDES_DEV=ON`, and build it the same way:
+   ```
+   cmake -S port -B port/build_dev -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl \
+     -DCMAKE_BUILD_TYPE= -DCMAKE_CXX_FLAGS_DEBUG= -DCMAKE_C_FLAGS_DEBUG= -DDES_DEV=ON
+   cmake --build port/build_dev --target des_boot --parallel 4
+   ```
+   Keep it out of `port/build`: CMake keeps the option in the folder's cache, so every later build there would have the cheats, and `tools/des/build.sh` and `play.sh` use `port/build`. The new folder's first build compiles the lifted chunks too (about 15 minutes, from the same lift). Run it with `tools/des/play.sh DES_EXE=port/build_dev/des_boot.exe`. A developer build says what it is: a CMake warning when it is configured, a line after each link, "(developer build)" in the window title and a `[dev] DES-DEV-BUILD` line at the top of the log. Never share one. No CI or release workflow checks for this yet, so before you share any build, run `python tools/ci/check_release_no_dev.py <its folder or zip>`: it fails when it finds the cheats, and when it meets a file it cannot look inside.
 
 ## Running
 
@@ -77,7 +84,7 @@ Options go after it as `NAME=value`:
 
 - `DES_ASPECT=21:9`: a wider picture for an ultrawide display (any `w:h`, such as `2560:1080` or `32:9`, a size such as `3440x1440`, or `auto` for the display's shape). The view gets wider at the same height (the same change as RPCS3's "Aspect Ratio" patch), the window opens in that shape, and fullscreen fills the display. The game still draws 1280 pixels across, stretched, so a higher render resolution (Settings, or `RSX_SCALE=150` and up) keeps it sharp. The HUD and menus stay 16:9 in the middle, and the lock-on reticle and enemy health bars stay on their targets; full-screen fades and the dim behind menus may still cover only the middle. Shapes narrower than 16:9 keep 16:9 with bars. Read at start.
 - `DES_HUD=stretch`: with `DES_ASPECT`, spread the HUD and menus across the full width instead. `DES_HUD_FADES=1` (experimental) keeps the HUD centred but stretches the full-screen fade and the dim behind menus across the full width.
-- `DES_CUTFPS=1`: with `DES_FPS` above 30, in-engine cutscenes stay at that frame rate instead of switching to 30, and the camera is blended between its 30 Hz keys (live).
+- `DES_CUTFPS=1`: with `DES_FPS` above 30, in-engine cutscenes stay at that frame rate instead of switching to 30, and the camera is blended between its 30 Hz keys (live; Settings, Display, Cutscene frame rate).
 - `DES_DOF=0`: no depth of field (live).
 - `DES_FPS=60`: the game's 60 fps mode, with real frame times. Any other number from `31` to `500` sets the frame cap to that many frames a second, and `DES_FPS=unlocked` removes the cap (the game runs as fast as the machine allows). `DES_FPS=30` keeps 30 with real frame times.
 - `DES_MOTION_BLUR=0`: no camera motion blur (live; the same change as RPCS3's "Disable Motion Blur" patch).

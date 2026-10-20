@@ -8,21 +8,34 @@ licences in `port/ui/NOTICE.md`.
 ## What it does
 
 - **Start screen** over the game as it boots: "DEMON'S SOULS", a silver
-  rule, *PC port*, then **Play**, **Settings** and **Quit**. The game's
+  rule, *PC port*, then **Play**, **Settings**, **Trophies** and **Quit**. The game's
   logos and notices run behind it, darkened from the left; it gets no input
   until Play. Esc or Circle on the start screen asks to quit.
 - **In-game menu**: F1 or Esc on the keyboard, or **L3 + R3** on a gamepad
   (Settings > Interface can switch this to Select + Start). It is a bar at
-  the top with **Settings**, **Report an issue** and **Quit**. Esc, Circle,
+  the top with **Settings**, **Trophies**, **Report an issue** and **Quit**. Esc, Circle,
   F1 or Start close it.
 - **Quit** asks first ("Return to the desktop? Progress since the game last
   saved will be lost.") in a blood-red window, then posts WM_CLOSE to the
   game window. The window's close button and Alt+F4 ask the same question
-  (the UI consumes their WM_CLOSE); a scripted run's window closes at once.
+  (the UI consumes their WM_CLOSE). The window closes at once only in a run
+  nobody plays: a tools/des test run, `PAD_FILE` or `EXIT_AFTER_MS`.
 - **Settings**: tabs Display, Game, Controls, Interface, About, the left
   pane showing the value, the right pane showing the choices and help. Rows
   that only apply at the next start say so. A row whose option was set in
   the environment shows that value, can't be changed, and its help says why.
+- **Trophies** (`trophies_window.cpp`, docs/44 section 5.4): the trophy set's
+  summary (unlocked n of 38, the percentage, the count per grade) over a list
+  of every trophy: its icon (dimmed while locked), name, description, grade,
+  and the unlock date or "Locked". The list comes from the sceNpTrophy HLE
+  (`sceNpTrophy_snapshot`, which works before the game registers its
+  trophies, so the window opens from the start screen too) and is read again
+  on each unlock. A hidden trophy that is still locked shows as "Hidden
+  trophy", with no name, description or icon; pressing its row (Cross, Enter
+  or a click) reveals it until the window closes, and the first row, *Show
+  hidden trophies*, shows them all. Demon's Souls has no hidden trophy, so
+  that row is disabled ("None in this game"). Up and Down move between rows,
+  L1 and R1 (Page Up, Page Down) six rows at a time.
 - After Play, a toast at the top says how to open the menu (setting *Menu
   hint*).
 
@@ -46,6 +59,7 @@ and on every change.
 | Row (tab) | Key | Values | Applies |
 |---|---|---|---|
 | Frame rate (Display) | `DES_FPS` | "" = 30 fps original, 30, 60, 120, 144, 165, 240 | at once (read at each flip request) |
+| Cutscene frame rate (Display) | `DES_CUTFPS` | 0 = 30 fps (original), 1 = the frame rate, the camera blended between its keys | at once (read at each flip request) |
 | V-sync (Display) | `DES_VSYNC` (sets `RSX_VSYNC`) | 1 / 0 | at once (live knob) |
 | Boot logos (Game) | `DES_SKIP_INTRO` | 0 = show, 1 = skip, 2 = last logo only | next start |
 | Skip opening movie (Game) | `DES_SKIP_INTRO_MOVIE` (sets `PS3_SAIL_SKIP`) | 0 / 1 | from the next movie |
@@ -55,6 +69,7 @@ and on every change.
 | Start screen (Interface) | `show_start_screen` | 1 / 0 | next start |
 | Menu hint (Interface) | `menu_hint` | 1 / 0 | at once |
 | Trophy pop-ups (Interface) | `trophy_popups` | 1 / 0 (off hides the toast; the unlock is still kept) | at once |
+| Show hidden trophies (the Trophies window) | `trophies_show_hidden` | 0 / 1 (1 lists hidden trophies with their names before they are unlocked) | at once |
 | Gamepad menu buttons (Interface) | `pad_menu_chord` | 0 = L3 + R3, 1 = Select + Start | at once |
 
 Live values go through `ps3_setenv` (the runtime's getenv cache and
@@ -275,19 +290,22 @@ issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
 | `DES_CRASH_DIALOG_REPORT=1` | The crash dialog presses Report on GitHub by itself (its frame 10). |
 | `DES_CRASH_DIALOG_SHOT=<file.bmp>` | The crash dialog writes its picture (its frame 40). |
 | `DES_CRASH_DIALOG_EXIT_MS=<ms>` | The crash dialog closes itself after that long. |
-| `DES_UI_OPEN=menu` / `settings` / `osk` | Open the menu bar, the settings window or a test of the on-screen keyboard at startup. |
+| `DES_UI_OPEN=menu` / `settings` / `trophies` / `osk` | Open the menu bar, the settings window, the Trophies window or a test of the on-screen keyboard at startup. |
 | `DES_UI_SHOT=<a.bmp>[,frame][;<b.bmp>,frame...]` | Write the back buffer, UI included, at that presented frame (default 300). |
 | `DES_UI_KEYS=<frame>:<KEY>[,...]` | Press keys at presented frames: F1 ESC UP DOWN LEFT RIGHT ENTER PGUP PGDN TAB SPACE. OSK opens the on-screen keyboard as the game would, and a digit (0-9) is typed, for a number field. With DES_UI_SHOT, a test can walk the menus. |
 | `DES_UI_NO_ANIM=1` | No transitions. |
 | `DES_UI_SOUND=0` | No UI sounds. |
 | `DES_PRECOMPILE=0` / `force` | No startup shader pass / one whatever the stamp says (above). |
 | `DES_TROPHY_TEST=<id>` | Unlock trophy `<id>` (0-127) through the sceNpTrophy HLE as the game would (unlock file, platinum rule, pop-up), once the game has registered its trophies. Also live: the debug console's `setenv DES_TROPHY_TEST=<id>`; each new value unlocks once. It is a real unlock in the unlock file, so point `PS3_TROPHY_DIR=<folder>` at a scratch folder. |
+| `DES_TROPHY_HIDDEN=<id>[,<id>...]` | The Trophies window treats these trophies as hidden, as if the trophy set said so (Demon's Souls has none), so a hidden row and revealing it can be seen and tested. UI only: the HLE, the pop-ups and the unlock file don't see it. Read when the window opens. |
 
 No start screen when the run is scripted: a tools/des test run
 (`PS3_PIDFILE` set and `DES_KIND` not `play`), `DES_AUTO_CONTINUE` on the
 command line, `PAD_FILE` or `EXIT_AFTER_MS`. `DES_AUTO_CONTINUE` from
 settings.ini keeps the start screen: its presses wait until Play
-(`des_ui_start_screen_up`). A scripted run's close button closes at once. Test runs also neither read nor write
+(`des_ui_start_screen_up`). The close button closes at once only in a test
+run, with `PAD_FILE` or with `EXIT_AFTER_MS` (`unattended_run`); with
+`DES_AUTO_CONTINUE` on the command line it still asks. Test runs also neither read nor write
 settings.ini unless `DES_SETTINGS` (or `DES_DATA_DIR`) is given, so regress,
 levelcap, exeab and friends see exactly the options they pass; they also
 keep no log and install no crash handler.
@@ -340,7 +358,12 @@ Files:
   the BMP screenshot.
 - `trophy_toasts.cpp`: trophy pop-ups (docs/44). The sceNpTrophy HLE's unlock
   hook queues on the game's thread; `frame` wakes for it and shows a toast
-  with the trophy's icon, grade and name. `DES_TROPHY_TEST`.
+  with the trophy's icon, grade and name. `DES_TROPHY_TEST`. It also counts
+  the unlocks and keeps the grade names and the icon lookup (each icon read
+  from the set once) that the Trophies window uses.
+- `trophies_window.cpp`: the Trophies window (docs/44, section 5.4): the
+  summary, the rows, hidden trophies and revealing them,
+  `DES_TROPHY_HIDDEN`; `trophies.rcss` is its style.
 - `settings.cpp`: settings.ini, the option table, pinned (env) detection,
   harness detection.
 - `report.cpp`: the data folder, the log tee, system facts, redaction, the
@@ -381,7 +404,9 @@ showing, Start also toggles the menu.
 `theme.rcss` tokens: text bone (215, 210, 195), accent near-white bone
 (236, 232, 220), borders silver (148, 150, 154), surfaces near-black
 (11, 11, 12) at 80-96 %, focus soul-white (200, 215, 225) at low alpha,
-danger blood red (#6E1A17 border, #A8241D heading). Borders 1 dp, corners
+danger blood red (#6E1A17 border, #A8241D heading), and the trophy grades
+(the pop-ups and the Trophies window): platinum (180, 205, 225), gold
+(222, 184, 84), silver (192, 194, 198), bronze (196, 128, 72). Borders 1 dp, corners
 2-4 dp. Cinzel for headings and the title, Alegreya Sans for body text,
 Material Symbols for icons. No `backdrop-filter`: with it, the F1 bar and
 the other translucent panels flickered over the game, so panels are plain
@@ -516,3 +541,39 @@ size loops with messages), Restart game after a resize.
 
 Not tested: a display scaled above 100% (this one is at 100%), moving the
 window between displays of different scales.
+
+### Trophies window (2026-10-19)
+
+Run tw1: the pinned save, a scratch `PS3_TROPHY_DIR` whose unlock file
+starts with trophies 1, 2, 4 and 5, a scratch settings file,
+`DES_TROPHY_HIDDEN=3,4,20`, `DES_TROPHY_TEST=7`, `DES_UI_START=1` and
+`DES_UI_NO_ANIM=1`, with scripted keys and DES_UI_SHOT, on a locked
+session:
+
+- Start screen: Down, Down, Enter opens the window. It reads "4 of 38
+  unlocked", 11 %, the count per grade and "3 hidden"; locked icons are
+  dimmed, unlock dates in local time.
+- Trophy 3 (hidden, locked) shows as "Hidden trophy" with the hidden
+  symbol. Enter reveals it (its name, the Hidden tag, Locked); Enter again
+  hides it. Trophy 4 (hidden, unlocked) shows like any other, with the tag.
+- Show hidden trophies on: trophies 3 and 20 are listed by name. R1 three
+  times and Down twice reach trophy 20; Enter there changes nothing; L1
+  four times goes back to the top, and the toggle goes off again
+  (settings.ini ends with `trophies_show_hidden = 0`).
+- Esc, Esc closes the window, and the focus is back on the Trophies
+  button: Up, Up, Enter is Play. With `DES_UI_NO_ANIM=1` the button is not
+  highlighted then: RmlUi gives the focus back without `:focus-visible`.
+  With transitions on, the start screen's `Show` should focus it again
+  visibly, since it runs while the window is still closing (not checked).
+- In the game: F1, Right, Enter opens it from the menu bar ("5 of 38":
+  trophy 7 was unlocked by `DES_TROPHY_TEST` once the game registered its
+  trophies). Trophy 9, unlocked through the debug console while the
+  window was open (present 2193), showed at once: the summary went to 6
+  of 38, and its row, reached with Down, R1 and Down while the list was
+  read again, has the date. The pop-up showed over the window. Esc, Esc
+  goes back to the menu bar, with Trophies focused.
+- The unlock file ends with 1 2 4 5 7 9. The user's save is unchanged.
+
+Not tested: a real gamepad or mouse (scripted keys only), transitions on,
+a display scaled above 100 %, a trophy set that has hidden trophies of its
+own (the knob stands in for one).

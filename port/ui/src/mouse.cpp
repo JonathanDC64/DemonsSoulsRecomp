@@ -30,6 +30,7 @@
 #include "mouse.hpp"
 
 #include "des_ui.h"
+#include "settings.hpp"
 
 #include <windows.h>
 
@@ -135,7 +136,10 @@ bool middle_of(HWND hwnd, RECT& r) {
 }
 
 // Hides the cursor and holds it on the middle of the window (again, if held already: the window may have moved).
+// Never with PS3_NO_USER_INPUT=1 (a test run): the mouse is the user's, and the runtime keeps its raw input from the
+// window too.
 void hold(HWND hwnd, const char* why) {
+    if (ui::settings::no_user_input()) return;
     RECT r;
     if (!middle_of(hwnd, r)) return;
     sClip = r;

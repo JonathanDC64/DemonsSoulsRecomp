@@ -517,6 +517,9 @@ std::string redact(std::string text) {
 
 std::string system_info() {
     std::ostringstream o;
+#if DES_DEV
+    o << "Developer build (cheats compiled in)\n";
+#endif
     o << "DemonsSoulsRecomp " << version() << "\n";
     {
         using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);

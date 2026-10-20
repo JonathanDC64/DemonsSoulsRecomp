@@ -98,11 +98,8 @@
  *   goes forwards and never moves a cursor off its default. It lets go for
  *   good when the level's script archive (script/m*.luabnd) opens.
  *
- * DES_WARP=x,y,z — debug, live (the console's setenv works): put the player
- *   at x, y, z the way the level scripts' LoadChrPos does. Each new value
- *   warps once. DES_WARP_CLEAR=<m> first sends the enemies within m metres
- *   of the target to the tutorial's start. Test scripts use it to reach a
- *   spot quickly.
+ * The dev cheats and the warp are in des_dev.cpp, compiled into developer
+ *   builds only (cmake -DDES_DEV=ON; docs/55).
  */
 #include "ppu_recomp.h"
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
@@ -416,11 +413,11 @@ void frame_log()
             reads - last_reads, empty - last_empty);
     last_reads = reads; last_empty = empty;
     if (pos) fprintf(s_framelog, " %.3f %.3f %.3f %d %.2f", x, y, z, stamina, want);
-    if (pos) {   /* the movement object's root-motion factor (see des_move_post) */
+    if (pos) {   /* the movement object's root-motion factor (see des_move_post), then HP and MP */
         const uint32_t chr = vm_read32(vm_read32(kChrMan) + 0x1BC);
         const uint32_t fb = vm_read32(vm_read32(chr + 0x20) + 0x128);
         float f; memcpy(&f, &fb, 4);
-        fprintf(s_framelog, " %.3f", f);
+        fprintf(s_framelog, " %.3f %d %d", f, (int)vm_read32(chr + 0x3C4), (int)vm_read32(chr + 0x3CC));
     }
     fputc('\n', s_framelog);
     if (pos && have_pos) {
@@ -444,7 +441,7 @@ void frame_log()
     }
     have_pos = pos; px = x; pz = z;
     win_dt += dt; win_n++;
-    const bool f8 = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
+    const bool f8 = !ps3_env_int("PS3_NO_USER_INPUT", 0) && (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
     if (f8 && !f8_down) { fprintf(s_framelog, "MARK %.1f\n", ms); movement_dump("mark", ms); }
     f8_down = f8;
     if (ms - win_ms >= 500.0) {
@@ -840,7 +837,7 @@ extern "C" void des_motion_blur(ppu_context* ctx, uint32_t addr)
     (void)addr;
     static int on = 1;
     PS3_KNOB(on, ps3_env_int("DES_MOTION_BLUR", 1) != 0);
-    if (!on) ctx->cr ^= 2u;   /* cr7 is the low field; EQ = 2 */
+    if (!on) ppu_cr_set(ctx, 7, (uint8_t)(ppu_cr_get(ctx, 7) ^ 2u));   /* cr7's EQ = 2 */
 }
 
 /* The cameras ease towards their targets by a fixed fraction a frame,
@@ -875,6 +872,25 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
     const float steps = vm_readf(kFrameDt) * 30.0f;
     if (!(k > 0.0 && k < 1.0) || !(steps > 0.0f) || steps == 1.0f) return;
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
+}
+
+/* A step a camera adds once a frame, cur += input * step, tuned for 30 fps:
+ * the bow's aim view zooms by 0.1 of its range a frame (ChrAimCam 0x00110608,
+ * +0x138 += input * +0x13C, then clamped to [0, 1]), so at 120 fps it zoomed
+ * four times as fast. Called after the lfs of the step (--insn-hooks); puts
+ * step * dt * 30 in the register. Main thread. DES_CAMFIX=0 turns it off with
+ * the camera eases; nothing at 30 fps or without DES_FPS. */
+extern "C" void des_cam_step(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_CAMFIX", 1) != 0);
+    if (!on || s_fps <= 0) return;
+    const uint32_t insn = vm_read32(addr);
+    if ((insn >> 26) != 48) return;   /* lfs only */
+    const int fd = (insn >> 21) & 31;
+    const float steps = vm_readf(kFrameDt) * 30.0f;
+    if (!(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
+    ctx->fpr[fd] = (float)(ctx->fpr[fd] * steps);
 }
 
 /* A factor kept once a frame, cur = base + (cur - base) * r (or cur *= r),
@@ -915,6 +931,39 @@ extern "C" void des_noise_rate(ppu_context* ctx, uint32_t addr)
     static int on = 1;
     PS3_KNOB(on, ps3_env_int("DES_NOISEFIX", 1) != 0);
     if (on && s_fps > 0) keep_rate(ctx, addr);
+}
+
+/* Character fades. A character's effect list (+0x3BC, docs/42) multiplies the
+ * model's alpha (chr+0x368) by each node's fade (+0x10, 0 to 1) every frame.
+ * Two node types move their fade by a fixed step a call, without dt: type 16
+ * (0x0025EB20, a fade-in, or a fade by distance from the player) by 0.05,
+ * loaded into f0 at 0x0025EB88 (in) and 0x0025EC14 (out); type 14
+ * (0x002654E8, a model fade with sounds) by 1/30, loaded into f13 at
+ * 0x00265C88 (in) and 0x0026558C (out). So at 240 fps a fade of 0.67 s or
+ * 1 s takes 83 or 125 ms. The lifter calls this after each of those lfs
+ * (--insn-hooks); it scales the step by the frame's 30 Hz steps (kFrameDt).
+ * The clamps to 0 and 1 come after the step, so a scaled step never
+ * overshoots. Nothing at 30 fps or without DES_FPS. DES_FADEFIX=0 turns it
+ * off live; DES_FADELOG=1 prints every step (node r31). */
+extern "C" void des_fade_rate(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1, log = 0;
+    PS3_KNOB(on, ps3_env_int("DES_FADEFIX", 1) != 0);
+    PS3_KNOB(log, env_on("DES_FADELOG"));
+    const uint32_t insn = vm_read32(addr);
+    if ((insn >> 26) != 48) return;   /* lfs only */
+    const int fd = (insn >> 21) & 31;
+    const float dt = vm_readf(kFrameDt), steps = dt * 30.0f;
+    const bool scale = on && s_fps > 0 && steps > 0.0f && steps < 30.0f && steps != 1.0f;
+    if (log) {
+        using clock = std::chrono::steady_clock;
+        static const clock::time_point t0 = clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(clock::now() - t0).count();
+        const uint32_t node = (uint32_t)ctx->gpr[31];
+        fprintf(stderr, "[fadelog] %.1f ms %08X node %08X fade %.4f step %.5f dt %.5f%s\n", ms, addr, node,
+                vm_readf(node + 0x10), ctx->fpr[fd], dt, scale ? " scaled" : "");
+    }
+    if (scale) ctx->fpr[fd] = (float)(ctx->fpr[fd] * steps);
 }
 
 /* A character proxy's slide velocity (wrapper + 0x100), in its velocity
@@ -978,82 +1027,60 @@ extern "C" void des_viewer_rate(ppu_context* ctx, uint32_t addr)
     ctx->fpr[2] = (float)(ctx->fpr[2] * steps);
 }
 
-extern "C" PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);
-
-/* DES_WARP=x,y,z (debug, live): put the player there the way Lua's LoadChrPos
- * does (0x004428F0 -> 0x00273BE0, r3 = character, vr2 = x y z 0). With
- * DES_WARP_CLEAR=<m>, enemies (vtable 0x0185AF98, in the array at
- * *(ChrMan + 0xC)) within that distance of the target go to the tutorial's
- * start first. Main thread: des_menu_tick calls this once a frame. */
-static void warp_chr(ppu_context* ctx, uint32_t chr, const float* p)
+/* Particle effects (FFX). Each effect node runs a small state machine in the
+ * scene update 0x013B74B8 (main thread, once a frame from the effect manager's
+ * step 0x00515070; r31 = the node, f31 = dt). Entering a state runs its entry
+ * messages, and an emitter's messages emit a fixed number of particles. An
+ * emitter repeats by re-entering its own state once the state's time (+0x94,
+ * set to 0 on entry, stepped by dt after the test) reaches an interval; with
+ * an interval of a frame or less that is every update: 30 times a second at 30
+ * fps, 240 at 240. So the boss fog walls churn 2, 4 or 8 times as fast. The
+ * lifter calls this after each instruction that picks the next state (r0, 0
+ * for none; --insn-hooks): 0x013B75A8 for the state's own transitions, the
+ * other four on the paths of templates 0x7E4, 0x7E7, 0x835 and 0x849. A state
+ * that would re-enter itself before it has lasted 1/30 s stays as it is this
+ * update. When it does re-enter, 0x013B75D4 (the store that sets its time to
+ * 0) starts the new time with the part of a frame past 1/30 s, so the loop
+ * runs 30 times a second at any frame rate. Other transitions, and loops
+ * slower than 1/30 s, are left alone. Nothing at 30 fps or without DES_FPS.
+ * DES_FXFIX=0 turns it off live. */
+extern "C" void des_fx_state(ppu_context* ctx, uint32_t addr)
 {
-    uint64_t g[32]; double f[32]; uint8_t v[32][16];
-    memcpy(g, ctx->gpr, sizeof g); memcpy(f, ctx->fpr, sizeof f); memcpy(v, ctx->vr, sizeof v);
-    const uint64_t lr = ctx->lr, ctr = ctx->ctr;
-    const uint32_t cr = ctx->cr, xer = ctx->xer;
-    uint8_t be[16] = {};
-    for (int i = 0; i < 3; i++) {
-        uint32_t b; memcpy(&b, &p[i], 4);
-        be[4 * i] = (uint8_t)(b >> 24); be[4 * i + 1] = (uint8_t)(b >> 16);
-        be[4 * i + 2] = (uint8_t)(b >> 8); be[4 * i + 3] = (uint8_t)b;
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_FXFIX", 1) != 0);
+    static PPU_THREAD_LOCAL uint32_t carry_node;
+    static PPU_THREAD_LOCAL float carry;
+    const uint32_t node = (uint32_t)ctx->gpr[31];
+    if (addr == 0x013B75D4u) {   /* the new state's time, just set to 0 */
+        if (carry_node == node) vm_writef(node + 0x94, carry);
+        carry_node = 0;
+        return;
     }
-    memcpy(&ctx->vr[2], be, 16);
-    ctx->gpr[3] = chr;
-    ctx->lr = 0x00724E40u;
-    func_00273BE0(ctx);
-    while (g_trampoline_fn) {
-        void (*tf)(void*) = g_trampoline_fn;
-        g_trampoline_fn = nullptr;
-        tf(ctx);
+    carry_node = 0;
+    const uint32_t next = (uint32_t)ctx->gpr[0];
+    if (!on || s_fps <= 0 || !next || next != vm_read32(node + 0x80)) return;
+    const float tick = 1.0f / 30.0f, dt = (float)ctx->fpr[31];
+    if (!(dt > 0.0f && dt < tick - 1e-4f)) return;
+    const float t = vm_readf(node + 0x94);
+    if (t < tick - 1e-5f) {
+        ctx->gpr[0] = 0;   /* too soon: no re-entry this update */
+        return;
     }
-    memcpy(ctx->gpr, g, sizeof g); memcpy(ctx->fpr, f, sizeof f); memcpy(ctx->vr, v, sizeof v);
-    ctx->lr = lr; ctx->ctr = ctr; ctx->cr = cr; ctx->xer = xer;
+    if (t > tick && t - tick < dt) {
+        carry_node = node;
+        carry = t - tick;
+    }
 }
 
-static bool chr_pos(uint32_t chr, float* p)
-{
-    uint32_t q = vm_read32(chr + 0x20);
-    if (!guest_ptr_ok(q) || !guest_ptr_ok(q = vm_read32(q + 0x10))) return false;
-    for (int i = 0; i < 3; i++) p[i] = vm_readf(q + 0x10 + 4 * i);
-    return true;
-}
-
-extern "C" void des_debug_tick(ppu_context* ctx)
-{
-    static int gen = 0;
-    static char last[96] = "";
-    const int before = gen;
-    PS3_KNOB(gen, gen + 1);
-    if (gen == before) return;
-    const char* e = getenv("DES_WARP");
-    if (!e || !strcmp(e, last)) return;
-    snprintf(last, sizeof last, "%s", e);
-    float p[3];
-    if (sscanf(e, "%f,%f,%f", &p[0], &p[1], &p[2]) != 3) return;
-    const uint32_t man = vm_read32(kChrMan);
-    uint32_t chr;
-    if (!guest_ptr_ok(man) || !guest_ptr_ok(chr = vm_read32(man + 0x1BC))) return;
-    const char* c = getenv("DES_WARP_CLEAR");
-    const float r = c ? (float)atof(c) : 0.0f;
-    const uint32_t list = vm_read32(man + 0xC);
-    if (r > 0.0f && guest_ptr_ok(list)) {
-        int moved = 0;
-        for (uint32_t i = 0; i < 64; i++) {
-            const uint32_t q = vm_read32(list + 4 * i);
-            float qp[3];
-            if (!guest_ptr_ok(q) || q == chr || vm_read32(q) != 0x0185AF98u || !chr_pos(q, qp)) continue;
-            const float d = std::sqrt((qp[0] - p[0]) * (qp[0] - p[0]) + (qp[1] - p[1]) * (qp[1] - p[1]) +
-                                      (qp[2] - p[2]) * (qp[2] - p[2]));
-            if (d > r) continue;
-            const float away[3] = {201.0f + 1.5f * moved, -1.1f, -96.2f};   /* the tutorial's start */
-            warp_chr(ctx, q, away);
-            fprintf(stderr, "[des] DES_WARP_CLEAR: enemy %08X (%.1f m) sent away\n", q, d);
-            moved++;
-        }
-    }
-    warp_chr(ctx, chr, p);
-    fprintf(stderr, "[des] DES_WARP %.3f %.3f %.3f (chr %08X)\n", p[0], p[1], p[2], chr);
-}
+#if !DES_DEV
+/* Release builds: the dev hook lines in insn_hooks.txt (docs/55) call this
+ * empty function, and no cheat is ever used. Developer builds (cmake
+ * -DDES_DEV=ON) link des_dev.cpp's instead. */
+extern "C" void des_dev_hook(ppu_context* ctx, uint32_t addr) { (void)ctx; (void)addr; }
+extern "C" int des_dev_cheats_used(void) { return 0; }
+#else
+extern "C" void des_dev_boot(void);   /* des_dev.cpp */
+#endif
 
 namespace {
 
@@ -1501,6 +1528,9 @@ extern "C" void ps3_title_options_init(void)
 {
     /* First: settings.ini fills in the options not set in the environment. */
     des_ui_early_init();
+#if DES_DEV
+    des_dev_boot();        /* developer build: the marker (log, window title) and the cheats' offline rule (docs/55) */
+#endif
     des_aspect_init();     /* DES_ASPECT, DES_HUD: before the first camera is built */
     des_menu_sfx_init();   /* the UI's sounds through the game's menu sounds */
     des_chrins_init();     /* the character step's handshake without its lost-kick race */
@@ -1541,7 +1571,7 @@ extern "C" void ps3_title_options_init(void)
     if (const char* f = getenv("DES_FRAMELOG")) {
         if (*f && (s_framelog = fopen(f, "w")) != nullptr) {
             snprintf(s_framelog_path, sizeof s_framelog_path, "%s", f);
-            fprintf(s_framelog, "# t_ms interval_ms step_ms cutscene pad buttons lstick reads empty [x y z stamina want_m/s speed_factor]; SUM t fps speed m/s game/real; MARK t (F8)\n");
+            fprintf(s_framelog, "# t_ms interval_ms step_ms cutscene pad buttons lstick reads empty [x y z stamina want_m/s speed_factor hp mp]; SUM t fps speed m/s game/real; MARK t (F8)\n");
             g_gcm_flip_request_hook = on_flip_request;
             fprintf(stderr, "[des] DES_FRAMELOG: %s (F8 marks)\n", f);
         } else if (*f) {

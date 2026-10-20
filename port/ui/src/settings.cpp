@@ -19,8 +19,14 @@ namespace ui::settings {
 namespace {
 
 constexpr Def kDefs[] = {
+#if DES_DEV
+    {"DES_GOD", "0", Apply::Session},          // des_dev.cpp (developer builds only): the cheats, live, never saved
+    {"DES_ATK", "1", Apply::Session},
+    {"DES_SPEED", "1", Apply::Session},
+#endif
     {"DES_FPS", "", Apply::Live},              // "" = the game's own 30 fps mode; read at each flip
     {"fps_custom", "90", Apply::UiOnly},       // Frame rate's Custom number, kept while a fixed rate is chosen
+    {"DES_CUTFPS", "0", Apply::Live},          // des_options.cpp's cutfps_on, read at each flip
     {"DES_MOTION_BLUR", "1", Apply::Live},     // des_motion_blur, read each frame
     {"DES_VSYNC", "1", Apply::Live},           // RSX_VSYNC, live
     {"DES_SKIP_INTRO", "0", Apply::Restart},   // 1 = no logos, 2 = the last logo only
@@ -39,6 +45,7 @@ constexpr Def kDefs[] = {
     {"show_start_screen", "1", Apply::UiOnly},
     {"menu_hint", "1", Apply::UiOnly},
     {"trophy_popups", "1", Apply::UiOnly},     // trophy_toasts.cpp; off hides the toast, the unlock is still kept
+    {"trophies_show_hidden", "0", Apply::UiOnly},  // trophies_window.cpp: hidden trophies listed with their names
     {"pad_menu_chord", "0", Apply::UiOnly},    // 0 = L3 + R3, 1 = Select + Start
     {"PAD_MAP", "", Apply::Live},              // cellPad, gamepad buttons (controls_window.cpp)
     {"PAD_KEYS", "", Apply::Live},             // cellPad, changes to the keyboard and mouse layout (kKeysLayout)
@@ -115,13 +122,21 @@ bool harness_run() {
     return env_set("PS3_PIDFILE") && !(kind && std::strcmp(kind, "play") == 0);
 }
 
+bool unattended_run() {
+    return harness_run() || env_set("PAD_FILE") || env_set("EXIT_AFTER_MS");
+}
+
 bool scripted_run() {
     // DES_AUTO_CONTINUE counts only from the command line: from settings.ini it waits for Play instead
     // (des_ui_start_screen_up).
     const char* ac = std::getenv("DES_AUTO_CONTINUE");
     const bool auto_continue = pinned("DES_AUTO_CONTINUE") && ac && *ac && std::strcmp(ac, "0") != 0;
-    return harness_run() || auto_continue || env_set("PAD_FILE") ||
-           env_set("EXIT_AFTER_MS");
+    return unattended_run() || auto_continue;
+}
+
+bool no_user_input() {
+    const char* v = std::getenv("PS3_NO_USER_INPUT");  // a number, as the runtime reads it: 0 or unset is off
+    return v && std::atoi(v) != 0;
 }
 
 const std::string& path() {
@@ -168,7 +183,7 @@ void load_file() {
             value = value == "0" ? "1" : "0";
         }
         const Def* d = find(key);
-        if (!d) continue;
+        if (!d || d->apply == Apply::Session) continue;  // (a per-session value is never read from the file)
         if (key == "keys_layout") layout_line = true;
         sValues[key] = value;
         if (d->apply != Apply::UiOnly && !sPinned.count(key) && !value.empty()) {
@@ -229,7 +244,8 @@ void set(std::string_view key, const std::string& value) {
     const Def* d = find(key);
     if (!d) return;
     sValues[std::string(key)] = value;
-    if (d->apply == Apply::Live && !pinned(key)) apply_env(key, value.empty() ? d->def : value);
+    if ((d->apply == Apply::Live || d->apply == Apply::Session) && !pinned(key))
+        apply_env(key, value.empty() ? d->def : value);
     save();
 }
 
@@ -253,7 +269,9 @@ void save() {
                  "# Demon's Souls PC port settings (key = value), written by the in-game menu.\n"
                  "# The option keys are the environment variables of the same name; a variable set in the\n"
                  "# environment wins over this file.\n");
-    for (const Def& d : kDefs) std::fprintf(f, "%s = %s\n", d.key, get(d.key).c_str());
+    for (const Def& d : kDefs) {
+        if (d.apply != Apply::Session) std::fprintf(f, "%s = %s\n", d.key, get(d.key).c_str());
+    }
     std::fclose(f);
     MoveFileExW(report::widen(tmp).c_str(), report::widen(file).c_str(), MOVEFILE_REPLACE_EXISTING);
 }

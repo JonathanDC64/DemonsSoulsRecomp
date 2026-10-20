@@ -30,6 +30,7 @@
 #include "report.hpp"
 #include "settings.hpp"
 #include "settings_window.hpp"
+#include "trophies_window.hpp"
 #include "trophy_toasts.hpp"
 #include "ui.hpp"
 
@@ -332,6 +333,7 @@ ui::input::PadState read_pads(bool& neutral) {
     static clock_type::time_point sNextScan[XUSER_MAX_COUNT]{};
     ui::input::PadState pad;
     neutral = true;
+    if (ui::settings::no_user_input()) return pad;  // PS3_NO_USER_INPUT: no pad of the user's is read
     const auto now = clock_type::now();
     for (DWORD i = 0; i < XUSER_MAX_COUNT; i++) {
         if (now < sNextScan[i]) continue;
@@ -372,6 +374,7 @@ ui::input::PadState read_pads(bool& neutral) {
 // No key or mouse button is held (the keyboard pad's keys can be any, PAD_KEYS): the game gets its input back only
 // then.
 bool keyboard_neutral() {
+    if (ui::settings::no_user_input()) return true;  // PS3_NO_USER_INPUT: a key held is the user's
     for (int vk = 1; vk < 0xFF; vk++)
         if (GetAsyncKeyState(vk) & 0x8000) return false;
     return true;
@@ -401,10 +404,11 @@ void push_documents() {
     ui::push_document(std::make_unique<ui::MenuBar>(), false);
     if (sStartScreen) ui::push_document(std::make_unique<ui::Prelaunch>());
 
-    // DES_UI_OPEN=menu | settings | osk: open one at startup (for screenshots and tests).
+    // DES_UI_OPEN=menu | settings | trophies | osk: open one at startup (for screenshots and tests).
     if (const char* open = std::getenv("DES_UI_OPEN"); open && *open) {
         if (!std::strcmp(open, "menu")) open_menu_bar();
         else if (!std::strcmp(open, "settings")) ui::push_document(std::make_unique<ui::SettingsWindow>());
+        else if (!std::strcmp(open, "trophies")) ui::push_document(std::make_unique<ui::TrophiesWindow>());
         else if (!std::strcmp(open, "osk")) open_test_osk();
     }
 }
@@ -694,7 +698,7 @@ extern "C" void des_ui_early_init(void) {
     sStartUp.store(sStartScreen);
     ui::mouse::set_ui_open(sStartScreen);  // (until the first frame pushes it)
 
-    sCloseAsks = !ui::settings::scripted_run();
+    sCloseAsks = !ui::settings::unattended_run();
     ui::app().quit = [] {
         sQuitConfirmed.store(true);
         if (HWND hwnd = static_cast<HWND>(rsx_d3d12_hwnd())) PostMessageW(hwnd, WM_CLOSE, 0, 0);

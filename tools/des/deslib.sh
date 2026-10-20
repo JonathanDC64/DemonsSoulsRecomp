@@ -41,6 +41,13 @@ des_env_defaults() {
   if [ "${DES_KIND:-test}" != play ] && [ -z "${RSX_PRESENT:-}" ]; then
     export RSX_PRESENT=$(des_session_locked && echo 0 || echo 1)
   fi
+  # Test runs ignore the user's pads, keyboard and mouse, and their window
+  # never takes the focus (PS3_NO_USER_INPUT, ps3recomp's ps3_knob.h): someone
+  # at the PC cannot nudge a run, and their typing stays in their own window.
+  # Scripted input still drives it. PS3_NO_USER_INPUT=0 to drive one by hand.
+  if [ "${DES_KIND:-test}" != play ]; then
+    export PS3_NO_USER_INPUT="${PS3_NO_USER_INPUT:-1}"
+  fi
   # Per-event log lines go through one FILE lock and change the timing being
   # measured (ps3_log.h); runs are quiet unless asked. PS3_VERBOSE=1 restores.
   export PS3_VERBOSE="${PS3_VERBOSE:-0}"
@@ -110,12 +117,56 @@ des_kill_own() {
     done < "$DES_PIDFILE"
     : > "$DES_PIDFILE"
   fi
-  while IFS='|' read -r pid exe; do
+  while IFS='|' read -r pid exe _; do
     pid="${pid//[!0-9]/}"; exe="$(printf %s "$exe" | tr -d '\015')"   # powershell writes CRLF
     [ -n "$pid" ] && [ -n "$exe" ] || continue
     [ -f "$(dirname "$(cygpath -u "$exe")")/$DES_STAGED_MARK" ] || continue
     taskkill //F //PID "$pid" > /dev/null 2>&1
-  done < <(powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='des_boot.exe'\" | ForEach-Object { '{0}|{1}' -f \$_.ProcessId, \$_.ExecutablePath }" 2>/dev/null)
+  done < <(des_games)
+}
+
+# des_games: "<pid>|<exe path>|<start>" for each running des_boot.exe, the
+# start in seconds since 1970 (empty when it cannot be read).
+des_games() {
+  powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='des_boot.exe'\" | ForEach-Object { \$t = ''; if (\$_.CreationDate) { \$t = ([DateTimeOffset]\$_.CreationDate).ToUnixTimeSeconds() }; '{0}|{1}|{2}' -f \$_.ProcessId, \$_.ExecutablePath, \$t }" 2>/dev/null
+}
+
+# des_stop_games <pidfile>: stop the games of one run, the pids in its pid
+# file (DES_PIDFILE, where boot_main writes its pid), and wait until they have
+# gone; then empty the file. A pid there is stopped only while it is a
+# des_boot.exe started from a staged test copy (the marker beside it), and only
+# if it started before the file was last written: a game writes its pid when it
+# starts, so a pid reused since, by the player's game or another run's, is left
+# alone. Fails if one is still running after 10 s, or if one's start cannot be
+# read.
+des_stop_games() {
+  local pid exe start since want=" " i left=0
+  [ -s "$1" ] || return 0
+  since=$(stat -c %Y "$1" 2>/dev/null) || return 1
+  while read -r pid || [ -n "$pid" ]; do
+    pid="${pid//[!0-9]/}"; [ -n "$pid" ] && want="$want$pid "
+  done < "$1"
+  while IFS='|' read -r pid exe start; do
+    pid="${pid//[!0-9]/}"; exe="$(printf %s "$exe" | tr -d '\015')"; start="${start//[!0-9]/}"
+    [ -n "$pid" ] && [ -n "$exe" ] || continue
+    case "$want" in *" $pid "*) ;; *) continue ;; esac
+    [ -f "$(dirname "$(cygpath -u "$exe")")/$DES_STAGED_MARK" ] || continue
+    if [ -z "$start" ]; then
+      echo "[save] des_boot $pid ($exe): cannot tell when it started" >&2; left=1; continue
+    fi
+    if [ "$start" -gt "$since" ]; then
+      echo "[save] des_boot $pid ($exe) started after $1 was written: not that run's game; left alone" >&2
+      continue
+    fi
+    taskkill //F //PID "$pid" > /dev/null 2>&1
+    for i in $(seq 1 50); do
+      tasklist //FI "PID eq $pid" //FO CSV //NH 2>/dev/null | grep -qi 'des_boot' || continue 2
+      sleep 0.2
+    done
+    echo "[save] des_boot $pid ($exe) is still running" >&2; left=1
+  done < <(des_games)
+  [ $left = 0 ] && : > "$1"
+  return $left
 }
 
 # Is a des_boot we started still running?
@@ -147,8 +198,9 @@ des_cache_dir() { echo "${DES_CACHE_DIR:-$PS3_VFS_ROOT/cache}"; }
 # replaces what <to> holds, not <to> itself: while something has <to> open
 # (a shell sitting in it, say), `rm -rf <to>` empties it but cannot remove
 # it, and `cp -r <from> <to>` then puts the copy one level down, where the
-# game does not look.
+# game does not look. If <from> is missing, <to> is left alone.
 des_put_save() {
+  [ -d "$1" ] || return 1
   mkdir -p "$2" || return 1
   find "$2" -mindepth 1 -delete 2>/dev/null
   cp -r "$1/." "$2/"
@@ -158,4 +210,171 @@ des_put_save() {
 # Fails if the copy differs, so a script stops before it swaps the save.
 des_backup_save() {
   des_put_save "$1" "$2" && diff -rq "$1" "$2" > /dev/null
+}
+
+# des_restore_save <backup> <save>: put the backup back and check it.
+des_restore_save() {
+  des_put_save "$1" "$2" && diff -rq "$1" "$2" > /dev/null && return 0
+  if [ -d "$1" ]; then echo "[save] could not put $1 back into $2; the backup is still there" >&2
+  else echo "[save] could not put $1 back into $2: that backup is missing" >&2; fi
+  return 1
+}
+
+# des_save_files <dir>: "<md5> <path under dir>" for each file in <dir>,
+# sorted by path; nothing for an empty or missing folder.
+des_save_files() {
+  local d="${1%/}" rels=() paths=() r h i=0
+  [ -d "$d" ] || return 0
+  mapfile -t rels < <(find "$d" -type f -printf '%P\n' | LC_ALL=C sort)
+  [ ${#rels[@]} -gt 0 ] || return 0
+  for r in "${rels[@]}"; do paths+=("$d/$r"); done
+  while read -r h _; do echo "${h#\\} ${rels[i]}"; i=$((i + 1)); done < <(md5sum "${paths[@]}")
+  [ $i = ${#rels[@]} ]
+}
+
+# The save folder belongs to one test run at a time. levelcap.sh and
+# regress.sh copy the player's save aside, put another save in its place and
+# put the player's back at the end. A second run that started before the
+# first had put the save back copied the swapped-in save aside as the
+# player's, and put that back at its own end.
+#
+# des_save_lock <save>: wait until no other run holds <save>, then hold it
+# (the directory <save>.lock, with the holder's pid). Waits up to
+# DES_SAVE_LOCK_WAIT seconds, a whole number (default 900, longer than a
+# capped run; 0 tries once). Returns 0 once it holds the folder, 1 if another
+# run still holds it, 2 if a run that has gone left the save swapped out and
+# this one did not undo that: the lock stays, and the [save] lines say what
+# was found and what to do.
+#
+# The lock of a run that has gone (its pid has exited, or it never wrote one)
+# is taken over by one waiter, the first to make claim.<pid> in it; the
+# others wait for that one. If the run had swapped the save and not put it
+# back (it was killed outright, or the copy back failed), its game is stopped
+# first, then its backup goes back, but only over what that run left there:
+# files of the save it put in or of the backup, or none. Any other file may be
+# newer play, so then the folder and the lock are left as they are. Running
+# again with DES_SAVE_TAKEOVER=restore:<id> puts the backup back all the
+# same; DES_SAVE_TAKEOVER=keep:<id> goes on from what the folder holds. The
+# message gives the <id> (that lock's), so a setting left behind does not
+# apply to a later lock.
+#
+# des_save_note <save> <backup>: record in the lock, before the swap, that
+# <backup> holds the player's save, the files it holds, and where this run's
+# game writes its pid.
+# des_save_swap <from> <save>: record in the lock the files of <from>, then
+# put a copy of <from> in <save>.
+# des_save_unlock <save>: let the folder go, once the save is back.
+des_save_lock() {
+  local lock="$1.lock" wait="${DES_SAVE_LOCK_WAIT:-900}" owner tries i nopid=0 said=
+  case "$wait" in ''|*[!0-9]*)
+    echo "[save] DES_SAVE_LOCK_WAIT=$wait: it takes a whole number of seconds" >&2; return 1 ;;
+  esac
+  mkdir -p "$(dirname "$1")" || return 1
+  tries=$(( 10#$wait * 2 )); [ "$tries" -ge 1 ] || tries=1
+  for ((i = 1; i <= tries; i++)); do
+    if mkdir "$lock" 2>/dev/null; then echo $$ > "$lock/pid"; des_save_id "$lock"; return 0; fi
+    owner=$(cat "$lock/pid" 2>/dev/null); owner="${owner//[!0-9]/}"
+    if [ -n "$owner" ]; then nopid=0; else nopid=$((nopid + 1)); fi
+    # Gone: its pid has exited, or it never wrote one (5 s without).
+    if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } || [ $nopid -gt 10 ]; then
+      if mkdir "$lock/claim.${owner:-none}" 2>/dev/null; then
+        if [ "$(cat "$lock/pid" 2>/dev/null | tr -cd 0-9)" = "$owner" ]; then
+          echo $$ > "$lock/pid"
+          des_save_takeover "$1" "${owner:-?}"; return
+        fi
+        rmdir "$lock/claim.${owner:-none}" 2>/dev/null   # it changed hands meanwhile
+      fi
+    elif [ -z "$said" ]; then
+      said=1; echo "[save] waiting for run ${owner:-?} to finish with $1" >&2
+    fi
+    if [ $i -lt $tries ]; then sleep 0.5; fi
+  done
+  echo "[save] gave up waiting for $1 ($lock)" >&2
+  return 1
+}
+
+# des_save_takeover <save> <owner>: finish the lock of run <owner>, which has
+# gone, for des_save_lock, once this shell has claimed it and written its pid
+# in it. Returns as des_save_lock does.
+des_save_takeover() {
+  local save="$1" lock="$1.lock" who="run $2" b id how= bad= have unknown sig= traps rc
+  b=$(cat "$lock/backup" 2>/dev/null); id=$(cat "$lock/id" 2>/dev/null)
+  case "${DES_SAVE_TAKEOVER:-}" in "restore:$id") how=restore ;; "keep:$id") how=keep ;; esac
+  if [ -n "$b" ]; then
+    # If only the script was killed, its game is still running, and it can
+    # write the save while the backup goes back.
+    if ! des_stop_games "$(cat "$lock/pidfile" 2>/dev/null)"; then
+      echo "[save] $who ended with $save swapped out, and its game is still running; leaving $lock in place" >&2
+      return 2
+    fi
+    if [ ! -d "$b" ]; then bad="is missing"
+    elif [ -f "$lock/backup.md5" ] && [ "$(des_save_files "$b")" != "$(cat "$lock/backup.md5")" ]; then
+      bad="has changed since it was checked"
+    fi
+    if [ -n "$bad" ]; then
+      if [ "$how" != keep ]; then
+        echo "[save] $who ended with $save swapped out, and its backup $b $bad." >&2
+        des_save_found "$save" "$lock/swapped"
+        echo "[save] $save is left as it is, and so is $lock. If $save holds a save to go on from, run again with DES_SAVE_TAKEOVER=keep:$id." >&2
+        return 2
+      fi
+    elif [ -z "$how" ]; then
+      if ! have=$(des_save_files "$save"); then
+        echo "[save] $who ended with $save swapped out, and not every file there can be read; leaving it and $lock as they are" >&2
+        return 2
+      fi
+      unknown=$(printf '%s\n' "$have" | grep . | grep -vxF -f <(des_save_files "$b"; cat "$lock/swapped" 2>/dev/null))
+      if [ -n "$unknown" ]; then
+        echo "[save] $who ended with $save swapped out, and the folder has changed since: $(printf '%s\n' "$unknown" | wc -l) file(s) there are in neither its backup nor the save it put there:" >&2
+        printf '%s\n' "$unknown" | head -5 | while read -r _ f; do echo "[save]   $(date -r "$save/$f" '+%F %T') $f" >&2; done
+        echo "[save] That may be newer play, so it is left as it is, and so is $lock; $b still holds the save from before that run." >&2
+        echo "[save] To put that backup back anyway, run again with DES_SAVE_TAKEOVER=restore:$id; to go on from what $save holds, DES_SAVE_TAKEOVER=keep:$id." >&2
+        return 2
+      fi
+      how=restore
+    fi
+    if [ "$how" = restore ]; then
+      echo "[save] $who ended with $save swapped out; putting back $b" >&2
+      # The copy ignores signals; one that comes meanwhile takes effect once
+      # the save is back.
+      traps=$(trap -p TERM INT HUP)
+      trap 'sig=TERM' TERM; trap 'sig=INT' INT; trap 'sig=HUP' HUP
+      ( trap '' TERM INT HUP; des_restore_save "$b" "$save" ); rc=$?
+      trap - TERM INT HUP; eval "$traps"
+      if [ $rc != 0 ]; then
+        echo "[save] leaving $lock in place" >&2
+        if [ -n "$sig" ]; then kill -s "$sig" $$; fi
+        return 2
+      fi
+    else
+      echo "[save] $who ended with $save swapped out; going on from what it holds (DES_SAVE_TAKEOVER=keep:$id)" >&2
+    fi
+  fi
+  rm -f "$lock/backup" "$lock/backup.md5" "$lock/swapped" "$lock/pidfile"
+  rm -rf "$lock"/claim.*
+  des_save_id "$lock"
+  if [ -n "$sig" ]; then kill -s "$sig" $$; fi
+  return 0
+}
+
+# des_save_found <save> <files>: say what <save> holds, next to the file
+# list <files> (des_save_files) of the save a run put there.
+des_save_found() {
+  local all n other
+  all=$(des_save_files "$1"); n=$(printf '%s' "$all" | grep -c .)
+  if [ "$n" = 0 ]; then echo "[save] $1 is empty." >&2; return 0; fi
+  other=$(printf '%s\n' "$all" | grep -vxF -f <(cat "$2" 2>/dev/null) | grep -c .)
+  if [ "$other" = 0 ]; then echo "[save] $1 holds the save that run put there ($n files)." >&2
+  else echo "[save] $1 holds $n files; $other of them are not from the save that run put there." >&2; fi
+}
+
+des_save_id() { echo "$$-$(date +%s)" > "$1/id"; }
+des_save_note() {
+  rm -f "$1.lock/swapped"
+  echo "$DES_PIDFILE" > "$1.lock/pidfile" && des_save_files "$2" > "$1.lock/backup.md5" &&
+    realpath "$2" > "$1.lock/backup"
+}
+des_save_swap() { des_save_files "$1" > "$2.lock/swapped" && des_put_save "$1" "$2"; }
+des_save_unlock() {
+  [ "$(cat "$1.lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$1.lock"
 }

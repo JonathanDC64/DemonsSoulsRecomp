@@ -15,6 +15,9 @@
 #include "settings.hpp"
 #include "ui.hpp"
 #include "version.hpp"
+#if DES_DEV
+#include "../../des_dev_marker.h"
+#endif
 
 #include <windows.h>
 #include <shellapi.h>
@@ -22,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <format>
 #include <string>
 #include <vector>
@@ -253,8 +257,9 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "The others give the game the real time of each frame; 60 uses the game's 60 fps mode, and the other "
             "rates set the frame cap to the number chosen. Unlocked has no cap: the game runs as fast as the "
             "machine allows, and with V-sync on the display still shows at most its refresh rate. Custom is the "
-            "rate set in Custom frame rate, below. In-engine cutscenes stay at 30 fps, as on the PS3. Above 60 fps "
-            "the game is less tested. Applies at once.<br/><br/>(DES_FPS)",
+            "rate set in Custom frame rate, below. In-engine cutscenes play at 30 fps, as on the PS3, unless "
+            "Cutscene frame rate says otherwise. Above 60 fps the game is less tested. Applies at once."
+            "<br/><br/>(DES_FPS)",
             {}, [](Pane& pane) {
                 pane.add_button({
                                     .text = "Custom",
@@ -291,6 +296,12 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                 pane.clear();
                 pane.add_rml(helpText);
             });
+        choice_row(leftPane, rightPane, "Cutscene frame rate", "DES_CUTFPS", {"0", "1"},
+            {"30 fps (original)", "Same as Frame rate"},
+            "The frame rate of the in-engine cutscenes. Their camera moves in steps of 1/30 s, so above 30 fps they "
+            "judder; 30 fps (original) plays them at 30, as on the PS3, and goes back to Frame rate when they end. "
+            "Same as Frame rate keeps them at the frame rate and moves the camera smoothly between its steps. "
+            "Movies are not affected, and at 30 fps this does nothing. Applies at once.<br/><br/>(DES_CUTFPS)");
         bool_row(leftPane, rightPane, "V-sync", "DES_VSYNC",
             "Presents wait for the display's refresh. Off shows each frame as soon as it is drawn, with tearing: "
             "needed to see a frame rate above the display's refresh rate. Applies at once.<br/><br/>(DES_VSYNC)");
@@ -444,11 +455,53 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "menu.");
     });
 
+#if DES_DEV
+    // Developer builds only (cmake -DDES_DEV=ON; docs/55, des_dev.cpp). The rows are live and never saved.
+    add_tab("Developer", [this](Rml::Element* content) {
+        auto& leftPane = add_child<Pane>(content, Pane::Type::Controlled);
+        auto& rightPane = add_child<Pane>(content, Pane::Type::Uncontrolled);
+
+        // des_dev_boot sets the session at start (cheats, online or offline); des_dev.cpp makes it online for good
+        // when PS3_NET_ONLINE or PSNR_SERVER is set later. The tab is built again each time it is shown.
+        const char* session = std::getenv("DES_DEV_SESSION");
+        if (session && std::strcmp(session, "online") == 0) {
+            info_row(leftPane, rightPane, "Cheats", "Off: online session",
+                "This session is online (PS3_NET_ONLINE or PSNR_SERVER is or was set), so the cheats are off "
+                "until the next start. Start the game without them to use the cheats.");
+            return;
+        }
+        info_row(leftPane, rightPane, "Developer build", "Cheats compiled in",
+            "This is a developer build (" DES_DEV_MARKER "). The cheats below are for testing. Turning one on "
+            "keeps this session offline; if the network is turned on later, they stop until the next start. They "
+            "are not saved: each start begins with all of them off.");
+        bool_row(leftPane, rightPane, "God mode", "DES_GOD",
+            "Your HP, MP and stamina never drop: hits, falls, poison, spells, attacks, rolls, guarding and dashing "
+            "cost nothing. Instant deaths still kill: falling out of the level, lethal grabs and scripted deaths."
+            "<br/><br/>(DES_GOD)");
+        choice_row(leftPane, rightPane, "Attack power", "DES_ATK", {"1", "2", "5", "10", "100", "0"},
+            {"Normal", "2x", "5x", "10x", "100x", "No damage"},
+            "Multiplies the damage your hits do to others. Any other number can be set with DES_ATK."
+            "<br/><br/>(DES_ATK)");
+        choice_row(leftPane, rightPane, "Movement speed", "DES_SPEED", {"1", "1.5", "2", "3", "0.5"},
+            {"Normal", "1.5x", "2x", "3x", "Half"},
+            "Multiplies how far you move: walking, running, dashing, rolling and attack lunges. Animations keep "
+            "their speed. Very high values may let you pass through thin walls.<br/><br/>(DES_SPEED)");
+        info_row(leftPane, rightPane, "Warp (scripts)", "DES_WARP=x,y,z",
+            "For test scripts and the debug console. DES_WARP=x,y,z puts you at x, y, z the way the level scripts "
+            "place characters; each new value warps once. DES_WARP_CLEAR=m first sends the enemies within m metres "
+            "of that spot to the tutorial's start. A warp counts as a cheat: the session stays offline.");
+    });
+#endif
+
     add_tab("About", [this](Rml::Element* content) {
         auto& leftPane = add_child<Pane>(content, Pane::Type::Controlled);
         auto& rightPane = add_child<Pane>(content, Pane::Type::Uncontrolled);
 
         leftPane.add_section("This program");
+#if DES_DEV
+        info_row(leftPane, rightPane, "Developer build", "Cheats compiled in",
+            "This build has the developer cheats (the Developer tab). Never share it as a release.");
+#endif
         info_row(leftPane, rightPane, "Version", kVersion,
             "Demon's Souls, PC port: a static recompilation of the PlayStation 3 game.<br/><br/>Version " +
                 escape(kVersion) + ".",

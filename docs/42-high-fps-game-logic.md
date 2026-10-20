@@ -23,7 +23,7 @@ Terms used below:
    - **Character fades** (read; what triggers them is inferred). Two of the 20 node types in a character's effect list fade the model by a fixed step per call: type 16 (0.05 a call, 0x0025EB20) and type 14 (1/30 a call, 0x002654E8). At 240 their fades are 8 times as fast: 0.67 s becomes 83 ms, 1 s becomes 125 ms.
    - **Pitch return after a scripted camera angle** (read). Keep factor C+0x18C = 0.3 a frame (0x0011C15C). It takes about 4 frames at any rate: 133 ms at 30, 17 ms at 240. Low.
 4. Everything else that was checked uses dt (section 3): the stamina drain tick, the regen accumulator, the camera manager's blend, the other effect-list timers, the noise life, and Havok (physics and animation, from 0x00FF0000 up).
-5. Reports from players of RPCS3's 60 fps patch (2019) say the jump distance changes, and that sliding down a ladder can drop you through the floor (the second is from Dark Souls with DSfix, said to apply here too). The jump report fits the movement stuck test that `des_move_post` already fixes (inferred). Both need a run (section 5).
+5. Reports from players of RPCS3's 60 fps patch (2019) say the jump distance changes, and that sliding down a ladder can drop you through the floor (the second is from Dark Souls with DSfix, said to apply here too). The jump report has nothing to check here: Demon's Souls has no jump (checked by hand in RPCS3, 2026-10-19: L3 while dashing does nothing). The ladder report needs a run (section 5).
 6. Two side notes. The ChrFollowCam update 0x00122C40 has no callers (read), so its five lines in `insn_hooks.txt` never run. 0x00798878, a twin of ObjScrollMsg's update with the same -1.5 px step a call, has no callers either.
 7. `DES_FRAMELOCK` and `DES_FLWATCH` cannot see any of this. They wrap functions with `ppu_register_function`, which only catches calls through a vtable or a pointer. Every function here is reached by a direct `bl`, which the lift emits as a plain C call (`func_00119670(ctx)` at `ppu_recomp_000.cpp:317601`). So a longer hook list would not help. The run request logs from inside `des_cam_rate` instead: it already runs every frame inside 0x00119670, with r31 = C.
 
@@ -140,13 +140,13 @@ All of these give the 30 fps behaviour at any frame rate, so they fit "original 
 
 ## 4. Not found, or not checked
 
-- Hit stop, damage flash, item pickup glow, doors, elevators, FFX particles and sound fades: the scan found no per-frame pattern for them in the game code (0x00010000 to 0x00F00000). They were not read further.
+- Hit stop, damage flash, item pickup glow, doors, elevators and sound fades: the scan found no per-frame pattern for them in the game code (0x00010000 to 0x00F00000). They were not read further. FFX particles: see section 6 (their state machine is in the effect library above 0x01300000, outside the scan).
 - Integer per-frame counters were not scanned (too many loops look the same). One was seen: the game step 0x00143F00 counts +0x48 down by 1 a call from 2 (0x00144004 to 0x0014400C). Two frames; harmless.
-- Jump and ladder: no lead in the code. See the run.
+- Ladder: no lead in the code. See the run. There is no jump to look for: Demon's Souls has none.
 - The scan finds float eases and steps whose factor comes from a constant or a field. It misses steps built from params or kept in ints.
 - Scan size: about 1,000 matches in the EBOOT; 149 outside the camera code after removing the ones scaled by dt. The game code ends below 0x00F00000; Havok is above.
 - RPCS3's patch does the same as `DES_FPS` (FlipMode, plus a measured dt capped at 0.05 s) and nothing about per-frame eases. Its note warns: "Vblank rate can be modified to increase the framelimit beyond 60 FPS. However, it's not recommended as users may encounter physics issues." So everything above happens in RPCS3 at 60 fps too, at twice the 30 fps rate.
-- Web, second hand (search snippets; the pages refused direct reads): a 2019 thread on the RPCS3 forums, "60 fps in Demon's Souls affects jump performance", says a jump lands somewhere else at 60 fps, and a reply says sliding down ladders can drop you through the floor (from Dark Souls). News coverage of the patch reported that at 120 fps, running into geometry slowed the player (since fixed here by `des_move_post`) and that cutscenes ran fast (handled by docs/40).
+- Web, second hand (search snippets; the pages refused direct reads): a 2019 thread on the RPCS3 forums, "60 fps in Demon's Souls affects jump performance", says a jump lands somewhere else at 60 fps (Demon's Souls has no jump, so there is nothing to check it against), and a reply says sliding down ladders can drop you through the floor (from Dark Souls). News coverage of the patch reported that at 120 fps, running into geometry slowed the player (since fixed here by `des_move_post`) and that cutscenes ran fast (handled by docs/40).
 
 ## 5. Run request
 
@@ -165,7 +165,7 @@ Steps:
 - **R1, R3 reset.** Stand still with no enemy near (the start area). Hold the right stick to one side until C+0x134 has moved by about pi, so the camera looks at the character's front. Release, wait 0.5 s, press R3 once, wait 2 s. Three times. Log: `DES_CAMWATCH` from the press until C+0x243 is back to 0.
 - **R2, lock-on.** Walk to about 8 m from the first enemy. Turn the camera 90° away with the right stick. Press R3 to lock, wait 1 s. Hold the left stick fully left for 3 s (strafe around it), release, press R3 to unlock. Log: `DES_CAMWATCH` (C+0x240 should be 1 while locked), `DES_FRAMELOG`.
 - **R3, noise.** In an open spot: 3 rolls (circle), 3 attacks (R1) at a wall, a 3 s dash (hold circle and the stick). Log: `DES_NOISELOG`.
-- **R4, jump.** On flat ground with 10 m free: dash for 2 s, then press L3 (Demon's Souls jumps with L3 while dashing), and hold the stick until landing. Three jumps at each rate. Log: `DES_FRAMELOG` (position, speed factor mv+0x128).
+- **R4, jump: dropped.** Demon's Souls has no jump (checked by hand in RPCS3, 2026-10-19: L3 while dashing does nothing).
 - **R5, ladder**, only if the Tutorial has one within reach: climb up (cross at the ladder), then slide down (inferred: circle on the ladder, as in Dark Souls). Log: `DES_FRAMELOG`, and a screenshot at the bottom.
 - **R6, character fades**, only if a re-lift is done anyway: add scratch hooks after the stores of the fade value at 0x0025EB98, 0x0025EC24 (type 16), 0x00265C9C and 0x0026559C (type 14), printing r31, +0x10 and dt. Then play R1 to R5 as above and note whether types 16 or 14 fire anywhere in the Tutorial. Without these hooks the fades cannot be seen in a log.
 
@@ -180,8 +180,6 @@ What to expect:
 | Strafe lag | C+0x134 against the target's bearing | rate x 0.078 s, plus 3° | rate x 0.0097 s, plus 3° | rate x 0.091 s, plus 3° |
 | Noise radius | +0x14 against time | x0.74 a second | x0.09 a second | x0.09 (needs the keep hook) |
 | Noise life (control) | +0x18 | -1 a second | -1 a second | -1 a second |
-| Jump | horizontal distance and air time | baseline | the same within 5% if fine | |
-| Speed factor in the jump | mv+0x128 | 1.0 | 1.0 (`des_move_post`) | |
 | Ladder slide | vertical speed; floor reached | baseline | the same if fine; faster means a per-frame step | |
 
 An item is confirmed when its per-frame count matches at 30 and at 240 with the fix off, while its control matches in seconds. A fix is confirmed when the 240 fix-on row matches 30 fps in seconds.
@@ -201,16 +199,57 @@ Measured:
 | Manual turn, 1.2 s of full right stick (control) | 270° | 270° | 270° |
 | Lock-on swing, 46-71° until settled (C+0x240 set; cw6) | 0.20 s | 0.033 s | 0.22-0.24 s |
 | Lock-on, camera lag behind a strafing target (cw5, cw6; rough, strafe speeds differed) | 19-20° | 10° | 24° |
-| Jump: circle + L3 while dashing (cw6) | no jump in 3 tries | no jump in 3 tries | no jump in 3 tries |
 
 What this shows:
 - R3 reset: the per-frame count matches at 30 and at 240 with the fix off (12 frames), and with the fix on the swing takes the 30 fps time (0.41 s against 0.40 s). Confirmed, and the fix works.
 - Noise radius: at 240 with the fix off a sound keeps a third to a half of what it keeps at 30 after a second; with the fix on it matches 30. The life clock runs at the same rate at 30 and at 240, so only the radius was per frame. Confirmed, and the fix works. (The life clock reads 0.81-0.88 s a second although game time ran at 0.98-1.0 of real time; why it is under 1 was not checked.)
 - The manual camera turn is dt-based already and the fix leaves it alone.
 - Lock-on: at 240 with the fix off, the camera snaps onto a new target in 33 ms instead of the 0.20 s it takes at 30. With the fix on it takes 0.22-0.24 s. Confirmed, and the fix works. While the player strafes around a locked target, the camera trails it by 19-20° at 30, 10° at 240 with the fix off and 24° with it on. The strafe speeds differed between the passes, so that row is only a rough check.
-- Jump: not checked. In three scripted tries at each setting (dash for 2 s, then circle + L3 for 6 frames, stick held), the character never jumped: the height stayed on the floor and stamina showed no jump cost. How the game reads its jump input needs a look before this check can run.
+- No jump to check: Demon's Souls has none (checked by hand in RPCS3, 2026-10-19). cw6's three scripted tries of L3 while dashing at each setting (dash for 2 s, then circle + L3 for 6 frames, stick held) did nothing, as a game without a jump would: the height stayed on the floor and stamina showed no cost.
 
 Notes for the next runs:
 - C+0x240 (lock-on) reads 0 from outside the game at any time; inside the camera update it is 1 for the whole lock. The byte only holds during the update. The driver reads the lock state from the `[camwatch]` rows instead.
-- `PAD_FILE` takes a new press only once the current hold is over (cellPad.c). A press written late leaves a gap: circle lifts, and circle + L3 after a gap is a roll (stamina -19), not a jump. Queue the presses behind each other so circle never lifts.
-- One session (cw2) slowed to a steady 9.7 fps for 30 s, every frame taking about 103 ms (a timed wait that expires each frame). The same plateau came up on a build without the fix hooks (master plus #50's idle cutscene hooks, after 27 s at 240 fps), so it is not from the fix. It is tracked separately. The other slow stretches, in cw4 and cw5, were build load: their frame times spread from 10 ms to over 500 ms instead of sitting at 100-110 ms.
+- `PAD_FILE` takes a new press only once the current hold is over (cellPad.c). A press written late leaves a gap: circle lifts, and circle pressed again after a gap is a roll (stamina -19), which ends the dash. Queue the presses behind each other so circle never lifts.
+- One session (cw2) slowed to a steady 9.7 fps for 30 s, every frame taking about 103 ms (a timed wait that expires each frame). The same plateau came up on a build without the fix hooks (master plus #50's idle cutscene hooks, after 27 s at 240 fps), so it is not from the fix. Update (2026-10-19): it was the ChrIns freeze that port #53 fixed: in cw2's frame log the game is frozen from 63 s to the end, and the ~10 fps is HG_Watchdog, which keeps presenting while the game threads are stuck. The other slow stretches, in cw4 and cw5, were build load: their frame times spread from 10 ms to over 500 ms instead of sitting at 100-110 ms.
+
+## 6. Particle effects (FFX): the boss fog walls (2026-10-19)
+
+Reported: above 30 fps the fog wall in front of a boss churns faster than at 30 fps. It also turned out darker.
+
+### Measured
+
+At the 1-1 boss door, from a copy of the player's save, with present bursts (`CELLMARK_DUMP_NOW`) at frame rates set live. The number is the fog box's mean absolute change over 1/30 s of game time (k = fps / 30 presents), divided by the box's mean brightness, which changes as the fog drifts. Runs fx1 (experiment) and fx4 (the fix), one boot each.
+
+| | 60 fps | 120 fps |
+|---|---|---|
+| fix off | 0.089-0.090 | 0.150 |
+| fix on (`des_fx_state`) | 0.030-0.043 | 0.053 |
+| experiment: the whole effect update at 30 Hz | 0.039 | 0.044 |
+
+At 30 fps every burst read 0.039 to 0.047, whatever the settings (neither hook does anything at 30 fps).
+
+The fog box's mean brightness: 116-129 at 30 fps; 87-92 at 60 and 47-52 at 120 with the fix off; 122-159 with it on.
+
+Before the cause was known, each fog particle was followed through the vertex data: its own animation was already dt-based (the alpha step, a lifetime of 0.43 s at 30 fps and 0.48 s at 60, the drift, the growth and the spin, and the UV scroll constants), and both fog draws had the same quad counts at 30 and 60 fps. The experiment row ran the effect manager's update (0x00515070) 30 times a second; that brought 60 fps down to the 30 fps value, so the cause was something done once per update call.
+
+### Cause
+
+Read from the code (a static pass over 0x01360000 to 0x01690000), then confirmed by the fix:
+
+- Effect nodes run a state machine in the scene update 0x013B74B8: main thread, once a frame, from 0x00515070 through 0x014418A8 and 0x01441870, with a pointer to dt. Per active node (+0x20 = -1): the current state is at +0x80, the state's time at +0x94, the node's total time at +0x98; the node's definition (+0xA8) holds the state table at +0x40.
+- Each update a transition may pick the next state (r0, 0 for none): the state's own conditions through 0x0136B4E8, or template code for templates 0x7E4, 0x7E7, 0x835 and 0x849. Entering a state sets +0x94 to 0 (0x013B75D4), stores the state (0x013B75D8) and runs the state's entry messages (0x0136B4C0). After that, +0x94 and +0x98 step by dt (0x013B75E4 to 0x013B7608).
+- An emitter's entry messages emit a fixed number of particles: the billboard emit 0x014221A0 and the line emit 0x0142C068 take a count that does not depend on dt.
+- An emitter repeats by re-entering its own state once +0x94 reaches an interval. The test comes before the dt step and the time restarts at 0, so with an interval of one frame or less it fires on every update: 30 times a second at 30 fps, 60 at 60, 240 at 240. The pool of fog particles has a fixed size, so more births a second means each particle is recycled younger, before it reaches full brightness: hence the darker fog.
+- An earlier memory diff of the effect heap found integer words that fall by 2.6 per update at both 30 and 60 fps (0x48196374, 0x48196574, 0x48196964); hardware write watches put their writes on this same per-update path.
+
+### Fix
+
+`des_fx_state` (`port/des_options.cpp`), on the lifter's `--insn-hooks`:
+- After each `mr r0, r3` that picks the next state (0x013B75A8 for the state's own transitions; 0x013B7940, 0x013B7B9C, 0x013B7CA4 and 0x013B7CCC on the template paths): if the next state is the current one and the state has lasted less than 1/30 s, r0 becomes 0. The node stays in its state this update, and its time still steps.
+- When the state does re-enter within one frame past 1/30 s, the hook after 0x013B75D4 starts the new state's time at that excess instead of 0, so the loop runs exactly 30 times a second also at frame rates that 30 does not divide (144, 165).
+- Nothing changes at 30 fps (a state is always 1/30 s old by its next update) or without `DES_FPS`. `DES_FXFIX=0` turns it off live.
+
+Limits:
+- Only self-loops faster than 1/30 s change. At 30 fps a loop with a longer interval ran at the next multiple of 1/30 s (an interval of 0.05 s re-entered every second frame, 15 times a second); above 30 fps it runs at its own interval (20 times a second). Matching that would mean holding every self-loop to the 1/30 s grid, which would also delay re-entries that an event triggers, so it is left alone.
+- A loop through two states (A to B to A on consecutive updates) is not caught. None showed at the fog wall: with the fix, 60 fps matches 30.
+- The rest of the effect library's timing was read and uses dt: fades, delays, curves and the particles' birth times. Its per-frame draw-list call (0x014236B8) does no time math.

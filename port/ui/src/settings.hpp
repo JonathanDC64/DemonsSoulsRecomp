@@ -17,6 +17,8 @@ enum class Apply {
     Live,     // applied at once (a live knob)
     Restart,  // read when the game starts
     UiOnly,   // the UI's own
+    Session,  // live, but never read from or written to settings.ini: each start begins at the default (the
+              // developer build's cheats, docs/55)
 };
 
 struct Def {
@@ -42,7 +44,8 @@ std::string get(std::string_view key);  // the value, or its default
 int get_int(std::string_view key);
 bool is_default(std::string_view key);
 
-// Stores the value, applies it if it is live (and not pinned) and saves settings.ini.
+// Stores the value, applies it if it is live or per session (and not pinned) and saves settings.ini (where a
+// per-session value is never written).
 void set(std::string_view key, const std::string& value);
 
 // The variable was set in the environment when the game started (not by settings.ini): it wins over the file.
@@ -60,6 +63,13 @@ std::string keys_with_layout(const std::string& changes);
 // is scripted (DES_AUTO_CONTINUE, PAD_FILE, EXIT_AFTER_MS): no start screen there.
 bool harness_run();
 bool scripted_run();
+// scripted_run() without DES_AUTO_CONTINUE: nobody plays the run. The close button closes at once only there; a
+// play session with DES_AUTO_CONTINUE on its command line skips the start screen but still asks.
+bool unattended_run();
+
+// PS3_NO_USER_INPUT=1 (test runs; tools/des/deslib.sh sets it): the user's pads, keys and mouse do nothing. The
+// runtime reads the same variable (ps3_knob.h) for the game's pad and the window.
+bool no_user_input();
 
 void save();
 

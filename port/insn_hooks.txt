@@ -8,6 +8,20 @@
 # (bne -> beq at 0x00217E7C).
 0x00217E70=des_motion_blur   # cmpwi cr7, r0 (= byte +0x1D4), 0
 
+# Dev hooks (docs/55). Every line calls des_dev_hook, which is empty in release builds.
+0x00280E64=des_dev_hook   # dev hook: hit HP damage (ApplyDamage 0x00280DC8)
+0x00280F88=des_dev_hook   # dev hook: hit stamina damage (ApplyDamage)
+0x0028B224=des_dev_hook   # dev hook: hit damage after the calculation (handler 0x0028B1D8)
+0x002818D0=des_dev_hook   # dev hook: fraction damage (0x002816D0)
+0x00280724=des_dev_hook   # dev hook: SpEffect HP change (0x002806D8)
+0x00280C78=des_dev_hook   # dev hook: SpEffect MP change (0x00280A08)
+0x0026FB20=des_dev_hook   # dev hook: AddHP
+0x0026FC48=des_dev_hook   # dev hook: SetMP
+0x0026FC98=des_dev_hook   # dev hook: SetStamina
+0x00286614=des_dev_hook   # dev hook: dash cost (0x00286020)
+0x002EDEB0=des_dev_hook   # dev hook: root-motion factor (0x002EDDA0)
+0x0027882C=des_dev_hook   # dev hook: weapon action stamina cost (0x002784C0)
+
 # des_cut_cam (port/des_options.cpp): the cutscene camera's keys (sibcam).
 # 0x005F71D0 loads the nearest of two keys 1/30 s apart (s < 0.5 ? earlier :
 # later); with DES_CUTFPS=1 the hooks blend the two by s. The first decides
@@ -56,8 +70,13 @@
 # pitch = base + (pitch - base) * r, tuned for 30 fps.
 0x0011C15C=des_cam_keep   # r = +0x18C (0.3): pitch return after a scripted angle
 
-# The manager's second camera (0x00110608).
-0x00110808=des_cam_rate   # k = +0x138, +0x130 towards +0x134
+# des_cam_step (port/des_options.cpp): a step a camera adds once a frame,
+# tuned for 30 fps. The hook scales it by the frame's 30 Hz steps.
+# The bow's aim view (ChrAimCam update 0x00110608): its zoom position +0x138
+# moves by the zoom input (-1, 0 or 1) times this step a frame, clamped to
+# [0, 1]. (Its field of view is lerp(+0x130, +0x134, +0x138), worked out
+# again each frame: no ease, so no des_cam_rate site.)
+0x001107C0=des_cam_step   # lfs f13, 0x13C(r31): the zoom step (0.1)
 
 # des_dof (port/des_options.cpp): DES_DOF=0 zeroes the two depth-of-field
 # strengths that the image-process update blends from the area's DOF_BANK rows.
@@ -95,3 +114,22 @@
 # frame (radius *= 0.99, 0x018EDC0C) in the list update 0x006A3970.
 0x006A3990=des_noise_rate   # lfs f12, the 0.99, loaded once before the loop
 0x006A2E8C=des_noise_rate   # the same in the single-entry twin 0x006A2E78 (no callers)
+
+# des_fade_rate (port/des_options.cpp): character effect nodes that fade the
+# model by a fixed step a frame (docs/42, 2.4). The hook scales the step by the
+# frame's 30 Hz steps.
+0x0025EB88=des_fade_rate   # lfs f0, 0.05 (0x018D6848): type 16 fading in
+0x0025EC14=des_fade_rate   # lfs f0, 0.05: type 16 fading out (distance mode)
+0x00265C88=des_fade_rate   # lfs f13, 1/30 (0x018D691C): type 14 fading in
+0x0026558C=des_fade_rate   # lfs f13, 1/30: type 14 fading out
+
+# des_fx_state (port/des_options.cpp): particle effect (FFX) nodes' state
+# machine in the scene update 0x013B74B8. An emitter repeats by re-entering its
+# own state, at most once an update: 30 times a second at 30 fps, 240 at 240.
+# The hook holds a re-entry until the state has lasted 1/30 s.
+0x013B75A8=des_fx_state   # mr r0, r3: the next state from the state's own transitions (0 = none)
+0x013B7940=des_fx_state   # mr r0, r3: the next state (1) on the paths of templates 0x7E7, 0x835 and 0x849
+0x013B7B9C=des_fx_state   # mr r0, r3: the next state (2) on template 0x7E4's path
+0x013B7CA4=des_fx_state   # mr r0, r3: the next state (2) on template 0x7E7's path
+0x013B7CCC=des_fx_state   # mr r0, r3: the next state (4) on the paths of templates 0x7E4 and 0x7E7
+0x013B75D4=des_fx_state   # stfs f0, 0x94(r31): the new state's time set to 0; takes the part of a frame past 1/30 s

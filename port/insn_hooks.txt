@@ -149,3 +149,10 @@
 0x013B7CA4=des_fx_state   # mr r0, r3: the next state (2) on template 0x7E7's path
 0x013B7CCC=des_fx_state   # mr r0, r3: the next state (4) on the paths of templates 0x7E4 and 0x7E7
 0x013B75D4=des_fx_state   # stfs f0, 0x94(r31): the new state's time set to 0; takes the part of a frame past 1/30 s
+
+# des_ghost_rate (port/des_options.cpp): wandering ghosts' playback
+# (ReplayManipulator) steps a sample per 10 frames, so above 30 fps ghosts ran;
+# the hooks use 1/(3 dt) frames a sample (docs/69, "Wandering ghosts").
+0x00315030=des_ghost_rate  # li r9, 10: Update's frames to the next sample (+0x1E4)
+0x003147EC=des_ghost_rate  # lfs f12: 10.0, the next sample's move and turn split into per-frame steps
+0x00314ABC=des_ghost_rate  # lfs f12: 30.0, SetMoveVector's step-to-speed factor (walk or run)

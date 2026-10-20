@@ -1321,6 +1321,33 @@ extern "C" void des_fx_state(ppu_context* ctx, uint32_t addr)
     }
 }
 
+/* Wandering ghosts (other players' phantoms walking through your world)
+ * play back through ReplayManipulator (vtable 0x0185C128): a recorded path of
+ * up to 27 samples, a third of a second apart. Its Update (0x00314C80) moves
+ * to the next sample every 10 frames (the li r9, 10 at 0x00315030), and the
+ * sample's move and turn are split into 10 per-frame steps (the 10.0 at
+ * 0x003147EC). Frames, not time: at 144 fps a ghost walked its path 4.8 times
+ * as fast. SetMoveVector (0x00314ABC) picks walk or run from the step times
+ * 30, a speed only at 30 fps. With DES_FPS set, the hooks put N = 1/(3 dt)
+ * frames a sample, N as the divisor and 3 N as the factor: 10, 10 and 30 at
+ * 30 fps, where nothing changes. Recording already runs on dt (a sample each
+ * 1/3 s, 0x002E4C68), so what is uploaded stays as on the PS3. Bloodstain
+ * replays most likely play through the same code. DES_GHOSTFIX=0 turns it
+ * off. Main thread. */
+extern "C" void des_ghost_rate(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_GHOSTFIX", 1) != 0);
+    const float dt = vm_readf(kFrameDt);
+    if (!on || s_fps <= 0 || !(dt > 0.0f && dt <= kMaxFrameDt)) return;
+    int n = (int)(1.0f / (3.0f * dt) + 0.5f);
+    if (n < 1) n = 1;
+    if (n == 10) return;
+    if (addr == 0x00315030u) ctx->gpr[9] = (uint64_t)n;         /* li r9, 10: frames to the next sample */
+    else if (addr == 0x003147ECu) ctx->fpr[12] = (float)n;      /* lfs f12: the move and turn divisor */
+    else ctx->fpr[12] = 3.0f * (float)n;                        /* 0x00314ABC, lfs f12: the step's speed factor */
+}
+
 #if !DES_DEV
 /* Release builds: the dev hook lines in insn_hooks.txt (docs/55) call this
  * empty function, and no cheat is ever used. Developer builds (cmake

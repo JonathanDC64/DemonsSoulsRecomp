@@ -1096,6 +1096,13 @@ extern "C" void des_qwc_local(ppu_context* ctx, uint32_t)
     vm_write32(out, vm_read32(own_at));
     vm_write32(out + 4, vm_read32(own_at + 4));
     ctx->gpr[4] = 0;
+    if (area == 1) {
+        float bw, lr;
+        const uint32_t b0 = vm_read32(own_at), b1 = vm_read32(own_at + 4);
+        std::memcpy(&bw, &b0, 4);
+        std::memcpy(&lr, &b1, 4);
+        std::fprintf(stderr, "[des] world tendency: yours only (the server's skipped; area 1 %.0f / %.0f)\n", bw, lr);
+    }
 }
 
 /* A step a camera adds once a frame, cur += input * step, tuned for 30 fps:

@@ -361,8 +361,9 @@ void apply_network() {
                  header.empty() ? "" : ", a matchmaking password");
 }
 
-// A changed password, online: the next request has the new group (cellHttp reads PS3_HTTP_HEADER for each one). A
-// sign already down stays in the old group until it is gone; a PS3_HTTP_HEADER from the environment wins.
+// A changed password, online: the next request has the new group (cellHttp reads PS3_HTTP_HEADER for each one), and
+// dessego moves a sign already down along at its owner's next checkSosData. A PS3_HTTP_HEADER from the environment
+// wins.
 void apply_match_group() {
     if (!sNetOnline || sHeaderPinned) return;
     const std::string header = net_options_header();

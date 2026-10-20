@@ -592,7 +592,8 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                  "bloodstains, ghosts and world tendency stay shared with everyone on the server. Empty plays with "
                  "everyone, as on the PS3. The password stays on this PC: the server gets a hash of it. Only "
                  "servers that support it (dessego with matchmaking groups) use it; others match everyone. Applies at "
-                 "once; a sign you already put down stays in the old group until it is gone. Confirm to type.<br/><br/>(DES_NET_PASSWORD)")](Pane& pane) {
+                 "once, and a sign you already put down moves along within about 20 seconds. Confirm to type.<br/><br/>"
+                 "(DES_NET_PASSWORD)")](Pane& pane) {
                 pane.clear();
                 pane.add_rml(helpText);
             });

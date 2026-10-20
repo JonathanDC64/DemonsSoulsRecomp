@@ -585,7 +585,9 @@ void ControlsWindow::update_key_capture() {
         return;
     }
     std::array<bool, 256> now{};
-    for (int vk = 1; vk < 0xFF; vk++) now[vk] = (GetAsyncKeyState(vk) & 0x8000) != 0;
+    if (!settings::no_user_input()) {  // PS3_NO_USER_INPUT: a key held is the user's, so a capture sees none
+        for (int vk = 1; vk < 0xFF; vk++) now[vk] = (GetAsyncKeyState(vk) & 0x8000) != 0;
+    }
     // The modifier first, so one pressed in the same frame as the other input still makes the chord.
     for (const int vk : {VK_LSHIFT, VK_RSHIFT, VK_LCONTROL, VK_RCONTROL, VK_LMENU, VK_RMENU}) {
         if (!mModDown && now[vk] && !mDown[vk]) mModDown = vk;

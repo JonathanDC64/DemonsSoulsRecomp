@@ -42,8 +42,9 @@ configure_like() {
     echo "call \"$VCVARS\" >nul 2>&1"
     printf 'cmake -S "%s" -B "%s" -G Ninja' "$src" "$dir"
     # The settings that make the normal build what it is; anything else keeps its default. PS3RECOMP_BUILD_DIR is
-    # left out: a PGO build links its own runtime build (an extra argument below).
-    grep -aE '^(CMAKE_(C|CXX)_COMPILER|CMAKE_(LINKER|AR|MT|RC_COMPILER|MAKE_PROGRAM|BUILD_TYPE)|CMAKE_(C|CXX)_FLAGS|RECOMP_DIR|PS3RECOMP_DIR|DES_[A-Z0-9_]+|PS3RECOMP_[A-Z0-9_]+|FETCHCONTENT_SOURCE_DIR_[A-Z0-9_]+):(BOOL|STRING|PATH|FILEPATH)=' "$cache" \
+    # left out: a PGO build links its own runtime build (an extra argument below). UNINITIALIZED is what a -D without
+    # a type leaves (-DCMAKE_C_COMPILER=clang-cl); without it the copy falls back to cl.exe.
+    grep -aE '^(CMAKE_(C|CXX)_COMPILER|CMAKE_(LINKER|AR|MT|RC_COMPILER|MAKE_PROGRAM|BUILD_TYPE)|CMAKE_(C|CXX)_FLAGS|RECOMP_DIR|PS3RECOMP_DIR|DES_[A-Z0-9_]+|PS3RECOMP_[A-Z0-9_]+|FETCHCONTENT_SOURCE_DIR_[A-Z0-9_]+):(BOOL|STRING|PATH|FILEPATH|UNINITIALIZED)=' "$cache" \
       | grep -avE '^(FETCHCONTENT_SOURCE_DIR_[A-Z0-9_]*:PATH=$|PS3RECOMP_BUILD_DIR:)' | tr -d '\r' \
       | while IFS= read -r kv; do printf ' "-D%s"' "$kv"; done
     local x; for x in "$@"; do printf ' "%s"' "$x"; done

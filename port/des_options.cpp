@@ -881,6 +881,52 @@ static double net_log_time()
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 }
 
+/* The remote's gait from its sender's own speed, for des_net_sync. The game
+ * picks idle / walk / run / dash from the frame's chase move (speed below 0.01,
+ * 2 and 6 m/s), and the chase restarts at each packet at distance / (1.2 *
+ * the last gap) and stops dead when it reaches the last position early. With
+ * packets 200 ms apart (30 fps, the game's rate) that holds steady; 40-60 ms
+ * apart (a sender above 30 fps, or DES_NET_SYNC) the gaps jitter by a frame
+ * or two, the chase arrives early on a fifth of the frames, and each arrival
+ * shows idle for at least 0.2 s (the gait's hold): a walk that flickers into
+ * idle, and a walk that reads as a run. Here, while packets come under
+ * 150 ms apart and the sender moves, the gait is the sender's speed (the
+ * distance between its last two positions over their gap, averaged with the
+ * one before): the speed the game's chase settles to (its 1.2 lead sets only
+ * how far behind it trails). A packet with
+ * the same position (the sender stopped), a gap over 150 ms, or one over
+ * 20 m/s (a warp) gives -1: the game's own value. Main thread. */
+static float net_remote_gait(uint32_t m, float dt)
+{
+    struct Remote { uint32_t m; float x, z, acc, speed, gap; unsigned last_use; };
+    static Remote rem[8];
+    static unsigned use;
+    Remote* r = nullptr;
+    for (Remote& e : rem)
+        if (e.m == m) { r = &e; break; }
+    if (!r) {   /* a new remote takes the slot used longest ago */
+        r = &rem[0];
+        for (Remote& e : rem)
+            if (e.last_use < r->last_use) r = &e;
+        *r = Remote{m, vm_readf(m + 0x1D0), vm_readf(m + 0x1D8), 0.0f, 0.0f, 1.0f, 0};
+    }
+    r->last_use = ++use;
+    r->acc += dt;
+    if (vm_readf(m + 0x21C) == 0.0f) {   /* the update reset its gap timer: a packet this frame */
+        const float x = vm_readf(m + 0x1D0), z = vm_readf(m + 0x1D8);
+        const float d = std::sqrt((x - r->x) * (x - r->x) + (z - r->z) * (z - r->z));
+        const float gap = r->acc;
+        r->x = x; r->z = z; r->acc = 0.0f;
+        if (gap > 0.0f) {   /* (a second packet in the same frame: no gap to measure) */
+            r->gap = gap;
+            const float v = d / gap;
+            r->speed = (d < 0.005f || v > 20.0f) ? 0.0f : (r->speed > 0.0f ? 0.5f * (r->speed + v) : v);
+        }
+    }
+    if (r->gap > 0.15f || r->acc > 0.15f || r->speed <= 0.0f) return -1.0f;
+    return r->speed;
+}
+
 /* Remote players (docs/69, "Remote players"). The local player's position
  * goes to the other players in a type-1 packet every 6 game frames:
  * PadManipulator counts +0x198 down once a frame, sends at 0, and reloads it
@@ -900,8 +946,10 @@ static double net_log_time()
  *
  * SetMoveVector (0x0030C378) picks the remote's walk, run or dash from the
  * frame's move times 30 (the fmuls at 0x0030C46C): a speed only at 30 fps,
- * so above it a running remote walks. That product is scaled by 1/(30 dt);
- * nothing at 30 fps or without DES_FPS, off with DES_NETFIX=0. Main thread. */
+ * so above it a running remote walked. While packets come under 150 ms apart
+ * the gait comes from the sender's speed (net_remote_gait); otherwise, with
+ * DES_FPS set, the product is scaled by 1/(30 dt). At 30 fps with the game's
+ * packet rate both leave it alone. DES_NETFIX=0 turns both off. Main thread. */
 extern "C" void des_net_sync(ppu_context* ctx, uint32_t addr)
 {
     const float dt = vm_readf(kFrameDt);
@@ -932,8 +980,13 @@ extern "C" void des_net_sync(ppu_context* ctx, uint32_t addr)
     }
     static int on = 1;
     PS3_KNOB(on, ps3_env_int("DES_NETFIX", 1) != 0);
-    if (!on || s_fps <= 0 || !(dt > 0.0f && dt <= kMaxFrameDt)) return;
-    ctx->fpr[12] = (float)(ctx->fpr[12] / (30.0 * dt));
+    if (!on || !(dt > 0.0f && dt <= kMaxFrameDt)) return;
+    const float gait = net_remote_gait((uint32_t)ctx->gpr[3], dt);
+    if (gait >= 0.0f) {
+        ctx->fpr[12] = gait;
+        return;
+    }
+    if (s_fps > 0) ctx->fpr[12] = (float)(ctx->fpr[12] / (30.0 * dt));
 }
 
 /* A step a camera adds once a frame, cur += input * step, tuned for 30 fps:

@@ -1089,11 +1089,14 @@ constexpr uint32_t kCutCamRot   = 0x005F7394u;   /* lvx v12: earlier r1+0xD0, la
 constexpr uint32_t kCutCamScale = 0x005F743Cu;   /* lvx v2: earlier r1+0x70, later r1+0xA0 */
 constexpr float    kCutMaxMove  = 2.0f;          /* m in one 1/30 s step */
 constexpr float    kCutMaxTurn  = 0.5f;          /* rad, any angle, in one step */
+constexpr float    kPi          = 3.14159265f;
 constexpr float    kTwoPi       = 6.28318531f;
 
 /* The choice for the call of 0x005F71D0 running on this thread, made at
- * kCutCamKeys before its three loads: blend them, or leave them alone. */
+ * kCutCamKeys before its three loads: blend them, or leave them alone; and
+ * whether the rotation blends to the later key's other Euler angles. */
 PPU_THREAD_LOCAL bool s_cut_blend;
+PPU_THREAD_LOCAL bool s_cut_flip;
 
 uint32_t bswap32(uint32_t b)
 {
@@ -1105,6 +1108,16 @@ float angle_delta(float a, float b)
 {
     const float d = b - a;
     return d - kTwoPi * std::nearbyint(d / kTwoPi);
+}
+
+/* Angle c of the other Euler angles for the rotation e. 0x00054D48 builds
+ * the camera's rotation from (x, y, z) as Rx(x) Rz(z) Ry(y), row vectors, so
+ * z is the middle turn, and Rx(x + pi) Rz(pi - z) Ry(y + pi) is the same
+ * matrix (docs/62). Angles 2 pi apart need nothing: angle_delta takes the
+ * short way round. */
+float euler_other(const float e[3], int c)
+{
+    return c == 2 ? kPi - e[2] : e[c] + kPi;
 }
 
 /* One channel's two keys, read from the track as 0x005F71D0 reads them. i0
@@ -1145,52 +1158,71 @@ int cut_keys(uint32_t h, uint32_t zero, int32_t i0, int32_t i1, float k0[3], flo
  * turns it over 0.5 rad, a shot change inside one track. After each of the
  * three loads it then puts the two keys blended by s in the register.
  * Rotations are Euler angles in radians and blend the short way round; the
- * code after the load wraps them again. A register that holds neither key
- * is left alone. DES_CUTLOG=1 counts what it did. Main thread. */
+ * code after the load wraps them again. A step whose angles turn over
+ * 0.5 rad while the later key's other angles for the same rotation
+ * (euler_other) are within 0.5 rad of the earlier key is not a turn: the
+ * track wrote the same rotation the other way (a flip). The rotation then
+ * blends to those other angles; keeping the nearest key there held the
+ * camera for a step (docs/62). DES_CUTEULER=0 keeps the nearest key at a
+ * flip, as before, live. A register that holds neither key is left alone.
+ * DES_CUTLOG=1 counts what it did. Main thread. */
 extern "C" void des_cut_cam(ppu_context* ctx, uint32_t addr)
 {
-    static int log = 0;
+    static int log = 0, euler = 1;
     PS3_KNOB(log, env_on("DES_CUTLOG"));
-    static unsigned n_calls, n_blend, n_apart, n_jump, n_odd, n_neither;
+    PS3_KNOB(euler, ps3_env_int("DES_CUTEULER", 1) != 0);
+    static unsigned n_calls, n_blend, n_flip, n_apart, n_jump, n_odd, n_neither;
     static double widest;   /* the widest gap between keys, frames */
     if (addr == kCutCamKeys) {
         s_cut_blend = false;
+        s_cut_flip = false;
         if (!cutfps_on() || s_fps <= 0) return;
         const double s = ctx->fpr[10], gap = ctx->fpr[11];
         if (!(s > 0.0 && s < 1.0)) return;   /* t on a key: the loads are exact */
         const uint32_t h = (uint32_t)ctx->gpr[7];
-        float p0[3], p1[3], r0[3], r1[3], k0[3], k1[3];
+        float p0[3], p1[3], r0[3] = {}, r1[3] = {}, k0[3], k1[3];
         const int pos   = cut_keys(h, 0x2C, (int32_t)ctx->gpr[6], (int32_t)ctx->gpr[4], p0, p1);
         const int rot   = cut_keys(h, 0x2F, (int32_t)ctx->gpr[29], (int32_t)ctx->gpr[31], r0, r1);
         const int scale = cut_keys(h, 0x32, (int32_t)ctx->gpr[12], (int32_t)ctx->gpr[28], k0, k1);
-        float move = 0.0f, turn = 0.0f;
+        float move = 0.0f, turn = 0.0f, turn_e = 0.0f;   /* turn_e: to the later key's other angles */
         for (int c = 0; c < 3; c++) {
             if (pos > 0) move += (p1[c] - p0[c]) * (p1[c] - p0[c]);
-            if (rot > 0) turn = std::fmax(turn, std::fabs(angle_delta(r0[c], r1[c])));
+            if (rot > 0) {
+                turn   = std::fmax(turn, std::fabs(angle_delta(r0[c], r1[c])));
+                turn_e = std::fmax(turn_e, std::fabs(angle_delta(r0[c], euler_other(r1, c))));
+            }
         }
         move = std::sqrt(move);
+        const bool flip  = euler && turn > kCutMaxTurn && turn_e <= kCutMaxTurn;
         const bool apart = std::fabs(gap * 30.0 - 1.0) > 0.01;
-        const bool jump  = !apart && (move > kCutMaxMove || turn > kCutMaxTurn);
+        const bool jump  = !apart && (move > kCutMaxMove || (flip ? turn_e : turn) > kCutMaxTurn);
         const bool odd   = pos < 0 || rot < 0 || scale < 0;
         s_cut_blend = !apart && !jump && !odd;
+        s_cut_flip  = s_cut_blend && flip;
         if (log) {
             n_calls++;
             if (s_cut_blend) n_blend++;
+            if (s_cut_flip) n_flip++;
             if (apart) { n_apart++; if (gap * 30.0 > widest) widest = gap * 30.0; }
             if (jump) n_jump++;
             if (odd) n_odd++;
-            static uint32_t jump_h;
-            static double jump_t0 = -1.0;
-            if (jump && !(h == jump_h && ctx->fpr[12] == jump_t0)) {   /* f12: the earlier key's time */
-                jump_h = h;
-                jump_t0 = ctx->fpr[12];
-                fprintf(stderr, "[cutlog] t=%.3f s: a jump (move %.2f m, turn %.2f rad), nearest key kept\n",
-                        ctx->fpr[1], move, turn);
+            static uint32_t said_h;
+            static double said_t0 = -1.0;
+            if ((jump || s_cut_flip) && !(h == said_h && ctx->fpr[12] == said_t0)) {   /* f12: the earlier key's time */
+                said_h = h;
+                said_t0 = ctx->fpr[12];
+                float e[3];   /* the later key's other angles, wrapped to [-pi, pi] */
+                for (int c = 0; c < 3; c++) e[c] = angle_delta(0.0f, euler_other(r1, c));
+                fprintf(stderr, "[cutlog] t=%.3f s: %s (move %.2f m, turn %.2f rad, %.2f to the other angles), %s;"
+                        " rotation keys (%.4f %.4f %.4f) to (%.4f %.4f %.4f), other angles (%.4f %.4f %.4f)\n",
+                        ctx->fpr[1], jump ? "a jump" : "an Euler flip", move, turn, turn_e,
+                        jump ? "nearest key kept" : "blended to the other angles",
+                        r0[0], r0[1], r0[2], r1[0], r1[1], r1[2], e[0], e[1], e[2]);
             }
             if (n_calls % 1000 == 0)
-                fprintf(stderr, "[cutlog] calls between keys %u: blended %u, keys apart %u (widest %.1f frames),"
-                        " jumps %u, one index unset %u; loads holding neither key %u\n",
-                        n_calls, n_blend, n_apart, widest, n_jump, n_odd, n_neither);
+                fprintf(stderr, "[cutlog] calls between keys %u: blended %u (Euler flips %u), keys apart %u"
+                        " (widest %.1f frames), jumps %u, one index unset %u; loads holding neither key %u\n",
+                        n_calls, n_blend, n_flip, n_apart, widest, n_jump, n_odd, n_neither);
         }
         return;
     }
@@ -1222,7 +1254,9 @@ extern "C" void des_cut_cam(ppu_context* ctx, uint32_t addr)
         return;
     }
     for (uint32_t i = 0; i < 4; i++) {
-        const float d = i == 3 ? 0.0f : ch == 1 ? angle_delta(x[i], y[i]) : y[i] - x[i];
+        /* At a flip the rotation blends to the later key's other angles. */
+        const float yi = ch == 1 && s_cut_flip && i < 3 ? euler_other(y, (int)i) : y[i];
+        const float d = i == 3 ? 0.0f : ch == 1 ? angle_delta(x[i], yi) : yi - x[i];
         const float f = x[i] + d * (float)s;
         uint32_t fb;
         memcpy(&fb, &f, 4);

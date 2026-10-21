@@ -347,13 +347,8 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                 pane.clear();
                 pane.add_text("Change which buttons and keys do what.");
             });
-#ifdef _WIN32
-        info_row(leftPane, rightPane, "Gamepads", "XInput, DualSense, DualShock 4",
-            "Xbox controllers, DualSense and DualShock 4, over USB or Bluetooth.");
-#else
-        info_row(leftPane, rightPane, "Gamepads", "SDL game controllers",
-            "Xbox, PlayStation and other controllers SDL knows, over USB or Bluetooth.");
-#endif
+        const input::PadSupport pads = input::pad_support();
+        info_row(leftPane, rightPane, "Gamepads", pads.value, pads.help);
         info_row(leftPane, rightPane, "Keyboard and mouse", "WASD, mouse, Space",
             "As in the Souls games on PC:<br/>"
             "<b>W A S D</b> move &nbsp; <b>Left Alt</b> (held) walk &nbsp; <b>Mouse</b> camera (Mouse look, "

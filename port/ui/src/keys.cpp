@@ -5,6 +5,8 @@
 
 #include "RmlUi_Platform_Win32.h"
 
+#include <windows.h>
+
 namespace ui::keys {
 
 Rml::Input::KeyIdentifier to_rml(int vk) {
@@ -15,6 +17,24 @@ int modifiers() {
     return RmlWin32::GetKeyModifierState();
 }
 
+bool key_down(int vk) {
+    return (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
+
+std::string key_name(int vk) {
+    LONG lp = LONG(MapVirtualKeyA(UINT(vk), MAPVK_VK_TO_VSC)) << 16;
+    switch (vk) {
+    case VK_INSERT: case VK_DELETE: case VK_HOME: case VK_END: case VK_PRIOR: case VK_NEXT: case VK_DIVIDE:
+    case VK_NUMLOCK:
+        lp |= 1 << 24;  // extended keys
+        break;
+    default: break;
+    }
+    char name[64];
+    if (GetKeyNameTextA(lp, name, sizeof name) > 0) return name;
+    return {};
+}
+
 }  // namespace ui::keys
 
 #else
@@ -22,6 +42,8 @@ int modifiers() {
 #include "platform.hpp"
 
 #include <SDL.h>
+
+extern "C" int cellPad_host_key_down(int vk);  // ps3recomp, libs/input/cellPad.h: SDL's keyboard and mouse state
 
 namespace ui::keys {
 
@@ -95,6 +117,50 @@ int modifiers() {
     if (m & KMOD_CTRL) out |= KM_CTRL;
     if (m & KMOD_ALT) out |= KM_ALT;
     return out;
+}
+
+bool key_down(int vk) {
+    return cellPad_host_key_down(vk) != 0;
+}
+
+std::string key_name(int vk) {
+    if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) return std::string(1, char(vk));
+    if (vk >= VK_F1 && vk <= VK_F24) return "F" + std::to_string(vk - VK_F1 + 1);
+    if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) return "Num " + std::to_string(vk - VK_NUMPAD0);
+    switch (vk) {
+    case VK_SPACE: return "Space";
+    case VK_TAB: return "Tab";
+    case VK_ESCAPE: return "Esc";
+    case VK_BACK: return "Backspace";
+    case VK_INSERT: return "Insert";
+    case VK_DELETE: return "Delete";
+    case VK_HOME: return "Home";
+    case VK_END: return "End";
+    case VK_PRIOR: return "Page Up";
+    case VK_NEXT: return "Page Down";
+    case VK_CAPITAL: return "Caps Lock";
+    case VK_NUMLOCK: return "Num Lock";
+    case VK_SCROLL: return "Scroll Lock";
+    case VK_PAUSE: return "Pause";
+    case VK_MULTIPLY: return "Num *";
+    case VK_ADD: return "Num +";
+    case VK_SUBTRACT: return "Num -";
+    case VK_DECIMAL: return "Num Del";
+    case VK_DIVIDE: return "Num /";
+    case VK_OEM_1: return ";";
+    case VK_OEM_PLUS: return "=";
+    case VK_OEM_COMMA: return ",";
+    case VK_OEM_MINUS: return "-";
+    case VK_OEM_PERIOD: return ".";
+    case VK_OEM_2: return "/";
+    case VK_OEM_3: return "`";
+    case VK_OEM_4: return "[";
+    case VK_OEM_5: return "\\";
+    case VK_OEM_6: return "]";
+    case VK_OEM_7: return "'";
+    default: break;
+    }
+    return {};
 }
 
 }  // namespace ui::keys

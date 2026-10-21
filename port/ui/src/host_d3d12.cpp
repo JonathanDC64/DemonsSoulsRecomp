@@ -191,13 +191,18 @@ void shot(void* back_buffer, int width, int height, const char* path) {
 
 // The display's scale, as Windows' DPI over 96: what the display reports, else 1.
 float display_scale() {
-    float dpi = 0.f;
-    const int display = s.window ? SDL_GetWindowDisplayIndex(s.window) : 0;
-    if (display < 0 || SDL_GetDisplayDPI(display, nullptr, &dpi, nullptr) != 0 || dpi < 48.f || dpi > 480.f) return 1.f;
-    return dpi / 96.f;
+    const unsigned dpi = window_dpi();
+    return dpi ? float(dpi) / 96.f : 1.f;
 }
 
 }  // namespace
+
+unsigned window_dpi() {  // (what the window's display reports)
+    float dpi = 0.f;
+    const int display = s.window ? SDL_GetWindowDisplayIndex(s.window) : 0;
+    if (display < 0 || SDL_GetDisplayDPI(display, nullptr, &dpi, nullptr) != 0 || dpi < 48.f || dpi > 480.f) return 0;
+    return unsigned(dpi + 0.5f);
+}
 
 bool init(void* d3d12_device, void* d3d12_queue, void* hwnd, int width, int height) {
     if (s.initialised) return true;

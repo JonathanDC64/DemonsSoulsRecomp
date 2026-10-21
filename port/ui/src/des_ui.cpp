@@ -25,6 +25,7 @@
 #include "osk_window.hpp"
 #include "overlay.hpp"
 #include "platform.hpp"
+#include "portable.hpp"
 #include "prelaunch.hpp"
 #include "prework_modal.hpp"
 #include "report.hpp"
@@ -36,9 +37,7 @@
 #include "version.hpp"
 
 #ifdef _WIN32
-#include <xinput.h>
-#else
-#include <SDL.h>  // (the window is SDL's: its size and the mouse capture)
+#include <xinput.h>  // (read_xinput)
 #endif
 
 #include <algorithm>
@@ -49,6 +48,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -244,7 +244,7 @@ void push_event(const InputEvent& e) {
 void wake_overlay(bool user = true) {
     sWakeByUser.store(user);
     sWakeMark.store(sFramesRun.load());
-    sWakeAt.store(GetTickCount64());
+    sWakeAt.store(ui::now_ms());
     rsx_d3d12_overlay_wake();
 }
 
@@ -256,15 +256,9 @@ bool is_menu_key(WPARAM vk) {
 
 // The back buffer is stretched over the client area: mouse positions are in back buffer pixels.
 void map_mouse(HWND hwnd, LPARAM lp, int& x, int& y) {
-#ifdef _WIN32
-    RECT rc{};
-    GetClientRect(hwnd, &rc);
-    const int cw = std::max<int>(1, rc.right - rc.left), ch = std::max<int>(1, rc.bottom - rc.top);
-#else
-    int w = 1, h = 1;  // (in the SDL window's points, as the positions are)
-    SDL_GetWindowSize(static_cast<SDL_Window*>(hwnd), &w, &h);
+    int w = 1, h = 1;
+    ui::mouse::client_size(hwnd, w, h);
     const int cw = std::max(1, w), ch = std::max(1, h);
-#endif
     x = GET_X_LPARAM(lp) * sBufferW.load() / cw;
     y = GET_Y_LPARAM(lp) * sBufferH.load() / ch;
 }
@@ -315,12 +309,7 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
                                : (msg == WM_RBUTTONDOWN || msg == WM_RBUTTONUP) ? 1
                                                                                 : 2;
             push_event({down ? InputEvent::MouseDown : InputEvent::MouseUp, button, 0, e.mods});
-#ifdef _WIN32
-            if (down) SetCapture(hwnd);
-            else ReleaseCapture();
-#else
-            SDL_CaptureMouse(down ? SDL_TRUE : SDL_FALSE);  // (the window's thread: this hook runs there)
-#endif
+            ui::mouse::hold_buttons(hwnd, down);
         }
         *result = 0;
         return 1;
@@ -345,6 +334,10 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
 // ---- Gamepads: XInput and the Sony HID reader, merged (the same readers the game's pad uses; off Windows the reader
 // gives SDL's pads) ----
 
+float pick(float a, float b) {
+    return std::abs(a) >= std::abs(b) ? a : b;
+}
+
 #ifdef _WIN32
 unsigned xinput_to_cell(WORD b) {
     unsigned c = 0;
@@ -364,19 +357,10 @@ unsigned xinput_to_cell(WORD b) {
     if (b & XINPUT_GAMEPAD_Y) c |= kTriangle;
     return c;
 }
-#endif
 
-float pick(float a, float b) {
-    return std::abs(a) >= std::abs(b) ? a : b;
-}
-
-// Polls XInput slots only while a slot answers: a missing pad's XInputGetState is slow, so empty slots are retried
-// once a second.
-ui::input::PadState read_pads(bool& neutral) {
-    ui::input::PadState pad;
-    neutral = true;
-    if (ui::settings::no_user_input()) return pad;  // PS3_NO_USER_INPUT: no pad of the user's is read
-#ifdef _WIN32
+// XInput's pads, into `pad`. Polls XInput slots only while a slot answers: a missing pad's XInputGetState is
+// slow, so empty slots are retried once a second.
+void read_xinput(ui::input::PadState& pad, bool& neutral) {
     static clock_type::time_point sNextScan[XUSER_MAX_COUNT]{};
     const auto now = clock_type::now();
     for (DWORD i = 0; i < XUSER_MAX_COUNT; i++) {
@@ -399,7 +383,17 @@ ui::input::PadState read_pads(bool& neutral) {
             std::abs(g.sThumbRX) > 8000 || std::abs(g.sThumbRY) > 8000)
             neutral = false;
     }
+}
+#else
+void read_xinput(ui::input::PadState&, bool&) {}  // (off Windows SDL's pads come through the HID reader)
 #endif
+
+// The pads: XInput's and the HID reader's, merged.
+ui::input::PadState read_pads(bool& neutral) {
+    ui::input::PadState pad;
+    neutral = true;
+    if (ui::settings::no_user_input()) return pad;  // PS3_NO_USER_INPUT: no pad of the user's is read
+    read_xinput(pad, neutral);
     PadHidSonyState hid[4];
     const int n = pad_hid_sony_poll(hid, 4);
     for (int i = 0; i < n; i++) {
@@ -421,7 +415,7 @@ ui::input::PadState read_pads(bool& neutral) {
 bool keyboard_neutral() {
     if (ui::settings::no_user_input()) return true;  // PS3_NO_USER_INPUT: a key held is the user's
     for (int vk = 1; vk < 0xFF; vk++)
-        if (GetAsyncKeyState(vk) & 0x8000) return false;
+        if (ui::keys::key_down(vk)) return false;
     return true;
 }
 
@@ -578,16 +572,15 @@ void push_hang_notice() {
 std::mutex sRateLock;
 std::vector<unsigned> sRates;
 
+const auto sStarted = std::chrono::steady_clock::now();  // (static initialisation: the start of the process)
+
 // What a report says about this run (report.cpp's game.txt). The render thread, in frame.
 std::string session_text(unsigned width, unsigned height) {
     std::string s;
     char line[256];
     {
-        FILETIME created{}, exited{}, kernel{}, user{}, now{};
-        GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
-        GetSystemTimeAsFileTime(&now);
-        const auto ticks = [](const FILETIME& t) { return (ULONGLONG(t.dwHighDateTime) << 32) | t.dwLowDateTime; };
-        const ULONGLONG sec = (ticks(now) - ticks(created)) / 10000000ull;
+        const unsigned long long sec =
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - sStarted).count();
         std::snprintf(line, sizeof line, "Running for: %llu h %02llu min %02llu s\n", sec / 3600, sec / 60 % 60, sec % 60);
         s += line;
     }
@@ -609,13 +602,7 @@ std::string session_text(unsigned width, unsigned height) {
     }
     std::snprintf(line, sizeof line, "Overlay frames: %llu\n", sFrame);
     s += line;
-    UINT dpi = 0;
-    if (HWND hwnd = static_cast<HWND>(rsx_d3d12_hwnd())) {
-        using DpiFn = UINT(WINAPI*)(HWND);
-        if (auto fn = reinterpret_cast<DpiFn>(
-                reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow"))))
-            dpi = fn(hwnd);
-    }
+    const unsigned dpi = ui::host::window_dpi();
     std::snprintf(line, sizeof line, "Window: %s, %ux%u, %u dpi (%u%%)\n", rsx_d3d12_borderless() ? "fullscreen" : "window",
                   width, height, dpi, dpi ? dpi * 100 / 96 : 0);
     s += line;
@@ -627,13 +614,13 @@ std::string session_text(unsigned width, unsigned height) {
 // kStoppedMs means the render thread is stuck too: the hang dialog (a second process) takes over. After kHangNoticeMs
 // without a new frame the overlay is asked to say how to report it (and if it cannot, the dialog opens). It also
 // counts the game's frames each second for reports.
-DWORD WINAPI watch_thread(LPVOID) {
+void watch_thread() {
     bool chordWasDown = true;  // (a chord held from before is not a press)
     bool noticed = false;
     bool dialogShown = false;  // the hang dialog opened in this stop: again only when the player asks
     unsigned lastFrames = ppu_boot_frames_presented(), ticks = 0;
     for (;;) {
-        Sleep(250);
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
         if (++ticks % 4 == 0) {
             const unsigned frames = ppu_boot_frames_presented();
             std::lock_guard<std::mutex> lock(sRateLock);
@@ -673,7 +660,7 @@ DWORD WINAPI watch_thread(LPVOID) {
         if (const unsigned long long at = sWakeAt.load()) {
             if (sFramesRun.load() != sWakeMark.load()) {
                 sWakeAt.store(0);
-            } else if (GetTickCount64() - at >= unsigned(kStoppedMs)) {
+            } else if (ui::now_ms() - at >= unsigned(kStoppedMs)) {
                 sWakeAt.store(0);
                 if (stopped && (sWakeByUser.load() || !dialogShown) && !ui::crash_report::hang_dialog_open()) {
                     std::fprintf(stderr, "[ui] no new frame for %lld s, and the menu cannot open: the hang dialog\n",
@@ -857,7 +844,7 @@ int vk_from_name(const std::string& name) {
                   {"LEFT", VK_LEFT},   {"RIGHT", VK_RIGHT}, {"ENTER", VK_RETURN}, {"PGUP", VK_PRIOR},
                   {"PGDN", VK_NEXT},   {"TAB", VK_TAB},    {"SPACE", VK_SPACE}, {"OSK", kScriptOsk}};
     for (const auto& n : kNames)
-        if (_stricmp(n.name, name.c_str()) == 0) return n.vk;
+        if (ui::same_name(n.name, name.c_str())) return n.vk;
     if (name.size() == 1 && name[0] >= '0' && name[0] <= '9') return kScriptChar + name[0];
     return 0;
 }
@@ -943,5 +930,5 @@ extern "C" void des_ui_early_init(void) {
     static const CellOskDialogHost kOsk = {osk_open, osk_close};
     cellOskDialog_set_host(&kOsk);
     ui::trophies::install();
-    if (HANDLE watch = CreateThread(nullptr, 0, watch_thread, nullptr, 0, nullptr)) CloseHandle(watch);
+    std::thread(watch_thread).detach();
 }

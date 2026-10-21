@@ -22,6 +22,14 @@ void on_frame();
 // The game crashed: the cursor is let go at once (the crash handler's thread).
 void release_now();
 
+// The window's client area, in the units of the mouse positions its messages carry (pixels on Windows, SDL's points
+// elsewhere). The window's thread.
+void client_size(void* hwnd, int& width, int& height);
+
+// A mouse button went down over the UI (true) or up (false): while one is held the window keeps the mouse, also
+// outside it. The window's thread.
+void hold_buttons(void* hwnd, bool down);
+
 #ifndef _WIN32
 // The cursor's shape over the UI (an SDL_SystemCursor), from RmlUi on the render thread: set on the window's thread.
 void set_cursor(int shape);

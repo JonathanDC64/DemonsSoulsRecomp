@@ -383,7 +383,7 @@ void write_in_use() {
     if (dir.empty()) return;
     std::error_code ec;
     std::filesystem::create_directories(dir / L"logs", ec);
-    if (FILE* f = _wfopen((dir / L"logs" / L"settings.txt").c_str(), L"wb")) {
+    if (FILE* f = report::open_file(dir / L"logs" / L"settings.txt", "wb")) {
         const std::string s = describe();
         std::fwrite(s.data(), 1, s.size(), f);
         std::fclose(f);

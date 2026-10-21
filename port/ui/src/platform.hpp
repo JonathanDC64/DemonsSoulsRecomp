@@ -1,7 +1,7 @@
-// Written for Demon's Souls. What the UI takes from Windows, for a build off Windows (docs/76): the Win32 types, the
-// virtual-key codes and window messages it reads (the runtime's SDL window hands the overlay the same messages,
-// rsx_d3d12_backend.h), and the few calls it makes, over the runtime and the C library. On Windows this is
-// <windows.h> itself.
+// Written for Demon's Souls. The UI's input format, for a build off Windows (docs/76): the Win32 types, virtual-key
+// codes and window messages it reads (the runtime's SDL window hands the overlay the same messages,
+// rsx_d3d12_backend.h). On Windows this is <windows.h> itself. Calls the platforms make differently are not here: they
+// are portable code (portable.hpp), or a small function with a version for each platform.
 #pragma once
 
 #include <string>
@@ -13,11 +13,7 @@
 
 #else
 
-#include <strings.h>
-
-#include <chrono>
 #include <cstdint>
-#include <ctime>
 
 using HWND = void*;
 using WPARAM = unsigned long long;
@@ -121,24 +117,6 @@ using BOOL = int;
 #define GET_WHEEL_DELTA_WPARAM(wp) (short(HIWORD(wp)))
 #define GET_XBUTTON_WPARAM(wp) (HIWORD(wp))
 #define WHEEL_DELTA 120
-
-extern "C" int cellPad_host_key_down(int vk);  // ps3recomp, libs/input/cellPad.h: SDL's keyboard and mouse state
-
-// What Windows' calls of these names give, for the UI's uses of them.
-inline short GetAsyncKeyState(int vk) {
-    return cellPad_host_key_down(vk) ? short(0x8000) : short(0);
-}
-inline int _stricmp(const char* a, const char* b) {
-    return strcasecmp(a, b);
-}
-inline int localtime_s(std::tm* out, const std::time_t* t) {
-    return localtime_r(t, out) ? 0 : 1;
-}
-inline unsigned long long GetTickCount64() {  // (milliseconds; only differences are used)
-    return (unsigned long long)std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
-        .count();
-}
 
 #endif  // _WIN32
 

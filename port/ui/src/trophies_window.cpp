@@ -16,9 +16,7 @@
 #include "trophy_toasts.hpp"
 #include "ui.hpp"
 
-#ifndef _WIN32
-#include "platform.hpp"  // (localtime_s)
-#endif
+#include "portable.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -69,12 +67,6 @@ constexpr int kPageRows = 6;                  // L1 / R1 move this many rows
 constexpr unsigned long long kRetryMs = 2000;  // no trophy set found yet: look again this often
 constexpr const char* kShowHidden = "trophies_show_hidden";
 
-unsigned long long now_ms() {
-    using namespace std::chrono;
-    return static_cast<unsigned long long>(
-        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
-}
-
 // DES_TROPHY_HIDDEN=<id>,<id>,... (a test knob, unset by default): this window treats those trophies as hidden, as if
 // the set said so. Demon's Souls has no hidden trophy, so this is how a hidden row, and revealing it, can be seen.
 // Nothing else sees it: not the HLE, the pop-ups or the unlock file. Read when the window opens.
@@ -104,7 +96,7 @@ std::string unlock_date(unsigned long long unixTime) {
                                                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     const std::time_t t = static_cast<std::time_t>(unixTime);
     std::tm tm{};
-    if (localtime_s(&tm, &t) != 0 || tm.tm_mon < 0 || tm.tm_mon > 11) return {};
+    if (!ui::local_time(t, tm) || tm.tm_mon < 0 || tm.tm_mon > 11) return {};
     char out[48];
     std::snprintf(out, sizeof out, "%d %s %d, %02d:%02d", tm.tm_mday, kMonths[tm.tm_mon], tm.tm_year + 1900,
                   tm.tm_hour, tm.tm_min);

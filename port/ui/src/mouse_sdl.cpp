@@ -236,6 +236,14 @@ void set_cursor(int shape) {
     if (sWindowUp.load()) rsx_d3d12_post_message(WM_DES_CURSOR, (unsigned long long)shape, 0);
 }
 
+void client_size(void* hwnd, int& width, int& height) {
+    SDL_GetWindowSize(static_cast<SDL_Window*>(hwnd), &width, &height);
+}
+
+void hold_buttons(void*, bool down) {
+    SDL_CaptureMouse(down ? SDL_TRUE : SDL_FALSE);
+}
+
 }  // namespace ui::mouse
 
 extern "C" void des_mouse_take(int* dx, int* dy) {

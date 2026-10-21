@@ -9,6 +9,7 @@
 #include "ui.hpp"
 
 #include "platform.hpp"
+#include "portable.hpp"
 
 #include <cmath>
 
@@ -282,7 +283,7 @@ void OskWindow::on_char(unsigned c) {
 }
 
 void OskWindow::on_pad(unsigned buttons) {
-    const unsigned long long now = GetTickCount64();
+    const unsigned long long now = now_ms();
     const unsigned pressed = mPadPrimed ? buttons & ~mPadPrev : 0;  // a button held as the window opened waits
     mPadPrev = buttons;
     mPadPrimed = true;

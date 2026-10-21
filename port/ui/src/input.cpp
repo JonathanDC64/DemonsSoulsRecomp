@@ -190,4 +190,12 @@ void update_input() noexcept {
     }
 }
 
+PadSupport pad_support() noexcept {
+#ifdef _WIN32
+    return {"XInput, DualSense, DualShock 4", "Xbox controllers, DualSense and DualShock 4, over USB or Bluetooth."};
+#else
+    return {"SDL game controllers", "Xbox, PlayStation and other controllers SDL knows, over USB or Bluetooth."};
+#endif
+}
+
 }  // namespace ui::input

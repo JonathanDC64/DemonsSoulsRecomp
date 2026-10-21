@@ -37,4 +37,11 @@ int take_captured_key() noexcept;
 void capture_wheel(int notches) noexcept;
 int take_captured_wheel() noexcept;
 
+// The gamepads this build reads, for the settings: a short value and its help text.
+struct PadSupport {
+    const char* value;
+    const char* help;
+};
+PadSupport pad_support() noexcept;
+
 }  // namespace ui::input

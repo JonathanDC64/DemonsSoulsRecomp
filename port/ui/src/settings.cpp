@@ -26,6 +26,7 @@ constexpr Def kDefs[] = {
     {"DES_ATK", "1", Apply::Session},
     {"DES_SPEED", "1", Apply::Session},
 #endif
+    {"DES_FULLSCREEN", "0", Apply::Live},      // 1 = borderless fullscreen; des_ui.cpp's sync_fullscreen, each frame
     {"DES_FPS", "", Apply::Live},              // "" = the game's own 30 fps mode; read at each flip
     {"fps_custom", "90", Apply::UiOnly},       // Frame rate's Custom number, kept while a fixed rate is chosen
     {"DES_CUTFPS", "0", Apply::Live},          // des_options.cpp's cutfps_on, read at each flip

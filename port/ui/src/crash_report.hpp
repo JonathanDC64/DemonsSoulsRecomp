@@ -16,4 +16,13 @@ namespace ui::crash_report {
 // without a data folder. DES_NO_CRASH_DIALOG=1 writes the report but shows no dialog.
 void install();
 
+// The game has stopped (no new frame for `ms_since_frame` ms) and the render thread cannot draw the menu either:
+// writes hang-<time>.txt (the runtime's snapshot: what every thread is doing) and hang-<time>.log (the end of the
+// log) beside the crash reports, then starts the dialog in its hang form (keep waiting, close the game, or report
+// it). Nothing without a data folder. Takes a few seconds (the snapshot samples the threads), on the caller's
+// thread: the watch thread (des_ui.cpp), which first asks hang_dialog_open().
+void report_hang(long long ms_since_frame);
+// A hang dialog report_hang started is still open.
+bool hang_dialog_open();
+
 }  // namespace ui::crash_report

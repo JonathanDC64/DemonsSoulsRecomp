@@ -468,6 +468,7 @@ std::atomic<unsigned> s_flips{0};
 
 void on_flip_request()
 {
+    des_report_flip_hook();   /* (a test knob: DES_HANG_AT_FRAME) */
     s_flips.fetch_add(1, std::memory_order_relaxed);
     fps_on_flip_request();
     if (s_framelog) frame_log();

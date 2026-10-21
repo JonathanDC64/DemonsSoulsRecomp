@@ -25,6 +25,7 @@
 
 extern "C" uint32_t g_last_hle_nid;          // ppu_hle.cpp: the last HLE call (any thread)
 extern "C" const char* g_last_hle_name;
+extern "C" void ps3_diag_report(FILE* out, unsigned sample_sec);  // boot_main.cpp: what every thread is doing
 
 namespace ui::crash_report {
 
@@ -109,16 +110,27 @@ void write_dump(EXCEPTION_POINTERS* info) {
 }
 
 // The end of the log, beside the report (the log is des.log in the data folder's logs folder).
-void write_log_tail() {
+void write_log_tail(const std::wstring& path) {
     const auto log = report::log_path();
     if (log.empty()) return;
     report::flush_log();
     const std::string tail = report::read_head_tail(log, 60, 256 << 10);
     FILE* f = nullptr;
-    _wfopen_s(&f, path_of(".log").c_str(), L"wb");
+    _wfopen_s(&f, path.c_str(), L"wb");
     if (!f) return;
     std::fwrite(tail.data(), 1, tail.size(), f);
     std::fclose(f);
+}
+
+// What to start again with (the dialog's restart button).
+void write_cmdline(const std::wstring& path) {
+    FILE* cmd = nullptr;
+    _wfopen_s(&cmd, path.c_str(), L"wb");
+    if (cmd) {
+        const wchar_t* line = GetCommandLineW();
+        std::fwrite(line, sizeof(wchar_t), std::wcslen(line), cmd);
+        std::fclose(cmd);
+    }
 }
 
 // Writes the report: what happened, then the stack from `context`.
@@ -129,15 +141,7 @@ void write_report(const char* what, CONTEXT* context, EXCEPTION_POINTERS* info) 
     std::wcsncpy(g_txt_path, txt.c_str(), MAX_PATH - 1);
     Report out;
     _wfopen_s(&out.file, txt.c_str(), L"w");
-    {  // (what to start again with: the restart button)
-        FILE* cmd = nullptr;
-        _wfopen_s(&cmd, path_of(".cmdline").c_str(), L"wb");
-        if (cmd) {
-            const wchar_t* line = GetCommandLineW();
-            std::fwrite(line, sizeof(wchar_t), std::wcslen(line), cmd);
-            std::fclose(cmd);
-        }
-    }
+    write_cmdline(path_of(".cmdline"));
     out("\n=== CRASH: %s ===\n", what);
     out("version %s, last HLE call 0x%08X (%s), thread %lu\n", kVersion, g_last_hle_nid,
         g_last_hle_name ? g_last_hle_name : "", GetCurrentThreadId());
@@ -167,29 +171,33 @@ void write_report(const char* what, CONTEXT* context, EXCEPTION_POINTERS* info) 
     out("report: %s.txt, minidump: %s.dmp, log: %s.log (in the data folder's crashes folder)\n", g_stem, g_stem, g_stem);
     std::fflush(stderr);
     if (out.file) std::fclose(out.file);
-    write_log_tail();
+    write_log_tail(path_of(".log"));
 }
 
-// Starts the crash dialog: a second process, since this one is in no state to show a window. It needs nothing of this
-// one: the report's path, this process's id (a restart waits for it to end) and the data folder are on its command
-// line, and it gets the environment the game started with.
-void show_dialog() {
-    if (!g_dialog || !g_txt_path[0] || InterlockedExchange(&g_dialog_shown, 1)) return;
+// Starts the dialog: a second process, since this one is in no state to show a window. It needs nothing of this one:
+// the report's path, this process's id (a restart waits for it to end) and the data folder are on its command line,
+// and it gets the environment the game started with. Its process handle, or null.
+HANDLE start_dialog(const std::wstring& txt) {
     wchar_t exe[MAX_PATH];
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     std::wstring data = report::data_dir().wstring();
     while (!data.empty() && (data.back() == L'\\' || data.back() == L'/')) data.pop_back();
-    std::wstring command = L"\"" + std::wstring(exe) + L"\" --crash-dialog \"" + g_txt_path + L"\" " +
+    std::wstring command = L"\"" + std::wstring(exe) + L"\" --crash-dialog \"" + txt + L"\" " +
                            std::to_wstring(GetCurrentProcessId()) + L" \"" + data + L"\"";
     STARTUPINFOW startup{};
     startup.cb = sizeof startup;
     PROCESS_INFORMATION process{};
     // (no console window of its own: it is a window, and the game's console is going away)
-    if (CreateProcessW(exe, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
-                       g_environment.empty() ? nullptr : g_environment.data(), nullptr, &startup, &process)) {
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
-    }
+    if (!CreateProcessW(exe, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+                        g_environment.empty() ? nullptr : g_environment.data(), nullptr, &startup, &process))
+        return nullptr;
+    CloseHandle(process.hThread);
+    return process.hProcess;
+}
+
+void show_dialog() {
+    if (!g_dialog || !g_txt_path[0] || InterlockedExchange(&g_dialog_shown, 1)) return;
+    if (HANDLE process = start_dialog(g_txt_path)) CloseHandle(process);
 }
 
 LONG WINAPI on_unhandled(EXCEPTION_POINTERS* info) {
@@ -225,7 +233,11 @@ struct Dialog {
     std::filesystem::path txt, data;
     DWORD pid = 0;
     std::string what;
+    bool hang = false;  // a hang report (report_hang): the game is still running
 };
+
+constexpr const char* kCrashMark = "=== CRASH: ";
+constexpr const char* kHangMark = "=== NOT RESPONDING: ";
 
 std::string read_text(const std::filesystem::path& path) {
     const auto b = report::read_file(path);
@@ -234,28 +246,54 @@ std::string read_text(const std::filesystem::path& path) {
     return text;
 }
 
-// "access violation writing 0000000000000000", from the first line of the report.
+// "access violation writing 0000000000000000" or "no new frame for 14 s", from the first line of the report.
 std::string what_happened(const std::string& txt) {
     std::string what = "The game stopped unexpectedly.";
-    const size_t a = txt.find("=== CRASH: ");
-    if (a != std::string::npos) {
-        const size_t b = txt.find(" ===", a);
-        if (b != std::string::npos) what = txt.substr(a + 11, b - a - 11);
+    for (const char* mark : {kCrashMark, kHangMark}) {
+        const size_t a = txt.find(mark);
+        if (a == std::string::npos) continue;
+        const size_t from = a + std::strlen(mark), b = txt.find(" ===", from);
+        if (b != std::string::npos) what = txt.substr(from, b - from);
+        break;
     }
     return what;
 }
 
-// The first `n` lines of the stack in the report.
-std::string top_of_stack(const std::string& txt, int n) {
-    const size_t a = txt.find("stack:\n");
+// The first `n` lines after the line `heading` starts in the report: the stack of a crash, the guest threads of a
+// hang.
+std::string top_of_stack(const std::string& txt, int n, const char* heading = "stack:\n") {
+    const size_t a = txt.find(heading);
     if (a == std::string::npos) return {};
     std::string out;
-    size_t at = a + 7;
+    size_t at = txt.find('\n', a) + 1;
     for (int i = 0; i < n && at < txt.size(); i++) {
         const size_t e = txt.find('\n', at);
         out += txt.substr(at, e == std::string::npos ? std::string::npos : e - at + 1);
         if (e == std::string::npos) break;
         at = e + 1;
+    }
+    return out;
+}
+
+// settings.ini with the online name, the matchmaking password and the custom server's address only as set (as
+// settings::describe() shows them; this process has not read the settings).
+std::string hide_private(const std::string& ini) {
+    static const char* kHidden[] = {"DES_NET_NAME", "DES_NET_PASSWORD", "DES_NET_CUSTOM"};
+    std::string out;
+    size_t at = 0;
+    while (at < ini.size()) {
+        size_t end = ini.find('\n', at);
+        if (end == std::string::npos) end = ini.size();
+        std::string line = ini.substr(at, end - at);
+        for (const char* key : kHidden) {
+            const size_t eq = line.find('=');
+            if (line.rfind(key, 0) == 0 && eq != std::string::npos &&
+                line.find_first_not_of(" \t\r", eq + 1) != std::string::npos &&
+                line.find_first_not_of(" \t", std::strlen(key)) == eq)
+                line = std::string(key) + " = (set)";
+        }
+        out += line + "\n";
+        at = end + 1;
     }
     return out;
 }
@@ -266,26 +304,47 @@ std::string make_report(Dialog& d) {
     const std::string txt = report::redact(read_text(d.txt));
     const std::string system = report::redact(report::system_info());
     std::vector<report::File> files;
-    files.push_back({"crash.txt", report::bytes(txt)});
+    files.push_back({d.hang ? "hang.txt" : "crash.txt", report::bytes(txt)});
     files.push_back({"system.txt", report::bytes(system)});
-    if (auto ini = report::read_file(d.data / L"settings.ini"); !ini.empty())  // (their settings)
-        files.push_back({"settings.ini", report::bytes(report::redact(std::string(ini.begin(), ini.end())))});
+    // (their settings: as the game had them, with the defaults and what the environment set; else the file)
+    if (auto in_use = report::read_file(d.data / L"logs" / L"settings.txt"); !in_use.empty())
+        files.push_back({"settings.ini", report::bytes(report::redact(std::string(in_use.begin(), in_use.end())))});
+    else if (auto ini = report::read_file(d.data / L"settings.ini"); !ini.empty())
+        files.push_back({"settings.ini", report::bytes(report::redact(hide_private(std::string(ini.begin(), ini.end()))))});
+    {
+        auto cmd = d.txt;  // (the game's command line, saved beside the report: this process's is the dialog's)
+        cmd.replace_extension(L".cmdline");
+        const auto b = report::read_file(cmd);
+        const std::wstring line(reinterpret_cast<const wchar_t*>(b.data()), b.size() / sizeof(wchar_t));
+        files.push_back({"environment.txt", report::bytes(report::redact(report::environment_info(report::narrow(line))))});
+    }
     auto log = d.txt;
     log.replace_extension(L".log");
     if (const std::string tail = read_text(log); !tail.empty()) files.push_back({"des.log", report::bytes(report::redact(tail))});
     const auto zip = report::write_bundle(report::narrow(d.txt.stem().wstring()), files);
 
-    std::string body = "## What happened\n(Please say what you were doing when the game crashed.)\n\n## Crash\n" + d.what +
-                       "\n\n```\n" + top_of_stack(txt, 20) + "```\n\n## System\n```\n" + system + "```\n\n## Attachments\n";
+    std::string body = std::string("## What happened\n(Please say what you were doing when the game ") +
+                       (d.hang ? "stopped.)\n\n## Not responding\n" : "crashed.)\n\n## Crash\n") + d.what + "\n\n```\n" +
+                       (d.hang ? top_of_stack(txt, 24, "--- guest threads") : top_of_stack(txt, 20)) +
+                       "```\n\n## System\n```\n" + system + "```\n\n## Attachments\n";
     const std::string name = report::narrow(zip.filename().wstring());
+    const char* holds = d.hang ? "what every thread was doing, your settings and the game's recent messages"
+                               : "the full stack, your settings and the game's recent messages";
     body += zip.empty() ? "(The report files could not be saved.)\n"
-                        : "Drag `" + name + "` (its folder is open) into this issue: it has the full stack, the "
-                          "settings and the game's recent messages.\n";
-    report::open_issue(report::issue_url("Crash: " + d.what.substr(0, 80), body), zip);
+                        : "Drag `" + name + "` (its folder is open) into this issue: it has " + holds + ".\n";
+    report::open_issue(report::issue_url((d.hang ? "Not responding: " : "Crash: ") + d.what.substr(0, 80), body), zip);
     return zip.empty() ? "The report files could not be saved. The issue form is open in your browser."
                        : "The issue form is open in your browser, with the folder holding " + name +
-                             ". Drag that file into the issue to attach the details: the full stack, your settings and "
-                             "the game's recent messages. Thank you!";
+                             ". Drag that file into the issue to attach the details: " + holds + ". Thank you!";
+}
+
+// A hang's "Close the game": the game is still running.
+void close_game(const Dialog& d) {
+    if (HANDLE h = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, d.pid)) {
+        TerminateProcess(h, 1);
+        WaitForSingleObject(h, 5000);
+        CloseHandle(h);
+    }
 }
 
 void restart(const Dialog& d) {
@@ -317,17 +376,21 @@ int run_dialog(int argc, LPWSTR* argv) {
     report::set_data_dir(d.data);
     const std::string txt = read_text(d.txt);
     d.what = what_happened(txt);
+    d.hang = txt.find(kHangMark) != std::string::npos;
 
-    crash_dialog::Content content{d.what, top_of_stack(txt, 14)};
+    crash_dialog::Content content{d.what, d.hang ? top_of_stack(txt, 30, "--- guest threads") : top_of_stack(txt, 14),
+                                  d.hang};
     crash_dialog::Actions actions;
     actions.report = [&d] { return make_report(d); };
     actions.restart = [&d] { restart(d); };
+    actions.close_game = [&d] { close_game(d); };
     if (!crash_dialog::show(content, actions)) {
         // (no window to be had: a plain message box)
         const std::wstring text = report::widen(d.what) + L"\n\nA report was saved in " + d.txt.parent_path().wstring() +
                                   L".\nTo report it, attach the files in that folder to a new issue at " +
                                   report::widen(report::kRepositoryUrl);
-        MessageBoxW(nullptr, text.c_str(), L"Demon's Souls has crashed", MB_OK | MB_ICONERROR);
+        MessageBoxW(nullptr, text.c_str(), d.hang ? L"Demon's Souls is not responding" : L"Demon's Souls has crashed",
+                    MB_OK | MB_ICONERROR);
     }
     return 0;
 }
@@ -351,7 +414,42 @@ void startup_hook() {
     report::start_log();
 }
 
+HANDLE g_hang_dialog = nullptr;  // the hang dialog report_hang started, while it is open
+
 }  // namespace
+
+bool hang_dialog_open() {
+    if (!g_hang_dialog) return false;
+    if (WaitForSingleObject(g_hang_dialog, 0) == WAIT_TIMEOUT) return true;
+    CloseHandle(g_hang_dialog);
+    g_hang_dialog = nullptr;
+    return false;
+}
+
+void report_hang(long long ms_since_frame) {
+    if (!g_installed || hang_dialog_open()) return;
+    char stem[64];
+    {
+        const std::time_t t = std::time(nullptr);
+        std::tm tm{};
+        localtime_s(&tm, &t);
+        std::strftime(stem, sizeof stem, "hang-%Y%m%d-%H%M%S", &tm);
+    }
+    const std::wstring base = std::wstring(g_dir) + report::widen(stem);
+    FILE* out = nullptr;
+    _wfopen_s(&out, (base + L".txt").c_str(), L"w");
+    if (!out) return;
+    std::fprintf(out, "\n%sno new frame for %lld s ===\n", kHangMark, ms_since_frame / 1000);
+    std::fprintf(out, "version %s, ps3recomp %s, game dump %s\n", kVersion, kPs3recompVersion,
+                 *kDumpSha256 ? kDumpSha256 : "unknown");
+    std::fprintf(out, "The menu could not open: the render thread did not answer.\n\n");
+    ps3_diag_report(out, 2);
+    std::fclose(out);
+    write_cmdline(base + L".cmdline");
+    write_log_tail(base + L".log");
+    std::fprintf(stderr, "[report] hang report: %s.txt (in the data folder's crashes folder)\n", stem);
+    if (g_dialog) g_hang_dialog = start_dialog(base + L".txt");
+}
 
 void install() {
     if (g_installed || report::data_dir().empty()) return;  // test runs: nothing

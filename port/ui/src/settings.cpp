@@ -175,8 +175,10 @@ std::string describe() {
         const bool hide = std::strcmp(d.key, "DES_NET_NAME") == 0 || std::strcmp(d.key, "DES_NET_CUSTOM") == 0 ||
                           std::strcmp(d.key, "DES_NET_PASSWORD") == 0;
         const auto shown = [hide](const std::string& v) { return hide && !v.empty() ? std::string("(set)") : v; };
-        out += std::string(d.key) + " = " + shown(get(d.key));
+        const std::string value = get(d.key);
+        out += std::string(d.key) + " = " + shown(value);
         if (pinned(d.key)) out += "    # set in the environment: " + shown(pinned_value(d.key));
+        else if (value != d.def && !hide) out += std::string("    # changed; default: ") + (*d.def ? d.def : "(none)");
         out += '\n';
     }
     return out;
@@ -373,6 +375,21 @@ void apply_match_group() {
     std::fprintf(stderr, "[ui] network: matchmaking password %s\n", header.empty() ? "cleared" : "changed");
 }
 
+// logs\settings.txt: describe(), kept current for the crash and hang dialog. It is a process of its own that reads
+// no settings, and settings.ini alone has neither the defaults nor what the environment set (and a player who never
+// changed a setting has none).
+void write_in_use() {
+    const auto& dir = report::data_dir();
+    if (dir.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(dir / L"logs", ec);
+    if (FILE* f = _wfopen((dir / L"logs" / L"settings.txt").c_str(), L"wb")) {
+        const std::string s = describe();
+        std::fwrite(s.data(), 1, s.size(), f);
+        std::fclose(f);
+    }
+}
+
 }  // namespace
 
 void load_and_apply_env() {
@@ -393,6 +410,7 @@ void load_and_apply_env() {
     std::fprintf(stderr, "[ui] keyboard and mouse: the Souls layout%s%s\n", keys.empty() ? "" : ", changed by ",
                  keys.c_str());
     apply_network();
+    write_in_use();
 }
 
 std::string get(std::string_view key) {
@@ -418,6 +436,7 @@ void set(std::string_view key, const std::string& value) {
         apply_env(key, value.empty() ? d->def : value);
     if (key == "DES_NET_PASSWORD" && !pinned(key)) apply_match_group();
     save();
+    write_in_use();
 }
 
 bool pinned(std::string_view key) {

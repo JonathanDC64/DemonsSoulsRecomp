@@ -10,8 +10,9 @@
 namespace ui::crash_dialog {
 
 struct Content {
-    std::string what;     // "access violation writing 0000000000000000"
-    std::string details;  // the top of the stack
+    std::string what;     // "access violation writing 0000000000000000", or for a hang "no new frame for 14 s"
+    std::string details;  // the top of the stack, or for a hang the guest threads
+    bool hang = false;    // the game is not responding (still running), not crashed
 };
 
 struct Actions {
@@ -19,6 +20,8 @@ struct Actions {
     std::function<std::string()> report;
     // Starts the game again (once the crashed process has ended).
     std::function<void()> restart;
+    // A hang's "Close the game": ends the game's process.
+    std::function<void()> close_game;
 };
 
 // Shows the dialog until it is closed. False if it could not be shown.

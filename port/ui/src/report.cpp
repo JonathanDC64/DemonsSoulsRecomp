@@ -10,8 +10,12 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 // (after windows.h)
-#include <dxgi.h>
+#include <d3d12.h>
+#include <dxgi1_6.h>
 #include <fcntl.h>
+#include <intrin.h>
+#include <psapi.h>
+#include <xinput.h>
 #include <io.h>
 #include <objbase.h>
 #include <shellapi.h>
@@ -53,6 +57,10 @@ extern char** environ;
 #include <thread>
 
 extern "C" void ps3_setenv(const char* name, const char* value);  // boot_main.cpp: through the getenv cache
+extern "C" void ps3_diag_report(FILE* out, unsigned sample_sec);   // boot_main.cpp: what every thread is doing
+extern "C" void* rsx_d3d12_device(void);                           // the D3D12 backend's device, or null
+extern "C" int pad_hid_sony_poll(void* out, int max);              // the DualSense / DualShock 4 reader
+extern "C" unsigned ppu_boot_frames_presented(void);               // boot_main.cpp: the game's frames so far
 
 namespace ui::report {
 
@@ -158,6 +166,32 @@ std::string psn_name() {
     return name;
 }
 #endif
+
+// The online name (Settings, Network), which the runtime's NP messages print: the environment's, else the setting,
+// else settings.ini's line (the crash dialog's process has not read the file).
+std::string online_name() {
+    for (const char* var : {"PS3_NP_ONLINE_ID", "DES_NET_NAME"})
+        if (std::string v = env(var); !v.empty()) return v;
+    if (std::string v = settings::get("DES_NET_NAME"); !v.empty()) return v;
+    if (const std::string& file = settings::path(); !file.empty()) {
+        if (FILE* f = _wfopen(widen(file).c_str(), L"r")) {
+            char line[512];
+            std::string name;
+            while (name.empty() && std::fgets(line, sizeof line, f)) {
+                std::string l = line;
+                if (l.rfind("DES_NET_NAME", 0) != 0) continue;
+                const size_t eq = l.find('=');
+                if (eq == std::string::npos) continue;
+                l = l.substr(eq + 1);
+                const size_t a = l.find_first_not_of(" \t"), b = l.find_last_not_of(" \t\r\n");
+                if (a != std::string::npos && b >= a) name = l.substr(a, b - a + 1);
+            }
+            std::fclose(f);
+            return name;
+        }
+    }
+    return {};
+}
 
 uint32_t crc32(const uint8_t* data, size_t n) {
     static uint32_t table[256];
@@ -531,7 +565,41 @@ std::vector<uint8_t> encode_png(const std::vector<uint8_t>& rgba, int width, int
 }
 #endif
 
-void make_issue_report(std::vector<uint8_t> rgba, int width, int height, unsigned long long frames,
+// The crash and hang reports of the last week in the crashes folder, by name, newest first.
+std::string recent_reports() {
+    std::error_code ec;
+    const auto dir = data_dir() / L"crashes";
+    const auto now = std::filesystem::file_time_type::clock::now();
+    std::vector<std::pair<std::filesystem::file_time_type, std::string>> found;
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+        if (e.path().extension() != L".txt" || now - e.last_write_time(ec) > std::chrono::hours(24 * 7)) continue;
+        found.emplace_back(e.last_write_time(ec), narrow(e.path().filename().wstring()));
+    }
+    std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::string out = "Crash and hang reports on this PC, the last 7 days: ";
+    if (found.empty()) return out + "none\n";
+    for (size_t i = 0; i < found.size() && i < 10; i++) out += (i ? ", " : "") + found[i].second;
+    return out + (found.size() > 10 ? " and " + std::to_string(found.size() - 10) + " more\n" : "\n");
+}
+
+// The runtime's snapshot (ps3_diag_report) through a file of its own in the reports folder.
+std::string runtime_snapshot() {
+    std::error_code ec;
+    const auto dir = data_dir() / L"reports";
+    std::filesystem::create_directories(dir, ec);
+    const auto path = dir / (L"runtime-" + std::to_wstring(GetCurrentProcessId()) + L".tmp");
+    FILE* f = _wfopen(path.c_str(), L"w+");
+    if (!f) return "(could not be written)\n";
+    ps3_diag_report(f, 2);
+    std::fclose(f);
+    const auto b = read_file(path);
+    std::filesystem::remove(path, ec);
+    std::string text(b.begin(), b.end());
+    text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+    return text;
+}
+
+void make_issue_report(std::vector<uint8_t> rgba, int width, int height, std::string session,
                        std::string settings_text) {
 #ifdef _WIN32
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);  // (WIC, ShellExecute)
@@ -543,20 +611,29 @@ void make_issue_report(std::vector<uint8_t> rgba, int width, int height, unsigne
     }
     const std::string system = redact(system_info());
     files.push_back({"system.txt", bytes(system)});
-    const std::string game = "Presented frames: " + std::to_string(frames) + "\nPicture: " + std::to_string(width) +
-                             "x" + std::to_string(height) + "\n";
+    const std::string game = redact(session + "Picture: " + std::to_string(width) + "x" + std::to_string(height) + "\n" +
+                                    recent_reports());
     files.push_back({"game.txt", bytes(game)});
     files.push_back({"settings.ini", bytes(redact(settings_text))});
+    files.push_back({"environment.txt", bytes(redact(environment_info()))});
+    files.push_back({"runtime.txt", bytes(redact(runtime_snapshot()))});
     if (!g_log_path.empty()) {
         flush_log();
-        files.push_back({"des.log", bytes(redact(read_head_tail(g_log_path, 80, 192 << 10)))});
+        files.push_back({"des.log", bytes(redact(read_head_tail(g_log_path, 120, 512 << 10)))});
+        std::error_code ec;
+        const auto prev = g_log_path.parent_path() / L"des.prev.log";
+        if (std::filesystem::exists(prev, ec) &&
+            std::filesystem::file_time_type::clock::now() - std::filesystem::last_write_time(prev, ec) <
+                std::chrono::hours(24))
+            files.push_back({"des.prev.log", bytes(redact(read_head_tail(prev, 40, 192 << 10)))});
     }
     const auto zip = write_bundle("issue-" + stamp, files);
     std::string body = "## What happened\n(Please describe the problem and what you were doing.)\n\n## What you expected\n\n"
                        "## System\n```\n" + system + game + "```\n\n## Attachments\n";
     body += zip.empty() ? "(The report files could not be saved.)\n"
                         : "Drag `" + narrow(zip.filename().wstring()) + "` (its folder is open) into this issue: it has "
-                          "a screenshot, the settings and the game's recent messages.\n";
+                          "a screenshot, your settings, what each part of the game was doing and the game's recent "
+                          "messages.\n";
     std::fprintf(stderr, "[report] issue report: %s\n", zip.empty() ? "could not be saved" : narrow(zip.wstring()).c_str());
     open_issue(issue_url("", body), zip);
 #ifdef _WIN32
@@ -689,6 +766,7 @@ std::string redact(std::string text) {
 #endif
     // (after the folders: a name inside a path goes with its path)
     replace_all(text, psn_name(), "<psn name>", true);
+    replace_all(text, online_name(), "<online name>", true);
 #ifdef _WIN32
     replace_all(text, env("USERNAME"), "<user>", true);
     replace_all(text, env("COMPUTERNAME"), "<pc>", true);
@@ -700,8 +778,72 @@ std::string redact(std::string text) {
     return text;
 }
 
+namespace {
+
+// Is HDR on for the display `mon` (DXGI's output description)?
+bool hdr_on(HMONITOR mon) {
+    bool on = false;
+    IDXGIFactory1* factory = nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) return false;
+    IDXGIAdapter1* adapter = nullptr;
+    for (UINT i = 0; !on && factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++) {
+        IDXGIOutput* output = nullptr;
+        for (UINT k = 0; !on && adapter->EnumOutputs(k, &output) != DXGI_ERROR_NOT_FOUND; k++) {
+            IDXGIOutput6* o6 = nullptr;
+            DXGI_OUTPUT_DESC1 d{};
+            if (SUCCEEDED(output->QueryInterface(IID_PPV_ARGS(&o6)))) {
+                if (SUCCEEDED(o6->GetDesc1(&d)) && d.Monitor == mon)
+                    on = d.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+                o6->Release();
+            }
+            output->Release();
+        }
+        adapter->Release();
+    }
+    factory->Release();
+    return on;
+}
+
+// The software loaded into the game that is neither Windows' nor the game's: overlays, recorders, injectors (their
+// file names; "beside the game" for one in the game's folder, such as a ReShade dxgi.dll).
+std::string other_modules() {
+    HMODULE mods[1024];
+    DWORD bytes_needed = 0;
+    if (!EnumProcessModules(GetCurrentProcess(), mods, sizeof mods, &bytes_needed)) return {};
+    wchar_t windir[MAX_PATH] = L"";
+    GetWindowsDirectoryW(windir, MAX_PATH);
+    const std::wstring win = std::filesystem::path(windir).wstring(), game = exe_dir().wstring();
+    const HMODULE self = GetModuleHandleW(nullptr);
+    const auto under = [](const std::wstring& path, const std::wstring& dir) {
+        return !dir.empty() && path.size() > dir.size() && _wcsnicmp(path.c_str(), dir.c_str(), dir.size()) == 0 &&
+               (path[dir.size()] == L'\\' || path[dir.size()] == L'/');
+    };
+    std::vector<std::string> names;
+    for (DWORD i = 0; i < std::min<DWORD>(bytes_needed / sizeof(HMODULE), 1024); i++) {
+        if (mods[i] == self) continue;
+        wchar_t path[MAX_PATH * 2];
+        const DWORD n = GetModuleFileNameW(mods[i], path, DWORD(std::size(path)));
+        if (!n) continue;
+        const std::wstring p(path, n);
+        if (under(p, win)) continue;
+        const std::wstring dir = std::filesystem::path(p).parent_path().wstring();
+        const bool beside = _wcsicmp(dir.c_str(), game.c_str()) == 0;
+        names.push_back(narrow(std::filesystem::path(p).filename().wstring()) + (beside ? " (beside the game)" : ""));
+    }
+    std::sort(names.begin(), names.end());
+    std::string out = "Other software in the game (" + std::to_string(names.size()) + "):";
+    for (const auto& name : names) out += " " + name + ";";
+    if (!names.empty()) out.pop_back();
+    return out + "\n";
+}
+
+}  // namespace
+
 std::string system_info() {
     std::ostringstream o;
+    // The game's own process (its renderer is up), not the crash dialog's: only then are this process's memory and
+    // the other software loaded into it the game's.
+    const bool game_process = rsx_d3d12_device() != nullptr;
 #if DES_DEV
     o << "Developer build (cheats compiled in)\n";
 #endif
@@ -741,7 +883,21 @@ std::string system_info() {
         v.dwOSVersionInfoSize = sizeof v;
         if (auto fn = reinterpret_cast<RtlGetVersionFn>(GetProcAddress(GetModuleHandleA("ntdll.dll"), "RtlGetVersion")))
             fn(&v);
-        o << "OS: Windows " << v.dwMajorVersion << "." << v.dwMinorVersion << " build " << v.dwBuildNumber << "\n";
+        // "Windows 11 Pro 24H2" (the registry's product name says Windows 10 on 11: the build tells them apart)
+        const auto reg = [](const char* name) {
+            char buf[128] = "";
+            DWORD size = sizeof buf;
+            RegGetValueA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", name, RRF_RT_REG_SZ,
+                         nullptr, buf, &size);
+            return std::string(buf);
+        };
+        std::string product = reg("ProductName");
+        if (v.dwBuildNumber >= 22000 && product.rfind("Windows 10", 0) == 0) product.replace(0, 10, "Windows 11");
+        DWORD ubr = 0, size = sizeof ubr;
+        RegGetValueA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "UBR", RRF_RT_REG_DWORD,
+                     nullptr, &ubr, &size);
+        o << "OS: " << (product.empty() ? "Windows" : product) << " " << reg("DisplayVersion") << ", "
+          << v.dwMajorVersion << "." << v.dwMinorVersion << " build " << v.dwBuildNumber << "." << ubr << "\n";
     }
     {
         char cpu[128] = "?";
@@ -750,12 +906,51 @@ std::string system_info() {
                      RRF_RT_REG_SZ, nullptr, cpu, &size);
         SYSTEM_INFO si;
         GetNativeSystemInfo(&si);
-        o << "CPU: " << cpu << " (" << si.dwNumberOfProcessors << " threads)\n";
+        // Cores, and on a hybrid processor how many of each kind (the highest efficiency class is the fast cores).
+        int cores = 0, fast = 0, top = -1;
+        DWORD len = 0;
+        GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &len);
+        std::vector<uint8_t> buf(len);
+        if (len && GetLogicalProcessorInformationEx(
+                       RelationProcessorCore, reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buf.data()), &len)) {
+            for (DWORD at = 0; at < len;) {
+                const auto* p = reinterpret_cast<const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buf.data() + at);
+                const int cls = p->Processor.EfficiencyClass;
+                cores++;
+                if (cls > top) top = cls, fast = 0;
+                if (cls == top) fast++;
+                at += p->Size;
+            }
+        }
+        int r[4];
+        __cpuid(r, 1);
+        const bool sse42 = r[2] & (1 << 20), avx = r[2] & (1 << 28), fma = r[2] & (1 << 12);
+        __cpuidex(r, 7, 0);
+        const bool avx2 = r[1] & (1 << 5), avx512 = r[1] & (1 << 16), bmi2 = r[1] & (1 << 8);
+        o << "CPU: " << cpu << " (" << cores << " cores";
+        if (fast && fast < cores) o << ": " << fast << " fast, " << (cores - fast) << " efficient";
+        o << ", " << si.dwNumberOfProcessors << " threads; " << (sse42 ? "SSE4.2" : "no SSE4.2") << (avx ? " AVX" : "")
+          << (avx2 ? " AVX2" : "") << (fma ? " FMA" : "") << (bmi2 ? " BMI2" : "") << (avx512 ? " AVX-512" : "") << ")\n";
         MEMORYSTATUSEX ms{};
         ms.dwLength = sizeof ms;
-        if (GlobalMemoryStatusEx(&ms)) o << "Memory: " << (ms.ullTotalPhys >> 20) << " MB\n";
+        if (GlobalMemoryStatusEx(&ms))
+            o << "Memory: " << (ms.ullTotalPhys >> 20) << " MB, " << (ms.ullAvailPhys >> 20) << " MB free now; commit limit "
+              << (ms.ullTotalPageFile >> 20) << " MB, " << (ms.ullAvailPageFile >> 20) << " MB free\n";
+        PROCESS_MEMORY_COUNTERS_EX pm{};
+        pm.cb = sizeof pm;
+        if (game_process &&
+            GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pm), sizeof pm))
+            o << "This process: " << (pm.WorkingSetSize >> 20) << " MB in memory (peak " << (pm.PeakWorkingSetSize >> 20)
+              << " MB), " << (pm.PrivateUsage >> 20) << " MB committed\n";
     }
     {
+        // The adapter the game draws with (the D3D12 device's), with its memory budget and this process's use.
+        LUID used{};
+        bool have_used = false;
+        if (auto* device = static_cast<ID3D12Device*>(rsx_d3d12_device())) {
+            used = device->GetAdapterLuid();
+            have_used = true;
+        }
         IDXGIFactory1* factory = nullptr;
         if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) {
             IDXGIAdapter1* adapter = nullptr;
@@ -768,6 +963,18 @@ std::string system_info() {
                     if (SUCCEEDED(adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &driver)))
                         o << ", driver " << HIWORD(driver.HighPart) << "." << LOWORD(driver.HighPart) << "."
                           << HIWORD(driver.LowPart) << "." << LOWORD(driver.LowPart);
+                    if (have_used && d.AdapterLuid.LowPart == used.LowPart && d.AdapterLuid.HighPart == used.HighPart) {
+                        o << " (in use";
+                        IDXGIAdapter3* a3 = nullptr;
+                        DXGI_QUERY_VIDEO_MEMORY_INFO mem{};
+                        if (SUCCEEDED(adapter->QueryInterface(IID_PPV_ARGS(&a3)))) {
+                            if (SUCCEEDED(a3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mem)))
+                                o << ": this process uses " << (mem.CurrentUsage >> 20) << " MB of a " << (mem.Budget >> 20)
+                                  << " MB budget";
+                            a3->Release();
+                        }
+                        o << ")";
+                    }
                     o << "\n";
                 }
                 adapter->Release();
@@ -792,13 +999,74 @@ std::string system_info() {
                 EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode);
                 *m.o << "Display " << ++m.n << ": " << (info.rcMonitor.right - info.rcMonitor.left) << "x"
                      << (info.rcMonitor.bottom - info.rcMonitor.top) << " at " << mode.dmDisplayFrequency << " Hz"
-                     << ((info.dwFlags & MONITORINFOF_PRIMARY) ? " (primary)" : "") << "\n";
+                     << ((info.dwFlags & MONITORINFOF_PRIMARY) ? " (primary)" : "") << (hdr_on(mon) ? ", HDR on" : "")
+                     << "\n";
                 return TRUE;
             },
             reinterpret_cast<LPARAM>(&m));
     }
+    {
+        SYSTEM_POWER_STATUS power{};
+        if (GetSystemPowerStatus(&power) && power.BatteryFlag != 128 && power.BatteryFlag != 255)
+            o << "Power: " << (power.ACLineStatus == 1 ? "plugged in" : power.ACLineStatus == 0 ? "on battery" : "unknown")
+              << ", battery " << int(power.BatteryLifePercent) << "%" << (power.SystemStatusFlag ? ", battery saver on" : "")
+              << "\n";
+        else
+            o << "Power: no battery\n";
+    }
+    {
+        const auto free_on = [](const std::filesystem::path& p) -> std::string {
+            ULARGE_INTEGER avail{};
+            if (p.empty() || !GetDiskFreeSpaceExW(p.root_path().c_str(), &avail, nullptr, nullptr)) return "?";
+            return std::to_string(avail.QuadPart >> 30) + " GB";
+        };
+        o << "Free disk space: " << free_on(exe_dir()) << " where the game is, " << free_on(data_dir())
+          << " where its data is\n";
+    }
+    {
+        // Gamepads: XInput slots that answer, and the DualSense / DualShock 4 reader's pads.
+        int xinput = 0;
+        for (DWORD i = 0; i < XUSER_MAX_COUNT; i++) {
+            XINPUT_STATE st{};
+            if (XInputGetState(i, &st) == ERROR_SUCCESS) xinput++;
+        }
+        uint8_t hid[4][16];
+        const int sony = pad_hid_sony_poll(hid, 4);
+        char layout[KL_NAMELENGTH] = "";
+        GetKeyboardLayoutNameA(layout);
+        o << "Gamepads: " << xinput << " XInput, " << sony << " DualSense or DualShock 4; keyboard layout " << layout << "\n";
+    }
+    if (game_process) o << other_modules();
 #endif
     return o.str();
+}
+
+std::string environment_info(const std::string& command_line) {
+    std::string out = "Command line: " + (command_line.empty() ? narrow(GetCommandLineW()) : command_line) + "\n";
+    static const char* kPrefixes[] = {"DES_", "PS3_", "RSX_", "SPU_", "SPURS_", "GCM_", "PAD_", "PPU_", "AUDIO_",
+                                      "VBLANK", "FIFO_", "LIBSRE_", "SAIL_", "TROPHY_", "WATCHDOG_"};
+    static const char* kHidden[] = {"DES_NET_NAME", "DES_NET_PASSWORD", "DES_NET_CUSTOM", "PS3_NP_ONLINE_ID",
+                                    "PS3_NET_PASSWORD"};
+    std::vector<std::string> lines;
+    if (LPWCH env = GetEnvironmentStringsW()) {
+        for (const wchar_t* p = env; *p; p += std::wcslen(p) + 1) {
+            const std::string kv = narrow(p);
+            const size_t eq = kv.find('=');
+            if (eq == std::string::npos || eq == 0) continue;
+            const std::string key = kv.substr(0, eq);
+            bool ours = false;
+            for (const char* prefix : kPrefixes) ours = ours || key.rfind(prefix, 0) == 0;
+            if (!ours) continue;
+            bool hide = false;
+            for (const char* h : kHidden) hide = hide || key == h;
+            lines.push_back(hide ? key + "=(set)" : kv);
+        }
+        FreeEnvironmentStringsW(env);
+    }
+    std::sort(lines.begin(), lines.end());
+    out += "Options set in the environment (" + std::to_string(lines.size()) + "):\n";
+    for (const auto& l : lines) out += "  " + l + "\n";
+    return out;
 }
 
 std::vector<uint8_t> read_file(const std::filesystem::path& path) {
@@ -1036,9 +1304,23 @@ namespace {
 volatile uintptr_t g_nowhere = 0;  // (a null pointer the compiler cannot see)
 }
 
+// A frame count from the environment, read again every 64th call (the console's setenv can set it in a running game).
+unsigned long long env_u64_live(const char* name, unsigned& calls, unsigned long long& value) {
+    if ((calls++ & 63) == 0) value = env_u64(name);
+    return value;
+}
+
+std::atomic<DWORD> g_render_thread{0};  // frame_hook's thread: flip_hook leaves it alone
+
 bool frame_hook(unsigned long long frame) {
-    static const unsigned long long crash_at = env_u64("DES_CRASH_AT_FRAME"), abort_at = env_u64("DES_ABORT_AT_FRAME"),
-                                    report_at = env_u64("DES_REPORT_AT_FRAME");
+    g_render_thread.store(GetCurrentThreadId(), std::memory_order_relaxed);
+    static const unsigned long long crash_at = env_u64("DES_CRASH_AT_FRAME"), abort_at = env_u64("DES_ABORT_AT_FRAME");
+    static unsigned calls = 0, report_calls = 0;
+    static unsigned long long hang_at = 0, report_at = 0, reported_at = 0;
+    if (const auto at = env_u64_live("DES_HANG_RENDER_AT_FRAME", calls, hang_at); at && frame >= at) {
+        std::fprintf(stderr, "[des] DES_HANG_RENDER_AT_FRAME=%llu: the render thread stops here (test)\n", at);
+        Sleep(INFINITE);
+    }
     if (frame == crash_at && crash_at) {
         std::fprintf(stderr, "[des] DES_CRASH_AT_FRAME=%llu: crashing on purpose (test)\n", frame);
         *reinterpret_cast<volatile int*>(g_nowhere) = 1;
@@ -1047,10 +1329,26 @@ bool frame_hook(unsigned long long frame) {
         std::fprintf(stderr, "[des] DES_ABORT_AT_FRAME=%llu: aborting on purpose (test)\n", frame);
         std::abort();
     }
-    return report_at && frame == report_at;
+    // (once per value: the console's setenv DES_REPORT_AT_FRAME=1 asks for one report now)
+    if (const auto at = env_u64_live("DES_REPORT_AT_FRAME", report_calls, report_at); at && frame >= at && at != reported_at) {
+        reported_at = at;
+        return true;
+    }
+    return false;
 }
 
-void send_issue_report(void* back_buffer, unsigned index, int width, int height, unsigned long long frame) {
+void flip_hook() {
+    static unsigned calls = 0;
+    static unsigned long long hang_at = 0;
+    // (the render thread decodes some flips from the FIFO: stopping it would be DES_HANG_RENDER_AT_FRAME's case)
+    if (const auto at = env_u64_live("DES_HANG_AT_FRAME", calls, hang_at);
+        at && ppu_boot_frames_presented() >= at && GetCurrentThreadId() != g_render_thread.load(std::memory_order_relaxed)) {
+        std::fprintf(stderr, "[des] DES_HANG_AT_FRAME=%llu: the game stops here (test)\n", at);
+        Sleep(INFINITE);
+    }
+}
+
+void send_issue_report(void* back_buffer, unsigned index, int width, int height, std::string session) {
     if (data_dir().empty()) {
         std::fprintf(stderr, "[report] no data folder (a test run without DES_DATA_DIR): no issue report\n");
         return;
@@ -1058,7 +1356,9 @@ void send_issue_report(void* back_buffer, unsigned index, int width, int height,
     if (g_report_busy.exchange(true)) return;  // (one at a time)
     std::vector<uint8_t> rgba;
     if (!host::capture(back_buffer, index, width, height, rgba)) rgba.clear();
-    std::thread(make_issue_report, std::move(rgba), width, height, frame, settings::describe()).detach();
+    std::thread(make_issue_report, std::move(rgba), width, height, std::move(session), settings::describe()).detach();
 }
 
 }  // namespace ui::report
+
+extern "C" void des_report_flip_hook(void) { ui::report::flip_hook(); }

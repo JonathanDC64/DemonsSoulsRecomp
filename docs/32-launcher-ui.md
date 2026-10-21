@@ -257,6 +257,9 @@ the saved command line again.
 
 ### Report an issue
 
+What the reports hold now (more than below), and how a frozen game is
+reported: docs/74.
+
 The menu bar's **Report an issue** asks first (what is sent, and that
 nothing is sent until the issue is submitted). **Report** closes the menu;
 4 presented frames later, inside the frame hook and before the UI is drawn,

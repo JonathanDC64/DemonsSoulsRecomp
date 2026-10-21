@@ -174,6 +174,12 @@ built with `DES_VKD3D`. `DES_UI=OFF` leaves it out (`port/des_ui_stub.cpp`),
 and `DES_UI=0` at run time turns it off. The 14 lifted chunks take about 2 GB
 of memory each to compile at `-O2`.
 
+CI builds both halves on Linux, with vkd3d 2.1 from its tarball: the fork's
+`linux-vkd3d.yml` builds the runtime with the vkd3d backend and boots its
+smoke title through it on lavapipe (GCC and Clang), and this repository's
+`ci.yml` builds the wrapper UI. des_boot itself needs the lift, which CI
+never has.
+
 ## Running
 
 The same environment as on Windows (`tools/des/deslib.sh`), plus:
@@ -254,7 +260,6 @@ cache in the data folder. Packing with appimagetool has not been run.
 | A native GPU run | WSL with dzn only so far (above); no real Linux driver yet |
 | vkd3d-proton | faster and more complete than Wine's vkd3d, but built for Wine/Proton; not tried as a library |
 | Packaging | `tools/linux/appimage.sh` (above) makes the AppDir; packing it with appimagetool and running the AppImage on another machine are not tested. FFmpeg is the system's, not bundled |
-| CI | a Linux job that builds the runtime with `PS3RECOMP_RSX_D3D12_VKD3D=ON` |
 
 vkd3d prints four `fixme` notes: read-only depth views (flags ignored),
 root signature flags, the pipeline library stub, and aliasing barriers.

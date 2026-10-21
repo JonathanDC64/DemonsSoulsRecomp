@@ -47,8 +47,14 @@ Linux GPU driver (Mesa RADV / ANV / NVK, NVIDIA) has not been tried.
   DXGI.
 - **`libs/video/rsx_vkd3d_host.h`** (ps3recomp) is what the backend takes
   from Windows: vkd3d's headers, `runtime/platform/win32_compat.h` for the
-  Win32 types and calls, a few MSVC spellings, and the part of DXGI the
-  backend uses (factory, swap chain, adapter; 17 methods).
+  Win32 types and calls (threads, locks, events, timers), and the part of
+  DXGI the backend uses (factory, swap chain, adapter; 17 methods).
+- **Spellings.** The backend uses forms clang takes on every host, not
+  MSVC's: `__builtin_bswap32`, `__builtin_clz`, `_Alignas`,
+  `__attribute__((always_inline))`, `swprintf`. It joins paths with `/`
+  (Windows takes it too), and finds a folder at the last `/` or `\`. The
+  runtime is built with clang (clang-cl on Windows); cl.exe is not
+  supported.
 - **`libs/video/rsx_vkd3d_dxgi.c`** implements that DXGI. The swap chain's
   buffers are its own Vulkan images wrapped as vkd3d resources. The backend
   renders to them and moves them to `PRESENT`, which vkd3d is told means
@@ -73,8 +79,9 @@ Linux GPU driver (Mesa RADV / ANV / NVK, NVIDIA) has not been tried.
   `calloc`: not page-aligned, so every `sys_memory_allocate` failed and the
   game panicked in `DLStdAllocator` before its first thread.
 
-Windows builds the same code as before: every change in the backend is
-behind `_WIN32`, or produces the same strings there.
+On Windows the backend does what it did: each change is behind `_WIN32`,
+or a portable form of the same thing. The one visible difference is the `/`
+after the folder in the shader cache's paths.
 
 ### The wrapper UI
 
@@ -107,8 +114,23 @@ on the game's device and queue, ahead of Present.
   Raw mouse motion arrives as `WM_RSX_MOUSE_MOTION`. `port/ui/src/mouse_sdl.cpp`
   holds the cursor with SDL's relative mouse mode for mouse look. The game's
   keyboard and mouse state comes from `cellPad_host_key_down`, which reads
-  SDL's state. `platform.hpp` gives the UI's few Win32 names their POSIX
-  meaning, and `keys.cpp` maps virtual keys to RmlUi's.
+  SDL's state. `platform.hpp` is that input format off Windows: the Win32
+  types, virtual-key codes and window messages. `keys.cpp` maps virtual
+  keys to RmlUi's.
+- **One code path.** Where both platforms do the same thing, the UI runs
+  the same code on both: `portable.hpp` (a steady clock, a name compare
+  that ignores case, the local time), `std::thread` for the watch thread,
+  `report::open_file` for files. Where a fact differs, one small function
+  has a version per platform, and its callers have no `#ifdef`:
+  - `keys::key_down`, `keys::key_name`: the key state and the keys' names;
+  - `host::window_dpi`, in each host;
+  - `mouse::client_size`, `mouse::hold_buttons`;
+  - `read_xinput` (empty off Windows), `input::pad_support`;
+  - in `report.cpp`: the process id, the command line, the environment,
+    file truncate and seek, the user's and the PC's names, the home folder,
+    and the system facts.
+  The crash dialog, the minidumps, `hdr_on` and `other_modules` stay
+  Windows-only.
 - **Reports.**
   - The data folder is `$XDG_DATA_HOME/DemonsSoulsRecomp/DemonsSouls` (else
     `~/.local/share/...`).
@@ -118,6 +140,9 @@ on the game's device and queue, ahead of Present.
   - Crashes (a fault nothing handled, or an abort) go through win32_compat's
     exception shim and write `crashes/crash-<time>.txt` with a backtrace,
     plus the end of the log. There is no dialog.
+  - Hangs: when the game has stopped and the render thread does not answer
+    the menu key, the watch thread writes `crashes/hang-<time>.txt` (the
+    runtime's snapshot) and `.log`. There is no dialog.
 
 stb is fetched at configure time, as RmlUi and FreeType are.
 
@@ -190,7 +215,7 @@ game at speed, not for judging Linux performance.
 | Movies | `sail_movie.cpp` uses Media Foundation; off Windows a movie ends at once. FFmpeg, 2-4 days |
 | Startup shader precompile | `rsx_shader_precompile.c` is Windows-only; shaders compile as the game draws them |
 | Pipeline cache across runs | vkd3d's `CreatePipelineLibrary` is a stub; the backend carries on without one, and pipelines are built again each run |
-| Crash dialog, F8 mark, hang watchdog | Win32 code; not ported. Crash reports are written, with no dialog |
+| Crash and hang dialog, F8 mark | Win32 code; not ported. Crash and hang reports are written, with no dialog |
 | IME | RmlUi's text fields take SDL's text input; no IME window |
 | Frame statistics | the swap chain reports none (`present_queued` and `FRAME_LOG` take "cannot say") |
 | A native GPU run | WSL with dzn only so far (above); no real Linux driver yet |
@@ -216,8 +241,10 @@ ps3recomp (feat/linux), for the wrapper UI:
 
 - `video: the SDL window hands the overlay Windows' messages`
 - `input: cellPad_host_key_down, and SDL controllers for the UI`
+- `video: portable spellings in the D3D12 backend`
 
 Port (feat/linux):
 
 - `build: des_boot on Linux`
 - `ui: the wrapper UI off Windows, on its own D3D12 renderer`
+- `ui: portable calls instead of Windows-only ones`

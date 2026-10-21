@@ -20,9 +20,11 @@ Linux PC, native Linux GPU driver or Steam Deck has run it yet.
 | Rendering | `rsx_d3d12_backend.c` on vkd3d 2.1, in an SDL window: the opening and the level match the Windows frames |
 | Shaders | all 3,652 DXBC files in a Windows shader cache, and all 3,605 HLSL programs dumped from a run, go through vkd3d-shader; the Windows cache can be copied over as is |
 | Audio | SDL2 (as before off Windows). `AUDIO_MUTE=1` now mutes it too |
-| Keyboard pad | SDL's keyboard state, with the same `PAD_KEYS` bindings as Windows |
-| Controllers | SDL2 game controllers (the existing SDL branch of `cellPad.c`) |
-| Window | SDL: resizable, Alt+Enter borderless, F9 / F10 / F11 hot keys, Escape closes |
+| Wrapper UI | start screen, menu (F1, Esc, or L3+R3), settings, controls, trophies, problem reports: RmlUi through its own D3D12 renderer |
+| Keyboard and mouse | the UI's layouts (the Souls layout by default) and bindings, mouse buttons and wheel, mouse look |
+| Keyboard pad | without the UI (`DES_UI=0`): SDL's keyboard state, with the same `PAD_KEYS` bindings as Windows |
+| Controllers | SDL2 game controllers (the existing SDL branch of `cellPad.c`), for the game and the menus |
+| Window | SDL: resizable, Alt+Enter borderless, F9 / F10 / F11 hot keys; Escape closes only without the UI |
 
 Measured at 1280x720, frame cap off, the tutorial's first room (~790
 draws):
@@ -74,6 +76,51 @@ Linux GPU driver (Mesa RADV / ANV / NVK, NVIDIA) has not been tried.
 Windows builds the same code as before: every change in the backend is
 behind `_WIN32`, or produces the same strings there.
 
+### The wrapper UI
+
+On Windows the UI draws with RmlUi's D3D11 renderer on a D3D11On12 device.
+vkd3d has no D3D11On12, so off Windows it draws through
+`port/ui/src/render_d3d12.cpp`: RmlUi's D3D11 renderer rewritten for D3D12,
+on the game's device and queue, ahead of Present.
+
+- **Drawing.** The UI goes into a layer, a 2x multisampled target; all
+  layers share one stencil buffer, which holds the clip mask. Filters
+  (opacity, blur, drop shadow, the colour matrices, mask images) work in
+  single-sampled targets of the same size. `end_frame` composites the base
+  layer over the back buffer in premultiplied alpha. The shaders are
+  RmlUi's, compiled by vkd3d's `D3DCompile`. The gradient's stops are
+  unrolled, so it indexes nothing at run time. Up to three frames are in
+  flight, each with its own allocator and its own ring for constants and
+  quads. Geometry and texture uploads use blocks of powers of two from 4 MB
+  upload pages. What RmlUi releases is freed once the GPU is past the frames
+  that used it.
+- **Host.** `port/ui/src/host_d3d12.cpp` is `host.cpp` for this renderer.
+  Images (the trophy icons) are decoded with stb_image. The display scale
+  comes from SDL's DPI. The cursor's shape is set on the window's thread.
+  The clipboard is RmlUi's own, inside the game.
+- **Input.** The runtime's SDL window thread hands the overlay the messages
+  Windows would, made from SDL's events (`rsx_d3d12_backend.h`):
+  - keys as virtual-key codes, with the repeat and Alt bits;
+  - `WM_CHAR` from text input;
+  - the mouse's buttons, moves and wheel;
+  - focus, size and close.
+  Raw mouse motion arrives as `WM_RSX_MOUSE_MOTION`. `port/ui/src/mouse_sdl.cpp`
+  holds the cursor with SDL's relative mouse mode for mouse look. The game's
+  keyboard and mouse state comes from `cellPad_host_key_down`, which reads
+  SDL's state. `platform.hpp` gives the UI's few Win32 names their POSIX
+  meaning, and `keys.cpp` maps virtual keys to RmlUi's.
+- **Reports.**
+  - The data folder is `$XDG_DATA_HOME/DemonsSoulsRecomp/DemonsSouls` (else
+    `~/.local/share/...`).
+  - The log is teed through a pipe.
+  - Screenshots are PNGs written by stb_image_write.
+  - Links and folders open with `xdg-open`.
+  - Crashes (a fault nothing handled, or an abort) go through win32_compat's
+    exception shim and write `crashes/crash-<time>.txt` with a backtrace,
+    plus the end of the log. There is no dialog.
+
+stb is fetched at configure time, as RmlUi and FreeType are.
+
 ## Building
 
 Linux packages: clang (or GCC), CMake, Ninja, SDL2 (`libsdl2-dev`), the
@@ -95,8 +142,9 @@ The runtime, then the port:
     ninja -C build
 
 `DES_VKD3D=OFF` builds the headless null backend instead. The wrapper UI is
-off by default (`DES_UI=OFF`, `port/des_ui_stub.cpp`). The 14 lifted chunks
-take about 2 GB of memory each to compile at `-O2`.
+built with `DES_VKD3D`. `DES_UI=OFF` leaves it out (`port/des_ui_stub.cpp`),
+and `DES_UI=0` at run time turns it off. The 14 lifted chunks take about 2 GB
+of memory each to compile at `-O2`.
 
 ## Running
 
@@ -110,6 +158,9 @@ The same environment as on Windows (`tools/des/deslib.sh`), plus:
   from there).
 - Under WSL, sound plays on the PC's speakers: test runs set
   `SDL_AUDIODRIVER=dummy` or `AUDIO_MUTE=1`.
+- Under WSL, controllers: WSL sees no Bluetooth devices. A USB controller
+  can be passed through with usbipd-win (installed on Windows); this has not
+  been tried.
 
 ### On the GPU in WSL (dzn)
 
@@ -136,11 +187,11 @@ game at speed, not for judging Linux performance.
 
 | Item | Note |
 |---|---|
-| Wrapper UI (start screen, menu, settings, reports) | Its renderer is D3D11On12, which vkd3d does not have; RmlUi's Vulkan or SDL renderer and an SDL platform layer. docs/75 put this at 8-13 days |
 | Movies | `sail_movie.cpp` uses Media Foundation; off Windows a movie ends at once. FFmpeg, 2-4 days |
 | Startup shader precompile | `rsx_shader_precompile.c` is Windows-only; shaders compile as the game draws them |
 | Pipeline cache across runs | vkd3d's `CreatePipelineLibrary` is a stub; the backend carries on without one, and pipelines are built again each run |
-| Mouse, F8 mark, problem reports, crash dialog, hang watchdog | Win32 code; not ported |
+| Crash dialog, F8 mark, hang watchdog | Win32 code; not ported. Crash reports are written, with no dialog |
+| IME | RmlUi's text fields take SDL's text input; no IME window |
 | Frame statistics | the swap chain reports none (`present_queued` and `FRAME_LOG` take "cannot say") |
 | A native GPU run | WSL with dzn only so far (above); no real Linux driver yet |
 | vkd3d-proton | faster and more complete than Wine's vkd3d, but built for Wine/Proton; not tried as a library |
@@ -161,4 +212,12 @@ ps3recomp (feat/linux):
 - `video: the D3D12 backend on vkd3d, off Windows`
 - `input: the keyboard pad off Windows`
 
-Port (feat/linux): `build: des_boot on Linux`.
+ps3recomp (feat/linux), for the wrapper UI:
+
+- `video: the SDL window hands the overlay Windows' messages`
+- `input: cellPad_host_key_down, and SDL controllers for the UI`
+
+Port (feat/linux):
+
+- `build: des_boot on Linux`
+- `ui: the wrapper UI off Windows, on its own D3D12 renderer`

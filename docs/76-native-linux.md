@@ -85,10 +85,12 @@ after the folder in the shader cache's paths.
 
 ### The wrapper UI
 
-On Windows the UI draws with RmlUi's D3D11 renderer on a D3D11On12 device.
-vkd3d has no D3D11On12, so off Windows it draws through
-`port/ui/src/render_d3d12.cpp`: RmlUi's D3D11 renderer rewritten for D3D12,
-on the game's device and queue, ahead of Present.
+The UI draws through `port/ui/src/render_d3d12.cpp`: RmlUi's D3D11 renderer
+rewritten for D3D12, on the game's device and queue, ahead of Present.
+vkd3d has no D3D11On12, which is what the UI drew with on Windows before;
+Windows now uses the D3D12 renderer too, and keeps the D3D11On12 path
+(`render_d3d11.cpp`) for one release behind `DES_UI_RENDER=d3d11` (docs/32,
+"The menu renderer").
 
 - **Drawing.** The UI goes into a layer, a 2x multisampled target; all
   layers share one stencil buffer, which holds the clip mask. Filters
@@ -101,10 +103,11 @@ on the game's device and queue, ahead of Present.
   quads. Geometry and texture uploads use blocks of powers of two from 4 MB
   upload pages. What RmlUi releases is freed once the GPU is past the frames
   that used it.
-- **Host.** `port/ui/src/host_d3d12.cpp` is `host.cpp` for this renderer.
-  Images (the trophy icons) are decoded with stb_image. The display scale
-  comes from SDL's DPI. The cursor's shape is set on the window's thread.
-  The clipboard is RmlUi's own, inside the game.
+- **Host.** `port/ui/src/host.cpp` is the one host for both platforms;
+  `renderer.hpp` is what each renderer implements. Images (the trophy icons)
+  are decoded with stb_image. Off Windows the display scale comes from SDL's
+  DPI, the cursor's shape is set on the window's thread, and the clipboard is
+  RmlUi's own, inside the game.
 - **Input.** The runtime's SDL window thread hands the overlay the messages
   Windows would, made from SDL's events (`rsx_d3d12_backend.h`):
   - keys as virtual-key codes, with the repeat and Alt bits;
@@ -123,7 +126,7 @@ on the game's device and queue, ahead of Present.
   `report::open_file` for files. Where a fact differs, one small function
   has a version per platform, and its callers have no `#ifdef`:
   - `keys::key_down`, `keys::key_name`: the key state and the keys' names;
-  - `host::window_dpi`, in each host;
+  - `host::window_dpi` and the system interface, at the top of `host.cpp`;
   - `mouse::client_size`, `mouse::hold_buttons`;
   - `read_xinput` (empty off Windows), `input::pad_support`;
   - in `report.cpp`: the process id, the command line, the environment,

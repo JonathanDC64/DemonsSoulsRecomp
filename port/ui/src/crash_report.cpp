@@ -174,9 +174,25 @@ void write_report(const char* what, CONTEXT* context, EXCEPTION_POINTERS* info) 
     write_log_tail(path_of(".log"));
 }
 
+// The dialog's environment: the one the game started with, and DES_UI_RENDER as it is now (the dialog reads no
+// settings, and draws with the renderer settings.ini chose for the menus).
+std::vector<wchar_t> dialog_environment() {
+    const char* render = std::getenv("DES_UI_RENDER");
+    if (g_environment.empty() || !render) return g_environment;
+    static constexpr wchar_t kName[] = L"DES_UI_RENDER=";
+    constexpr size_t kLength = std::size(kName) - 1;
+    std::vector<wchar_t> env;
+    for (const wchar_t* p = g_environment.data(); *p; p += std::wcslen(p) + 1)
+        if (_wcsnicmp(p, kName, kLength) != 0) env.insert(env.end(), p, p + std::wcslen(p) + 1);
+    const std::wstring entry = kName + report::widen(render);
+    env.insert(env.end(), entry.c_str(), entry.c_str() + entry.size() + 1);
+    env.push_back(L'\0');
+    return env;
+}
+
 // Starts the dialog: a second process, since this one is in no state to show a window. It needs nothing of this one:
 // the report's path, this process's id (a restart waits for it to end) and the data folder are on its command line,
-// and it gets the environment the game started with. Its process handle, or null.
+// and it gets the environment the game started with (dialog_environment). Its process handle, or null.
 HANDLE start_dialog(const std::wstring& txt) {
     wchar_t exe[MAX_PATH];
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
@@ -187,9 +203,10 @@ HANDLE start_dialog(const std::wstring& txt) {
     STARTUPINFOW startup{};
     startup.cb = sizeof startup;
     PROCESS_INFORMATION process{};
+    std::vector<wchar_t> environment = dialog_environment();
     // (no console window of its own: it is a window, and the game's console is going away)
     if (!CreateProcessW(exe, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
-                        g_environment.empty() ? nullptr : g_environment.data(), nullptr, &startup, &process))
+                        environment.empty() ? nullptr : environment.data(), nullptr, &startup, &process))
         return nullptr;
     CloseHandle(process.hThread);
     return process.hProcess;

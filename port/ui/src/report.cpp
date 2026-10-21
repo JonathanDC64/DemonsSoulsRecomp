@@ -7,6 +7,8 @@
 #include "settings.hpp"
 #include "version.hpp"
 
+#include <stb_image_write.h>
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -22,14 +24,12 @@
 #include <shellapi.h>
 #include <share.h>
 #include <shlobj.h>
-#include <wincodec.h>
 #else
 #include "platform.hpp"
 
 #include <SDL.h>  // (the displays, for system_info)
 #include <fcntl.h>
 #include <spawn.h>
-#include <stb_image_write.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -164,7 +164,7 @@ long long tell_file(FILE* f) {
     return _ftelli64(f);
 }
 
-// COM on a report's thread (WIC, ShellExecute).
+// COM on a report's thread (ShellExecute).
 void begin_report_thread() {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 }
@@ -597,7 +597,6 @@ void flush_at_exit() {
 
 std::atomic<bool> g_report_busy{false};
 
-#ifndef _WIN32
 // The picture as a PNG, through stb_image_write. On the report's own thread.
 std::vector<uint8_t> encode_png(const std::vector<uint8_t>& rgba, int width, int height) {
     std::vector<uint8_t> rgb(size_t(width) * height * 3), png;
@@ -614,52 +613,6 @@ std::vector<uint8_t> encode_png(const std::vector<uint8_t>& rgba, int width, int
         &png, width, height, 3, rgb.data(), width * 3);
     return png;
 }
-#else
-// The picture as a PNG, through the Windows Imaging Component (part of Windows). On the report's own thread.
-std::vector<uint8_t> encode_png(const std::vector<uint8_t>& rgba, int width, int height) {
-    std::vector<uint8_t> png;
-    IWICImagingFactory* factory = nullptr;
-    IStream* stream = nullptr;
-    IWICBitmapEncoder* encoder = nullptr;
-    IWICBitmapFrameEncode* frame = nullptr;
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
-        FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream)) ||
-        FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder)) ||
-        FAILED(encoder->Initialize(stream, WICBitmapEncoderNoCache)) ||
-        FAILED(encoder->CreateNewFrame(&frame, nullptr)) || FAILED(frame->Initialize(nullptr)) ||
-        FAILED(frame->SetSize(UINT(width), UINT(height)))) {
-        // (falls through to the release below)
-    } else {
-        WICPixelFormatGUID format = GUID_WICPixelFormat24bppBGR;
-        if (SUCCEEDED(frame->SetPixelFormat(&format)) && IsEqualGUID(format, GUID_WICPixelFormat24bppBGR)) {
-            const UINT stride = UINT(width) * 3;
-            std::vector<uint8_t> bgr(size_t(stride) * height);
-            for (size_t i = 0, n = size_t(width) * height; i < n; i++) {
-                bgr[i * 3 + 0] = rgba[i * 4 + 2];
-                bgr[i * 3 + 1] = rgba[i * 4 + 1];
-                bgr[i * 3 + 2] = rgba[i * 4 + 0];
-            }
-            HGLOBAL global = nullptr;
-            if (SUCCEEDED(frame->WritePixels(UINT(height), stride, UINT(bgr.size()), bgr.data())) &&
-                SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit()) &&
-                SUCCEEDED(GetHGlobalFromStream(stream, &global))) {
-                STATSTG stat{};
-                stream->Stat(&stat, STATFLAG_NONAME);
-                if (const void* p = GlobalLock(global)) {
-                    const auto* b = static_cast<const uint8_t*>(p);
-                    png.assign(b, b + size_t(stat.cbSize.QuadPart));
-                    GlobalUnlock(global);
-                }
-            }
-        }
-    }
-    if (frame) frame->Release();
-    if (encoder) encoder->Release();
-    if (stream) stream->Release();
-    if (factory) factory->Release();
-    return png;
-}
-#endif
 
 // The crash and hang reports of the last week in the crashes folder, by name, newest first.
 std::string recent_reports() {

@@ -25,6 +25,10 @@ void des_mouse_take(int* dx, int* dy);
  * mouse to match, soon after. Any thread. */
 void des_mouse_refresh(void);
 
+/* At each of the game's flip requests (des_options.cpp, the game's thread):
+ * the report test knob DES_HANG_AT_FRAME (port/ui/src/report.hpp). */
+void des_report_flip_hook(void);
+
 /* The UI's sounds, by id (ui::Sound in port/ui/src/sound.hpp, in this order). */
 enum {
     DES_UI_SOUND_CLICK = 0,       /* a button pressed */

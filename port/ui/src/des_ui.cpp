@@ -60,6 +60,11 @@ typedef struct rsx_d3d12_overlay {
 } rsx_d3d12_overlay;
 void rsx_d3d12_set_overlay(const rsx_d3d12_overlay* overlay);
 void rsx_d3d12_overlay_repaint(int on);
+void rsx_d3d12_overlay_wake(void);
+long long ps3_ms_since_frame(void);  // boot_main.cpp: since the game's last frame, -1 before the first
+unsigned ppu_boot_frames_presented(void);  // boot_main.cpp: the game's frames so far
+void ps3_setenv(const char* name, const char* value);  // boot_main.cpp: the debug console's setenv
+int rsx_d3d12_borderless(void);
 void* rsx_d3d12_device(void);
 void* rsx_d3d12_queue(void);
 void* rsx_d3d12_hwnd(void);
@@ -95,6 +100,13 @@ constexpr unsigned kTriangle = 1u << 12, kCircle = 1u << 13, kCross = 1u << 14, 
 // How long the UI keeps drawing after the last document hides: its closing transitions.
 constexpr auto kGrace = std::chrono::milliseconds(600);
 
+// The game has stopped (no new frame for this long): the watch thread then reads the gamepad's menu chord itself,
+// since the game no longer reads the pad, and a menu key the render thread does not answer opens the hang dialog.
+constexpr long long kStoppedMs = 2000;
+// After this long without a new frame the overlay says how to report it.
+constexpr long long kHangNoticeMs = 15000;
+constexpr auto kHangNoticeDuration = std::chrono::seconds(30);
+
 struct InputEvent {
     enum Type { KeyDown, KeyUp, Char, MouseMove, MouseDown, MouseUp, Wheel, Leave } type;
     int a = 0;  // key (VK) / character / button / x
@@ -123,10 +135,16 @@ bool sChordWasDown = false;
 clock_type::time_point sLastVisible{};
 bool sRepaint = false;  // rsx_d3d12_overlay_repaint is on
 unsigned long long sFrame = 0;
+// For the watch thread (watch_thread): frame's calls, and the last menu key or chord (when, and frame's count then).
+std::atomic<unsigned long long> sFramesRun{0};
+std::atomic<unsigned long long> sWakeAt{0}, sWakeMark{0};
+std::atomic<bool> sWakeByUser{false};       // that wake was the player's (not the hang notice's)
+std::atomic<bool> sHangNotice{false};      // the watch thread asks frame for the hang notice
+clock_type::time_point sHangNoticeUntil{};  // repaints stay on while it shows (the game draws no frames)
 int sReportCountdown = 0;     // "Report an issue": frames until the game's picture is taken (report.cpp)
 bool sInitFailed = false;
 bool sOpenPending = false;     // DES_UI_OPEN, until the documents exist
-unsigned sChordMask = kL3 | kR3;  // the menu chord, refreshed while the UI is awake
+std::atomic<unsigned> sChordMask{kL3 | kR3};  // the menu chord, refreshed while the UI is awake
 
 // DES_UI_SHOT=path[,frame][;path[,frame]...]: write the back buffer after the UI draws, at that presented frame.
 struct Shot {
@@ -144,6 +162,7 @@ struct ScriptKey {
     int vk;
 };
 std::vector<ScriptKey> sScriptKeys;
+int vk_from_name(const std::string& name);
 
 // The game's on-screen keyboard (cellOskDialog_set_host). The game opens and closes it on its own threads; frame
 // shows and closes the window.
@@ -222,6 +241,15 @@ void push_event(const InputEvent& e) {
     sQueued.store(true, std::memory_order_release);
 }
 
+// A menu key or the chord: frame runs soon even when the game has stopped presenting (the runtime draws it over the
+// last frame shown), and the watch thread can tell whether the render thread answered.
+void wake_overlay(bool user = true) {
+    sWakeByUser.store(user);
+    sWakeMark.store(sFramesRun.load());
+    sWakeAt.store(GetTickCount64());
+    rsx_d3d12_overlay_wake();
+}
+
 // Opens the menu over the game. Not Esc: in play it is the game's Start (the keyboard layout, settings.cpp), and it
 // reaches the UI only while a document is up, where it goes back.
 bool is_menu_key(WPARAM vk) {
@@ -253,6 +281,7 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
         if (is_menu_key(wp) || (capturing && !(wp >= VK_F9 && wp <= VK_F12))) {
             if (!(down && (lp & (1LL << 30)) && is_menu_key(wp) && !capturing)) {  // no auto-repeat opening
                 push_event({down ? InputEvent::KeyDown : InputEvent::KeyUp, int(wp), 0, RmlWin32::GetKeyModifierState()});
+                if (down && is_menu_key(wp) && !capturing) wake_overlay();
             }
             *result = 0;
             return 1;
@@ -516,8 +545,142 @@ void script_keys_for_frame(unsigned long long frame) {
     }
 }
 
+// "The game is not responding" (the watch thread asks for it): a toast, with repaints on while it shows, since the
+// game draws no frames to show it on.
+void push_hang_notice() {
+    const long long ms = std::max(0LL, ps3_ms_since_frame());
+    ui::push_toast({
+        .type = "warning",
+        .title = "The game is not responding",
+        .content = "No new frame for " + std::to_string(ms / 1000) + " s. Press F1 or " +
+                   ui::input::chord_label(ui::settings::get_int("pad_menu_chord")) +
+                   " to open the menu, then choose Report an issue.",
+        .duration = kHangNoticeDuration,
+    });
+    sHangNoticeUntil = clock_type::now() + kHangNoticeDuration + std::chrono::seconds(1);
+    std::fprintf(stderr, "[ui] no new frame for %lld s: the hang notice is up\n", ms / 1000);
+}
+
+// The game's frames each second, the last minute, oldest first (the watch thread counts them), for reports.
+std::mutex sRateLock;
+std::vector<unsigned> sRates;
+
+// What a report says about this run (report.cpp's game.txt). The render thread, in frame.
+std::string session_text(unsigned width, unsigned height) {
+    std::string s;
+    char line[256];
+    {
+        FILETIME created{}, exited{}, kernel{}, user{}, now{};
+        GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
+        GetSystemTimeAsFileTime(&now);
+        const auto ticks = [](const FILETIME& t) { return (ULONGLONG(t.dwHighDateTime) << 32) | t.dwLowDateTime; };
+        const ULONGLONG sec = (ticks(now) - ticks(created)) / 10000000ull;
+        std::snprintf(line, sizeof line, "Running for: %llu h %02llu min %02llu s\n", sec / 3600, sec / 60 % 60, sec % 60);
+        s += line;
+    }
+    const long long since = ps3_ms_since_frame();
+    std::snprintf(line, sizeof line, "Game frames: %u", ppu_boot_frames_presented());
+    s += line;
+    if (since < 0) s += " (none yet)\n";
+    else if (since >= kStoppedMs) {
+        std::snprintf(line, sizeof line, " (no new frame for %.1f s: the game had stopped)\n", since / 1000.0);
+        s += line;
+    } else s += "\n";
+    {
+        std::lock_guard<std::mutex> lock(sRateLock);
+        if (!sRates.empty()) {
+            s += "Game frames each second, the last " + std::to_string(sRates.size()) + " s (oldest first):";
+            for (unsigned r : sRates) s += " " + std::to_string(r);
+            s += "\n";
+        }
+    }
+    std::snprintf(line, sizeof line, "Overlay frames: %llu\n", sFrame);
+    s += line;
+    UINT dpi = 0;
+    if (HWND hwnd = static_cast<HWND>(rsx_d3d12_hwnd())) {
+        using DpiFn = UINT(WINAPI*)(HWND);
+        if (auto fn = reinterpret_cast<DpiFn>(
+                reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow"))))
+            dpi = fn(hwnd);
+    }
+    std::snprintf(line, sizeof line, "Window: %s, %ux%u, %u dpi (%u%%)\n", rsx_d3d12_borderless() ? "fullscreen" : "window",
+                  width, height, dpi, dpi ? dpi * 100 / 96 : 0);
+    s += line;
+    return s;
+}
+
+// Every quarter second, on a thread of its own: what the render thread cannot do once the game has stopped. The game
+// no longer reads the pad, so the menu chord is read here. A menu key or chord that frame has not answered within
+// kStoppedMs means the render thread is stuck too: the hang dialog (a second process) takes over. After kHangNoticeMs
+// without a new frame the overlay is asked to say how to report it (and if it cannot, the dialog opens). It also
+// counts the game's frames each second for reports.
+DWORD WINAPI watch_thread(LPVOID) {
+    bool chordWasDown = true;  // (a chord held from before is not a press)
+    bool noticed = false;
+    bool dialogShown = false;  // the hang dialog opened in this stop: again only when the player asks
+    unsigned lastFrames = ppu_boot_frames_presented(), ticks = 0;
+    for (;;) {
+        Sleep(250);
+        if (++ticks % 4 == 0) {
+            const unsigned frames = ppu_boot_frames_presented();
+            std::lock_guard<std::mutex> lock(sRateLock);
+            sRates.push_back(frames - lastFrames);
+            if (sRates.size() > 60) sRates.erase(sRates.begin());
+            lastFrames = frames;
+        }
+        const long long since = ps3_ms_since_frame();
+        const bool stopped = since >= kStoppedMs;
+        if (!stopped) noticed = dialogShown = false;
+        if (stopped && !sCapturing.load()) {  // (the menu is not up: the chord opens it)
+            bool neutral = true;
+            const unsigned mask = sChordMask.load();
+            const bool down = (read_pads(neutral).buttons & mask) == mask;
+            if (down && !chordWasDown) {
+                std::fprintf(stderr, "[ui] the menu chord, with no new frame for %lld s\n", since / 1000);
+                push_event({InputEvent::KeyDown, VK_F1});
+                push_event({InputEvent::KeyUp, VK_F1});
+                wake_overlay();
+            }
+            chordWasDown = down;
+        } else {
+            chordWasDown = true;
+        }
+        // DES_UI_PRESS=KEY (a test, with the debug console's setenv): the key is pressed as the wndproc presses it,
+        // in a running game or a stopped one, and the variable is cleared. (PS3_NO_USER_INPUT keeps the keys a test
+        // posts to the window from the overlay.)
+        if (const char* v = std::getenv("DES_UI_PRESS"); v && *v) {
+            const int vk = vk_from_name(v);
+            ps3_setenv("DES_UI_PRESS", "");
+            if (vk > 0) {
+                push_event({InputEvent::KeyDown, vk});
+                push_event({InputEvent::KeyUp, vk});
+                if (is_menu_key(WPARAM(vk)) && !sCapturing.load()) wake_overlay();
+            }
+        }
+        if (const unsigned long long at = sWakeAt.load()) {
+            if (sFramesRun.load() != sWakeMark.load()) {
+                sWakeAt.store(0);
+            } else if (GetTickCount64() - at >= unsigned(kStoppedMs)) {
+                sWakeAt.store(0);
+                if (stopped && (sWakeByUser.load() || !dialogShown) && !ui::crash_report::hang_dialog_open()) {
+                    std::fprintf(stderr, "[ui] no new frame for %lld s, and the menu cannot open: the hang dialog\n",
+                                 since / 1000);
+                    dialogShown = true;
+                    ui::crash_report::report_hang(since);
+                }
+            }
+        }
+        if (stopped && since >= kHangNoticeMs && !noticed && !sCapturing.load()) {
+            noticed = true;
+            sHangNotice.store(true);
+            wake_overlay(false);
+        }
+    }
+}
+
 void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned height) {
     ++sFrame;
+    sFramesRun.fetch_add(1, std::memory_order_relaxed);
     ui::mouse::on_frame();  // (mouse look: is the game's camera taking the mouse?)
     if (ui::report::frame_hook(sFrame)) sReportCountdown = 4;  // DES_REPORT_AT_FRAME (and the crash test knobs)
     const bool script = !sScriptKeys.empty();
@@ -535,7 +698,8 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     const bool prework = ui::prework_running();
     if (!sActive && !sStartScreen && !chordEdge && !shot && !sQueued.load(std::memory_order_acquire) &&
         !sOpenPending && !sReportCountdown && !(prework && !sPreworkShown) && !sCloseRequested.load() &&
-        !sOskPending.load(std::memory_order_acquire) && !ui::trophies::pending()) {
+        !sOskPending.load(std::memory_order_acquire) && !ui::trophies::pending() &&
+        !sHangNotice.load(std::memory_order_relaxed)) {
         return;
     }
 
@@ -548,6 +712,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         if (sCloseRequested.exchange(false) && ui::app().quit) ui::app().quit();  // nothing to ask with
         if (sOskPending.exchange(false)) apply_osk_request(false);
         ui::trophies::discard();  // (the unlocks are saved; only the pop-ups are lost)
+        sHangNotice.store(false);
         sActive = false;
         std::lock_guard<std::mutex> lock(sQueueLock);
         sQueue.clear();
@@ -565,6 +730,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         ui::input::reset_input_state();
         if (chordEdge) open_menu_bar();
     }
+    if (sHangNotice.exchange(false)) push_hang_notice();
 
     if (prework && !sPreworkShown) {
         sPreworkShown = true;
@@ -597,10 +763,12 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     const auto now = clock_type::now();
     if (visible) sLastVisible = now;
     sCapturing.store(visible, std::memory_order_release);
-    // While a document is up (and through its closing fade), the UI moves at the display's refresh rate: between
-    // the game's frames the runtime shows the last one again and calls this hook for it. Not in scripted runs,
-    // whose keys and screenshots count frames.
-    const bool repaint = now - sLastVisible <= kGrace && !script && sShots.empty();
+    // While a document is up (and through its closing fade), the hang notice shows or a report waits for its
+    // picture, the UI moves at the display's refresh rate: between the game's frames (or once it has stopped) the
+    // runtime shows the last one again and calls this hook for it. Not in scripted runs, whose keys and screenshots
+    // count frames.
+    const bool repaint =
+        (now - sLastVisible <= kGrace || now < sHangNoticeUntil || sReportCountdown) && !script && sShots.empty();
     if (repaint != sRepaint) {
         sRepaint = repaint;
         rsx_d3d12_overlay_repaint(repaint ? 1 : 0);
@@ -616,7 +784,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     }
 
     if (sReportCountdown > 0 && !visible && --sReportCountdown == 0)  // (the game's picture, before the UI is drawn)
-        ui::report::send_issue_report(back_buffer, index, int(width), int(height), sFrame);
+        ui::report::send_issue_report(back_buffer, index, int(width), int(height), session_text(width, height));
     ui::host::render(back_buffer, index, int(width), int(height), shot);
 
     auto* overlay = static_cast<ui::Overlay*>(ui::find_document(ui::DocumentScope::Overlay));
@@ -723,4 +891,5 @@ extern "C" void des_ui_early_init(void) {
     static const CellOskDialogHost kOsk = {osk_open, osk_close};
     cellOskDialog_set_host(&kOsk);
     ui::trophies::install();
+    if (HANDLE watch = CreateThread(nullptr, 0, watch_thread, nullptr, 0, nullptr)) CloseHandle(watch);
 }

@@ -111,8 +111,9 @@ void MenuBar::build_tabs() {
         push(std::make_unique<Modal>(Modal::Props{
             .title = "Report an Issue",
             .bodyText = "Opens a new issue on GitHub with the details filled in, and a zip to attach with a "
-                        "screenshot, your settings and the game's recent messages. It has no save data or game "
-                        "files; nothing is sent until you submit the issue.",
+                        "screenshot, your PC's details, your settings, what each part of the game was doing and the "
+                        "game's recent messages. It has no save data or game files; nothing is sent until you submit "
+                        "the issue. Making it takes a few seconds.",
             .actions =
                 {
                     ModalAction{

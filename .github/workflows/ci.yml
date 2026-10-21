@@ -55,6 +55,58 @@ jobs:
           ls -la build/ui/des_ui/des_ui.lib
           test -s build/ui/des_ui/des_ui.lib
 
+  # The same library on Linux, where it draws through D3D12 on vkd3d and takes SDL's mouse and the POSIX crash
+  # reports (docs/76): files the Windows job never compiles. vkd3d comes from its release tarball (Ubuntu's 1.2 has
+  # no HLSL compiler) and is cached on its version.
+  ui-linux:
+    name: Wrapper UI (Linux, clang, vkd3d)
+    runs-on: ubuntu-24.04
+    env:
+      VKD3D_VERSION: "2.1"
+      VKD3D_SHA256: 7510146aff2adfb4ae07ab890701a607e5ff7c66e57100cfc9f630ec92eeda6a
+      VKD3D_PREFIX: ${{ github.workspace }}/../vkd3d
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # vkd3d's build needs flex, bison, Perl's JSON module and the SPIR-V headers.
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config clang libsdl2-dev libvulkan-dev \
+            flex bison libjson-perl spirv-headers
+
+      - name: Cache vkd3d
+        id: vkd3d-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.VKD3D_PREFIX }}
+          key: vkd3d-${{ env.VKD3D_VERSION }}-${{ runner.os }}-ubuntu-24.04-v1
+
+      - name: Build vkd3d
+        if: steps.vkd3d-cache.outputs.cache-hit != 'true'
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -sSfLO "https://dl.winehq.org/vkd3d/source/vkd3d-$VKD3D_VERSION.tar.xz"
+          echo "$VKD3D_SHA256  vkd3d-$VKD3D_VERSION.tar.xz" | sha256sum -c -
+          tar xf "vkd3d-$VKD3D_VERSION.tar.xz"
+          cd "vkd3d-$VKD3D_VERSION"
+          ./configure -q --prefix="$VKD3D_PREFIX" --disable-doxygen-doc
+          make -s -j"$(nproc)"
+          make -s install
+
+      - name: Configure
+        run: |
+          PKG_CONFIG_PATH="$VKD3D_PREFIX/lib/pkgconfig" CC=clang CXX=clang++ \
+            cmake -S .github/ci/des_ui -B build/ui -G Ninja -DCMAKE_BUILD_TYPE=
+
+      - name: Build
+        run: cmake --build build/ui
+
+      - name: Verify the library exists
+        run: |
+          ls -la build/ui/des_ui/libdes_ui.a
+          test -s build/ui/des_ui/libdes_ui.a
+
   scripts:
     name: Scripts (syntax, icon step)
     runs-on: ubuntu-latest

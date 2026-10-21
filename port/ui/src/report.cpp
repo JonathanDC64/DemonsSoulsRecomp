@@ -408,7 +408,8 @@ std::string replace_paths(const std::string& text, const std::regex& re, const c
             path.pop_back();
         const size_t slash = path.find_last_of("\\/");
         const std::string base = slash == std::string::npos ? std::string() : path.substr(slash + 1);
-        out += prefix + "<path>" + (base.empty() ? "" : "\\" + base);
+        static const std::string sep(1, char(std::filesystem::path::preferred_separator));  // (the platform's)
+        out += prefix + "<path>" + (base.empty() ? "" : sep + base);
         out.append(m.str(keep_prefix_group ? 2 : 0), path.size(), std::string::npos);  // what was trimmed
         at = size_t(m.position(0) + m.length(0));
     }

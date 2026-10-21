@@ -14,11 +14,16 @@ set(RECOMP_DIR    "${CMAKE_CURRENT_SOURCE_DIR}/../work/recomp" CACHE PATH "lifte
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Ps3recompPin.cmake")
 
 # --- Prebuilt runtime library ----------------------------------------------
-# Where ps3recomp_runtime.lib is built. A second runtime build (tools/pgo/pgo.sh's) links from its own folder.
+# Where ps3recomp_runtime.lib (libps3recomp_runtime.a on Linux) is built. A second runtime build
+# (tools/pgo/pgo.sh's) links from its own folder.
 set(PS3RECOMP_BUILD_DIR "${PS3RECOMP_DIR}/build" CACHE PATH "ps3recomp runtime build dir")
 add_library(ps3recomp_runtime STATIC IMPORTED GLOBAL)
-set_target_properties(ps3recomp_runtime PROPERTIES
-    IMPORTED_LOCATION "${PS3RECOMP_BUILD_DIR}/ps3recomp_runtime.lib")
+if(WIN32)
+    set(PS3RECOMP_RUNTIME_LIB "${PS3RECOMP_BUILD_DIR}/ps3recomp_runtime.lib")
+else()
+    set(PS3RECOMP_RUNTIME_LIB "${PS3RECOMP_BUILD_DIR}/libps3recomp_runtime.a")
+endif()
+set_target_properties(ps3recomp_runtime PROPERTIES IMPORTED_LOCATION "${PS3RECOMP_RUNTIME_LIB}")
 
 # --- Lifted game code (generated PPU chunks) -------------------------------
 file(GLOB RECOMP_CHUNKS CONFIGURE_DEPENDS "${RECOMP_DIR}/ppu_recomp_*.cpp")
@@ -106,8 +111,11 @@ add_executable(des_boot
     "${CMAKE_CURRENT_SOURCE_DIR}/des_prework.cpp"           # startup work: the shader cache, behind a progress bar
 )
 
+if(WIN32)
+    target_include_directories(des_boot PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/compat")   # Win32 <dirent.h> shim for ppu_fs.cpp
+endif()
 target_include_directories(des_boot PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/compat"   # Win32 <dirent.h> shim for ppu_fs.cpp
     "${RECOMP_DIR}"
     "${PS3RECOMP_DIR}/include"
     "${PS3RECOMP_DIR}/runtime/ppu"
@@ -232,25 +240,74 @@ if(MSVC)   # also true for clang-cl
         set_source_files_properties(${SPU_CHUNKS} PROPERTIES
             COMPILE_OPTIONS "${DES_SPU_FLAGS}")
     endif()
+else()
+    # Clang or GCC (Linux, docs/76): the same code generation as clang-cl above. clang-cl turns strict
+    # aliasing off by default; here it has to be asked for, and the lifted code depends on it (guest
+    # memory is read through casts of every width). No fused multiply-add, as the runtime builds
+    # (its CMakeLists.txt says why).
+    if(DES_PPU_OPT)
+        set(DES_OPT_FLAGS -O2 -fwrapv -msse4.1)
+    else()
+        set(DES_OPT_FLAGS -O0)
+        set_source_files_properties("${RECOMP_DIR}/ppu_recomp_005.cpp" PROPERTIES COMPILE_OPTIONS "-O2")
+    endif()
+    if(DES_DEBUG_INFO)
+        set(DES_DEBUG_FLAGS -g)
+    endif()
+    target_compile_options(des_boot PRIVATE
+        ${DES_OPT_FLAGS} ${DES_DEBUG_FLAGS} -fno-strict-aliasing -ffp-contract=off
+        -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-unused-label
+        -Wno-unused-but-set-variable)
+    target_compile_definitions(des_boot PRIVATE _GNU_SOURCE)
+    option(DES_SPU_OPT "Build the lifted SPU images -O2 with SSE4.1" ON)
+    if(DES_SPU_OPT)
+        set_source_files_properties(${SPU_CHUNKS} PROPERTIES COMPILE_OPTIONS "-O2;-msse4.1")
+    endif()
 endif()
 
-target_link_libraries(des_boot PRIVATE
-    ps3recomp_runtime
-    ws2_32 xinput ole32 bcrypt          # winsock / gamepad / COM(WASAPI) / RNG
-    d3d12 dxgi d3dcompiler uuid dxguid   # RSX D3D12 backend (dxguid: IID_IDXGIFactory4/SwapChain3)
-)
-
-# Emit a linker map so we can resolve host RVAs back to func_<guestaddr> even for
-# /O2 chunks that llvm-symbolizer can't (used to locate busy-loop spin addresses).
-target_link_options(des_boot PRIVATE "/MAP:des_boot.map")
+target_link_libraries(des_boot PRIVATE ps3recomp_runtime)
+if(WIN32)
+    target_link_libraries(des_boot PRIVATE
+        ws2_32 xinput ole32 bcrypt          # winsock / gamepad / COM(WASAPI) / RNG
+        d3d12 dxgi d3dcompiler uuid dxguid   # RSX D3D12 backend (dxguid: IID_IDXGIFactory4/SwapChain3)
+    )
+    # Emit a linker map so we can resolve host RVAs back to func_<guestaddr> even for
+    # /O2 chunks that llvm-symbolizer can't (used to locate busy-loop spin addresses).
+    target_link_options(des_boot PRIVATE "/MAP:des_boot.map")
+else()
+    # The runtime's own dependencies (a static library carries none): SDL2 for the pad and audio,
+    # threads, dlopen.
+    find_package(SDL2 REQUIRED)
+    find_package(Threads REQUIRED)
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(des_boot PRIVATE SDL2::SDL2)
+    else()
+        target_link_libraries(des_boot PRIVATE ${SDL2_LIBRARIES})
+    endif()
+    target_link_libraries(des_boot PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)
+    target_link_options(des_boot PRIVATE "-Wl,-Map=des_boot.map")
+    # The window and the rendering: ps3recomp's D3D12 backend on vkd3d (Wine's D3D12 on Vulkan), which the
+    # runtime must be built with (-DPS3RECOMP_RSX_D3D12_VKD3D=ON; docs/76). Off, the game runs headless on
+    # the null backend.
+    option(DES_VKD3D "Render through the D3D12 backend on vkd3d" ON)
+    if(DES_VKD3D)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(DES_VKD3D_LIBS REQUIRED IMPORTED_TARGET libvkd3d libvkd3d-utils)
+        target_compile_definitions(des_boot PRIVATE PS3RECOMP_RSX_D3D12_VKD3D)
+        target_link_libraries(des_boot PRIVATE PkgConfig::DES_VKD3D_LIBS)
+    endif()
+    message(STATUS "des_boot: rendering ${DES_VKD3D} (DES_VKD3D: the D3D12 backend on vkd3d)")
+endif()
 
 # --- The exe's version ---------------------------------------------------------
 # The port version (VERSION and git), the ps3recomp commit or tag and the game
 # dump's SHA-256, rewritten on every build into des_version.h (the UI, reports,
 # log) and a version resource (Explorer: Properties > Details). docs/54.
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DesVersion.cmake")
-enable_language(RC)
-target_sources(des_boot PRIVATE "${DES_VERSION_RC}")
+if(WIN32)
+    enable_language(RC)
+    target_sources(des_boot PRIVATE "${DES_VERSION_RC}")
+endif()
 add_dependencies(des_boot des_version)
 
 # --- The exe's icon ------------------------------------------------------------
@@ -260,7 +317,7 @@ add_dependencies(des_boot des_version)
 # build directory, never committed. Without the file the exe has no icon. The
 # window uses it too (resource 1, loaded by the runtime's window class).
 set(DES_ICON0 "${CMAKE_CURRENT_SOURCE_DIR}/../work/game/ICON0.PNG" CACHE FILEPATH "the game's PS3_GAME/ICON0.PNG")
-if(EXISTS "${DES_ICON0}")
+if(EXISTS "${DES_ICON0}" AND WIN32)
     enable_language(RC)
     set(DES_ICO "${CMAKE_CURRENT_BINARY_DIR}/des_boot.ico")
     set(DES_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/des_boot_icon.rc")
@@ -279,6 +336,18 @@ endif()
 # --- The wrapper UI (port/ui, docs/32) ---------------------------------------
 # Start screen, in-game menu (F1 / Esc, or L3+R3 on a pad) and settings,
 # drawn over the game frame. Its own static library, linked only: des_boot's
-# compile flags do not change. DES_UI=0 at run time leaves it uninstalled.
-add_subdirectory(ui)
-target_link_libraries(des_boot PRIVATE des_ui)
+# compile flags do not change. DES_UI=0 at run time leaves it uninstalled. -DDES_UI=OFF builds
+# without it (des_ui_stub.cpp): the default off Windows until the UI runs there (docs/76).
+if(WIN32)
+    option(DES_UI "Build the wrapper UI (start screen, menu, settings)" ON)
+else()
+    option(DES_UI "Build the wrapper UI (start screen, menu, settings)" OFF)
+endif()
+if(DES_UI)
+    add_subdirectory(ui)
+    target_link_libraries(des_boot PRIVATE des_ui)
+else()
+    target_sources(des_boot PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/des_ui_stub.cpp")
+    target_include_directories(des_boot PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui/include")
+    message(STATUS "des_boot: no wrapper UI (DES_UI=OFF)")
+endif()

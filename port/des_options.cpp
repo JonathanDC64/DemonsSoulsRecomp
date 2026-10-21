@@ -123,8 +123,10 @@ extern "C" void ps3_vblank_set_mhz(int mhz);   /* boot_main.cpp; 0 = VBLANK_MHZ 
 extern "C" void des_aspect_init(void);         /* des_aspect.cpp: DES_ASPECT, DES_HUD */
 extern "C" volatile unsigned g_pad0_reads, g_pad0_empty_reads, g_pad0_buttons, g_pad0_lstick;   /* cellPad.c */
 extern "C" void cellPad_host_stick(int stick, unsigned char x, unsigned char y, unsigned reads);   /* cellPad.c */
+#ifdef _WIN32
 extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vkey);   /* user32 */
 constexpr int VK_F8 = 0x77;
+#endif
 
 namespace {
 
@@ -443,7 +445,11 @@ void frame_log()
     }
     have_pos = pos; px = x; pz = z;
     win_dt += dt; win_n++;
+#ifdef _WIN32
     const bool f8 = !ps3_env_int("PS3_NO_USER_INPUT", 0) && (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
+#else
+    const bool f8 = false;   /* (the F8 mark is Windows-only for now) */
+#endif
     if (f8 && !f8_down) { fprintf(s_framelog, "MARK %.1f\n", ms); movement_dump("mark", ms); }
     f8_down = f8;
     if (ms - win_ms >= 500.0) {

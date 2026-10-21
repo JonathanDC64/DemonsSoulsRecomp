@@ -216,6 +216,7 @@ game at speed, not for judging Linux performance.
 | Startup shader precompile | `rsx_shader_precompile.c` is Windows-only; shaders compile as the game draws them |
 | Pipeline cache across runs | vkd3d's `CreatePipelineLibrary` is a stub; the backend carries on without one, and pipelines are built again each run |
 | Crash and hang dialog, F8 mark | Win32 code; not ported. Crash and hang reports are written, with no dialog |
+| Runtime snapshot | the runtime's `ps3_diag_report` (what every thread is doing) and its debug console (`PS3_DEBUG`) are Windows-only; reports and hang reports say the snapshot is not available |
 | IME | RmlUi's text fields take SDL's text input; no IME window |
 | Frame statistics | the swap chain reports none (`present_queued` and `FRAME_LOG` take "cannot say") |
 | A native GPU run | WSL with dzn only so far (above); no real Linux driver yet |

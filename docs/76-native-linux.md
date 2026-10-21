@@ -20,6 +20,7 @@ Linux PC, native Linux GPU driver or Steam Deck has run it yet.
 | Rendering | `rsx_d3d12_backend.c` on vkd3d 2.1, in an SDL window: the opening and the level match the Windows frames |
 | Shaders | all 3,652 DXBC files in a Windows shader cache, and all 3,605 HLSL programs dumped from a run, go through vkd3d-shader; the Windows cache can be copied over as is |
 | Audio | SDL2 (as before off Windows). `AUDIO_MUTE=1` now mutes it too |
+| Movies | the PAMF movies (MPEG-2 video, LPCM sound) decode through FFmpeg's libavcodec, loaded at run time: the opening advert plays all 3,896 frames, as on Windows |
 | Wrapper UI | start screen, menu (F1, Esc, or L3+R3), settings, controls, trophies, problem reports: RmlUi through its own D3D12 renderer |
 | Keyboard and mouse | the UI's layouts (the Souls layout by default) and bindings, mouse buttons and wheel, mouse look |
 | Keyboard pad | without the UI (`DES_UI=0`): SDL's keyboard state, with the same `PAD_KEYS` bindings as Windows |
@@ -152,7 +153,8 @@ stb is fetched at configure time, as RmlUi and FreeType are.
 ## Building
 
 Linux packages: clang (or GCC), CMake, Ninja, SDL2 (`libsdl2-dev`), the
-Vulkan headers and loader (`libvulkan-dev`), and a Vulkan driver.
+Vulkan headers and loader (`libvulkan-dev`), a Vulkan driver, and FFmpeg's
+headers for the movies (`libavcodec-dev`).
 
 vkd3d: 2.1 from the release tarball. Ubuntu 24.04 packages vkd3d 1.2, which
 has no HLSL compiler. Building it needs flex, bison, Perl's JSON module
@@ -164,7 +166,8 @@ prefix and point pkg-config at it:
 
 The runtime, then the port:
 
-    cmake -S ps3recomp -B rt -G Ninja -DCMAKE_BUILD_TYPE=Release -DPS3RECOMP_RSX_D3D12_VKD3D=ON
+    cmake -S ps3recomp -B rt -G Ninja -DCMAKE_BUILD_TYPE=Release -DPS3RECOMP_RSX_D3D12_VKD3D=ON \
+      -DPS3RECOMP_FFMPEG_RUNTIME=ON
     ninja -C rt ps3recomp_runtime
     cmake -S port -B build -G Ninja -DPS3RECOMP_DIR=<ps3recomp> -DPS3RECOMP_BUILD_DIR=rt -DRECOMP_DIR=<lift>
     ninja -C build
@@ -184,6 +187,10 @@ The same environment as on Windows (`tools/des/deslib.sh`), plus:
   away from anything else.
 - The working folder needs `work/libsre/libsre_image.bin` (libsre is loaded
   from there).
+- Movies load FFmpeg's libavcodec when one starts: the major version the
+  build's headers named (`libavcodec.so.60` on Ubuntu 24.04, FFmpeg 6.1).
+  Without it a movie ends as soon as it starts, as before, and the log says
+  `[sail_movie] no MPEG-2 video decoder`. `PS3RECOMP_FFMPEG=0` turns it off.
 - Under WSL, sound plays on the PC's speakers: test runs set
   `SDL_AUDIODRIVER=dummy` or `AUDIO_MUTE=1`.
 - Under WSL, controllers: WSL sees no Bluetooth devices. A USB controller
@@ -215,7 +222,6 @@ game at speed, not for judging Linux performance.
 
 | Item | Note |
 |---|---|
-| Movies | `sail_movie.cpp` uses Media Foundation; off Windows a movie ends at once. FFmpeg, 2-4 days |
 | Startup shader precompile | `rsx_shader_precompile.c` is Windows-only; shaders compile as the game draws them |
 | Pipeline cache across runs | vkd3d's `CreatePipelineLibrary` is a stub; the backend carries on without one, and pipelines are built again each run |
 | Crash and hang dialog, F8 mark | Win32 code; not ported. Crash and hang reports are written, with no dialog |
@@ -246,6 +252,11 @@ ps3recomp (feat/linux), for the wrapper UI:
 - `video: the SDL window hands the overlay Windows' messages`
 - `input: cellPad_host_key_down, and SDL controllers for the UI`
 - `video: portable spellings in the D3D12 backend`
+
+ps3recomp (feat/linux-movies):
+
+- `codec: movies off Windows through FFmpeg`
+- `tests: sail_movie end to end, and the codec tests in Linux CI`
 
 Port (feat/linux):
 

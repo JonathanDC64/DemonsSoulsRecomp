@@ -112,6 +112,8 @@
 #include <cmath>
 #include <cstring>
 #include <string>
+#include <mutex>
+#include <unordered_map>
 
 extern "C" void ppu_register_function(uint64_t addr, void (*fn)(ppu_context*));
 extern "C" void (*g_gcm_flip_request_hook)(void);
@@ -872,6 +874,182 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
     const float steps = vm_readf(kFrameDt) * 30.0f;
     if (!(k > 0.0 && k < 1.0) || !(steps > 0.0f) || steps == 1.0f) return;
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
+}
+
+/* DES_PHYS_HZ=<n> (default 30; 0 = step every frame): at most n Havok steps
+ * a second. The physics update 0x001D1E30 steps the world once a frame with
+ * the frame's dt (f31). Havok counts its solver passes and its sleep checks
+ * in steps, so at 400 fps a ragdoll gets 13 times the passes and 1/13 of the
+ * time to settle: corpses twitch after death and sink through the floor when
+ * touched. The hook runs after 0x001D1E64 (lbz r28, 0x14(r31), the update's
+ * own skip byte). Frames shorter than 1/n add up; the world steps 1/n each
+ * time they reach it and skips the step (r28 = 1) otherwise. A frame of 1/n
+ * or longer steps its own dt, so 30 fps is the game as it was. */
+static int phys_hz()
+{
+    static int hz = 30;
+    PS3_KNOB(hz, ps3_env_int("DES_PHYS_HZ", 30));
+    return hz;
+}
+static std::atomic<double> s_phys_clock{0.0};   /* game seconds, summed frame dts */
+static std::atomic<bool> s_phys_capped{false};  /* this frame was shorter than the step */
+extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
+{
+    const int hz = phys_hz();
+    static double acc = 0.0;
+    const double dt = ctx->fpr[31], h = hz > 0 ? 1.0 / hz : 0.0;
+    if (dt > 0.0) s_phys_clock.store(s_phys_clock.load() + dt);
+    s_phys_capped.store(hz > 0 && dt > 0.0 && dt < h);
+    if (hz <= 0 || ctx->gpr[28] != 0) { acc = 0.0; return; }
+    if (!(dt > 0.0) || dt >= h) { acc = 0.0; return; }
+    acc += dt;
+    if (acc < h) {
+        ctx->gpr[28] = 1;              /* skip this frame's step */
+        return;
+    }
+    ctx->fpr[31] = (float)h;
+    acc -= h;
+    if (acc >= h) acc = 0.0;
+}
+
+/* With DES_PHYS_HZ: the passes that drive a character's bodies to its
+ * animation pose (0x001EF670, 0x001DF7C0, through Havok's hard keyframe
+ * 0x0131BAF8) set each body's velocity to the distance to the pose times
+ * 1/dt. Under the cap the world steps 1/n, so a frame's 1/dt would carry the
+ * body n*dt times too far. The hook runs after their fdivs f31, f0, f1 and
+ * makes 1/dt n when the frame is shorter than 1/n. */
+extern "C" void des_phys_kf(ppu_context* ctx, uint32_t)
+{
+    const int hz = phys_hz();
+    if (hz <= 0 || !(ctx->fpr[1] > 0.0) || ctx->fpr[1] >= 1.0 / hz) return;
+    ctx->fpr[31] = (float)(ctx->fpr[0] * hz);
+}
+
+/* DES_RAGINTERP (default 1; 0 = off): with DES_PHYS_HZ capping the steps,
+ * physics objects would be drawn at 30 Hz. A rigid body's swept transform
+ * holds its pose at the start and the end of its last step (centre of mass 0
+ * at +0x120, whose w is the step's start time, centre of mass 1 at +0x130,
+ * whose w is 1 / the step length, rotations at +0x140 and +0x150, local
+ * centre of mass at +0x160). Two hooks draw the pose between the two instead,
+ * blended by the game time since the body last got a new step over the step
+ * length, so the drawn pose runs one step behind:
+ *  - ragdolls: Havok's pose readers (0x012D85E8, 0x012D9288) turn each bone's
+ *    body transform into a position and rotation (0x0109FB30, through
+ *    0x011801C8); the hook runs after that call;
+ *  - everything else the game draws from a body (breakables, debris, loose
+ *    objects): the game reads the transform through 0x0109F250, which copies
+ *    an hkTransform into a 4x4 matrix; the hook runs after its last store.
+ * Only moving dynamic bodies are touched: a body that sleeps or stops
+ * stepping shows its own transform, keyframed bodies (inverse mass 0) are
+ * left to the game, and frames of a step or longer are left alone. */
+namespace {
+struct RagSeen { float t0; double at; };
+std::mutex s_rag_mu;
+std::unordered_map<uint32_t, RagSeen> s_rag_seen;
+void vm_read4f(uint32_t ea, float* v) { for (int i = 0; i < 4; i++) v[i] = vm_readf(ea + 4 * i); }
+/* v rotated by the quaternion q (x, y, z, w) */
+void quat_rotate(const float* q, const float* v, float* r)
+{
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float tx = 2.0f * (y * v[2] - z * v[1]), ty = 2.0f * (z * v[0] - x * v[2]), tz = 2.0f * (x * v[1] - y * v[0]);
+    r[0] = v[0] + w * tx + (y * tz - z * ty);
+    r[1] = v[1] + w * ty + (z * tx - x * tz);
+    r[2] = v[2] + w * tz + (x * ty - y * tx);
+}
+}
+static bool rag_interp_on()
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_RAGINTERP", 1));
+    return on && s_phys_capped.load();
+}
+/* The body's pose between the start and the end of its last step: the
+ * position of its origin in pos, its rotation (x, y, z, w) in q. False when
+ * it shows its own transform. */
+static bool body_pose_between(uint32_t body, float* pos, float* q)
+{
+    float c0[4], c1[4], q0[4], q1[4], cl[4];
+    vm_read4f(body + 0x120, c0); vm_read4f(body + 0x130, c1);
+    vm_read4f(body + 0x140, q0); vm_read4f(body + 0x150, q1);
+    vm_read4f(body + 0x160, cl);
+    if (!(c1[3] > 0.0f)) return false;
+    const double now = s_phys_clock.load(), span = 1.0 / c1[3];
+    double since;
+    {
+        std::lock_guard<std::mutex> lk(s_rag_mu);
+        if (s_rag_seen.size() > 8192) s_rag_seen.clear();
+        RagSeen& s = s_rag_seen[body];
+        if (s.t0 != c0[3]) { s.t0 = c0[3]; s.at = now; }
+        since = now - s.at;
+    }
+    if (since >= span) return false;
+    static int log = 0; static std::atomic<int> nlog{0};
+    PS3_KNOB(log, ps3_env_int("DES_RAGINTERP_LOG", 0));
+    if (log && (nlog++ < 40 || nlog.load() % 4000 == 0)) {
+        /* the swept end against the body's transform: origin and first column */
+        float e[3], col[3], ex[3] = {1.0f, 0.0f, 0.0f};
+        quat_rotate(q1, cl, e); quat_rotate(q1, ex, col);
+        fprintf(stderr, "[raginterp] body %08X span %.4f since %.4f end %.3f %.3f %.3f transform %.3f %.3f %.3f"
+                " col0 %.3f %.3f %.3f transform %.3f %.3f %.3f\n", body, span, since,
+                c1[0] - e[0], c1[1] - e[1], c1[2] - e[2], vm_readf(body + 0x110), vm_readf(body + 0x114), vm_readf(body + 0x118),
+                col[0], col[1], col[2], vm_readf(body + 0xE0), vm_readf(body + 0xE4), vm_readf(body + 0xE8));
+    }
+    const float a = (float)(since / span);
+    const float d = q0[0] * q1[0] + q0[1] * q1[1] + q0[2] * q1[2] + q0[3] * q1[3];
+    const float s1 = d < 0.0f ? -a : a;
+    float n = 0.0f;
+    for (int i = 0; i < 4; i++) { q[i] = q0[i] * (1.0f - a) + q1[i] * s1; n += q[i] * q[i]; }
+    if (!(n > 1e-12f)) return false;
+    n = 1.0f / std::sqrt(n);
+    for (int i = 0; i < 4; i++) q[i] *= n;
+    float r[3];
+    quat_rotate(q, cl, r);   /* origin = centre of mass - q * local centre of mass */
+    for (int i = 0; i < 3; i++) pos[i] = c0[i] + (c1[i] - c0[i]) * a - r[i];
+    return true;
+}
+static void rag_interp(uint32_t inst, uint32_t out, uint32_t idx)
+{
+    if (!rag_interp_on()) return;
+    uint32_t map, bodies, bi, body;
+    if (!guest_ptr_ok(inst) || !guest_ptr_ok(out) || !guest_ptr_ok(map = vm_read32(inst + 0x20)) ||
+        !guest_ptr_ok(bodies = vm_read32(inst + 8))) return;
+    if ((int32_t)(bi = vm_read32(map + 4 * idx)) < 0 || !guest_ptr_ok(body = vm_read32(bodies + 4 * bi))) return;
+    float pos[3], q[4], qo[4];
+    if (!body_pose_between(body, pos, q)) return;
+    vm_read4f(out + 0x10, qo);
+    if (q[0] * qo[0] + q[1] * qo[1] + q[2] * qo[2] + q[3] * qo[3] < 0.0f)
+        for (int i = 0; i < 4; i++) q[i] = -q[i];      /* same sign as the converter's */
+    for (int i = 0; i < 3; i++) vm_writef(out + 4 * i, pos[i]);
+    for (int i = 0; i < 4; i++) vm_writef(out + 0x10 + 4 * i, q[i]);
+}
+/* After 0x012D86C4: ragdoll instance in r30, pose slot in r29, bone in r28. */
+extern "C" void des_rag_pose_a(ppu_context* ctx, uint32_t)
+{
+    rag_interp((uint32_t)ctx->gpr[30], (uint32_t)ctx->gpr[29], (uint32_t)ctx->gpr[28]);
+}
+/* After 0x012D9354: ragdoll instance in r29, pose slot in r30, bone in r28. */
+extern "C" void des_rag_pose_b(ppu_context* ctx, uint32_t)
+{
+    rag_interp((uint32_t)ctx->gpr[29], (uint32_t)ctx->gpr[30], (uint32_t)ctx->gpr[28]);
+}
+/* After 0x0109F2C4, the last store of the transform-to-matrix copy: r3 and r4
+ * are the source and the destination plus 0x30. A source at +0xE0 of a moving
+ * dynamic rigid body (vtable 0x018B4810) gets the in-between pose. */
+extern "C" void des_body_xform(ppu_context* ctx, uint32_t)
+{
+    if (!rag_interp_on()) return;
+    const uint32_t src = (uint32_t)ctx->gpr[3] - 0x30, dst = (uint32_t)ctx->gpr[4] - 0x30, body = src - 0xE0;
+    if (!guest_ptr_ok(body) || !guest_ptr_ok(dst) || vm_read32(body) != 0x018B4810u || !(vm_readf(body + 0x19C) > 0.0f)) return;
+    float pos[3], q[4];
+    if (!body_pose_between(body, pos, q)) return;
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float col[3][3] = {
+        {1.0f - 2.0f * (y * y + z * z), 2.0f * (x * y + w * z), 2.0f * (x * z - w * y)},
+        {2.0f * (x * y - w * z), 1.0f - 2.0f * (x * x + z * z), 2.0f * (y * z + w * x)},
+        {2.0f * (x * z + w * y), 2.0f * (y * z - w * x), 1.0f - 2.0f * (x * x + y * y)}};
+    for (int c = 0; c < 3; c++)
+        for (int i = 0; i < 3; i++) vm_writef(dst + 0x10 * c + 4 * i, col[c][i]);
+    for (int i = 0; i < 3; i++) vm_writef(dst + 0x30 + 4 * i, pos[i]);
 }
 
 /* DES_NETLOG=1: seconds since the first line, for des_net_sync's log. */

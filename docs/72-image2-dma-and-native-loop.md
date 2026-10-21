@@ -1,10 +1,10 @@
 # Image 2: a cheaper DMA path and the native ring loop
 
-Date: 2026-10-21 (overnight). Status: two ps3recomp PRs:
+Date: 2026-10-21 (overnight). Status: merged 2026-10-21 as two ps3recomp PRs, with the port pinned at the fork's merge commit 3f88c24:
 - #90: DMA fast path, ring fetch and /GS checks;
 - #91: native loop for commands 7 and 8.
 
-Both are measured, and the loop was checked against the lifted code. Bases: ps3recomp `fork/master` = 19c8c97, port `origin/master` = 29aefa5.
+Both are measured, and the loop was checked against the lifted code. Bases: ps3recomp `fork/master` = 19c8c97, port `origin/master` = 29aefa5. ps3recomp #89 (the usleep yield, docs/71) merged with them.
 
 Labels as in docs/48: **measured** (from a run, source given), **read** (seen in the code or the lift), **inferred**.
 
@@ -17,6 +17,7 @@ Labels as in docs/48: **measured** (from a run, source given), **read** (seen in
 - **#90**, the DMA and fetch trims: +4.6% to +8.8% a round against master. A further +1.8% comes from removing /GS cookie checks.
 - **#91**, the native loop: +4.2% against master on its own.
 - **Both together: 146.3 -> 162.2 fps (+10.9%)**, every round. 1% lows rise from about 93 to about 108 fps.
+- **With #89 as well** (the merged state, last A/B of the night): 146.7 -> 163.1 fps (+11.2%), every round; 1% lows 88-96 -> 107-122 fps.
 - The two PRs are both based on master, touch different hunks of `spu_ring_hook.c`, and merge cleanly in either order.
 
 ## Measurements
@@ -33,6 +34,8 @@ All runs: deep Palace save (`work/tmp/lc_deep/save` copy), `RSX_VSYNC=0 DES_VSYN
 | #91 alone vs master (exeab) | 146.2 | 152.3 |
 | **#90 + #91 vs master (exeab)** | **146.3** | **162.2** |
 | loop v2 (also 10-13, 17, 18) vs v1 (exeab) | 162.4 | 162.8 (dropped) |
+| the coherent PPU store as one call (exeab, on top of both) | 161.9 | 162.9 (B won 2 rounds of 3; dropped) |
+| **#89 + #90 + #91 vs master (exeab)** | **146.7** | **163.1** |
 | loop on vs off, same build, 9 windows each (knobab) | lows 99-122 | lows 90-108; one round of three favoured off on the mean |
 
 ## What #90 changes (read)
@@ -69,8 +72,9 @@ Every way off the fast path is checked before the command's first side effect, a
 ## Tried and dropped
 
 - **Forcing the DMA helpers inline**: no gain.
-- **Loop v2**: adds commands 10-13, 17 and 18, with the GETs through an emulated 0xC4D8 main case. Check mode passed 2.1 million comparisons, and a planted GET fault was caught. But there was no measurable gain over v1 (162.4 vs 162.8), so it is not in #91. The code is in this session's scratch (`perfn/loop_v2.py`) if image 2 becomes the limit again.
+- **Loop v2**: adds commands 10-13, 17 and 18, with the GETs through an emulated 0xC4D8 main case. Check mode passed 2.1 million comparisons, and a planted GET fault was caught. But there was no measurable gain over v1 (162.4 vs 162.8), so it is not in #91. The code is kept locally in `work/tmp/scratch_20261021/perf/loop_v2.py` if image 2 becomes the limit again.
 - **SSSE3 LS accessors** (one load or store plus `pshufb`): clang already turns the four swaps into a `pshufb` in the lifted regions (1,782 shuffles and 8 scalar swaps in region 0x8CB8). Not measured, reverted.
+- **The coherent PPU store as one call.** A PPU store into a reserved line made four calls: take the stripe, store, notify, release. A scratch `spu_coh_store` did them in one, with one stripe for a store inside one line. +0.7% over three rounds, but A won one of them, so it is inside the noise. The patch is kept locally in `work/tmp/scratch_20261021/perf/coh_store.py`, and the slope knobs in `causal.patch` next to it. The lock itself is the cost (next candidates, item 1), not the calls around it.
 
 ## Where the frame is now (measured, combined build, `cpu 4`)
 
@@ -85,6 +89,17 @@ Every way off the fast path is checked before the command's first side effect, a
 
 All three are close to a full core, so the next gain on any one of them will be smaller than its share suggests (inferred).
 
+Same-build slopes on the combined build at about 161 fps (measured, scratch `TMP_SLOW_*` knobs, 6 interleaved pairs each). A slope is the share of the added time that shows up in the frame:
+
+| Busy wait added | fps A -> B | Frame time added | Slope |
+|---|---|---|---|
+| 300 us per flip, HighGraphics (`TMP_SLOW_FLIP_US`) | 161.2 -> 155.5 | +0.23 ms | 0.75 |
+| 300 us per present, FIFO thread (`TMP_SLOW_PRESENT_US`) | 161.0 -> 154.0 | +0.28 ms | 0.94 |
+| 30 ns per coherent PPU store, 39,000 a frame (`TMP_SLOW_COH_NS`) | 161.4 -> 144.9 | +0.71 ms of 1.18 | 0.60 |
+| 10-30 ns per ring command, image 2 (`TMP_SLOW_RING_NS`) | see the short answer | | about 1 |
+
+All four sit on the frame's path. No single thread is the limit any more.
+
 ## Next candidates (inferred, for the decisions list)
 
 1. **The put-pointer store's lock** (HighGraphics, about 12%). Every PPU store to a reserved line takes the stripe lock, notifies and unlocks.
@@ -92,3 +107,4 @@ All three are close to a full core, so the next gain on any one of them will be 
    - That is a design change on the path that froze the game before (docs/48 risks, the lwarx and PUTLLC notes). It needs its own plan.
 2. **Commands 31-34 natively** (docs/48 Stage 4). About a quarter of image 2. Region 0x8CB8 alone is about 1,950 SPU instructions, so this is a project of its own.
 3. **The FIFO thread**: the render thread (docs/68) and GPU fetch for lists and quads (docs/64) are still the big items there. docs/66 rows 1, 2, 5 and 8 are already in master.
+4. **Havok's image 8** (added 2026-10-21, docs/73). It is not on the deep Palace frame. But after a break it sets the length of the physics step, and with it the frame rate for 2-4 s: about 10% lower, with step frames of 7-20 ms. It needs the same kind of work as image 2, after a profile of image 8 on its own.

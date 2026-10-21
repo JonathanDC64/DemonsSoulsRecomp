@@ -8,7 +8,6 @@
 #include "app.hpp"
 #include "bool_button.hpp"
 #include "controls_window.hpp"
-#include "host.hpp"
 #include "input.hpp"
 #include "number_button.hpp"
 #include "pane.hpp"
@@ -609,10 +608,6 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         choice_row(leftPane, rightPane, "Gamepad menu buttons", "pad_menu_chord", {"0", "1"},
             {"L3 + R3", "Select + Start"},
             "The gamepad buttons that open this menu, pressed together. Select + Start also opens the game's menu.");
-        if (host::can_use_d3d11())
-            choice_row(leftPane, rightPane, "Menu renderer", "DES_UI_RENDER", {"", "d3d11"}, {"D3D12", "D3D11 (old)"},
-                "How these menus are drawn. D3D11 is the old way, kept for one release: try it if the menus look "
-                "wrong.<br/><br/>(DES_UI_RENDER)");
     });
 
 #if DES_DEV

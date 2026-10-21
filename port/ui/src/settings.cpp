@@ -57,7 +57,6 @@ constexpr Def kDefs[] = {
     {"DES_NET_GHOSTS", "1", Apply::Live},      // des_net_show: 0 hides wandering ghosts
     {"DES_NET_SYNC", "", Apply::Live},         // des_net_sync: position packets a second; "" = every 6th frame
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
-    {"DES_UI_RENDER", "", Apply::Restart},     // "" = D3D12; "d3d11" = D3D11On12 (Windows, one release; host.cpp)
     {"show_start_screen", "1", Apply::UiOnly},
     {"menu_hint", "1", Apply::UiOnly},
     {"trophy_popups", "1", Apply::UiOnly},     // trophy_toasts.cpp; off hides the toast, the unlock is still kept

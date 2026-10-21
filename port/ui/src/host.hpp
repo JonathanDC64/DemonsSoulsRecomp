@@ -25,9 +25,6 @@ void set_ui_scale(float scale);
 // The window's DPI (96 is 100%), 0 if not known.
 unsigned window_dpi();
 
-// True where the menus can still be drawn through D3D11On12 (DES_UI_RENDER=d3d11): Windows, for one release.
-bool can_use_d3d11();
-
 // Updates the context and draws the documents into the back buffer (D3D12, PRESENT state on entry and on exit). With
 // shot_path, also writes the result (game frame and UI) to that BMP file.
 void render(void* back_buffer, unsigned index, int width, int height, const char* shot_path);

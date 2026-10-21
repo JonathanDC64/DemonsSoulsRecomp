@@ -89,8 +89,6 @@ std::unique_ptr<Renderer> make_renderer(void* device, void* queue) {
     return r;
 }
 
-constexpr bool kD3D11 = true;  // render_d3d11.cpp
-
 #else
 
 // RmlUi's system interface: the time, its warnings and errors printed, and the cursor's shape (set on the window's
@@ -128,8 +126,6 @@ unsigned dpi_of_window() {  // (what the window's display reports)
 }
 
 std::unique_ptr<Renderer> make_renderer(void* device, void* queue) { return d3d12::create(device, queue, find_png); }
-
-constexpr bool kD3D11 = false;
 
 #endif
 
@@ -308,7 +304,6 @@ Rml::Context* context() { return s.rml; }
 void set_ui_scale(float scale) { s.ui_scale = std::clamp(scale, 0.0f, 4.0f); }
 
 unsigned window_dpi() { return dpi_of_window(); }
-bool can_use_d3d11() { return kD3D11; }
 
 void render(void* back_buffer, unsigned index, int width, int height, const char* shot_path) {
     if (!s.initialised) return;

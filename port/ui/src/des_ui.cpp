@@ -68,6 +68,8 @@ int rsx_d3d12_borderless(void);
 void* rsx_d3d12_device(void);
 void* rsx_d3d12_queue(void);
 void* rsx_d3d12_hwnd(void);
+void rsx_d3d12_set_borderless(int on);
+int rsx_d3d12_borderless(void);
 
 void cellPad_set_host_hold(int hold);
 extern volatile unsigned g_pad0_buttons;  // pad 0 as the game last read it (CELL_PAD_CTRL_* layout)
@@ -678,9 +680,48 @@ DWORD WINAPI watch_thread(LPVOID) {
     }
 }
 
+// Display mode (DES_FULLSCREEN) and the window follow each other. A change of the setting asks the window thread
+// for it; a change of the window that nobody here asked for (Alt+Enter, handled on the window thread) becomes the
+// setting, and is saved with it. Borderless fullscreen, not exclusive: the overlay and Alt+Tab work as windowed.
+void sync_fullscreen() {
+    static int sSeen = -1;   // the window's state as last seen here
+    static int sWant = -1;   // the setting as last acted on
+    static int sAsked = -1;  // what was asked of the window, until it shows it
+    static int sWaited = 0;  // frames since: a window that cannot switch (no monitor information) is given up on
+    const int now = rsx_d3d12_borderless();
+    if (sAsked >= 0) {
+        if (now != sAsked && ++sWaited < 240) return;  // (the window thread has not got to it yet)
+        sAsked = -1;
+        sSeen = now;
+    }
+    const bool pinned = ui::settings::pinned("DES_FULLSCREEN");
+    const std::string v = pinned ? ui::settings::pinned_value("DES_FULLSCREEN") : ui::settings::get("DES_FULLSCREEN");
+    const int want = !v.empty() && v != "0";
+    if (sSeen >= 0 && now != sSeen) {  // Alt+Enter
+        sSeen = now;
+        std::fprintf(stderr, "[ui] display mode: %s (Alt+Enter)%s\n", now ? "fullscreen" : "window",
+                     pinned ? "; DES_FULLSCREEN is set in the environment, so the setting stays" : "");
+        if (pinned) return;  // (set on the command line: Alt+Enter still switches, the setting stays)
+        sWant = now;
+        if (now != want) ui::settings::set("DES_FULLSCREEN", now ? "1" : "0");
+        return;
+    }
+    sSeen = now;
+    if (want != sWant) {
+        sWant = want;
+        if (now != want) {
+            sAsked = want;
+            sWaited = 0;
+            std::fprintf(stderr, "[ui] display mode: %s (setting)\n", want ? "fullscreen" : "window");
+            rsx_d3d12_set_borderless(want);
+        }
+    }
+}
+
 void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned height) {
     ++sFrame;
     sFramesRun.fetch_add(1, std::memory_order_relaxed);
+    sync_fullscreen();
     ui::mouse::on_frame();  // (mouse look: is the game's camera taking the mouse?)
     if (ui::report::frame_hook(sFrame)) sReportCountdown = 4;  // DES_REPORT_AT_FRAME (and the crash test knobs)
     const bool script = !sScriptKeys.empty();

@@ -8,7 +8,8 @@
 
 #include "ui.hpp"
 
-#include <windows.h>
+#include "platform.hpp"
+#include "portable.hpp"
 
 #include <cmath>
 
@@ -33,14 +34,7 @@ constexpr const char* kRows[] = {
 };
 
 std::string utf8(const std::u16string& s) {
-    if (s.empty()) return {};
-    const int n = WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<const wchar_t*>(s.data()), int(s.size()), nullptr,
-                                      0, nullptr, nullptr);
-    std::string out(size_t(n > 0 ? n : 0), '\0');
-    if (n > 0)
-        WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<const wchar_t*>(s.data()), int(s.size()), out.data(), n,
-                            nullptr, nullptr);
-    return out;
+    return utf16_to_utf8(s);
 }
 
 float centre_x(Rml::Element* e) {
@@ -289,7 +283,7 @@ void OskWindow::on_char(unsigned c) {
 }
 
 void OskWindow::on_pad(unsigned buttons) {
-    const unsigned long long now = GetTickCount64();
+    const unsigned long long now = now_ms();
     const unsigned pressed = mPadPrimed ? buttons & ~mPadPrev : 0;  // a button held as the window opened waits
     mPadPrev = buttons;
     mPadPrimed = true;

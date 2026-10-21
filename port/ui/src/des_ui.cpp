@@ -15,16 +15,17 @@
 // only once every key and button is released, so the press that closed the menu does not reach the game.
 #include "des_ui.h"
 
-#include "RmlUi_Platform_Win32.h"
-
 #include "app.hpp"
 #include "crash_report.hpp"
 #include "host.hpp"
 #include "input.hpp"
+#include "keys.hpp"
 #include "menu_bar.hpp"
 #include "mouse.hpp"
 #include "osk_window.hpp"
 #include "overlay.hpp"
+#include "platform.hpp"
+#include "portable.hpp"
 #include "prelaunch.hpp"
 #include "prework_modal.hpp"
 #include "report.hpp"
@@ -35,9 +36,9 @@
 #include "ui.hpp"
 #include "version.hpp"
 
-#include <windows.h>
-#include <windowsx.h>
-#include <xinput.h>
+#ifdef _WIN32
+#include <xinput.h>  // (read_xinput)
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -47,6 +48,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -68,6 +70,7 @@ int rsx_d3d12_borderless(void);
 void* rsx_d3d12_device(void);
 void* rsx_d3d12_queue(void);
 void* rsx_d3d12_hwnd(void);
+void rsx_d3d12_post_message(unsigned msg, unsigned long long wp, long long lp);
 void rsx_d3d12_set_borderless(int on);
 int rsx_d3d12_borderless(void);
 
@@ -198,14 +201,7 @@ void osk_close() {
 }
 
 std::string osk_utf8(const std::u16string& s) {
-    if (s.empty()) return {};
-    const int n = WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<const wchar_t*>(s.data()), int(s.size()), nullptr,
-                                      0, nullptr, nullptr);
-    std::string out(size_t(n > 0 ? n : 0), '\0');
-    if (n > 0)
-        WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<const wchar_t*>(s.data()), int(s.size()), out.data(), n,
-                            nullptr, nullptr);
-    return out;
+    return ui::utf16_to_utf8(s);
 }
 
 // In frame: show or close the keyboard as the game asked. Without the UI (it failed to start) the game gets its
@@ -248,7 +244,7 @@ void push_event(const InputEvent& e) {
 void wake_overlay(bool user = true) {
     sWakeByUser.store(user);
     sWakeMark.store(sFramesRun.load());
-    sWakeAt.store(GetTickCount64());
+    sWakeAt.store(ui::now_ms());
     rsx_d3d12_overlay_wake();
 }
 
@@ -260,9 +256,9 @@ bool is_menu_key(WPARAM vk) {
 
 // The back buffer is stretched over the client area: mouse positions are in back buffer pixels.
 void map_mouse(HWND hwnd, LPARAM lp, int& x, int& y) {
-    RECT rc{};
-    GetClientRect(hwnd, &rc);
-    const int cw = std::max<int>(1, rc.right - rc.left), ch = std::max<int>(1, rc.bottom - rc.top);
+    int w = 1, h = 1;
+    ui::mouse::client_size(hwnd, w, h);
+    const int cw = std::max(1, w), ch = std::max(1, h);
     x = GET_X_LPARAM(lp) * sBufferW.load() / cw;
     y = GET_Y_LPARAM(lp) * sBufferH.load() / ch;
 }
@@ -282,7 +278,7 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
         const bool down = msg == WM_KEYDOWN;
         if (is_menu_key(wp) || (capturing && !(wp >= VK_F9 && wp <= VK_F12))) {
             if (!(down && (lp & (1LL << 30)) && is_menu_key(wp) && !capturing)) {  // no auto-repeat opening
-                push_event({down ? InputEvent::KeyDown : InputEvent::KeyUp, int(wp), 0, RmlWin32::GetKeyModifierState()});
+                push_event({down ? InputEvent::KeyDown : InputEvent::KeyUp, int(wp), 0, ui::keys::modifiers()});
                 if (down && is_menu_key(wp) && !capturing) wake_overlay();
             }
             *result = 0;
@@ -305,7 +301,7 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
         if (!capturing) return 0;
         int x, y;
         map_mouse(hwnd, lp, x, y);
-        InputEvent e{InputEvent::MouseMove, x, y, RmlWin32::GetKeyModifierState()};
+        InputEvent e{InputEvent::MouseMove, x, y, ui::keys::modifiers()};
         push_event(e);
         if (msg != WM_MOUSEMOVE) {
             const bool down = msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN;
@@ -313,15 +309,14 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
                                : (msg == WM_RBUTTONDOWN || msg == WM_RBUTTONUP) ? 1
                                                                                 : 2;
             push_event({down ? InputEvent::MouseDown : InputEvent::MouseUp, button, 0, e.mods});
-            if (down) SetCapture(hwnd);
-            else ReleaseCapture();
+            ui::mouse::hold_buttons(hwnd, down);
         }
         *result = 0;
         return 1;
     }
     case WM_MOUSEWHEEL: {
         if (!capturing) return 0;
-        InputEvent e{InputEvent::Wheel, 0, 0, RmlWin32::GetKeyModifierState()};
+        InputEvent e{InputEvent::Wheel, 0, 0, ui::keys::modifiers()};
         e.wheel = -float(GET_WHEEL_DELTA_WPARAM(wp)) / float(WHEEL_DELTA);
         push_event(e);
         *result = 0;
@@ -336,8 +331,14 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
     }
 }
 
-// ---- Gamepads: XInput and the Sony HID reader, merged (the same readers the game's pad uses) ----
+// ---- Gamepads: XInput and the Sony HID reader, merged (the same readers the game's pad uses; off Windows the reader
+// gives SDL's pads) ----
 
+float pick(float a, float b) {
+    return std::abs(a) >= std::abs(b) ? a : b;
+}
+
+#ifdef _WIN32
 unsigned xinput_to_cell(WORD b) {
     unsigned c = 0;
     if (b & XINPUT_GAMEPAD_DPAD_UP) c |= kUp;
@@ -357,17 +358,10 @@ unsigned xinput_to_cell(WORD b) {
     return c;
 }
 
-float pick(float a, float b) {
-    return std::abs(a) >= std::abs(b) ? a : b;
-}
-
-// Polls XInput slots only while a slot answers: a missing pad's XInputGetState is slow, so empty slots are retried
-// once a second.
-ui::input::PadState read_pads(bool& neutral) {
+// XInput's pads, into `pad`. Polls XInput slots only while a slot answers: a missing pad's XInputGetState is
+// slow, so empty slots are retried once a second.
+void read_xinput(ui::input::PadState& pad, bool& neutral) {
     static clock_type::time_point sNextScan[XUSER_MAX_COUNT]{};
-    ui::input::PadState pad;
-    neutral = true;
-    if (ui::settings::no_user_input()) return pad;  // PS3_NO_USER_INPUT: no pad of the user's is read
     const auto now = clock_type::now();
     for (DWORD i = 0; i < XUSER_MAX_COUNT; i++) {
         if (now < sNextScan[i]) continue;
@@ -389,6 +383,17 @@ ui::input::PadState read_pads(bool& neutral) {
             std::abs(g.sThumbRX) > 8000 || std::abs(g.sThumbRY) > 8000)
             neutral = false;
     }
+}
+#else
+void read_xinput(ui::input::PadState&, bool&) {}  // (off Windows SDL's pads come through the HID reader)
+#endif
+
+// The pads: XInput's and the HID reader's, merged.
+ui::input::PadState read_pads(bool& neutral) {
+    ui::input::PadState pad;
+    neutral = true;
+    if (ui::settings::no_user_input()) return pad;  // PS3_NO_USER_INPUT: no pad of the user's is read
+    read_xinput(pad, neutral);
     PadHidSonyState hid[4];
     const int n = pad_hid_sony_poll(hid, 4);
     for (int i = 0; i < n; i++) {
@@ -410,7 +415,7 @@ ui::input::PadState read_pads(bool& neutral) {
 bool keyboard_neutral() {
     if (ui::settings::no_user_input()) return true;  // PS3_NO_USER_INPUT: a key held is the user's
     for (int vk = 1; vk < 0xFF; vk++)
-        if (GetAsyncKeyState(vk) & 0x8000) return false;
+        if (ui::keys::key_down(vk)) return false;
     return true;
 }
 
@@ -486,11 +491,11 @@ void process_queue() {
                 break;
             }
             ctx->ProcessMouseLeave();
-            ctx->ProcessKeyDown(RmlWin32::ConvertKey(e.a), e.mods);
+            ctx->ProcessKeyDown(ui::keys::to_rml(e.a), e.mods);
             break;
         case InputEvent::KeyUp:
             if (ui::input::binding_capture()) break;
-            ctx->ProcessKeyUp(RmlWin32::ConvertKey(e.a), e.mods);
+            ctx->ProcessKeyUp(ui::keys::to_rml(e.a), e.mods);
             break;
         case InputEvent::Char:
             // Typing into a text field (Custom frame rate's): printable characters only, as RmlUi's own Win32
@@ -567,16 +572,15 @@ void push_hang_notice() {
 std::mutex sRateLock;
 std::vector<unsigned> sRates;
 
+const auto sStarted = std::chrono::steady_clock::now();  // (static initialisation: the start of the process)
+
 // What a report says about this run (report.cpp's game.txt). The render thread, in frame.
 std::string session_text(unsigned width, unsigned height) {
     std::string s;
     char line[256];
     {
-        FILETIME created{}, exited{}, kernel{}, user{}, now{};
-        GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
-        GetSystemTimeAsFileTime(&now);
-        const auto ticks = [](const FILETIME& t) { return (ULONGLONG(t.dwHighDateTime) << 32) | t.dwLowDateTime; };
-        const ULONGLONG sec = (ticks(now) - ticks(created)) / 10000000ull;
+        const unsigned long long sec =
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - sStarted).count();
         std::snprintf(line, sizeof line, "Running for: %llu h %02llu min %02llu s\n", sec / 3600, sec / 60 % 60, sec % 60);
         s += line;
     }
@@ -598,13 +602,7 @@ std::string session_text(unsigned width, unsigned height) {
     }
     std::snprintf(line, sizeof line, "Overlay frames: %llu\n", sFrame);
     s += line;
-    UINT dpi = 0;
-    if (HWND hwnd = static_cast<HWND>(rsx_d3d12_hwnd())) {
-        using DpiFn = UINT(WINAPI*)(HWND);
-        if (auto fn = reinterpret_cast<DpiFn>(
-                reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow"))))
-            dpi = fn(hwnd);
-    }
+    const unsigned dpi = ui::host::window_dpi();
     std::snprintf(line, sizeof line, "Window: %s, %ux%u, %u dpi (%u%%)\n", rsx_d3d12_borderless() ? "fullscreen" : "window",
                   width, height, dpi, dpi ? dpi * 100 / 96 : 0);
     s += line;
@@ -616,13 +614,13 @@ std::string session_text(unsigned width, unsigned height) {
 // kStoppedMs means the render thread is stuck too: the hang dialog (a second process) takes over. After kHangNoticeMs
 // without a new frame the overlay is asked to say how to report it (and if it cannot, the dialog opens). It also
 // counts the game's frames each second for reports.
-DWORD WINAPI watch_thread(LPVOID) {
+void watch_thread() {
     bool chordWasDown = true;  // (a chord held from before is not a press)
     bool noticed = false;
     bool dialogShown = false;  // the hang dialog opened in this stop: again only when the player asks
     unsigned lastFrames = ppu_boot_frames_presented(), ticks = 0;
     for (;;) {
-        Sleep(250);
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
         if (++ticks % 4 == 0) {
             const unsigned frames = ppu_boot_frames_presented();
             std::lock_guard<std::mutex> lock(sRateLock);
@@ -662,7 +660,7 @@ DWORD WINAPI watch_thread(LPVOID) {
         if (const unsigned long long at = sWakeAt.load()) {
             if (sFramesRun.load() != sWakeMark.load()) {
                 sWakeAt.store(0);
-            } else if (GetTickCount64() - at >= unsigned(kStoppedMs)) {
+            } else if (ui::now_ms() - at >= unsigned(kStoppedMs)) {
                 sWakeAt.store(0);
                 if (stopped && (sWakeByUser.load() || !dialogShown) && !ui::crash_report::hang_dialog_open()) {
                     std::fprintf(stderr, "[ui] no new frame for %lld s, and the menu cannot open: the hang dialog\n",
@@ -846,7 +844,7 @@ int vk_from_name(const std::string& name) {
                   {"LEFT", VK_LEFT},   {"RIGHT", VK_RIGHT}, {"ENTER", VK_RETURN}, {"PGUP", VK_PRIOR},
                   {"PGDN", VK_NEXT},   {"TAB", VK_TAB},    {"SPACE", VK_SPACE}, {"OSK", kScriptOsk}};
     for (const auto& n : kNames)
-        if (_stricmp(n.name, name.c_str()) == 0) return n.vk;
+        if (ui::same_name(n.name, name.c_str())) return n.vk;
     if (name.size() == 1 && name[0] >= '0' && name[0] <= '9') return kScriptChar + name[0];
     return 0;
 }
@@ -923,7 +921,7 @@ extern "C" void des_ui_early_init(void) {
     sCloseAsks = !ui::settings::unattended_run();
     ui::app().quit = [] {
         sQuitConfirmed.store(true);
-        if (HWND hwnd = static_cast<HWND>(rsx_d3d12_hwnd())) PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        rsx_d3d12_post_message(WM_CLOSE, 0, 0);
     };
     ui::app().report_issue = [] { sReportCountdown = 4; };  // (the render thread: the menu's callbacks run in frame)
 
@@ -932,5 +930,5 @@ extern "C" void des_ui_early_init(void) {
     static const CellOskDialogHost kOsk = {osk_open, osk_close};
     cellOskDialog_set_host(&kOsk);
     ui::trophies::install();
-    if (HANDLE watch = CreateThread(nullptr, 0, watch_thread, nullptr, 0, nullptr)) CloseHandle(watch);
+    std::thread(watch_thread).detach();
 }

@@ -3,9 +3,11 @@
 #include "report.hpp"
 
 #include "host.hpp"
+#include "portable.hpp"
 #include "settings.hpp"
 #include "version.hpp"
 
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 // (after windows.h)
@@ -21,6 +23,24 @@
 #include <share.h>
 #include <shlobj.h>
 #include <wincodec.h>
+#else
+#include "platform.hpp"
+
+#include <SDL.h>  // (the displays, for system_info)
+#include <fcntl.h>
+#include <spawn.h>
+#include <stb_image_write.h>
+#include <sys/file.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <sys/utsname.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <fstream>
+
+extern char** environ;
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -30,6 +50,7 @@
 #include <cstring>
 #include <ctime>
 #include <initializer_list>
+#include <mutex>
 #include <regex>
 #include <sstream>
 #include <thread>
@@ -84,6 +105,7 @@ unsigned long long env_u64(const char* name) {
     return v && *v ? std::strtoull(v, nullptr, 10) : 0;
 }
 
+#ifdef _WIN32
 std::filesystem::path exe_dir() {
     wchar_t buf[MAX_PATH * 2];
     const DWORD n = GetModuleFileNameW(nullptr, buf, DWORD(std::size(buf)));
@@ -101,17 +123,146 @@ std::filesystem::path pref_dir() {
     return out;
 }
 
-// The PSN name given on the command line (--username NAME or --username=NAME), if any.
-std::string psn_name() {
+// The command line's arguments (the program first), and the command line as the process got it.
+std::vector<std::string> command_line_args() {
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    std::string name;
-    for (int i = 1; argv && i < argc; i++) {
-        const std::wstring a = argv[i];
-        if (a.rfind(L"--username=", 0) == 0) name = narrow(a.substr(11));
-        else if (a == L"--username" && i + 1 < argc) name = narrow(argv[i + 1]);
-    }
+    std::vector<std::string> args;
+    for (int i = 0; argv && i < argc; i++) args.push_back(narrow(argv[i]));
     if (argv) LocalFree(argv);
+    return args;
+}
+
+std::string command_line_text() {
+    return narrow(GetCommandLineW());
+}
+
+// The environment's NAME=value strings.
+std::vector<std::string> environment_strings() {
+    std::vector<std::string> out;
+    if (LPWCH env = GetEnvironmentStringsW()) {
+        for (const wchar_t* p = env; *p; p += std::wcslen(p) + 1) out.push_back(narrow(p));
+        FreeEnvironmentStringsW(env);
+    }
+    return out;
+}
+
+unsigned long process_id() {
+    return GetCurrentProcessId();
+}
+
+// Cuts the open file `f` to `size` bytes; positions and sizes past 2 GB.
+void truncate_file(FILE* f, long long size) {
+    _chsize_s(_fileno(f), __int64(size));
+}
+
+int seek_file(FILE* f, long long offset, int origin) {
+    return _fseeki64(f, offset, origin);
+}
+
+long long tell_file(FILE* f) {
+    return _ftelli64(f);
+}
+
+// COM on a report's thread (WIC, ShellExecute).
+void begin_report_thread() {
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+}
+
+void end_report_thread() {
+    CoUninitialize();
+}
+
+// The user's account and the PC's name (reports leave them out).
+std::string user_name() {
+    return env("USERNAME");
+}
+
+std::string pc_name() {
+    return env("COMPUTERNAME");
+}
+
+#else
+std::filesystem::path exe_dir() {
+    std::error_code ec;
+    const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+    return ec ? std::filesystem::path{} : exe.parent_path();
+}
+
+// $XDG_DATA_HOME/DemonsSoulsRecomp/DemonsSouls, else ~/.local/share/... (what SDL_GetPrefPath gives there).
+std::filesystem::path pref_dir() {
+    const std::string xdg = env("XDG_DATA_HOME"), home = env("HOME");
+    const std::filesystem::path base = !xdg.empty()    ? std::filesystem::path(xdg)
+                                       : !home.empty() ? std::filesystem::path(home) / ".local" / "share"
+                                                       : std::filesystem::path{};
+    return base.empty() ? base : base / "DemonsSoulsRecomp" / "DemonsSouls";
+}
+
+// The command line's arguments (the program first), and the command line as the process got it (quoted where an
+// argument holds a space).
+std::vector<std::string> command_line_args() {
+    std::ifstream f("/proc/self/cmdline", std::ios::binary);
+    std::vector<std::string> args;
+    for (std::string a; std::getline(f, a, '\0');) args.push_back(a);
+    return args;
+}
+
+std::string command_line_text() {
+    std::string out;
+    for (const std::string& a : command_line_args()) {
+        if (!out.empty()) out += ' ';
+        out += a.find(' ') != std::string::npos ? "\"" + a + "\"" : a;
+    }
+    return out;
+}
+
+// The environment's NAME=value strings.
+std::vector<std::string> environment_strings() {
+    std::vector<std::string> out;
+    for (char** e = environ; e && *e; e++) out.push_back(*e);
+    return out;
+}
+
+unsigned long process_id() {
+    return (unsigned long)getpid();
+}
+
+// Cuts the open file `f` to `size` bytes; positions and sizes past 2 GB.
+void truncate_file(FILE* f, long long size) {
+    if (ftruncate(fileno(f), off_t(size)) != 0) {}
+}
+
+int seek_file(FILE* f, long long offset, int origin) {
+    return fseeko(f, off_t(offset), origin);
+}
+
+long long tell_file(FILE* f) {
+    return (long long)ftello(f);
+}
+
+void begin_report_thread() {}
+void end_report_thread() {}
+
+// The user's account and the PC's name (reports leave them out).
+std::string user_name() {
+    return env("USER");
+}
+
+std::string pc_name() {
+    char host[256] = {};
+    return gethostname(host, sizeof host - 1) == 0 ? std::string(host) : std::string();
+}
+
+#endif
+
+// The PSN name given on the command line (--username NAME or --username=NAME), if any.
+std::string psn_name() {
+    const std::vector<std::string> args = command_line_args();
+    std::string name;
+    for (size_t i = 1; i < args.size(); i++) {
+        if (args[i].rfind("--username=", 0) == 0) name = args[i].substr(11);
+        else if (args[i] == "--username" && i + 1 < args.size()) name = args[i + 1];
+    }
     return name;
 }
 
@@ -122,7 +273,7 @@ std::string online_name() {
         if (std::string v = env(var); !v.empty()) return v;
     if (std::string v = settings::get("DES_NET_NAME"); !v.empty()) return v;
     if (const std::string& file = settings::path(); !file.empty()) {
-        if (FILE* f = _wfopen(widen(file).c_str(), L"r")) {
+        if (FILE* f = open_file(widen(file), "r")) {
             char line[512];
             std::string name;
             while (name.empty() && std::fgets(line, sizeof line, f)) {
@@ -170,10 +321,10 @@ void put32(std::string& s, uint32_t v) {
 bool write_zip(const std::filesystem::path& path, const std::vector<File>& files) {
     const std::time_t t = std::time(nullptr);
     std::tm tm{};
-    localtime_s(&tm, &t);
+    ui::local_time(t, tm);
     const uint32_t dos_time = uint32_t(tm.tm_hour << 11 | tm.tm_min << 5 | tm.tm_sec / 2);
     const uint32_t dos_date = uint32_t(std::max(0, tm.tm_year - 80) << 9 | (tm.tm_mon + 1) << 5 | tm.tm_mday);
-    FILE* out = _wfopen(path.c_str(), L"wb");
+    FILE* out = open_file(path, "wb");
     if (!out) return false;
     std::string central;
     uint32_t offset = 0;
@@ -257,7 +408,8 @@ std::string replace_paths(const std::string& text, const std::regex& re, const c
             path.pop_back();
         const size_t slash = path.find_last_of("\\/");
         const std::string base = slash == std::string::npos ? std::string() : path.substr(slash + 1);
-        out += prefix + "<path>" + (base.empty() ? "" : "\\" + base);
+        static const std::string sep(1, char(std::filesystem::path::preferred_separator));  // (the platform's)
+        out += prefix + "<path>" + (base.empty() ? "" : sep + base);
         out.append(m.str(keep_prefix_group ? 2 : 0), path.size(), std::string::npos);  // what was trimmed
         at = size_t(m.position(0) + m.length(0));
     }
@@ -270,36 +422,35 @@ std::string replace_paths(const std::string& text, const std::regex& re, const c
 constexpr uint64_t kLogCap = 128ull << 20;   // past this the log keeps its first kLogKeep and goes on from there
 constexpr uint64_t kLogKeep = 2ull << 20;
 
-SRWLOCK g_log_lock = SRWLOCK_INIT;
+std::mutex g_log_lock;
 FILE* g_log_file = nullptr;
 uint64_t g_log_bytes = 0;
 int g_tees = 0;
 std::atomic<int> g_tee_idle{0};  // tee threads waiting for output with everything before it in the log file
 
 void log_write(const char* data, size_t n) {
-    AcquireSRWLockExclusive(&g_log_lock);
+    std::lock_guard<std::mutex> lock(g_log_lock);
     if (g_log_file) {
         if (g_log_bytes + n > kLogCap) {
             static const char kNote[] =
                 "\n[log] (the log passed 128 MB: what followed its first 2 MB was dropped; it goes on from here)\n";
             std::fflush(g_log_file);
-            _chsize_s(_fileno(g_log_file), __int64(kLogKeep));
-            _fseeki64(g_log_file, __int64(kLogKeep), SEEK_SET);
+            truncate_file(g_log_file, (long long)kLogKeep);
+            seek_file(g_log_file, (long long)kLogKeep, SEEK_SET);
             std::fwrite(kNote, 1, sizeof kNote - 1, g_log_file);
             g_log_bytes = kLogKeep + sizeof kNote - 1;
         }
         std::fwrite(data, 1, n, g_log_file);
         g_log_bytes += n;
     }
-    ReleaseSRWLockExclusive(&g_log_lock);
 }
 
 void log_flush_now() {
-    AcquireSRWLockExclusive(&g_log_lock);
+    std::lock_guard<std::mutex> lock(g_log_lock);
     if (g_log_file) std::fflush(g_log_file);
-    ReleaseSRWLockExclusive(&g_log_lock);
 }
 
+#ifdef _WIN32
 struct Tee {
     HANDLE read;
     HANDLE out;  // where the output was going (a copy of that handle), or null
@@ -387,6 +538,56 @@ bool tee(std::initializer_list<int> fds, HANDLE original, int slot) {
     if (thread) CloseHandle(thread);
     return thread != nullptr;
 }
+#else
+// One per pipe, as on Windows: what the program prints, to where it was going (a copy of that descriptor, or -1) and
+// into the log, which is flushed whenever the pipe has nothing more waiting.
+void tee_thread(int read_fd, int out) {
+    std::vector<char> buf(1 << 16);
+    bool idle = true;
+    g_tee_idle.fetch_add(1);
+    for (;;) {
+        ssize_t n;
+        do n = ::read(read_fd, buf.data(), buf.size());
+        while (n < 0 && errno == EINTR);
+        if (idle) g_tee_idle.fetch_sub(1);
+        idle = false;
+        if (n <= 0) break;
+        for (const char* p = buf.data(); out >= 0 && p < buf.data() + n;) {
+            const ssize_t w = ::write(out, p, size_t(buf.data() + n - p));
+            if (w <= 0 && errno != EINTR) out = -1;  // (that terminal or file is gone: the log goes on)
+            if (w > 0) p += w;
+        }
+        log_write(buf.data(), size_t(n));
+        int waiting = 0;
+        if (ioctl(read_fd, FIONREAD, &waiting) == 0 && waiting == 0) {
+            log_flush_now();
+            idle = true;
+            g_tee_idle.fetch_add(1);
+        }
+    }
+}
+
+// A pipe that takes over descriptors `fds` (1, 2 or both); a thread copies what comes out of it to `original` (a
+// descriptor of its own, or -1) and the log.
+bool tee(std::initializer_list<int> fds, int original) {
+    int p[2];
+    if (pipe(p) != 0) {
+        if (original >= 0) close(original);
+        return false;
+    }
+    fcntl(p[1], F_SETPIPE_SZ, 1 << 20);  // (a burst of messages fits without waiting)
+    for (int target : fds) {
+        FILE* stream = target == 1 ? stdout : stderr;
+        std::fflush(stream);
+        dup2(p[1], target);
+        std::setvbuf(stream, nullptr, _IONBF, 0);
+    }
+    close(p[1]);  // (the descriptors above hold it)
+    g_tees++;
+    std::thread(tee_thread, p[0], original).detach();
+    return true;
+}
+#endif
 
 void flush_at_exit() {
     flush_log();
@@ -396,6 +597,24 @@ void flush_at_exit() {
 
 std::atomic<bool> g_report_busy{false};
 
+#ifndef _WIN32
+// The picture as a PNG, through stb_image_write. On the report's own thread.
+std::vector<uint8_t> encode_png(const std::vector<uint8_t>& rgba, int width, int height) {
+    std::vector<uint8_t> rgb(size_t(width) * height * 3), png;
+    for (size_t i = 0, n = size_t(width) * height; i < n; i++) {
+        rgb[i * 3 + 0] = rgba[i * 4 + 0];
+        rgb[i * 3 + 1] = rgba[i * 4 + 1];
+        rgb[i * 3 + 2] = rgba[i * 4 + 2];
+    }
+    stbi_write_png_to_func(
+        [](void* out, void* data, int size) {
+            const auto* b = static_cast<const uint8_t*>(data);
+            static_cast<std::vector<uint8_t>*>(out)->insert(static_cast<std::vector<uint8_t>*>(out)->end(), b, b + size);
+        },
+        &png, width, height, 3, rgb.data(), width * 3);
+    return png;
+}
+#else
 // The picture as a PNG, through the Windows Imaging Component (part of Windows). On the report's own thread.
 std::vector<uint8_t> encode_png(const std::vector<uint8_t>& rgba, int width, int height) {
     std::vector<uint8_t> png;
@@ -440,6 +659,7 @@ std::vector<uint8_t> encode_png(const std::vector<uint8_t>& rgba, int width, int
     if (factory) factory->Release();
     return png;
 }
+#endif
 
 // The crash and hang reports of the last week in the crashes folder, by name, newest first.
 std::string recent_reports() {
@@ -463,8 +683,8 @@ std::string runtime_snapshot() {
     std::error_code ec;
     const auto dir = data_dir() / L"reports";
     std::filesystem::create_directories(dir, ec);
-    const auto path = dir / (L"runtime-" + std::to_wstring(GetCurrentProcessId()) + L".tmp");
-    FILE* f = _wfopen(path.c_str(), L"w+");
+    const auto path = dir / (L"runtime-" + std::to_wstring(process_id()) + L".tmp");
+    FILE* f = open_file(path, "w+");
     if (!f) return "(could not be written)\n";
     ps3_diag_report(f, 2);
     std::fclose(f);
@@ -477,7 +697,7 @@ std::string runtime_snapshot() {
 
 void make_issue_report(std::vector<uint8_t> rgba, int width, int height, std::string session,
                        std::string settings_text) {
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);  // (WIC, ShellExecute)
+    begin_report_thread();
     const std::string stamp = timestamp();
     std::vector<File> files;
     if (!rgba.empty()) {
@@ -510,12 +730,13 @@ void make_issue_report(std::vector<uint8_t> rgba, int width, int height, std::st
                           "messages.\n";
     std::fprintf(stderr, "[report] issue report: %s\n", zip.empty() ? "could not be saved" : narrow(zip.wstring()).c_str());
     open_issue(issue_url("", body), zip);
-    CoUninitialize();
+    end_report_thread();
     g_report_busy.store(false);
 }
 
 }  // namespace
 
+#ifdef _WIN32
 std::wstring widen(const std::string& s) {
     const int size = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), int(s.size()), nullptr, 0);
     if (size <= 0) return {};
@@ -531,6 +752,49 @@ std::string narrow(const std::wstring& w) {
     WideCharToMultiByte(CP_UTF8, 0, w.c_str(), int(w.size()), s.data(), size, nullptr, nullptr);
     return s;
 }
+
+FILE* open_file(const std::filesystem::path& path, const char* mode) {
+    return _wfopen(path.c_str(), widen(mode).c_str());
+}
+
+bool replace_file(const std::filesystem::path& from, const std::filesystem::path& to) {
+    return MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+}
+#else
+// UTF-8 and wchar_t's UTF-32.
+std::wstring widen(const std::string& s) {
+    std::wstring w;
+    for (size_t i = 0; i < s.size();) {
+        unsigned c = (unsigned char)s[i++];
+        int more = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
+        c &= more == 3 ? 0x07u : more == 2 ? 0x0Fu : more == 1 ? 0x1Fu : 0x7Fu;
+        while (more-- > 0 && i < s.size() && ((unsigned char)s[i] & 0xC0) == 0x80) c = (c << 6) | ((unsigned char)s[i++] & 0x3Fu);
+        w += wchar_t(c);
+    }
+    return w;
+}
+
+std::string narrow(const std::wstring& w) {
+    std::u16string u;
+    for (wchar_t c : w) {
+        if (unsigned(c) >= 0x10000) {
+            u += char16_t(0xD800 + ((unsigned(c) - 0x10000) >> 10));
+            u += char16_t(0xDC00 + ((unsigned(c) - 0x10000) & 0x3FF));
+        } else {
+            u += char16_t(c);
+        }
+    }
+    return utf16_to_utf8(u);
+}
+
+FILE* open_file(const std::filesystem::path& path, const char* mode) {
+    return std::fopen(path.c_str(), mode);
+}
+
+bool replace_file(const std::filesystem::path& from, const std::filesystem::path& to) {
+    return std::rename(from.c_str(), to.c_str()) == 0;
+}
+#endif
 
 const std::filesystem::path& data_dir() {
     if (g_data_dir_resolved) return g_data_dir;
@@ -560,13 +824,15 @@ std::string version() { return kVersion; }
 std::string timestamp() {
     const std::time_t t = std::time(nullptr);
     std::tm tm{};
-    localtime_s(&tm, &t);
+    ui::local_time(t, tm);
     char buf[32];
     std::strftime(buf, sizeof buf, "%Y%m%d-%H%M%S", &tm);
     return buf;
 }
 
-std::string redact(std::string text) {
+namespace {
+#ifdef _WIN32
+void redact_home(std::string& text) {
     const std::string home = env("USERPROFILE");
     if (!home.empty()) {
         std::string slashed = home;
@@ -574,6 +840,16 @@ std::string redact(std::string text) {
         replace_all(text, home, "%USERPROFILE%");
         replace_all(text, slashed, "%USERPROFILE%");
     }
+}
+#else
+void redact_home(std::string& text) {
+    if (const std::string home = env("HOME"); home.size() > 1) replace_all(text, home, "~");
+}
+#endif
+}  // namespace
+
+std::string redact(std::string text) {
+    redact_home(text);
     static const std::regex email(R"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})");
     text = std::regex_replace(text, email, "<e-mail>");
     // Folders of this PC: C:\... or C:/... and UNC \\server\..., and Git Bash's /c/... (only the last name is kept).
@@ -582,16 +858,23 @@ std::string redact(std::string text) {
     text = replace_paths(text, win_path, "1");
     static const std::regex msys_path(R"((^|[\s"'=(])(/[a-zA-Z]/(?:[^\s"'<>|*?]|'(?=[A-Za-z]))*))");
     text = replace_paths(text, msys_path, "1");
+#ifndef _WIN32
+    // The home folder (~) and the usual places of a Linux system's own folders.
+    static const std::regex unix_path(
+        R"((^|[\s"'=(])((?:~|/(?:home|root|mnt|media|tmp|run|var|opt|srv|usr))/(?:[^\s"'<>|*?]|'(?=[A-Za-z]))*))");
+    text = replace_paths(text, unix_path, "1");
+#endif
     // (after the folders: a name inside a path goes with its path)
     replace_all(text, psn_name(), "<psn name>", true);
     replace_all(text, online_name(), "<online name>", true);
-    replace_all(text, env("USERNAME"), "<user>", true);
-    replace_all(text, env("COMPUTERNAME"), "<pc>", true);
+    replace_all(text, user_name(), "<user>", true);
+    replace_all(text, pc_name(), "<pc>", true);
     return text;
 }
 
 namespace {
 
+#ifdef _WIN32
 // Is HDR on for the display `mon` (DXGI's output description)?
 bool hdr_on(HMONITOR mon) {
     bool on = false;
@@ -649,19 +932,9 @@ std::string other_modules() {
     return out + "\n";
 }
 
-}  // namespace
-
-std::string system_info() {
-    std::ostringstream o;
-    // The game's own process (its renderer is up), not the crash dialog's: only then are this process's memory and
-    // the other software loaded into it the game's.
-    const bool game_process = rsx_d3d12_device() != nullptr;
-#if DES_DEV
-    o << "Developer build (cheats compiled in)\n";
-#endif
-    o << "DemonsSoulsRecomp " << version() << "\n";
-    o << "ps3recomp: " << kPs3recompVersion << "\n";
-    o << "Game dump (EBOOT.ELF SHA-256): " << (*kDumpSha256 ? kDumpSha256 : "unknown") << "\n";
+// The OS, the CPU, the memory and the displays; on Windows also the gamepads and the power, and in the game's
+// own process the other software loaded into it.
+void platform_facts(std::ostringstream& o, bool game_process) {
     {
         using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);
         OSVERSIONINFOW v{};
@@ -822,30 +1095,69 @@ std::string system_info() {
         o << "Gamepads: " << xinput << " XInput, " << sony << " DualSense or DualShock 4; keyboard layout " << layout << "\n";
     }
     if (game_process) o << other_modules();
+}
+#else
+void platform_facts(std::ostringstream& o, bool) {
+    struct utsname u {};
+    if (uname(&u) == 0) o << "OS: " << u.sysname << " " << u.release << " " << u.machine << "\n";
+    std::ifstream cpuinfo("/proc/cpuinfo"), meminfo("/proc/meminfo");
+    std::string cpu = "?";
+    for (std::string line; std::getline(cpuinfo, line);) {
+        if (line.rfind("model name", 0) == 0 && line.find(':') != std::string::npos) {
+            cpu = line.substr(line.find(':') + 2);
+            break;
+        }
+    }
+    o << "CPU: " << cpu << " (" << sysconf(_SC_NPROCESSORS_ONLN) << " threads)\n";
+    for (std::string line; std::getline(meminfo, line);) {
+        if (line.rfind("MemTotal:", 0) == 0) {
+            o << "Memory: " << (std::strtoull(line.c_str() + 9, nullptr, 10) >> 10) << " MB\n";
+            break;
+        }
+    }
+    o << "GPU: in the log ([D3D12] vkd3d: ...)\n";
+    for (int i = 0, n = SDL_GetNumVideoDisplays(); i < n; i++) {
+        SDL_DisplayMode m{};
+        if (SDL_GetCurrentDisplayMode(i, &m) == 0)
+            o << "Display " << i + 1 << ": " << m.w << "x" << m.h << " at " << m.refresh_rate << " Hz\n";
+    }
+}
+#endif
+
+}  // namespace
+
+std::string system_info() {
+    std::ostringstream o;
+    // The game's own process (its renderer is up), not the crash dialog's: only then are this process's memory and
+    // the other software loaded into it the game's.
+    const bool game_process = rsx_d3d12_device() != nullptr;
+#if DES_DEV
+    o << "Developer build (cheats compiled in)\n";
+#endif
+    o << "DemonsSoulsRecomp " << version() << "\n";
+    o << "ps3recomp: " << kPs3recompVersion << "\n";
+    o << "Game dump (EBOOT.ELF SHA-256): " << (*kDumpSha256 ? kDumpSha256 : "unknown") << "\n";
+    platform_facts(o, game_process);
     return o.str();
 }
 
 std::string environment_info(const std::string& command_line) {
-    std::string out = "Command line: " + (command_line.empty() ? narrow(GetCommandLineW()) : command_line) + "\n";
+    std::string out = "Command line: " + (command_line.empty() ? command_line_text() : command_line) + "\n";
     static const char* kPrefixes[] = {"DES_", "PS3_", "RSX_", "SPU_", "SPURS_", "GCM_", "PAD_", "PPU_", "AUDIO_",
                                       "VBLANK", "FIFO_", "LIBSRE_", "SAIL_", "TROPHY_", "WATCHDOG_"};
     static const char* kHidden[] = {"DES_NET_NAME", "DES_NET_PASSWORD", "DES_NET_CUSTOM", "PS3_NP_ONLINE_ID",
                                     "PS3_NET_PASSWORD"};
     std::vector<std::string> lines;
-    if (LPWCH env = GetEnvironmentStringsW()) {
-        for (const wchar_t* p = env; *p; p += std::wcslen(p) + 1) {
-            const std::string kv = narrow(p);
-            const size_t eq = kv.find('=');
-            if (eq == std::string::npos || eq == 0) continue;
-            const std::string key = kv.substr(0, eq);
-            bool ours = false;
-            for (const char* prefix : kPrefixes) ours = ours || key.rfind(prefix, 0) == 0;
-            if (!ours) continue;
-            bool hide = false;
-            for (const char* h : kHidden) hide = hide || key == h;
-            lines.push_back(hide ? key + "=(set)" : kv);
-        }
-        FreeEnvironmentStringsW(env);
+    for (const std::string& kv : environment_strings()) {
+        const size_t eq = kv.find('=');
+        if (eq == std::string::npos || eq == 0) continue;
+        const std::string key = kv.substr(0, eq);
+        bool ours = false;
+        for (const char* prefix : kPrefixes) ours = ours || key.rfind(prefix, 0) == 0;
+        if (!ours) continue;
+        bool hide = false;
+        for (const char* h : kHidden) hide = hide || key == h;
+        lines.push_back(hide ? key + "=(set)" : kv);
     }
     std::sort(lines.begin(), lines.end());
     out += "Options set in the environment (" + std::to_string(lines.size()) + "):\n";
@@ -855,7 +1167,7 @@ std::string environment_info(const std::string& command_line) {
 
 std::vector<uint8_t> read_file(const std::filesystem::path& path) {
     std::vector<uint8_t> out;
-    FILE* f = _wfsopen(path.c_str(), L"rb", _SH_DENYNO);
+    FILE* f = open_file(path, "rb");
     if (!f) return out;
     uint8_t buf[1 << 16];
     for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) out.insert(out.end(), buf, buf + n);
@@ -864,11 +1176,11 @@ std::vector<uint8_t> read_file(const std::filesystem::path& path) {
 }
 
 std::string read_head_tail(const std::filesystem::path& path, size_t head, size_t tail_bytes) {
-    FILE* f = _wfsopen(path.c_str(), L"rb", _SH_DENYNO);  // (the game may still be writing it)
+    FILE* f = open_file(path, "rb");  // (the game may still be writing it)
     if (!f) return {};
-    _fseeki64(f, 0, SEEK_END);
-    const long long size = _ftelli64(f);
-    _fseeki64(f, 0, SEEK_SET);
+    seek_file(f, 0, SEEK_END);
+    const long long size = tell_file(f);
+    seek_file(f, 0, SEEK_SET);
     std::string text;
     // The first `head` lines (from the first 64 KB).
     {
@@ -884,7 +1196,7 @@ std::string read_head_tail(const std::filesystem::path& path, size_t head, size_
     const long long head_end = (long long)text.size();
     long long from = std::max(head_end, size - (long long)tail_bytes);
     if (from < size) {
-        _fseeki64(f, from, SEEK_SET);
+        seek_file(f, from, SEEK_SET);
         std::string tail(size_t(size - from), '\0');
         tail.resize(std::fread(tail.data(), 1, tail.size(), f));
         if (from > head_end) {
@@ -918,6 +1230,7 @@ std::string issue_url(const std::string& title, const std::string& body) {
     return std::string(kRepositoryUrl) + "/issues/new?title=" + url_encode(title) + "&body=" + url_encode(text);
 }
 
+#ifdef _WIN32
 void open_url(const std::string& url) {
     ShellExecuteW(nullptr, L"open", widen(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
@@ -926,12 +1239,27 @@ void reveal(const std::filesystem::path& path) {
     const std::wstring args = L"/select,\"" + path.wstring() + L"\"";
     ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
 }
+#else
+// xdg-open, the desktop's "open this" (a browser for a link, the file manager for a folder).
+void open_url(const std::string& url) {
+    char prog[] = "xdg-open";
+    std::string arg = url;
+    char* argv[] = {prog, arg.data(), nullptr};
+    pid_t pid = 0;
+    if (posix_spawnp(&pid, prog, nullptr, nullptr, argv, environ) != 0)
+        std::fprintf(stderr, "[report] could not run xdg-open for %s\n", url.c_str());
+}
+
+void reveal(const std::filesystem::path& path) {
+    open_url(path.parent_path().string());  // (the folder: xdg-open cannot select a file in it)
+}
+#endif
 
 void open_issue(const std::string& url, const std::filesystem::path& zip) {
     if (env_on("DES_REPORT_NO_OPEN")) {
         auto where = zip.empty() ? data_dir() / L"reports" / L"last-issue.zip" : zip;
         where += L".url.txt";
-        if (FILE* f = _wfopen(where.c_str(), L"wb")) {
+        if (FILE* f = open_file(where, "wb")) {
             std::fwrite(url.data(), 1, url.size(), f);
             std::fclose(f);
         }
@@ -942,6 +1270,72 @@ void open_issue(const std::string& url, const std::filesystem::path& zip) {
     if (!zip.empty()) reveal(zip);
 }
 
+#ifndef _WIN32
+void start_log() {
+    if (data_dir().empty()) return;
+    std::error_code ec;
+    const auto dir = data_dir() / "logs";
+    std::filesystem::create_directories(dir, ec);
+    auto path = dir / "des.log";
+    // Another copy of the game running at the same time holds a lock on des.log: this one then writes its own, which
+    // its reports quote (those of finished copies are cleared away after a day). Otherwise des.log starts over and
+    // the previous run's is kept as des.prev.log.
+    const auto locked = [](const std::filesystem::path& p) {
+        const int fd = open(p.c_str(), O_RDONLY | O_CLOEXEC);
+        if (fd < 0) return false;
+        const bool busy = flock(fd, LOCK_SH | LOCK_NB) != 0;
+        close(fd);
+        return busy;
+    };
+    if (locked(path)) {
+        const auto now = std::filesystem::file_time_type::clock::now();
+        for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+            const std::string name = e.path().filename().string();
+            if (name.rfind("des.", 0) == 0 && name != "des.log" && name != "des.prev.log" &&
+                now - e.last_write_time(ec) > std::chrono::hours(24))
+                std::filesystem::remove(e.path(), ec);
+        }
+        path = dir / ("des." + std::to_string(getpid()) + ".log");
+    } else {
+        std::filesystem::rename(path, dir / "des.prev.log", ec);
+    }
+    g_log_file = std::fopen(path.c_str(), "wb");
+    if (!g_log_file) return;
+    flock(fileno(g_log_file), LOCK_EX | LOCK_NB);
+    std::setvbuf(g_log_file, nullptr, _IOFBF, 1 << 16);
+
+    // The runtime's chatty per-event messages are on when standard error is not a terminal (ps3_log.h: "someone is
+    // capturing a log"). Standard error is a pipe from here on: keep what it decided on the terminal (quiet).
+    if (!std::getenv("PS3_VERBOSE") && isatty(2)) ps3_setenv("PS3_VERBOSE", "0");
+    // One pipe for both when they went to the same place (a terminal, or play.sh's file): the log then keeps their
+    // order. Otherwise one each, so that each still goes where it went.
+    struct stat so {}, se {};
+    const bool same = (fstat(1, &so) == 0 && fstat(2, &se) == 0 && so.st_dev == se.st_dev && so.st_ino == se.st_ino) ||
+                      (isatty(1) && isatty(2));
+    bool ok;
+    if (same) ok = tee({1, 2}, dup(2));
+    else ok = tee({2}, dup(2)) && tee({1}, dup(1));
+    if (!ok) return;
+    g_log_path = path;
+    std::atexit(flush_at_exit);
+}
+
+void flush_log() {
+    if (!g_log_file) return;
+    // As on Windows: a moment for the tee threads to wake up for what was just printed, then until they have written
+    // it all, never forever.
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    for (int i = 0; i < 50 && g_tee_idle.load() < g_tees; i++) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    for (int i = 0; i < 20; i++) {
+        if (g_log_lock.try_lock()) {
+            std::fflush(g_log_file);
+            g_log_lock.unlock();
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+#else
 void start_log() {
     if (data_dir().empty()) return;
     std::error_code ec;
@@ -992,18 +1386,24 @@ void flush_log() {
     Sleep(30);
     for (int i = 0; i < 50 && g_tee_idle.load() < g_tees; i++) Sleep(10);
     for (int i = 0; i < 20; i++) {  // (not forever: the thread holding it may be the one that crashed)
-        if (TryAcquireSRWLockExclusive(&g_log_lock)) {
+        if (g_log_lock.try_lock()) {
             std::fflush(g_log_file);
-            ReleaseSRWLockExclusive(&g_log_lock);
+            g_log_lock.unlock();
             return;
         }
         Sleep(10);
     }
 }
+#endif
 
 namespace {
 volatile uintptr_t g_nowhere = 0;  // (a null pointer the compiler cannot see)
+
+// A test's stop: this thread sleeps for good.
+[[noreturn]] void stop_here() {
+    for (;;) std::this_thread::sleep_for(std::chrono::hours(24));
 }
+}  // namespace
 
 // A frame count from the environment, read again every 64th call (the console's setenv can set it in a running game).
 unsigned long long env_u64_live(const char* name, unsigned& calls, unsigned long long& value) {
@@ -1011,16 +1411,16 @@ unsigned long long env_u64_live(const char* name, unsigned& calls, unsigned long
     return value;
 }
 
-std::atomic<DWORD> g_render_thread{0};  // frame_hook's thread: flip_hook leaves it alone
+std::atomic<std::thread::id> g_render_thread{};  // frame_hook's thread: flip_hook leaves it alone
 
 bool frame_hook(unsigned long long frame) {
-    g_render_thread.store(GetCurrentThreadId(), std::memory_order_relaxed);
+    g_render_thread.store(std::this_thread::get_id(), std::memory_order_relaxed);
     static const unsigned long long crash_at = env_u64("DES_CRASH_AT_FRAME"), abort_at = env_u64("DES_ABORT_AT_FRAME");
     static unsigned calls = 0, report_calls = 0;
     static unsigned long long hang_at = 0, report_at = 0, reported_at = 0;
     if (const auto at = env_u64_live("DES_HANG_RENDER_AT_FRAME", calls, hang_at); at && frame >= at) {
         std::fprintf(stderr, "[des] DES_HANG_RENDER_AT_FRAME=%llu: the render thread stops here (test)\n", at);
-        Sleep(INFINITE);
+        stop_here();
     }
     if (frame == crash_at && crash_at) {
         std::fprintf(stderr, "[des] DES_CRASH_AT_FRAME=%llu: crashing on purpose (test)\n", frame);
@@ -1043,9 +1443,10 @@ void flip_hook() {
     static unsigned long long hang_at = 0;
     // (the render thread decodes some flips from the FIFO: stopping it would be DES_HANG_RENDER_AT_FRAME's case)
     if (const auto at = env_u64_live("DES_HANG_AT_FRAME", calls, hang_at);
-        at && ppu_boot_frames_presented() >= at && GetCurrentThreadId() != g_render_thread.load(std::memory_order_relaxed)) {
+        at && ppu_boot_frames_presented() >= at &&
+        std::this_thread::get_id() != g_render_thread.load(std::memory_order_relaxed)) {
         std::fprintf(stderr, "[des] DES_HANG_AT_FRAME=%llu: the game stops here (test)\n", at);
-        Sleep(INFINITE);
+        stop_here();
     }
 }
 

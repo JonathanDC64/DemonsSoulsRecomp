@@ -360,15 +360,19 @@ Rml::Context* context() { return s.rml; }
 
 void set_ui_scale(float scale) { s.ui_scale = std::clamp(scale, 0.0f, 4.0f); }
 
+unsigned window_dpi() {
+    using DpiFn = UINT(WINAPI*)(HWND);  // (Windows 10 1607; by name, as the build targets older headers)
+    static const auto get_dpi =
+        reinterpret_cast<DpiFn>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow")));
+    return s.hwnd && get_dpi ? get_dpi(s.hwnd) : 0;
+}
+
 void render(void* back_buffer, unsigned index, int width, int height, const char* shot_path) {
     if (!s.initialised) return;
     if (s.rml->GetDimensions() != Rml::Vector2i{width, height}) s.rml->SetDimensions({width, height});
     // Dusklight's (and FFCCEOT-Recomp's) rule: the display's scale (its DPI), times the UI scale setting. The
     // window's size does not scale the UI: a larger window gives the documents more room, as for any program.
-    using DpiFn = UINT(WINAPI*)(HWND);  // (Windows 10 1607; by name, as the build targets older headers)
-    static const auto get_dpi =
-        reinterpret_cast<DpiFn>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow")));
-    const UINT dpi = s.hwnd && get_dpi ? get_dpi(s.hwnd) : 0;
+    const UINT dpi = window_dpi();
     const float display = dpi ? float(dpi) / 96.0f : 1.0f;
     s.rml->SetDensityIndependentPixelRatio((s.ui_scale > 0.0f ? s.ui_scale : 1.0f) * display);
     s.rml->Update();

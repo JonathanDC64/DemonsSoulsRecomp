@@ -21,6 +21,9 @@ Rml::Context* context();
 // The UI's size: 0 is automatic (1 dp = 1 px at 720p), anything else multiplies that.
 void set_ui_scale(float scale);
 
+// The window's DPI (96 is 100%), 0 if not known.
+unsigned window_dpi();
+
 // Updates the context and draws the documents into the back buffer (D3D12, PRESENT state on entry and on exit). With
 // shot_path, also writes the result (game frame and UI) to that BMP file.
 void render(void* back_buffer, unsigned index, int width, int height, const char* shot_path);

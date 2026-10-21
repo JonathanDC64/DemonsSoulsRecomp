@@ -23,14 +23,21 @@
 #include "ps3emu/ps3_knob.h"
 #include "rsx_shader_precompile.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <filesystem>
+#include <system_error>
+#endif
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 extern "C" const char* ppu_vfs_root;
@@ -49,7 +56,21 @@ constexpr const char* kAlts  = "1=d2c,2=d2c";
 std::atomic<int> s_state{0};   /* 0 idle, 1 reading, 2 compiling, 3 done */
 std::atomic<bool> s_skip{false};
 
+#ifdef _WIN32
+constexpr const char* kSep = "\\";
+#else
+constexpr const char* kSep = "/";
+#endif
+
 uint32_t be32(const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
+
+/* Case not counted. */
+bool same_nocase(const char* a, const char* b)
+{
+    for (; *a && *b; a++, b++)
+        if (std::tolower((unsigned char)*a) != std::tolower((unsigned char)*b)) return false;
+    return *a == *b;
+}
 
 bool read_file(const std::string& path, std::vector<uint8_t>& out)
 {
@@ -64,6 +85,7 @@ bool read_file(const std::string& path, std::vector<uint8_t>& out)
     return ok;
 }
 
+#ifdef _WIN32
 /* One line per input: name, size, last write. */
 void stamp_line(std::string& s, const char* name, const WIN32_FILE_ATTRIBUTE_DATA& a)
 {
@@ -108,6 +130,37 @@ std::vector<std::string> list_archives(const std::string& dir, std::string& stam
     for (const std::string& n : names) stamp_file(stamp, n.c_str(), dir + "\\" + n);
     return names;
 }
+#else
+/* One line per input: name, size, last write. */
+void stamp_file(std::string& s, const char* label, const std::string& path)
+{
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec) {
+        s += std::string(label) + " none\n";
+        return;
+    }
+    const auto when = std::filesystem::last_write_time(path, ec).time_since_epoch().count();
+    char line[512];
+    std::snprintf(line, sizeof line, "%s %llu %lld\n", label, (unsigned long long)size, (long long)when);
+    s += line;
+}
+
+/* The archives, in name order, and the stamp of everything the pass depends on. */
+std::vector<std::string> list_archives(const std::string& dir, std::string& stamp)
+{
+    std::vector<std::string> names;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec))
+        if (e.path().extension() == ".shaderbnd") names.emplace_back(e.path().filename().string());
+    std::sort(names.begin(), names.end());
+    stamp = "des_prework 1\n";
+    stamp_file(stamp, "exe", "/proc/self/exe");   /* (a new build is another size or time) */
+    stamp += std::string("kinds ") + kUnits + " " + kAlts + "\n";
+    for (const std::string& n : names) stamp_file(stamp, n.c_str(), dir + "/" + n);
+    return names;
+}
+#endif
 
 /* Queue every .vpo/.fpo in one archive; returns how many. */
 int queue_archive(const std::string& path, const std::string& name)
@@ -128,7 +181,7 @@ int queue_archive(const std::string& path, const std::string& name)
         const size_t elen = strnlen(ename, b.size() - name_off);
         if (elen < 4) continue;
         const std::string ext(ename + elen - 4, 4);
-        if (_stricmp(ext.c_str(), ".vpo") != 0 && _stricmp(ext.c_str(), ".fpo") != 0) continue;
+        if (!same_nocase(ext.c_str(), ".vpo") && !same_nocase(ext.c_str(), ".fpo")) continue;
         const uint32_t hdr = be32(&b[off + 4]);
         if (hdr >= size) continue;
         char label[256];
@@ -171,16 +224,16 @@ extern "C" void ps3_title_prework(void)
 {
     const char* knob = std::getenv("DES_PRECOMPILE");
     if (knob && std::strcmp(knob, "0") == 0) return;
-    const bool force = knob && _stricmp(knob, "force") == 0;
+    const bool force = knob && same_nocase(knob, "force");
     const char* cache = rsx_d3d12_shader_cache_path();
     if (!cache || !cache[0] || !ppu_vfs_root) return;   /* the cache is off */
-    const std::string dir = std::string(ppu_vfs_root) + "\\PS3_GAME\\USRDIR\\shader";
+    const std::string dir = std::string(ppu_vfs_root) + kSep + "PS3_GAME" + kSep + "USRDIR" + kSep + "shader";
     s_state.store(1);
 
     std::string stamp;
     const std::vector<std::string> names = list_archives(dir, stamp);
-    stamp_file(stamp, "fp_variants", std::string(cache) + "\\fp_variants.txt");
-    const std::string stamp_path = std::string(cache) + "\\precompile.stamp";
+    stamp_file(stamp, "fp_variants", std::string(cache) + kSep + "fp_variants.txt");
+    const std::string stamp_path = std::string(cache) + kSep + "precompile.stamp";
     std::vector<uint8_t> old;
     if (names.empty()) {
         std::fprintf(stderr, "[des] shaders: no archives in %s; shaders compile as the game draws them\n", dir.c_str());
@@ -197,12 +250,11 @@ extern "C" void ps3_title_prework(void)
     int programs = 0;
     for (const std::string& n : names) {
         if (s_skip.load()) break;
-        programs += queue_archive(dir + "\\" + n, n);
+        programs += queue_archive(dir + kSep + n, n);
     }
     /* One processor is left for the window and its progress bar. */
-    SYSTEM_INFO si;
-    GetSystemInfo(&si);
-    const int threads = si.dwNumberOfProcessors > 2 ? int(si.dwNumberOfProcessors) - 1 : 1;
+    const unsigned cpus = std::thread::hardware_concurrency();
+    const int threads = cpus > 2 ? int(cpus) - 1 : 1;
     if (s_skip.load() || rsx_shader_precompile_start(threads) != 0) {
         std::fprintf(stderr, "[des] shaders: precompile %s\n", s_skip.load() ? "skipped" : "did not start");
         s_state.store(3);

@@ -366,6 +366,18 @@ void release_now() {
     if (sHeld.exchange(false)) ClipCursor(nullptr);
 }
 
+void client_size(void* hwnd, int& width, int& height) {
+    RECT rc{};
+    GetClientRect(static_cast<HWND>(hwnd), &rc);
+    width = rc.right - rc.left;
+    height = rc.bottom - rc.top;
+}
+
+void hold_buttons(void* hwnd, bool down) {
+    if (down) SetCapture(static_cast<HWND>(hwnd));
+    else ReleaseCapture();
+}
+
 }  // namespace ui::mouse
 
 extern "C" void des_mouse_take(int* dx, int* dy) {

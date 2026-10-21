@@ -1,5 +1,9 @@
 # 75. Linux builds, Vulkan, and a renderer choice on Windows (study, 2026-10-21)
 
+**Update (same day):** native Linux runs, with the D3D12 backend on vkd3d
+rather than a new Vulkan device layer. See docs/76; the estimates below are
+out of date.
+
 This page checks docs/36 (Linux and macOS survey) and docs/46 part B
 (platforms) against the current code. It adds two questions those pages
 did not answer: how far the Vulkan backend is from what Demon's Souls needs,

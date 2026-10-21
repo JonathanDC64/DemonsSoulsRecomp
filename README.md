@@ -124,6 +124,7 @@ port/       the Demon's Souls glue: CMake, heap shim, options, stubs
 scripts/    lift, patch and build helpers
 tools/des/  run, regression, capture and analysis scripts
 tools/ghidra/  headless Ghidra helpers for reading the game's code
+tools/linux/  an AppImage of your own Linux build (docs/76)
 tools/pgo/  profile-guided (PGO) builds, a developer tool
 ps3recomp/  the recompiler and runtime (separate repository, not tracked here)
 work/       your decrypted executable, lifted code and logs (gitignored)

@@ -111,6 +111,7 @@
 0x001DF83C=des_phys_kf    # fdivs f31, f0, f1: the same, second caller
 0x012D86C4=des_rag_pose_a  # ld r2 after a ragdoll pose reader's transform-to-pose call: bone pose between steps
 0x012D9354=des_rag_pose_b  # the same, second pose reader
+0x0109F2C4=des_body_xform  # last stvx of the hkTransform-to-matrix copy: a moving body's matrix between steps
 
 # des_viewer_rate (port/des_options.cpp): the character creation previews'
 # stick steps add the right stick to the yaw and pitch once a frame, tuned

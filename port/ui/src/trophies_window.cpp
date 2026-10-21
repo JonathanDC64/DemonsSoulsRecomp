@@ -16,6 +16,10 @@
 #include "trophy_toasts.hpp"
 #include "ui.hpp"
 
+#ifndef _WIN32
+#include "platform.hpp"  // (localtime_s)
+#endif
+
 #include <algorithm>
 #include <chrono>
 #include <cstddef>

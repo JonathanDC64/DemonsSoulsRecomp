@@ -3,8 +3,6 @@
 
 #include "report.hpp"
 
-#include <windows.h>
-
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -190,7 +188,7 @@ namespace {
 void load_file() {
     const std::string& file = path();
     if (file.empty()) return;
-    FILE* f = _wfopen(report::widen(file).c_str(), L"r");
+    FILE* f = report::open_file(report::widen(file), "r");
     if (!f) return;
     char line[512];
     int applied = 0;
@@ -492,7 +490,7 @@ void save() {
     if (file.empty()) return;
     make_dirs(file);
     const std::string tmp = file + ".tmp";
-    FILE* f = _wfopen(report::widen(tmp).c_str(), L"w");
+    FILE* f = report::open_file(report::widen(tmp), "w");
     if (!f) return;
     std::fprintf(f,
                  "# Demon's Souls PC port settings (key = value), written by the in-game menu.\n"
@@ -502,7 +500,7 @@ void save() {
         if (d.apply != Apply::Session) std::fprintf(f, "%s = %s\n", d.key, get(d.key).c_str());
     }
     std::fclose(f);
-    MoveFileExW(report::widen(tmp).c_str(), report::widen(file).c_str(), MOVEFILE_REPLACE_EXISTING);
+    report::replace_file(report::widen(tmp), report::widen(file));
 }
 
 }  // namespace ui::settings

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -60,6 +61,10 @@ void reveal(const std::filesystem::path& path);
 
 std::wstring widen(const std::string& s);
 std::string narrow(const std::wstring& s);
+
+// A file, as fopen (on Windows through _wfopen, so that any name opens), and a rename over an existing file.
+FILE* open_file(const std::filesystem::path& path, const char* mode);
+bool replace_file(const std::filesystem::path& from, const std::filesystem::path& to);
 
 // The test knobs read at each presented frame (the overlay's frame hook): DES_CRASH_AT_FRAME=n crashes (an access
 // violation) and DES_ABORT_AT_FRAME=n aborts at frame n; true at DES_REPORT_AT_FRAME=n (start an issue report).

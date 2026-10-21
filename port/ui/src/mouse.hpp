@@ -22,4 +22,9 @@ void on_frame();
 // The game crashed: the cursor is let go at once (the crash handler's thread).
 void release_now();
 
+#ifndef _WIN32
+// The cursor's shape over the UI (an SDL_SystemCursor), from RmlUi on the render thread: set on the window's thread.
+void set_cursor(int shape);
+#endif
+
 }  // namespace ui::mouse

@@ -15,16 +15,16 @@
 // only once every key and button is released, so the press that closed the menu does not reach the game.
 #include "des_ui.h"
 
-#include "RmlUi_Platform_Win32.h"
-
 #include "app.hpp"
 #include "crash_report.hpp"
 #include "host.hpp"
 #include "input.hpp"
+#include "keys.hpp"
 #include "menu_bar.hpp"
 #include "mouse.hpp"
 #include "osk_window.hpp"
 #include "overlay.hpp"
+#include "platform.hpp"
 #include "prelaunch.hpp"
 #include "prework_modal.hpp"
 #include "report.hpp"
@@ -35,9 +35,11 @@
 #include "ui.hpp"
 #include "version.hpp"
 
-#include <windows.h>
-#include <windowsx.h>
+#ifdef _WIN32
 #include <xinput.h>
+#else
+#include <SDL.h>  // (the window is SDL's: its size and the mouse capture)
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -63,6 +65,7 @@ void rsx_d3d12_overlay_repaint(int on);
 void* rsx_d3d12_device(void);
 void* rsx_d3d12_queue(void);
 void* rsx_d3d12_hwnd(void);
+void rsx_d3d12_post_message(unsigned msg, unsigned long long wp, long long lp);
 void rsx_d3d12_set_borderless(int on);
 int rsx_d3d12_borderless(void);
 
@@ -179,14 +182,7 @@ void osk_close() {
 }
 
 std::string osk_utf8(const std::u16string& s) {
-    if (s.empty()) return {};
-    const int n = WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<const wchar_t*>(s.data()), int(s.size()), nullptr,
-                                      0, nullptr, nullptr);
-    std::string out(size_t(n > 0 ? n : 0), '\0');
-    if (n > 0)
-        WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<const wchar_t*>(s.data()), int(s.size()), out.data(), n,
-                            nullptr, nullptr);
-    return out;
+    return ui::utf16_to_utf8(s);
 }
 
 // In frame: show or close the keyboard as the game asked. Without the UI (it failed to start) the game gets its
@@ -232,9 +228,15 @@ bool is_menu_key(WPARAM vk) {
 
 // The back buffer is stretched over the client area: mouse positions are in back buffer pixels.
 void map_mouse(HWND hwnd, LPARAM lp, int& x, int& y) {
+#ifdef _WIN32
     RECT rc{};
     GetClientRect(hwnd, &rc);
     const int cw = std::max<int>(1, rc.right - rc.left), ch = std::max<int>(1, rc.bottom - rc.top);
+#else
+    int w = 1, h = 1;  // (in the SDL window's points, as the positions are)
+    SDL_GetWindowSize(static_cast<SDL_Window*>(hwnd), &w, &h);
+    const int cw = std::max(1, w), ch = std::max(1, h);
+#endif
     x = GET_X_LPARAM(lp) * sBufferW.load() / cw;
     y = GET_Y_LPARAM(lp) * sBufferH.load() / ch;
 }
@@ -254,7 +256,7 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
         const bool down = msg == WM_KEYDOWN;
         if (is_menu_key(wp) || (capturing && !(wp >= VK_F9 && wp <= VK_F12))) {
             if (!(down && (lp & (1LL << 30)) && is_menu_key(wp) && !capturing)) {  // no auto-repeat opening
-                push_event({down ? InputEvent::KeyDown : InputEvent::KeyUp, int(wp), 0, RmlWin32::GetKeyModifierState()});
+                push_event({down ? InputEvent::KeyDown : InputEvent::KeyUp, int(wp), 0, ui::keys::modifiers()});
             }
             *result = 0;
             return 1;
@@ -276,7 +278,7 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
         if (!capturing) return 0;
         int x, y;
         map_mouse(hwnd, lp, x, y);
-        InputEvent e{InputEvent::MouseMove, x, y, RmlWin32::GetKeyModifierState()};
+        InputEvent e{InputEvent::MouseMove, x, y, ui::keys::modifiers()};
         push_event(e);
         if (msg != WM_MOUSEMOVE) {
             const bool down = msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN;
@@ -284,15 +286,19 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
                                : (msg == WM_RBUTTONDOWN || msg == WM_RBUTTONUP) ? 1
                                                                                 : 2;
             push_event({down ? InputEvent::MouseDown : InputEvent::MouseUp, button, 0, e.mods});
+#ifdef _WIN32
             if (down) SetCapture(hwnd);
             else ReleaseCapture();
+#else
+            SDL_CaptureMouse(down ? SDL_TRUE : SDL_FALSE);  // (the window's thread: this hook runs there)
+#endif
         }
         *result = 0;
         return 1;
     }
     case WM_MOUSEWHEEL: {
         if (!capturing) return 0;
-        InputEvent e{InputEvent::Wheel, 0, 0, RmlWin32::GetKeyModifierState()};
+        InputEvent e{InputEvent::Wheel, 0, 0, ui::keys::modifiers()};
         e.wheel = -float(GET_WHEEL_DELTA_WPARAM(wp)) / float(WHEEL_DELTA);
         push_event(e);
         *result = 0;
@@ -307,8 +313,10 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
     }
 }
 
-// ---- Gamepads: XInput and the Sony HID reader, merged (the same readers the game's pad uses) ----
+// ---- Gamepads: XInput and the Sony HID reader, merged (the same readers the game's pad uses; off Windows the reader
+// gives SDL's pads) ----
 
+#ifdef _WIN32
 unsigned xinput_to_cell(WORD b) {
     unsigned c = 0;
     if (b & XINPUT_GAMEPAD_DPAD_UP) c |= kUp;
@@ -327,6 +335,7 @@ unsigned xinput_to_cell(WORD b) {
     if (b & XINPUT_GAMEPAD_Y) c |= kTriangle;
     return c;
 }
+#endif
 
 float pick(float a, float b) {
     return std::abs(a) >= std::abs(b) ? a : b;
@@ -335,10 +344,11 @@ float pick(float a, float b) {
 // Polls XInput slots only while a slot answers: a missing pad's XInputGetState is slow, so empty slots are retried
 // once a second.
 ui::input::PadState read_pads(bool& neutral) {
-    static clock_type::time_point sNextScan[XUSER_MAX_COUNT]{};
     ui::input::PadState pad;
     neutral = true;
     if (ui::settings::no_user_input()) return pad;  // PS3_NO_USER_INPUT: no pad of the user's is read
+#ifdef _WIN32
+    static clock_type::time_point sNextScan[XUSER_MAX_COUNT]{};
     const auto now = clock_type::now();
     for (DWORD i = 0; i < XUSER_MAX_COUNT; i++) {
         if (now < sNextScan[i]) continue;
@@ -360,6 +370,7 @@ ui::input::PadState read_pads(bool& neutral) {
             std::abs(g.sThumbRX) > 8000 || std::abs(g.sThumbRY) > 8000)
             neutral = false;
     }
+#endif
     PadHidSonyState hid[4];
     const int n = pad_hid_sony_poll(hid, 4);
     for (int i = 0; i < n; i++) {
@@ -457,11 +468,11 @@ void process_queue() {
                 break;
             }
             ctx->ProcessMouseLeave();
-            ctx->ProcessKeyDown(RmlWin32::ConvertKey(e.a), e.mods);
+            ctx->ProcessKeyDown(ui::keys::to_rml(e.a), e.mods);
             break;
         case InputEvent::KeyUp:
             if (ui::input::binding_capture()) break;
-            ctx->ProcessKeyUp(RmlWin32::ConvertKey(e.a), e.mods);
+            ctx->ProcessKeyUp(ui::keys::to_rml(e.a), e.mods);
             break;
         case InputEvent::Char:
             // Typing into a text field (Custom frame rate's): printable characters only, as RmlUi's own Win32
@@ -755,7 +766,7 @@ extern "C" void des_ui_early_init(void) {
     sCloseAsks = !ui::settings::unattended_run();
     ui::app().quit = [] {
         sQuitConfirmed.store(true);
-        if (HWND hwnd = static_cast<HWND>(rsx_d3d12_hwnd())) PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        rsx_d3d12_post_message(WM_CLOSE, 0, 0);
     };
     ui::app().report_issue = [] { sReportCountdown = 4; };  // (the render thread: the menu's callbacks run in frame)
 

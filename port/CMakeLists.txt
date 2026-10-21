@@ -337,8 +337,8 @@ endif()
 # Start screen, in-game menu (F1 / Esc, or L3+R3 on a pad) and settings,
 # drawn over the game frame. Its own static library, linked only: des_boot's
 # compile flags do not change. DES_UI=0 at run time leaves it uninstalled. -DDES_UI=OFF builds
-# without it (des_ui_stub.cpp): the default off Windows until the UI runs there (docs/76).
-if(WIN32)
+# without it (des_ui_stub.cpp). Off Windows it draws through D3D12 on vkd3d, so it needs DES_VKD3D (docs/76).
+if(WIN32 OR DES_VKD3D)
     option(DES_UI "Build the wrapper UI (start screen, menu, settings)" ON)
 else()
     option(DES_UI "Build the wrapper UI (start screen, menu, settings)" OFF)

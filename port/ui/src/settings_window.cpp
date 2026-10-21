@@ -20,9 +20,6 @@
 #include "../../des_dev_marker.h"
 #endif
 
-#include <windows.h>
-#include <shellapi.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -35,7 +32,7 @@ namespace ui {
 namespace {
 
 void open_url(const char* url) {
-    ShellExecuteA(nullptr, "open", url, nullptr, nullptr, SW_SHOWNORMAL);
+    report::open_url(url);
 }
 
 // What heads a row's help: the option is set from outside, or it takes effect at the next start.
@@ -350,8 +347,13 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                 pane.clear();
                 pane.add_text("Change which buttons and keys do what.");
             });
+#ifdef _WIN32
         info_row(leftPane, rightPane, "Gamepads", "XInput, DualSense, DualShock 4",
             "Xbox controllers, DualSense and DualShock 4, over USB or Bluetooth.");
+#else
+        info_row(leftPane, rightPane, "Gamepads", "SDL game controllers",
+            "Xbox, PlayStation and other controllers SDL knows, over USB or Bluetooth.");
+#endif
         info_row(leftPane, rightPane, "Keyboard and mouse", "WASD, mouse, Space",
             "As in the Souls games on PC:<br/>"
             "<b>W A S D</b> move &nbsp; <b>Left Alt</b> (held) walk &nbsp; <b>Mouse</b> camera (Mouse look, "

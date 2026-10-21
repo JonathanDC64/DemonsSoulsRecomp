@@ -12,9 +12,8 @@
 #include "modal.hpp"
 #include "pane.hpp"
 #include "settings.hpp"
+#include "platform.hpp"
 #include "ui.hpp"
-
-#include <windows.h>
 
 #include <array>
 #include <cctype>
@@ -337,6 +336,7 @@ Rml::String key_label(int vk) {
     case kInWheelDown: return "Wheel down";
     default: break;
     }
+#ifdef _WIN32
     LONG lp = LONG(MapVirtualKeyA(UINT(vk), MAPVK_VK_TO_VSC)) << 16;
     switch (vk) {
     case VK_INSERT: case VK_DELETE: case VK_HOME: case VK_END: case VK_PRIOR: case VK_NEXT: case VK_DIVIDE:
@@ -347,6 +347,45 @@ Rml::String key_label(int vk) {
     }
     char name[64];
     if (GetKeyNameTextA(lp, name, sizeof name) > 0) return name;
+#else
+    // (Windows asks the keyboard layout for the name; here the US keyboard's names)
+    if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) return Rml::String(1, char(vk));
+    if (vk >= VK_F1 && vk <= VK_F24) return "F" + std::to_string(vk - VK_F1 + 1);
+    if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) return "Num " + std::to_string(vk - VK_NUMPAD0);
+    switch (vk) {
+    case VK_SPACE: return "Space";
+    case VK_TAB: return "Tab";
+    case VK_ESCAPE: return "Esc";
+    case VK_BACK: return "Backspace";
+    case VK_INSERT: return "Insert";
+    case VK_DELETE: return "Delete";
+    case VK_HOME: return "Home";
+    case VK_END: return "End";
+    case VK_PRIOR: return "Page Up";
+    case VK_NEXT: return "Page Down";
+    case VK_CAPITAL: return "Caps Lock";
+    case VK_NUMLOCK: return "Num Lock";
+    case VK_SCROLL: return "Scroll Lock";
+    case VK_PAUSE: return "Pause";
+    case VK_MULTIPLY: return "Num *";
+    case VK_ADD: return "Num +";
+    case VK_SUBTRACT: return "Num -";
+    case VK_DECIMAL: return "Num Del";
+    case VK_DIVIDE: return "Num /";
+    case VK_OEM_1: return ";";
+    case VK_OEM_PLUS: return "=";
+    case VK_OEM_COMMA: return ",";
+    case VK_OEM_MINUS: return "-";
+    case VK_OEM_PERIOD: return ".";
+    case VK_OEM_2: return "/";
+    case VK_OEM_3: return "`";
+    case VK_OEM_4: return "[";
+    case VK_OEM_5: return "\\";
+    case VK_OEM_6: return "]";
+    case VK_OEM_7: return "'";
+    default: break;
+    }
+#endif
     char code[16];
     std::snprintf(code, sizeof code, "Key 0x%02X", vk);
     return code;

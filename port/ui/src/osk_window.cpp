@@ -8,7 +8,7 @@
 
 #include "ui.hpp"
 
-#include <windows.h>
+#include "platform.hpp"
 
 #include <cmath>
 
@@ -33,14 +33,7 @@ constexpr const char* kRows[] = {
 };
 
 std::string utf8(const std::u16string& s) {
-    if (s.empty()) return {};
-    const int n = WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<const wchar_t*>(s.data()), int(s.size()), nullptr,
-                                      0, nullptr, nullptr);
-    std::string out(size_t(n > 0 ? n : 0), '\0');
-    if (n > 0)
-        WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<const wchar_t*>(s.data()), int(s.size()), out.data(), n,
-                            nullptr, nullptr);
-    return out;
+    return utf16_to_utf8(s);
 }
 
 float centre_x(Rml::Element* e) {

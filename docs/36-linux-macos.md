@@ -4,6 +4,8 @@ Short answer: the ps3recomp runtime already builds on Linux and macOS, and its C
 
 This doc lists what exists, what blocks a port, and an order to do it in. No code has changed yet.
 
+Updated plan (2026-10-21), with the Vulkan backend's gaps, Proton first, and whether Windows should get a renderer choice: docs/75.
+
 ## What already works off Windows
 
 - **CI** (`ps3recomp/.github/workflows`): `linux.yml` (gcc and clang, null renderer), `linux-vulkan.yml` (lavapipe plus the validation layer, every `ps3recomp_host` scene) and `macos.yml` (arm64). They build the runtime library and the host test scenes, not a game.

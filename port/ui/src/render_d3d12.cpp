@@ -1,4 +1,4 @@
-// Written for Demon's Souls. RmlUi's renderer on D3D12 (render_d3d12.hpp, docs/76). RmlUi's own D3D11 renderer
+// Written for Demon's Souls. RmlUi's renderer on D3D12 (renderer.hpp, docs/76). RmlUi's own D3D11 renderer
 // (Backends/RmlUi_Renderer_DX11.cpp, MIT) rewritten for D3D12, and in D3D's conventions throughout (rows top down, no
 // flips): its shaders, its layers and filters (opacity, blur, drop shadow, the colour matrices, mask images), its
 // gradients and its clip mask in the stencil buffer, all in premultiplied alpha.
@@ -10,7 +10,7 @@
 // targets after a resize) is released once the GPU is past the frames that used it.
 //
 // Not here: RmlUi's "shader" decorator demo ("creation"), which the UI does not use.
-#include "render_d3d12.hpp"
+#include "renderer.hpp"
 
 #ifdef _WIN32
 #include <d3d12.h>
@@ -364,7 +364,7 @@ private:
     std::vector<UINT> mFree;
 };
 
-class RendererImpl final : public Renderer {
+class RendererImpl final : public Renderer, public Rml::RenderInterface {
 public:
     RendererImpl(ID3D12Device* device, ID3D12CommandQueue* queue, ImageSource images)
         : mDevice(device), mQueue(queue), mImages(std::move(images)) {
@@ -375,9 +375,10 @@ public:
     bool init();
 
     // ---- Renderer ----
-    void begin_frame(int width, int height) override;
-    void end_frame(void* back_buffer) override;
-    bool read_back(void* back_buffer, int width, int height, std::vector<unsigned char>& rgba) override;
+    Rml::RenderInterface* rml() override { return this; }
+    bool begin_frame(void* back_buffer, unsigned index, int width, int height) override;
+    void end_frame() override;
+    bool read_back(void* back_buffer, unsigned index, int width, int height, std::vector<unsigned char>& rgba) override;
     void release_back_buffers() override;
 
     // ---- Rml::RenderInterface ----
@@ -488,6 +489,7 @@ private:
 
     UINT mSamples = 1;
     int mWidth = 0, mHeight = 0;
+    ID3D12Resource* mFrameBuffer = nullptr;  // the frame's back buffer, from begin_frame to end_frame
     std::vector<std::unique_ptr<Target>> mLayers;
     int mLayerCount = 0;
     ID3D12Resource* mStencil = nullptr;
@@ -1116,10 +1118,12 @@ void RendererImpl::resolve(Target& from, Target& to) {
 
 // ---- Frames ----
 
-void RendererImpl::begin_frame(int width, int height) {
+// Always a frame: if the list or the stencil buffer could not be made, the drawing calls and end_frame skip their work.
+bool RendererImpl::begin_frame(void* back_buffer, unsigned, int width, int height) {
+    mFrameBuffer = static_cast<ID3D12Resource*>(back_buffer);
     width = std::max(width, 1);
     height = std::max(height, 1);
-    if (!open()) return;
+    if (!open()) return true;
     if (width != mWidth || height != mHeight) resize(width, height);
     mProjection = Rml::Matrix4f::ProjectOrtho(0, float(width), float(height), 0, -10000, 10000);
     mTransform = mProjection;
@@ -1134,19 +1138,22 @@ void RendererImpl::begin_frame(int width, int height) {
         clear.DepthStencil.Depth = 1.f;
         mStencil = make_texture(width, height, 1, kStencilFormat, mSamples, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL,
                                 D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear);
-        if (!mStencil) return;
+        if (!mStencil) return true;
         mDevice->CreateDepthStencilView(mStencil, nullptr, mDsv.cpu(mStencilDsv));
     }
     mList->ClearDepthStencilView(mDsv.cpu(mStencilDsv), D3D12_CLEAR_FLAG_STENCIL, 1.f, 0, 0, nullptr);
     PushLayer();
+    return true;
 }
 
-void RendererImpl::end_frame(void* back_buffer) {
+void RendererImpl::end_frame() {
+    ID3D12Resource* const back_buffer = mFrameBuffer;
+    mFrameBuffer = nullptr;
     if (!mOpen) return;
     Target* base = mStencil ? layer(0) : nullptr;
     Target* primary = base ? post(0) : nullptr;
     Target out;
-    if (base && primary && back_buffer && this->back_buffer(static_cast<ID3D12Resource*>(back_buffer), out)) {
+    if (base && primary && back_buffer && this->back_buffer(back_buffer, out)) {
         resolve(*base, *primary);
         bind(out);
         mBlend = kPremultiplied;
@@ -1159,7 +1166,7 @@ void RendererImpl::end_frame(void* back_buffer) {
     submit();
 }
 
-bool RendererImpl::read_back(void* back_buffer, int width, int height, std::vector<unsigned char>& rgba) {
+bool RendererImpl::read_back(void* back_buffer, unsigned, int width, int height, std::vector<unsigned char>& rgba) {
     auto* res = static_cast<ID3D12Resource*>(back_buffer);
     if (!res || width <= 0 || height <= 0 || !open()) return false;
     const D3D12_RESOURCE_DESC d = res->GetDesc();
@@ -1788,7 +1795,7 @@ void RendererImpl::ReleaseShader(Rml::CompiledShaderHandle shader) {
 
 }  // namespace
 
-std::unique_ptr<Renderer> Renderer::create(void* device, void* queue, ImageSource images) {
+std::unique_ptr<Renderer> create(void* device, void* queue, ImageSource images) {
     if (!device || !queue) return nullptr;
     auto r = std::make_unique<RendererImpl>(static_cast<ID3D12Device*>(device), static_cast<ID3D12CommandQueue*>(queue),
                                             std::move(images));

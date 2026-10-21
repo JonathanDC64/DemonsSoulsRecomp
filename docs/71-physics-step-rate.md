@@ -74,6 +74,32 @@ All runs use a scratch probe that warps the player next to an enemy. Unlocked is
 - Drawn pose of a soldier's pelvis after death, unlocked: without `DES_RAGINTERP` it holds for 4-5 frames and then
   jumps (up to 5.7 cm in a frame); with it, it moves every frame (at most 0.75 cm).
 
+## Stutter when breaking obstacles
+
+Above 30 fps, breaking a barricade or crate made the game stutter for about half a second. The frame log lined up
+with the F8 marks: the frames that stepped the physics took 20-120 ms, the others 4-7 ms.
+
+- **Cause.** The main thread waits for the step (`sys_cond_wait`) on the Havok PPU Thread, which polls its SPU jobs
+  with `usleep(1)` (poll sites `0x010CF834`, `0x010D000C`, `0x010D0F8C`, `0x010D3B44`). After 64 back-to-back short
+  sleeps, ps3recomp's `sys_timer_usleep` sleeps on the high-resolution timer (about 0.5 ms), so each poll came back
+  late. Debris makes many short SPU jobs, so a step after a break added up hundreds of late polls.
+- **Not the cause.** The SPU float fix (the same step cost on both, interleaved), the number of moving bodies
+  (killing every enemy at once leaves 110-190 bodies awake, and the steps stay at 9-13 ms), and the in-between pose
+  hooks (about 0.04 ms a frame).
+- **Fix.** ps3recomp #89: sleeps of at most `USLEEP_YIELD_US` (default 10) keep the precise spin in a streak.
+  Only the Havok thread sleeps that briefly; the other pollers ask for 30 us or more.
+
+| 10 replayed breaks, 2 rounds | Worst step frame per break | Step frames over 16 ms |
+|---|---|---|
+| before | 12-54 ms | 56, 50 |
+| after | 12-22 ms | 9, 7 |
+
+Normal play on the deep Palace save is unchanged (same build, knob off and on, 3 runs: -0.07%, +0.5%, -0.2%).
+
+The breaks were replayed from a player's recording: the frame log with the camera yaw, then a scratch probe that kills
+every enemy, warps to where the player stood before each roll, and rolls along the same world direction (stick angle =
+heading minus camera yaw).
+
 ## Open
 
 - Per-body settings (damping, quality type, max speeds) come from the game data and were not read.

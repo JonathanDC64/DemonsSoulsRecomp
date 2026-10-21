@@ -32,9 +32,27 @@ walks into them. RPCS3's DeS FPS patch has the same warning: above 60 fps "users
   The blend is the game time since the body got a new step over the step length, so the drawn pose runs one step
   (33 ms) behind. A body that sleeps shows its own transform. `DES_RAGINTERP_LOG=1` checks the swept end against
   the transform (they matched for every body tested).
-- Other physics objects (breakables, debris) may still move 30 times a second (not checked).
+- Breakables, debris and loose objects are drawn between steps too. The game reads their body transform through
+  `0x0109F250`, which copies an hkTransform into a 4x4 matrix; a hook after its last store (`0x0109F2C4`) writes
+  the in-between pose into the matrix when the source is a moving dynamic rigid body (vtable `0x018B4810`,
+  inverse mass above 0). Keyframed bodies and copies of anything else are left alone.
 - `DES_PHYS_HZ=0` steps every frame (the old behaviour above 30 fps). Other values set the cap; 60 was tried and
   is worse than 30 (below).
+
+## Corpses falling through the floor
+
+Corpses that sank through the floor and fell out of the level were not the step rate. The SPU has no Inf or NaN:
+the refined reciprocal estimate of 0 is the largest finite float, and RPCS3's approximate float mode (the one it
+runs Demon's Souls with) also gives 0 for a multiply by 0. Our SPU helpers (`runtime/spu/spu_helpers.h` in
+ps3recomp) gave Inf for 1/0 and then NaN for Inf * 0, and Havok's SPU code passed it on. ps3recomp branch
+`fix/spu-xfloat-approx` matches RPCS3 (`fi` on the bit fields with a clamp, `fm`/`fma` zero cases, clamped
+`fs`/`fms`/`fnms`). Which case Havok hit was not traced. The fix stops the falls with or without the cap.
+
+| Warp test: runs where a corpse fell out of the level | Old SPU floats | Fixed SPU floats |
+|---|---|---|
+| Unlocked, no cap | 7 of 10 | 0 of 10 |
+| Unlocked, no cap, the two runtimes interleaved | 3 of 4 | 0 of 4 |
+| Unlocked, cap 30, with the breakables hook | 2 of 6 | 0 of 4 |
 
 ## Tests
 
@@ -42,12 +60,14 @@ All runs use a scratch probe that warps the player next to an enemy. Unlocked is
 
 | Test | 30 fps | Unlocked | Unlocked + cap 30 |
 |---|---|---|---|
-| Already-dead corpses, warp next to them, walk about: runs where a corpse fell through the floor | 2 of 7 | 7 of 10 | 2 of 6 (cap 60: 3 of 6) |
+| Already-dead corpses, warp next to them, walk about: runs where a corpse fell through the floor (old SPU floats) | 2 of 7 | 7 of 10 | 2 of 6 (cap 60: 3 of 6) |
 | Kill a soldier next to the player (Palace 1-1): samples over 1 m/s 3-12 s after death | 7, 0, 0 | 5, 6, 16 | 3, 1, 0 |
 | The same with the player unhurt (`DES_GOD=1`), death phase | 2, 2, 3, 3 | 8, 7, 18, 8 | 2, 6, 2, 4 |
 | The same, then walk into the corpse | 6, 0, 2, 4 | 32, 8, 0, 4 | 3, 0, 0, 39 |
+| Death phase, fixed SPU floats and the breakables hook | | | 5, 2, 2, 12 |
 
 - The cap brings death twitching back to the 30 fps level.
+- Dragging a corpse by walking through it throws it at 5-11 m/s at 30 fps too; there is no RPCS3 reference for it yet.
 - Walking into corpses is noisy at every rate. One capped run sank a corpse 2 m. The warp test also sinks corpses
   at 30 fps, so the original game does this too, less often.
 - At level load, 30-40 bodies drop for a few seconds and settle the same way at 30 fps and unlocked.
@@ -56,6 +76,5 @@ All runs use a scratch probe that warps the player next to an enemy. Unlocked is
 
 ## Open
 
-- Breakables and debris were not checked; if they draw from their body transforms directly, they move at 30 Hz.
 - Per-body settings (damping, quality type, max speeds) come from the game data and were not read.
 - The Havok inactivity test and TOI code run on the SPU and were not read.

@@ -71,7 +71,6 @@ and on every change.
 | Trophy pop-ups (Interface) | `trophy_popups` | 1 / 0 (off hides the toast; the unlock is still kept) | at once |
 | Show hidden trophies (the Trophies window) | `trophies_show_hidden` | 0 / 1 (1 lists hidden trophies with their names before they are unlocked) | at once |
 | Gamepad menu buttons (Interface) | `pad_menu_chord` | 0 = L3 + R3, 1 = Select + Start | at once |
-| Menu renderer (Interface, Windows only) | `DES_UI_RENDER` | "" = D3D12, `d3d11` = D3D11On12, the old way (kept for one release) | next start |
 
 Live values go through `ps3_setenv` (the runtime's getenv cache and
 PS3_KNOB). Controls is information only (the menu keys, the keyboard pad
@@ -297,7 +296,7 @@ issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
 | `DES_UI_SHOT=<a.bmp>[,frame][;<b.bmp>,frame...]` | Write the back buffer, UI included, at that presented frame (default 300). |
 | `DES_UI_KEYS=<frame>:<KEY>[,...]` | Press keys at presented frames: F1 ESC UP DOWN LEFT RIGHT ENTER PGUP PGDN TAB SPACE. OSK opens the on-screen keyboard as the game would, and a digit (0-9) is typed, for a number field. With DES_UI_SHOT, a test can walk the menus. |
 | `DES_UI_NO_ANIM=1` | No transitions. |
-| `DES_UI_RENDER=d3d11` | The menus and the crash dialog draw through D3D11On12, as before the D3D12 renderer (Windows; kept for one release). |
+| `DES_UI_RENDER=d3d11` | The menus and the crash dialog draw through D3D11On12, as before the D3D12 renderer (Windows; kept for one release, with no settings row). |
 | `RSX_OVERLAY_REPAINT=0` | The UI moves only with the game's frames, not at the display's refresh rate (live; "The UI's frame rate" below). |
 | `DES_UI_SOUND=0` | No UI sounds. |
 | `DES_PRECOMPILE=0` / `force` | No startup shader pass / one whatever the stamp says (above). |
@@ -344,11 +343,11 @@ DES_SCRATCH=<scratch> RSX_PRESENT=0 bash tools/des/desrun.sh 75 <scratch>/run.tx
 
 | FFCCEOT | Here |
 |---|---|
-| GL3 renderer in the game's GL context | RmlUi's D3D11 renderer rewritten for D3D12 (`render_d3d12.cpp`, docs/76) on the game's own device and queue: the UI is drawn into its own layer and composited (premultiplied) over the back buffer, one command list a frame, submitted ahead of Present. For one release, `DES_UI_RENDER=d3d11` (Interface, Menu renderer) draws the old way: RmlUi's stock D3D11 renderer (`Backends/RmlUi_Renderer_DX11`) on a D3D11On12 device (`render_d3d11.cpp`), each swap-chain buffer wrapped (`CreateWrappedResource`, PRESENT in and out) with an RTV; per frame: Acquire, BeginFrame, Render, EndFrame(rtv), Release, Flush. See "The menu renderer" below. |
+| GL3 renderer in the game's GL context | RmlUi's D3D11 renderer rewritten for D3D12 (`render_d3d12.cpp`, docs/76) on the game's own device and queue: the UI is drawn into its own layer and composited (premultiplied) over the back buffer, one command list a frame, submitted ahead of Present. For one release, `DES_UI_RENDER=d3d11` draws the old way: RmlUi's stock D3D11 renderer (`Backends/RmlUi_Renderer_DX11`) on a D3D11On12 device (`render_d3d11.cpp`), each swap-chain buffer wrapped (`CreateWrappedResource`, PRESENT in and out) with an RTV; per frame: Acquire, BeginFrame, Render, EndFrame(rtv), Release, Flush. See "The menu renderer" below. |
 | SDL3 window events and gamepads | **No SDL.** The window procedure hook queues keyboard and mouse messages (RmlUi's Win32 helpers convert the keys); the gamepads are XInput plus the runtime's `pad_hid_sony_poll`, the same readers and mapping the game's pad uses. |
 | `Presenter::present` callback | `rsx_d3d12_set_overlay` (ps3recomp): `wndproc` (on the window thread), `frame` (on the vblank thread, with the window-sized back buffer) and `release` (before a resize) hooks. |
 | data folder: the pref dir, or `data\` beside the exe with portable.txt; settings.ini, logs, crashes, reports | the same; `DES_DATA_DIR` in place of `--data-dir`; settings mapped onto the DES_* / PS3_* options, env wins; saves stay in the PS3 file system |
-| `report::start_log` (tee), `crash_report` (filter, SIGABRT, minidump, `--crash-dialog` second process), report zip, redaction, issue link | the same, chained after boot_main's filter and abort handler and started from a `.CRT$XCV` hook (boot_main is ps3recomp's); the dialog in its own window and D3D12 swap chain instead of SDL + GL, drawn by the same renderer as the menus (its environment carries `DES_UI_RENDER`); the PNG through stb_image_write |
+| `report::start_log` (tee), `crash_report` (filter, SIGABRT, minidump, `--crash-dialog` second process), report zip, redaction, issue link | the same, chained after boot_main's filter and abort handler and started from a `.CRT$XCV` hook (boot_main is ps3recomp's); the dialog in its own window and D3D12 swap chain instead of SDL + GL, drawn by the same renderer as the menus (it starts with the game's environment, `DES_UI_RENDER` included); the PNG through stb_image_write |
 | start screen over generated art | over the game itself, booting behind it; gradient and vignette in RCSS, no images |
 | ROM setup, Wii setup, presets, spell ring, update check, ui_script | not taken |
 | game SFX through `cfie::queue_sound` | `g_des_ui_sound(int id)` (des_ui.h): des_menu_sfx.cpp queues the game's menu sound for the main thread (docs/33) |
@@ -450,11 +449,11 @@ Since 2026-10-21 the menus draw through the same D3D12 renderer on Windows
 as on Linux (`render_d3d12.cpp`, docs/76), on the game's own device and
 queue. Before, Windows drew them with RmlUi's stock D3D11 renderer on a
 D3D11On12 device. That path stays for one release (`render_d3d11.cpp`),
-behind Interface, Menu renderer (`DES_UI_RENDER=d3d11`, next start), in case
-the D3D12 one shows a problem on some PC; the release after, it goes. If
-the renderer asked for cannot start, the other one is tried. The crash and
-hang dialog reads no settings, so the game passes `DES_UI_RENDER` on in the
-dialog's environment.
+behind the run option `DES_UI_RENDER=d3d11`, in case the D3D12 one shows a
+problem on some PC; the release after, it goes. It has no settings row, so
+players are not asked to choose. If the renderer asked for cannot start, the
+other one is tried. The crash and hang dialog starts with the game's
+environment, so it follows the option too.
 
 Compared before the switch (2026-10-21, one exe, D3D12 against
 `DES_UI_RENDER=d3d11`):
@@ -465,15 +464,15 @@ Compared before the switch (2026-10-21, one exe, D3D12 against
   quit prompt over the game, the on-screen keyboard, the start screen, a
   closing fade, the crash and hang dialogs (their own swap chain, cleared),
   and the settings window after the window was resized to 1600x900 and
-  960x540. Interface differs only in the Menu renderer row's own value. The
-  quit prompt over the start screen differs by at most 1 level in its box
-  shadow, plus a 4x2 px dark spot that only D3D11 draws, at the left edge of
-  the shadow over the title's rule (D3D12 leaves the background as it was
-  there). A trophy pop-up in the title screen matches to 1 level. Shots in
+  960x540. The quit prompt over the start screen differs by at most 1 level
+  in its box shadow, plus a 4x2 px dark spot that only D3D11 draws, at the
+  left edge of the shadow over the title's rule (D3D12 leaves the background
+  as it was there). A trophy pop-up in the title screen matches to 1 level. Shots in
   the middle of a transition differ with timing between any two runs.
 - **Reports.** The screenshot is the game's frame without the menu on both.
-  A settings.ini set to D3D11 reaches the hang dialog (it loads
-  `d3d11on12.dll`); with the default it does not.
+  With `DES_UI_RENDER=d3d11` on the command line the hang dialog draws
+  through D3D11On12 too (it loads `d3d11on12.dll`); with the default it does
+  not.
 - **Resize.** With the settings window open, the swap chain followed each
   size (1600x900, 960x540, 1280x720) with no errors, on both. Alt+Enter was
   not sent (test runs drop key messages), but it ends in the same resize
@@ -516,8 +515,8 @@ edge and a fading band.
   patcher (no installs) will need them vendored or downloaded by its own
   script.
 - The D3D11On12 menu renderer ("The menu renderer" above) goes one release
-  after the switch: `render_d3d11.cpp`, the Menu renderer row and
-  `DES_UI_RENDER`, and with them RmlUi's D3D11 renderer in the build.
+  after the switch: `render_d3d11.cpp` and `DES_UI_RENDER`, and with them
+  RmlUi's D3D11 renderer in the build.
 
 ## Verification (2026-10-17)
 

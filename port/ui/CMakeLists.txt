@@ -115,7 +115,7 @@ endif()
 # compile lines, only its link line.
 if(WIN32)
   target_link_libraries(des_ui PRIVATE des_rmlui_backend RmlUi::RmlUi d3d11 d3d12 d3dcompiler dxgi dxguid xinput shell32
-    ole32 user32 dbghelp windowscodecs uuid)   # crash reports (minidump, stack), report screenshots (PNG through WIC)
+    ole32 user32 dbghelp uuid)   # (dbghelp: the crash reports' minidump and stack)
 else()
   # SDL2 and vkd3d as port/CMakeLists.txt found them (the window, the pads, D3D12 and D3DCompile).
   if(NOT TARGET PkgConfig::DES_VKD3D_LIBS)

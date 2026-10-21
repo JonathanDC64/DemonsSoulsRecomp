@@ -8,8 +8,9 @@ It replaces the plan in docs/75. docs/75 expected a new Vulkan device layer
 for the renderer, 30-45 days of work and 65-110 for all of native Linux.
 That layer is not needed: the D3D12 backend runs unchanged on vkd3d.
 
-Tested in WSL (Ubuntu 24.04) only, where Vulkan is lavapipe, Mesa's CPU
-renderer. No GPU, no real Linux PC and no Steam Deck has run it yet.
+Tested in WSL (Ubuntu 24.04) only: on lavapipe (Mesa's CPU renderer) and
+on an RTX 5070 Ti through Mesa's dzn driver (Vulkan on WSL's D3D12). No real
+Linux PC, native Linux GPU driver or Steam Deck has run it yet.
 
 ## What runs
 
@@ -23,9 +24,18 @@ renderer. No GPU, no real Linux PC and no Steam Deck has run it yet.
 | Controllers | SDL2 game controllers (the existing SDL branch of `cellPad.c`) |
 | Window | SDL: resizable, Alt+Enter borderless, F9 / F10 / F11 hot keys, Escape closes |
 
-Measured under lavapipe: about 4 fps at 1280x720 with ~590 draws. That is
-the CPU drawing every pixel. A GPU driver (Mesa RADV / ANV, NVIDIA) has not
-been tried.
+Measured at 1280x720, frame cap off, the tutorial's first room (~790
+draws):
+
+| Vulkan driver | fps |
+|---|---|
+| lavapipe (CPU) | about 4 |
+| dzn on an RTX 5070 Ti, SDL on X11 | 55-58 |
+| dzn on an RTX 5070 Ti, SDL on Wayland (`SDL_VIDEODRIVER=wayland`) | 59-61 |
+
+Both dzn rows sit at WSLg's 60 Hz display, so they say little about the GPU
+path's own cost. Frames dumped on dzn match the Windows frames. A native
+Linux GPU driver (Mesa RADV / ANV / NVK, NVIDIA) has not been tried.
 
 ## How it fits together
 
@@ -101,6 +111,27 @@ The same environment as on Windows (`tools/des/deslib.sh`), plus:
 - Under WSL, sound plays on the PC's speakers: test runs set
   `SDL_AUDIODRIVER=dummy` or `AUDIO_MUTE=1`.
 
+### On the GPU in WSL (dzn)
+
+WSL passes the Windows GPU through as D3D12 (`/dev/dxg`,
+`/usr/lib/wsl/lib/libd3d12.so`). NVIDIA and AMD ship no Linux Vulkan driver
+for WSL; Mesa's dzn ("Dozen") is Vulkan 1.2 on that D3D12. Ubuntu's Mesa
+does not build it, so build it alone into a prefix (a minute or so), and pick
+it per run:
+
+    # packages: python3-mako, directx-headers-dev, wayland-protocols, and the
+    # libxcb-*-dev / libx11-xcb-dev / libxshmfence-dev headers for its X11 WSI.
+    # Mesa 25.2 needs meson >= 1.4 (Ubuntu 24.04 has 1.3.2): meson.py runs from
+    # its release tarball without installing.
+    meson setup build mesa-25.2.8 --prefix=$HOME/mesa-dzn --buildtype=release       -Dvulkan-drivers=microsoft-experimental -Dgallium-drivers= -Dplatforms=x11,wayland       -Dllvm=disabled -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dopengl=false       -Dgles1=disabled -Dgles2=disabled -Dvideo-codecs= -Dmicrosoft-clc=disabled
+    ninja -C build install
+    export VK_DRIVER_FILES=$HOME/mesa-dzn/share/vulkan/icd.d/dzn_icd.x86_64.json
+
+`vulkaninfo --summary` then lists each Windows GPU as "Microsoft Direct3D12
+(...)". vkd3d takes the first discrete one; `VKD3D_VULKAN_DEVICE=<index>`
+picks another. dzn is not a conformant Vulkan driver: good for checking the
+game at speed, not for judging Linux performance.
+
 ## Missing
 
 | Item | Note |
@@ -111,7 +142,7 @@ The same environment as on Windows (`tools/des/deslib.sh`), plus:
 | Pipeline cache across runs | vkd3d's `CreatePipelineLibrary` is a stub; the backend carries on without one, and pipelines are built again each run |
 | Mouse, F8 mark, problem reports, crash dialog, hang watchdog | Win32 code; not ported |
 | Frame statistics | the swap chain reports none (`present_queued` and `FRAME_LOG` take "cannot say") |
-| A GPU run | lavapipe only so far. In WSL a GPU needs Mesa's `dzn` driver (Vulkan on D3D12), which Ubuntu's Mesa does not ship |
+| A native GPU run | WSL with dzn only so far (above); no real Linux driver yet |
 | vkd3d-proton | faster and more complete than Wine's vkd3d, but built for Wine/Proton; not tried as a library |
 | Packaging | an AppImage carrying vkd3d's libraries (LGPL: shared, with its notice) |
 | CI | a Linux job that builds the runtime with `PS3RECOMP_RSX_D3D12_VKD3D=ON` |

@@ -174,6 +174,12 @@ built with `DES_VKD3D`. `DES_UI=OFF` leaves it out (`port/des_ui_stub.cpp`),
 and `DES_UI=0` at run time turns it off. The 14 lifted chunks take about 2 GB
 of memory each to compile at `-O2`.
 
+CI builds both halves on Linux, with vkd3d 2.1 from its tarball: the fork's
+`linux-vkd3d.yml` builds the runtime with the vkd3d backend and boots its
+smoke title through it on lavapipe (GCC and Clang), and this repository's
+`ci.yml` builds the wrapper UI. des_boot itself needs the lift, which CI
+never has.
+
 ## Running
 
 The same environment as on Windows (`tools/des/deslib.sh`), plus:
@@ -211,6 +217,35 @@ it per run:
 picks another. dzn is not a conformant Vulkan driver: good for checking the
 game at speed, not for judging Linux performance.
 
+### An AppImage of your build
+
+`tools/linux/appimage.sh <build dir> [out.AppImage]` packs a build into one
+file, for example to copy it to a Steam Deck. It holds code lifted from your
+copy of the game, the decrypted EBOOT and libsre, so it is yours only: never
+share it. A developer build (`DES_DEV=ON`) is refused.
+
+- **Inside:** `des_boot`, vkd3d's three libraries (LGPL-2.1, unchanged, with
+  a notice saying where their source is and that they can be replaced),
+  `work/game/EBOOT.ELF`, `work/libsre/libsre_image.bin`, and `AppRun`, the
+  launcher. The icon is the game's `ICON0.PNG` when `PS3_VFS_ROOT` is set
+  while packing, else a plain one.
+- **From the system:** SDL2, the Vulkan loader and driver, and FFmpeg for the
+  movies (the major version the runtime was built against; without it a
+  movie ends at once). The system's glibc must be at least as new as the
+  build machine's.
+- **AppRun** sets what `play.sh` sets, and everything the game writes goes to
+  one folder, `~/.local/share/DemonsSoulsRecomp/DemonsSouls` (`DES_DATA_DIR`),
+  where the settings already live: saves, the HDD cache, the shader cache,
+  logs and reports. The game is `PS3_VFS_ROOT` (the folder holding
+  `PS3_GAME`), or a folder or link named `game` in that data folder.
+- **Packing** needs appimagetool, on `PATH` or in `APPIMAGETOOL`.
+  `--appdir-only` stops at the AppDir, which runs as it is
+  (`<name>.AppDir/AppRun`).
+
+Tested in WSL: the AppDir of a `DES_DEV=OFF` build (306 MB) boots from
+`AppRun` into the save's level, with saves, the HDD cache and the shader
+cache in the data folder. Packing with appimagetool has not been run.
+
 ## Missing
 
 | Item | Note |
@@ -224,8 +259,7 @@ game at speed, not for judging Linux performance.
 | Frame statistics | the swap chain reports none (`present_queued` and `FRAME_LOG` take "cannot say") |
 | A native GPU run | WSL with dzn only so far (above); no real Linux driver yet |
 | vkd3d-proton | faster and more complete than Wine's vkd3d, but built for Wine/Proton; not tried as a library |
-| Packaging | an AppImage carrying vkd3d's libraries (LGPL: shared, with its notice) |
-| CI | a Linux job that builds the runtime with `PS3RECOMP_RSX_D3D12_VKD3D=ON` |
+| Packaging | `tools/linux/appimage.sh` (above) makes the AppDir; packing it with appimagetool and running the AppImage on another machine are not tested. FFmpeg is the system's, not bundled |
 
 vkd3d prints four `fixme` notes: read-only depth views (flags ignored),
 root signature flags, the pipeline library stub, and aliasing barriers.
@@ -252,3 +286,8 @@ Port (feat/linux):
 - `build: des_boot on Linux`
 - `ui: the wrapper UI off Windows, on its own D3D12 renderer`
 - `ui: portable calls instead of Windows-only ones`
+
+Port (tools/linux-appimage):
+
+- `tools: an AppImage of your own Linux build`
+- `docs: 76, the AppImage`

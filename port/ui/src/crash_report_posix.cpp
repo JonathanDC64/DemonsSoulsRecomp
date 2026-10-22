@@ -197,7 +197,15 @@ bool start_again() {
     for (std::string& a : args) argv.push_back(a.data());
     argv.push_back(nullptr);
     pid_t child = 0;
-    return posix_spawn(&child, "/proc/self/exe", nullptr, nullptr, argv.data(), envp.data()) == 0;
+    if (posix_spawn(&child, "/proc/self/exe", nullptr, nullptr, argv.data(), envp.data()) != 0) return false;
+    // A test run's PS3_PIDFILE (each process appends itself, late in its boot): the new one goes in now, so the script
+    // that started this one sees the game at once, to wait for it or stop it.
+    if (const char* pids = std::getenv("PS3_PIDFILE"); pids && *pids)
+        if (FILE* f = std::fopen(pids, "a")) {
+            std::fprintf(f, "%ld\n", static_cast<long>(child));
+            std::fclose(f);
+        }
+    return true;
 }
 
 }  // namespace ui::crash_report

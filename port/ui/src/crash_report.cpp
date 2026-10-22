@@ -542,6 +542,13 @@ bool start_again() {
                                    nullptr, &startup.StartupInfo, &process);
     if (listed) DeleteProcThreadAttributeList(list);
     if (!ok) return false;
+    // A test run's PS3_PIDFILE (each process appends itself, late in its boot): the new one goes in now, so the script
+    // that started this one sees the game at once, to wait for it or stop it.
+    if (const char* pids = std::getenv("PS3_PIDFILE"); pids && *pids)
+        if (FILE* f = std::fopen(pids, "a")) {
+            std::fprintf(f, "%lu\n", static_cast<unsigned long>(process.dwProcessId));
+            std::fclose(f);
+        }
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
     return true;

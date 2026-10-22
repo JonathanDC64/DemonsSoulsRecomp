@@ -1,13 +1,13 @@
 # 86. The compiler setup downloads
 
-Date: 2026-10-22. Status: the workflow is written, and it has not run on GitHub yet. LLVM's 862 MB archive was not downloaded here. The packing is tested on a made-up archive (`tools/setup/tests/test_llvm_pack.py`), and the smoke test ran against this PC's own LLVM 22.1.8 install. The rest comes from web pages, the GitHub API and LLVM's source.
+Date: 2026-10-22. Status: the workflow ran once on GitHub (run 39870384825, LZMA, upload on) and passed. It attached `llvm-win64-22.1.8-1.zip` (49,496,165 bytes) and its JSON to the draft release `llvm-22.1.8-1`, and `toolchain.json` pins that zip (section "How the sums get into `toolchain.json`", step 3). LLVM's 862 MB archive was downloaded only on the runner, never here. The packing is tested on a made-up archive (`tools/setup/tests/test_llvm_pack.py`), and the smoke test ran against this PC's own LLVM 22.1.8 install and then on the runner. The rest comes from web pages, the GitHub API and LLVM's source.
 
 Labels, as in the other notes:
 - **Read**: seen on a web page, in the GitHub API or in our source.
 - **Measured**: checked on this PC.
 - **Inferred**: a conclusion that still needs a check.
 
-Files: `.github/workflows/llvm-archive.yml` (the workflow), `.github/scripts/llvm_pack.py` (its packing and smoke test), the `llvm-win64` entry in `tools/setup/des_setup/toolchain.json` (not pinned yet), and the tests in `tools/setup/tests/` (`test_llvm_pack.py`, and the manifest tests in `test_setup.py`).
+Files: `.github/workflows/llvm-archive.yml` (the workflow), `.github/scripts/llvm_pack.py` (its packing and smoke test), the `llvm-win64` entry in `tools/setup/des_setup/toolchain.json` (pinned 10-22), and the tests in `tools/setup/tests/` (`test_llvm_pack.py`, and the manifest tests in `test_setup.py`).
 
 ## Short answer
 
@@ -138,6 +138,12 @@ Time: about 5 to 10 minutes. The download is 862 MB, and the stream is decompres
 4. Publish the release. A draft's assets are not public, so players can only download the zip after that.
 5. Run `python -m des_setup fetch llvm-win64` once on a PC. It downloads the zip, checks the size and SHA-256, and unpacks it. Say so in the entry's `checked` text.
 
+**Done for `llvm-22.1.8-1`** (10-22):
+- Steps 1 and 3 done; step 2 was skipped (one run, LZMA). The release is still a draft: step 4 is the maintainer's.
+- Before step 4, the zip was downloaded from the draft with `gh release download`: size and SHA-256 equal the JSON's and the entry's (measured). Put at `archive_path` in a scratch cache, `fetch.ensure` took it without a download, unpacked it and wrote the stamp; `fetch.unpacked` is true (measured).
+- Step 5, the plain HTTPS download, waits for the release to be published.
+- What the run reported: `clang.exe` and `lld-link.exe` carry no Authenticode signature. Neither do the installer's (measured, `Get-AuthenticodeSignature`).
+
 The tests that guard the entry (`test_setup.py`): every real entry is pinned or refused; the compiler entry's URL ends in `<name>-<version>.zip`; once pinned, its size is between 30 and 150 MB; and an LZMA zip unpacks through `fetch.ensure`. The entry's URL names the recommended release tag, `llvm-22.1.8-1` (Open questions).
 
 `python -m des_setup tools` used to format the size with `:,`, which crashes on a null size. It now prints "size not set" for the unpinned entry.
@@ -157,11 +163,11 @@ The tests that guard the entry (`test_setup.py`): every real entry is pinned or 
 
 ## Open questions
 
-1. **Which release carries the zip**: its own `llvm-22.1.8-1` release (recommended), or the version releases.
-2. **LZMA or deflate**: LZMA by default, about 49 MB against about 69 MB. A dry run gives the real sizes.
+1. **Which release carries the zip**: its own `llvm-22.1.8-1` release (recommended), or the version releases. *Decided: its own release (10-22), tagged on master and still a draft.*
+2. **LZMA or deflate**: LZMA by default, about 49 MB against about 69 MB. A dry run gives the real sizes. *LZMA, as made: 49,496,165 bytes, 196,460,103 unpacked (measured). Deflate was not run.*
 3. **`__chkstk`.** A function with more than 4 KB of locals makes clang call `__chkstk`, which comes from compiler-rt or the C runtime. docs/57's list of outside symbols has no `__chkstk` (read), so today's lift may not need it. If the freestanding link (docs/52 section 7.8) reports it, the game part's support file can define it, or the zip can add `clang_rt.builtins-x86_64.lib` (190 KB, docs/52; package revision 2). Not checked.
-4. **Same bytes as the installer?** Compare the JSON's sums for `clang.exe` and `lld-link.exe` with a developer's install, once. If they match, docs/57's builds and setup's builds use the same compiler bytes.
-5. **Signing.** If LLVM's exes are unsigned (the job reports it), check whether Smart App Control or Defender blocks an unsigned `clang.exe` unpacked from a download. This is the same clean-PC test docs/54 section 10.1 asks for the game DLL.
+4. **Same bytes as the installer?** Compare the JSON's sums for `clang.exe` and `lld-link.exe` with a developer's install, once. If they match, docs/57's builds and setup's builds use the same compiler bytes. *No (measured 10-22): both report 22.1.8, but the zip's `clang.exe` is 108,434,432 bytes against the installer's 104,745,472, and `lld-link.exe` 72,403,968 against 71,456,768. They are separate builds of the same version. So a game DLL built with the zip has to be checked on its own: a setup compile with the pinned zip, then a boot.*
+5. **Signing.** LLVM's exes are unsigned (the run reported it, 10-22). Check whether Smart App Control or Defender blocks an unsigned `clang.exe` unpacked from a download. This is the same clean-PC test docs/54 section 10.1 asks for the game DLL.
 6. **Linux**: the same job for LLVM's Linux archive (docs/87).
 
 ## Sources

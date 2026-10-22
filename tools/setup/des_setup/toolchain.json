@@ -14,10 +14,10 @@
    "name": "llvm-win64",
    "version": "22.1.8-1",
    "url": "https://github.com/JonathanDC64/DemonsSoulsRecomp/releases/download/llvm-22.1.8-1/llvm-win64-22.1.8-1.zip",
-   "size": null,
-   "sha256": null,
+   "size": 49496165,
+   "sha256": "019c8dd5b7e5194bdb07b7a609c55032c0888083cff30076e4038c36d99c295a",
    "why": "Compiles and links the game part: clang, lld-link and clang's headers from LLVM 22.1.8 (docs/86).",
-   "checked": null
+   "checked": "made by the LLVM archive workflow (run 39870384825) from LLVM's own clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz after its size, SHA-256, attestation and GPG signature passed; the asset's size and SHA-256 read back from the release, 2026-10-22"
   }
  ]
 }

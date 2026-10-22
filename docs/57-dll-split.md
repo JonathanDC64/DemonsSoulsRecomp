@@ -1,6 +1,6 @@
 # The DLL split, milestone 1: des_host.exe and des_game.dll
 
-Date: 2026-10-19. Status: milestone 1 reached on local branches, no PR yet. The split build boots into Boletaria. In a 6-round A/B its frame rate is not significantly different from master's: -1.2% and -2.3%, with 95% intervals that include zero (4.3).
+Date: 2026-10-19; rebased onto the masters of 2026-10-22 and checked again (section 7). Status: in review (a ps3recomp and a port pull request). The split build boots into Boletaria. In a 6-round A/B its frame rate is not significantly different from master's: -1.2% and -2.3%, with 95% intervals that include zero (4.3).
 
 This is step 1 of docs/45 (section 6.1) and its milestone 1: `des_host.exe` loads `des_game.dll`, built from today's lift with today's toolchain (clang-cl, both sides `/MD`), reaches Boletaria, and runs at the same frame rate as the single exe.
 
@@ -121,14 +121,14 @@ ps3recomp:
 - `include/ps3emu/game_split.h`: the host's redirects, force-included in a split build.
 - `runtime/ppu/game_module.c`: the DLL's half (slots, thunks, globals, thread-locals, `ps3_game_module_init`).
 - `runtime/ppu/game_host.c`: the exe's half (load, hand-over, pointer moves, `ps3_game_load_prx_modules`).
-- `CMakeLists.txt`: `PS3RECOMP_GAME_SPLIT`; the definitions of the moved globals and thread-locals in `ppu_loader.cpp`, `ps3_knob.c`, `spu_channels.c`, `spu_coherency.c`, `spu_drain.c`, `spu_lockstep.c` and `spu_context.h` are under `#ifndef PS3_GAME_SPLIT`; `boot_main.cpp` calls the load.
+- `CMakeLists.txt`: `PS3RECOMP_GAME_SPLIT`; the definitions of the moved globals and thread-locals in `ppu_loader.cpp`, `ps3_knob.c`, `spu_channels.c`, `spu_coherency.c`, `spu_drain.c`, `spu_lockstep.c` and `spu_context.h` are under `#ifndef PS3_GAME_SPLIT`, and so is `spu_dma.h`'s inline coherency test (7.1); `boot_main.cpp` calls the load.
 
 Port:
 - `port/CMakeLists.txt`: `DES_SPLIT`, the two targets.
 - `port/des_game_module.cpp`: `des_game_init`, the port function slots.
-- `port/des_game_title.h`: the two lists, `DES_GAME_TITLE_FUNCS` (port functions the lift calls) and `DES_GAME_CALLS` (lifted functions the port calls).
+- `port/des_game_title.h`: `DES_GAME_CALLS` (lifted functions the port calls). `DES_GAME_TITLE_FUNCS` (port functions the lift calls) is generated into the build directory since 10-22 (7.1).
 - `port/des_game_title.c`, `port/des_game_host.cpp`, `port/des_game_calls.h`: the exe's side of the lists.
-- `des_options.cpp`, `des_aspect.cpp`, `des_menu_sfx.cpp`, `des_chrins.cpp`: include `des_game_calls.h`; their declarations of `g_trampoline_fn` are under `#ifndef PS3_GAME_SPLIT`.
+- `des_options.cpp`, `des_aspect.cpp`, `des_menu_sfx.cpp`, `des_chrins.cpp`, `des_dev.cpp`: include `des_game_calls.h`; their declarations of `g_trampoline_fn` are under `#ifndef PS3_GAME_SPLIT`.
 
 ## 4. Results
 
@@ -209,12 +209,74 @@ No difference is significant. `ab1` alone, on the quiet PC, gives -0.57% and -1.
 - **Header split.** The exe still compiles against the lift's generated `ppu_recomp.h` (for `ppu_context` and the accessors). A host built in CI without a lift needs the fixed runtime part of that header shipped with ps3recomp and the per-game part generated.
 - **Link.** `lld-link /dll /noentry /nodefaultlib`, then an A/B against this build.
 
+## 7. Rebased onto the masters of 2026-10-22
+
+Setup's Q2 is decided as A (docs/81): CI builds the host exe, and the player's PC compiles only the game part. That makes this split setup's first step. So both branches were rebased onto ps3recomp fork/master 601fb36 and port master af06c0f, and checked again.
+
+### 7.1 The rebase
+
+- Three conflicts:
+  - `spu_drain.c`: master's new `g_spu_bi_switch` sits beside `g_spu_goto_slow`;
+  - `port/CMakeLists.txt`: master's new Linux, `DES_UI` and `DES_DEV` parts;
+  - `des_options.cpp`: the warp moved to `des_dev.cpp`, which now has the guarded `g_trampoline_fn` declaration and includes `des_game_calls.h`.
+- The boundary, measured again (`llvm-nm` on the 30 lifted objects of a master build of the same commits and the same lift): 106 symbols from outside the lift, against 85 on 10-19.
+
+| Group | 10-19 | 10-22 | New since 10-19 |
+|---|---|---|---|
+| Runtime functions | 31 | 35 | `spu_hook_ring_post` and `spu_hook_state_diff` (image 2's native loops), `spu_registering_image` and `spu_bi_switch_verify` (the SPU jump-table gotos): a thunk each, at the end of `PS3_GAME_HOST_FUNCS`. `PS3_GAME_ABI` stays 1, since no split build has shipped. |
+| Port functions | 16 | 33 | 17 hooks merged since: `des_body_xform`, `des_cam_ctor`, `des_cam_own`, `des_cam_step`, `des_dev_hook`, `des_fade_rate`, `des_fx_state`, `des_ghost_rate`, `des_hud_ctx`, `des_net_grade_poll`, `des_net_show`, `des_net_sync`, `des_phys_kf`, `des_phys_rate`, `des_qwc_local`, `des_rag_pose_a`, `des_rag_pose_b` |
+| Globals | 14 | 16 | `g_spu_bi_switch` and `g_spu_task_regs`, which `spu_bi_switch_on` reads inline in the lifted SPU images. The DLL owns them, like the other dispatch flags (3.3). |
+| Thread-locals | 2 | 2 | none |
+| C and compiler runtime | 22 | 20 | none; `memset` is no longer used |
+
+- The port now calls 29 lifted functions by name, against 27: the two more are in `des_dev.cpp` (`func_004418B8`, `func_008FB4F0`).
+
+Two changes keep the lists from falling behind again:
+- **`DES_GAME_TITLE_FUNCS` is generated** (Decision 2, the first half). CMake reads the overrides in `scripts/lift_ppu.json` and the hooks in `insn_hooks.txt`, the lift's own inputs, into `split_gen/des_game_title_funcs.h` in the build directory (33 names). `DES_GAME_CALLS` stays by hand; a missing entry still stops the exe's link with its name.
+- **`des_host` follows `des_boot`.** It takes `des_boot`'s sources, include folders, definitions, options and libraries from the target itself, minus the lifted sources, so the section stays last in the file. The 10-19 list was a copy, and by 10-22 it lacked `des_dev.cpp`, the version resource and `des_ui_stub.cpp`. Configure stops if a lifted source would go into `des_host`.
+
+One host fix: the DMA fast path (ps3recomp, 10-21) added an inline coherency test to `spu_dma.h` that names the bitmap and the armed flag directly. The host's link stopped on both names. Under `PS3_GAME_SPLIT`, the test now reads them through the pointers, as `ppu_loader.cpp`'s test does (3.3). The default build keeps the old text.
+
+### 7.2 Checks (measured)
+
+| Check | Result |
+|---|---|
+| A default build preprocesses as master's. Checked: every source of ps3recomp's runtime library, and every source of `des_boot` except `_deps` and lift chunks 001-013 (chunk 000 stands for the 14, which share their headers). Method: clang-cl `/E` with the master build's own commands (`ninja -t commands`), once on master's trees and once on the branches', with the tree paths, line markers and blank lines normalised. | 170 of 170 and 319 of 319 the same |
+| The DLL's lifted sources get `des_boot`'s command lines (`ninja -t commands`, one build directory, apart from the object and dependency file names) | 30 of 30 |
+| Builds, 12 jobs | the split runtime library 15 s; the two port targets in a new build directory about 5 minutes |
+| Sizes | `des_host.exe` 8,182,272 bytes and `des_game.dll` 289,020,416 bytes: together 38,912 bytes more than master's `des_boot.exe` (297,163,776) |
+| Boot and screenshots: `regress.sh` from the pinned save, at 30 and 240 fps, the session unlocked (presenting) | `[game-host] loaded ...: 94017 functions, 79 ms`. All four shots ok at both rates, with the same differences as master's own runs at those rates. The user's save is unchanged. |
+
+### 7.3 Frame rate, in plain windows (measured)
+
+The method is the perf lane's A/B (`perfab.sh`), with the verdict from the plain windows (docs/83). A is master's `des_boot.exe` from the merged masters' build, and B is this split build, with the same lift, compiler and flags. Each side ran 8 boots, alternating A B, B A. Every boot:
+- runs uncapped: `RSX_VSYNC=0 DES_VSYNC=0 DES_FPS=unlocked VBLANK_MHZ=960000`, normal priority on all CPUs;
+- presents to a window (the session was unlocked), and nothing is pressed after the title;
+- waits 40 s after the level starts loading, then runs two 8 s profile windows, each followed by 10 s with nothing armed (the plain window).
+
+The PC was not quiet. The user's Vite dev server used about a core all morning, so the quiet check's limit for processes outside the batch was raised from 3% to 20%. Both sides ran beside that same load, in alternating rounds. All 32 boots were valid, and the user's save was unchanged after every boot.
+
+| Spot | Window | A, master (boot mean) | B, split (boot mean) | B vs A | Rounds B faster | Paired t |
+|---|---|---|---|---|---|---|
+| The pinned save, Tutorial (m08) | plain | 425.71 fps | 425.98 fps | +0.06% (median +0.35%) | 4 of 8 | p = 0.97 |
+| | profile | 403.68 fps | 403.59 fps | -0.02% (median -0.58%) | 3 of 8 | p = 0.99 |
+| The deep Palace save (m02, Boletarian Palace 1-1) | plain | 147.03 fps | 150.05 fps | +2.05% (median +0.98%) | 5 of 8 | p = 0.12 |
+| | profile | 138.09 fps | 139.31 fps | +0.88% (median +1.63%) | 6 of 8 | p = 0.41 |
+
+At the Tutorial spot each round's delta swings by 4 to 9% either way, so the 95% interval of the mean is about -3.7% to +4.1%. That batch cannot rule out a 1-2% cost. The Palace batch can: its 95% interval of the mean (plain windows, the round deltas) is -0.7% to +4.9%, so a cost above 0.7% is ruled out there. Neither batch finds a difference. The split leans faster at the Palace, but not significantly; a faster split would need a cause, and none is known. The 10-19 result (4.3: -1.2% and -2.3%, not significant, in profile windows) is in line with this.
+
+### 7.4 What is left
+
+- **Review and merge**, ps3recomp first (Decision 6).
+- **A play session** with `DES_EXE=<build>/des_host.exe`: the menus, the pad, the keyboard and the mouse. The screenshot route walks with the `PAD_STICK` knob, not with real input.
+- **Setup's next step**: the freestanding game DLL (6.2, docs/52 section 7.8). The host then builds in the Visual C++ runtime and the C++ library and uses the UCRT that Windows includes (docs/81, decided 10-22).
+
 ## Decisions
 
 These need the user's call. The milestone works without any of them.
 
 1. **Trampolines.** Keep them as DLL thread-locals with a per-thread pointer in the exe (today; no lifter change), or move them into `ppu_context` and `spu_context` (a lifter and runtime change that touches every lifted object, but removes the DLL's only thread-locals before milestone 2).
-2. **The two lists.** `DES_GAME_TITLE_FUNCS` (16 port functions) and `DES_GAME_CALLS` (27 lifted functions) are kept by hand in `port/des_game_title.h`. A new hook in `insn_hooks.txt` or a new `func_` call in the port must be added there; a missing entry stops the link or the load with its name. They could be generated from `insn_hooks.txt` and the override list instead.
+2. **The two lists.** Half done on 10-22: `DES_GAME_TITLE_FUNCS` is generated from `insn_hooks.txt` and the override list (7.1). `DES_GAME_CALLS` (29 lifted functions) is still kept by hand in `port/des_game_title.h`: a new `func_` call in the port must be added there, and a missing entry stops the exe's link with its name. A scan of the port's sources could generate it too.
 3. **Where the DLL lives.** Beside the exe, or `PS3_GAME_MODULE`. docs/45 wants `build\<lift key>\des_game.dll` with a manifest; that comes with the setup screen.
 4. **Diagnostics.** A crash in the DLL prints an address relative to the DLL (`[CRASH] module=` gives its base); symbolize with `des_game.map`, not the exe's map. `GETENV_STATS` does not see the DLL's `getenv` calls. The SPU debug-probe latches exist once per module.
 5. **The thunk rule.** Runtime code that compares a function pointer with a runtime function must also accept the DLL's thunk address (3.2). Keep this rule, or have the lifter call the runtime through its own table and never take addresses.

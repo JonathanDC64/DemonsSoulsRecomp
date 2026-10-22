@@ -190,12 +190,49 @@ setup-main {
     padding: var(--space-2xl) var(--space-2xl) var(--space-lg) var(--space-2xl);
 }
 
+/* The parts are as tall as they are, and shrink (and scroll) only when the page is short of room. The buttons
+   under them never scroll: on a short page they follow the parts, on a long one they sit above the pad's buttons. */
 setup-content {
     display: block;
-    flex: 1 1 0;
+    flex: 0 1 auto;
     min-height: 0;
     padding-right: var(--space-lg);
     overflow: hidden auto;
+}
+
+setup-footer {
+    display: flex;
+    flex-flow: row wrap;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--space-md);
+    max-width: 960dp;
+    margin-top: var(--space-xl);
+    padding-right: var(--space-lg);
+}
+
+setup-footer.first {
+    margin-top: 0;
+}
+
+/* The parts scroll behind the buttons: a line between them */
+setup-footer.edge {
+    margin-top: 0;
+    padding-top: var(--space-md);
+    border-top: 1dp var(--setup-line);
+}
+
+setup-footer setup-actions {
+    margin-top: 0;
+}
+
+setup-footer #actions-end {
+    margin-left: auto;
+}
+
+setup-main-space {
+    display: block;
+    flex: 1 1 auto;
 }
 
 /* The page's parts */
@@ -473,7 +510,7 @@ setup-task {
     flex-direction: row;
     align-items: center;
     gap: var(--space-md);
-    padding: 9dp 0;
+    padding: 6dp 0;
     border-bottom: 1dp rgba(var(--color-border-rgb), 12%);
     color: var(--setup-faint);
 }
@@ -699,4 +736,163 @@ setup-question-text {
     setup-title {
         font-size: var(--font-size-4xl);
     }
+}
+
+/* The screens before a run (setup_screens.cpp) */
+setup-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    max-width: 960dp;
+}
+
+setup-actions.near {
+    margin-top: 10dp;
+}
+
+setup-callout-body setup-actions {
+    margin-top: 10dp;
+}
+
+setup-row.start {
+    justify-content: flex-start;
+}
+
+setup-text.note {
+    font-size: var(--font-size-sm);
+    color: var(--setup-muted);
+}
+
+setup-row-end {
+    display: block;
+    flex: 0 0 auto;
+}
+
+icon.setup-folder { decorator: text("&#xe2c7;" center center); color: var(--color-info); }  /* folder */
+
+/* The folder chosen */
+setup-field.folder {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-sm);
+    max-width: 960dp;
+    margin-top: 0;
+}
+
+setup-field.folder icon {
+    flex: 0 0 auto;
+    width: 18dp;
+    height: 18dp;
+    font-size: 18dp;
+}
+
+setup-field-text {
+    display: block;
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: var(--font-size-sm);
+    word-break: break-all;
+}
+
+setup-field-text.none {
+    color: var(--setup-muted);
+}
+
+/* The ways to the game's files: a card each */
+setup-choices {
+    display: flex;
+    flex-flow: row wrap;
+    gap: var(--space-md);
+    max-width: 960dp;
+}
+
+button.setup-choice {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    flex: 1 1 230dp;
+    padding: var(--space-lg) var(--space-lg) var(--space-lg) var(--space-xl);
+    border-left: 2dp rgba(0, 0, 0, 0%);
+    border-radius: var(--radius-small);
+    font-size: var(--font-size-base);
+    text-align: left;
+    color: var(--color-text);
+    background-color: rgba(0, 0, 0, 45%);
+    box-shadow: var(--setup-line-soft) 0 0 0 1dp;
+    opacity: 1;
+}
+
+button.setup-choice:not(:disabled):hover,
+button.setup-choice:not(:disabled):focus-visible {
+    border-left-color: rgb(var(--color-interactive-rgb));
+    background-color: rgba(0, 0, 0, 0%);
+    box-shadow: rgb(var(--color-border-rgb)) 0 0 0 1dp;
+    decorator: linear-gradient(to right, rgba(var(--color-interactive-rgb), 12%), rgba(var(--color-interactive-rgb), 3%));
+}
+
+setup-choice-title,
+setup-choice-text {
+    display: block;
+}
+
+setup-choice-title {
+    font-family: var(--font-family-display);
+    font-size: var(--font-size-lg);
+    letter-spacing: 1dp;
+    color: var(--color-accent);
+}
+
+setup-choice-text {
+    font-size: var(--font-size-base);
+    color: var(--setup-muted);
+}
+
+/* The dumps found in the usual places: a row each */
+setup-places {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    max-width: 960dp;
+}
+
+button.setup-place {
+    display: block;
+    padding: var(--space-sm) var(--space-md);
+    border-left: 2dp rgba(0, 0, 0, 0%);
+    border-radius: var(--radius-small);
+    font-size: var(--font-size-sm);
+    text-align: left;
+    color: var(--color-text);
+    background-color: rgba(0, 0, 0, 45%);
+    box-shadow: var(--setup-line-soft) 0 0 0 1dp;
+    opacity: 1;
+    word-break: break-all;
+}
+
+button.setup-place:not(:disabled):hover,
+button.setup-place:not(:disabled):focus-visible {
+    background-color: rgba(var(--color-interactive-rgb), 6%);
+    box-shadow: rgb(var(--color-border-rgb)) 0 0 0 1dp;
+}
+
+button.setup-place:selected {
+    border-left-color: rgb(var(--color-interactive-rgb));
+    color: var(--color-accent);
+}
+
+/* How to: numbered steps under a callout's line */
+setup-guide {
+    display: block;
+    margin-top: var(--space-md);
+    padding: var(--space-sm) var(--space-lg);
+    border-left: 2dp var(--setup-line-soft);
+}
+
+setup-guide-item {
+    display: block;
+    margin-bottom: 6dp;
+    font-size: var(--font-size-base);
+    color: var(--setup-muted);
 }

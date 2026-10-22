@@ -1,6 +1,6 @@
 <div align="center">
 
-# Demon's Souls PC
+# Demon's Souls Recomp
 
 **A native PC port of *Demon's Souls* (PS3, 2009), made by static recompilation.**
 
@@ -133,8 +133,8 @@ The build is not yet a single command. It takes six steps:
 **1. Get the code.** Clone this repository, then the fork into `ps3recomp/` inside it. Use the fork's master, or at least the commit named in [`ps3recomp.pin`](ps3recomp.pin).
 
 ```sh
-git clone https://github.com/JonathanDC64/DemonsSoulsPC.git
-cd DemonsSoulsPC
+git clone https://github.com/JonathanDC64/DemonsSoulsRecomp.git
+cd DemonsSoulsRecomp
 git clone https://github.com/JonathanDC64/ps3recomp.git
 ```
 

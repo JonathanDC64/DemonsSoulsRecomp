@@ -537,3 +537,8 @@ Found while building the first ultrawide version (branch `feat/ultrawide`, 2026-
 - **A fourth on-screen test.** 0x007A61D8, listed as unclassified in the 1280/720 table, is a fourth on-screen test. It loads x at 0x007A6264. It needs the same treatment as the other three; the implementation hooks all four.
 - **WorldToScreen's callers.** 0x0079F780 does not call WorldToScreen. Its callers among the HUD anchor updates are 0x0079EFA0, 0x0079F4A8 and 0x0079FCB8.
 - **The canvas record is not replayed (R2, measured 2026-10-21, docs/79).** After boot the six words are nowhere in guest memory but the game's constant. The 0x3A handler (0x00CD4800) turns them into an ortho matrix at +0x90 of the render context once, and that matrix is what the HUD is drawn with. A live HUD change rewrites that matrix (`des_hud_ctx`), not the canvas words.
+
+## 8. Known limitations
+
+- **Three markers in the left side band.** With the HUD centred at a wide aspect ratio, three small markers show in the left band: a red triangle, a green triangle and a blue ring (seen while testing the live aspect change, docs/79, and also at a 21:9 start). They look like the developers' own icons, placed outside the 16:9 canvas where a 16:9 screen never shows them. What the game uses them for is unknown, so hiding them could change something else. Left as they are for now.
+  - Docket: find which HUD element draws them (its dialog and the code that places it) and what it is for, then decide whether to keep them off screen at wide ratios.

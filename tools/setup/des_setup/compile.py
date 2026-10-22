@@ -30,13 +30,14 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import journal
+from . import fetch, journal
 
 SRC = Path(__file__).resolve().parents[3]          # the source tree: tools/setup/des_setup/compile.py
 DESC = Path(__file__).resolve().parent / "game_build.json"
 GB = 1 << 30
 OOM = re.compile(r"out of memory|not enough memory|bad_alloc|std::bad_alloc", re.I)
 OOM_CODES = {0xC0000017, 0xC000012D}               # STATUS_NO_MEMORY, STATUS_COMMITMENT_LIMIT
+LLVM_ENTRY = "llvm-win64"                          # toolchain.json's compiler (docs/86)
 
 
 def sha_file(p) -> str:
@@ -143,6 +144,21 @@ def split_workloads(text: bytes, ps3recomp: Path) -> bytes:
     if b"constructor" in text:
         raise journal.StepFailed("gen", "the SPU workload table still has a static constructor")
     return text
+
+
+def toolchain(data: Path, cc=None, ld=None):
+    """(clang-cl command, lld-link): cc and ld when given (both or neither), else the
+    pinned LLVM download unpacked under data/tools (fetched first if it is not).
+    The download has clang.exe only, which is clang-cl with --driver-mode=cl."""
+    if cc or ld:
+        if not (cc and ld):
+            raise fetch.FetchError("--cc and --ld go together")
+        return [str(cc)], Path(ld)
+    e = next((t for t in fetch.load_manifest()["tools"] if t["name"] == LLVM_ENTRY), None)
+    if e is None:
+        raise fetch.FetchError("no compiler is pinned yet: pass --cc and --ld")
+    root = fetch.ensure(e, Path(data) / "downloads", Path(data) / "tools")
+    return [str(root / "bin" / "clang.exe"), "--driver-mode=cl"], root / "bin" / "lld-link.exe"
 
 
 class Obj:
@@ -305,7 +321,8 @@ class Compile:
     def _cc(self, o, slots, stop):
         obj = self.objdir / f"{o.name}.obj"
         dep = self.objdir / f"{o.name}.obj.d"
-        cmd = self.cc + o.args + [f"/Fo{obj}", "-clang:-MD", f"-clang:-MF{dep}", "-c", "--", str(o.src)]
+        cmd = self.cc + o.args + [f"/Fo{obj}", "-clang:-MD", f"-clang:-MF{dep}", "-clang:-fno-caret-diagnostics",
+                                  "-c", "--", str(o.src)]
         self._log(o.step).write_text("", encoding="utf-8")
         for attempt in (0, 1):
             with slots:
@@ -314,11 +331,13 @@ class Compile:
                 rc, out = self._exec(o.step, cmd, self.objdir)
             if rc == 0:
                 break
-            if attempt == 0 and (OOM.search(out) or (rc & 0xFFFFFFFF) in OOM_CODES):
+            oom = bool(OOM.search(out)) or (rc & 0xFFFFFFFF) in OOM_CODES
+            if attempt == 0 and oom:
                 slots.shrink()
                 continue
             tail = " | ".join(out.strip().splitlines()[-5:])
-            raise journal.StepFailed(o.step, f"the compiler failed (exit {rc}): {tail}", self._log(o.step))
+            why = "the compiler ran out of memory" if oom else "the compiler failed"
+            raise journal.StepFailed(o.step, f"{why} (exit {rc}): {tail}", self._log(o.step))
         try:
             deps = parse_depfile(dep.read_text(encoding="utf-8", errors="replace"))
         except OSError:

@@ -129,24 +129,6 @@ def cmd_run(a) -> int:
     return pipeline.run(Path(a.data), req, app=a.app, jobs=a.jobs, check_only=a.check_only)
 
 
-LLVM_ENTRY = "llvm-win64"
-
-
-def compiler(a, data: Path):
-    """(clang-cl command, lld-link): the ones named on the command line, or the
-    pinned LLVM download (toolchain.json's llvm-win64 entry, docs/86). The
-    download has clang.exe only, which is clang-cl with --driver-mode=cl."""
-    if a.cc or a.ld:
-        if not (a.cc and a.ld):
-            raise fetch.FetchError("--cc and --ld go together")
-        return [a.cc], Path(a.ld)
-    e = next((t for t in fetch.load_manifest()["tools"] if t["name"] == LLVM_ENTRY), None)
-    if e is None:
-        raise fetch.FetchError("no compiler is pinned yet: pass --cc and --ld")
-    root = fetch.ensure(e, data / "downloads", data / "tools")
-    return [str(root / "bin" / "clang.exe"), "--driver-mode=cl"], root / "bin" / "lld-link.exe"
-
-
 def cmd_compile(a) -> int:
     """The lift compiled and linked into des_game.dll (compile.py), each object
     skipped when done. The lift must have run."""
@@ -160,7 +142,7 @@ def cmd_compile(a) -> int:
             print(f"@progress {step} {done}/{total}", flush=True)
 
     try:
-        cc, ld = compiler(a, data)
+        cc, ld = compile_step.toolchain(data, a.cc, a.ld)
         dll = compile_step.Compile(data, jr, cc, ld, jobs=a.jobs, progress=prog).run_all()
     except fetch.FetchError as e:
         print(f"FIX  {e}")

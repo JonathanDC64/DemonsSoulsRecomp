@@ -12,14 +12,15 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from des_setup import compile as cc, journal  # noqa: E402
+from des_setup import compile as cc, fetch, journal  # noqa: E402
 
 REAL = Path(__file__).resolve().parents[3]          # this source tree
 
 # The fake compiler: /Fo<obj> -clang:-MF<dep> ... -- <src>. It reads the
 # source's quoted includes (beside it, then the -I folders), writes them as the
 # dependency file and the object as the sum of what it read. A source with FAIL
-# in it fails; one with OOM_ONCE runs out of memory the first time.
+# in it fails; one with OOM_ONCE runs out of memory the first time; one with
+# OOM_EXIT ends with Windows' out-of-memory status and prints nothing about it.
 FAKECC = r'''import hashlib, os, re, sys
 a = sys.argv[1:]
 src = a[a.index("--") + 1]
@@ -31,6 +32,8 @@ open(os.path.join(here, "cc_calls.txt"), "a").write(os.path.basename(obj) + "\n"
 text = open(src, encoding="utf-8").read()
 if "FAIL" in text:
     print("error: made to fail"); sys.exit(1)
+if "OOM_EXIT" in text:
+    sys.exit(-1073741801)   # 0xC0000017 as a signed exit status
 mark = obj + ".oom"
 if "OOM_ONCE" in text and not os.path.exists(mark):
     open(mark, "w").close(); print("LLVM ERROR: out of memory"); sys.exit(1)
@@ -267,6 +270,27 @@ class TestCompile(unittest.TestCase):
         Tree.put(self.t.data / "work/recomp/ppu_recomp_001.cpp", "OOM_ONCE\n")
         self.t.make(jobs=3).run_all()
         self.assertEqual(self.t.calls("cc").count("ppu_recomp_001.obj"), 2)
+
+    @unittest.skipUnless(os.name == "nt", "Windows' exit status")
+    def test_out_of_memory_by_exit_status_says_so(self):
+        """Only the exit status tells: tried once more, then the message says out
+        of memory, so `run` reports the memory error (pipeline.OOM)."""
+        Tree.put(self.t.data / "work/recomp/ppu_recomp_001.cpp", "OOM_EXIT\n")
+        with self.assertRaises(journal.StepFailed) as e:
+            self.t.make(jobs=2).run_all()
+        self.assertEqual(self.t.calls("cc").count("ppu_recomp_001.obj"), 2)
+        self.assertIn("out of memory", e.exception.message)
+
+    def test_no_source_lines_in_messages(self):
+        self.t.make(jobs=1).run_all()
+        log = (self.t.data / "setup/logs/cc_ppu_recomp_000.log").read_text(encoding="utf-8")
+        self.assertIn("-clang:-fno-caret-diagnostics", log)
+
+    def test_toolchain_given(self):
+        self.assertEqual(cc.toolchain(self.t.data, "bin/clang-cl", "bin/lld-link"),
+                         (["bin/clang-cl"], Path("bin/lld-link")))
+        with self.assertRaises(fetch.FetchError):
+            cc.toolchain(self.t.data, "bin/clang-cl", None)
 
     def test_missing_header_in_install(self):
         (self.t.src / "inc/rt.h").unlink()

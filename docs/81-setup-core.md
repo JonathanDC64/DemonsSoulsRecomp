@@ -1,6 +1,11 @@
 # 81. Setup core: the game check, pinned downloads, the step journal and the lift
 
-The first part of the player setup (docs/52, and the setup plan page): the parts that do not depend on the two open setup questions, Q2 (a prebuilt host exe, or everything built on the player's PC with llvm-mingw) and Q7 (the defaults: build parts after setup, the Enhanced preset's frame rate, button prompts).
+The first part of the player setup (docs/52, and the setup plan page): the game check, pinned downloads, the step journal and the lift.
+
+**Decided (2026-10-22).**
+- Q2 = A, a prebuilt host: CI builds the host exe, and the player's PC lifts and compiles only the game part (docs/52's "CI host, game DLL on the player's PC" route). The compiler and every other tool the build needs are downloaded by the host during setup, each pinned by version and SHA-256; none is bundled.
+- Q7: a. the build files are kept after setup, because an update needs them to rebuild; b. the Enhanced preset is a fixed preset, with no benchmark; c. button prompts other than the PS3's are left for later.
+- The game table and `scripts/spu_table.json` (sums, sizes and offsets only) are committed.
 
 Code: `tools/setup/` on the port branch `feat/setup-core` (local, not pushed). Standard-library Python only, so it runs on the embeddable Python that setup will bring.
 
@@ -30,20 +35,23 @@ Setup supports one game: **BLUS30443, version 1.00**, checked by hash. It accept
 
 A file that is still encrypted gets its own message: it starts with `SCE\0` (a SELF) or `NPD\0` (SDATA). Every problem is one line in plain words that says what to do.
 
-**The 26 decrypted `.sdat` sums are not measured yet** (docs/51 §10, check 2). They need RPCS3's output, and this PC has only the runtime's own decryption of 13 of them. Until they are in the table, setup checks each file's first bytes: a decrypted file is a DCX container and starts with `DCX\0`. The runtime's 13 decryptions do start that way. The CLI reports these files as "ok?".
+**The 26 decrypted `.sdat` sums** (docs/51 §10, check 2) were measured on 2026-10-22 from RPCS3's own output: a copy of RPCS3 0.0.43-20290 run as `rpcs3.exe --decrypt <file>...` (headless; SDATA needs no key) on copies of the 26 files. It writes `<name>.sdat.unedat` beside each one. All 26 start with `DCX\0`, and the 13 that the runtime also decrypts are byte for byte the same as the runtime's output. A table entry without a sum would still be checked by its first bytes and reported as "ok?"; none is left.
+
+In a folder the player picks, a decrypted file is found by its name at the top, or at its own path under the folder (`chr/...`, `USRDIR/chr/...` or `PS3_GAME/USRDIR/chr/...`), because RPCS3 keeps the game's subfolders when it decrypts a copied folder tree.
 
 The table (`des_setup/game_table.json`) holds sizes and SHA-256 sums only, no bytes of the game. It is generated from docs/51 appendix A.
 
 ## 2. Tested on a copy
 
-The copy, in the scratchpad: `PARAM.SFO`, `EBOOT.BIN`, the 26 `.sdat` files, the lift's `EBOOT.ELF`, the runtime's 13 `.sdat.dec` files renamed to `.unedat`, and `libsre.prx`. The data folder was fresh.
+The copy, outside the repository: `PARAM.SFO`, `EBOOT.BIN`, the 26 `.sdat` files, the lift's `EBOOT.ELF`, the runtime's 13 `.sdat.dec` files renamed to `.unedat`, and `libsre.prx`. The data folder was fresh.
 
 | Case | Result |
 |---|---|
 | The disc's files | all 28 match docs/51's sums |
-| Decrypted files | `EBOOT.elf` matches; `libsre.prx` matches; 13 script files found and start with `DCX\0`; 13 reported missing, which is right for this copy |
+| Decrypted files | first run: `EBOOT.elf` and `libsre.prx` match; 13 script files found and start with `DCX\0`; 13 reported missing, which was right for that copy. With RPCS3's 26 files (2026-10-22): all 26 match by sum, "Ready." |
 | No `--decrypted` folder | all 27 decrypted files reported missing, one line |
-| `fetch llvm-mingw` | refused: the entry has no SHA-256 yet, and nothing was written |
+| `fetch llvm-mingw` | refused: the entry had no SHA-256, and nothing was written (the entry is gone since Q2 = A) |
+| `fetch python-embed`, pinned | downloaded, size and sum checked, unpacked; a second run reused it with no download |
 | `lift -j 8` | the stage step and all 19 lift steps done in 82 s (loader, PPU lift, patches, NID table, the cut, 14 SPU lifts, libsre); it lists the 13 missing `.sdat` files and carries on |
 | `lift` again | every step skipped, 0.3 s |
 
@@ -65,14 +73,14 @@ The unit tests (24, on made-up files) cover:
 - Zips unpack into a folder of their own. Absolute paths, drive letters, `..` and symlinks are refused.
 - Everything stays in setup's data folder (`%LOCALAPPDATA%\DemonsSoulsRecomp`). Nothing is installed.
 
-Entries today, both **not pinned yet**:
+Entries today:
 
-| Tool | Version | Size | Route |
+| Tool | Version | Size | State |
 |---|---|---|---|
-| Python, embeddable | 3.13.9 | 10,926,675 bytes | both answers to Q2 |
-| llvm-mingw, UCRT x86-64 | 20261006 | 190,836,485 bytes | Q2 = B |
+| Python, embeddable | 3.13.9 | 10,926,675 bytes | pinned 2026-10-22: the size and python.org's MD5 checked on the first download |
 
-Pinning each needs one download to measure its SHA-256. That needs your OK (decisions list).
+- llvm-mingw was only for Q2 = B and is out of the table.
+- The compiler for the game part is not in the table yet. LLVM 22.1.8, the version the builds use today, is published as `clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz` (862,053,924 bytes) and as the `LLVM-22.1.8-win64.exe` installer (455,545,840 bytes). An installer would install, so it is out. The choice between the full archive and a smaller one made from it is open.
 
 ## 4. The journal (`journal.py`)
 
@@ -110,6 +118,8 @@ Pinning each needs one download to measure its SHA-256. That needs your OK (deci
 
 ## 6. Next, in order
 
-1. **Compile and link.** This depends on Q2 (which compiler, and whether the host is built here).
-2. **The screens.** This also depends on Q2: under A they run in the prebuilt RmlUi host, while under B no host exists until the build ends, so the first screens need another form.
-3. **The shaders step, and the end-of-setup cleanup.** The cleanup default is Q7 a.
+1. **The DLL split** (docs/57, local branch `feat/dll-split`, milestone 1 built on 10-19): `des_host.exe` and `des_game.dll`. Its frame-rate check was in profile windows; it needs a plain-window A/B (docs/83) on today's master before a PR.
+2. **The game part freestanding** (docs/52 section 7.8): no C runtime, Windows SDK or C++ library in `des_game.dll`, so the player's PC needs only clang, lld-link and clang's headers.
+3. **Compile and link in setup**, with the compiler download (section 3).
+4. **The screens**, in the prebuilt RmlUi host.
+5. **The shaders step.** The build files stay (Q7 a).

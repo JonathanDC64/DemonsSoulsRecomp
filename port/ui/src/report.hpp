@@ -25,6 +25,8 @@ struct File {
 // saves are not here: they stay in the PS3 file system (gamedata/dev_hdd0).
 const std::filesystem::path& data_dir();
 void set_data_dir(const std::filesystem::path& dir);  // (the crash dialog process: the crashed game's)
+// The folder of the running exe, or empty if it cannot be told.
+std::filesystem::path program_dir();
 
 // The port's version (version.hpp): "0.1.0", or "0.1.0-dev.<commits>+g<commit>" between releases.
 std::string version();

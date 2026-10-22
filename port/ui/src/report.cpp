@@ -689,6 +689,8 @@ void make_issue_report(std::vector<uint8_t> rgba, int width, int height, std::st
 
 }  // namespace
 
+std::filesystem::path program_dir() { return exe_dir(); }
+
 #ifdef _WIN32
 std::wstring widen(const std::string& s) {
     const int size = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), int(s.size()), nullptr, 0);

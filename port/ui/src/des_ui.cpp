@@ -31,6 +31,7 @@
 #include "report.hpp"
 #include "settings.hpp"
 #include "settings_window.hpp"
+#include "setup_window.hpp"
 #include "trophies_window.hpp"
 #include "trophy_toasts.hpp"
 #include "ui.hpp"
@@ -443,12 +444,16 @@ void push_documents() {
     ui::push_document(std::make_unique<ui::MenuBar>(), false);
     if (sStartScreen) ui::push_document(std::make_unique<ui::Prelaunch>());
 
-    // DES_UI_OPEN=menu | settings | trophies | osk: open one at startup (for screenshots and tests).
+    // DES_UI_OPEN=menu | settings | trophies | osk | setup: open one at startup (for screenshots and tests). setup runs
+    // the setup engine over the game (docs/88: its own window comes with the split host), on DES_SETUP_GAME's dump.
     if (const char* open = std::getenv("DES_UI_OPEN"); open && *open) {
         if (!std::strcmp(open, "menu")) open_menu_bar();
         else if (!std::strcmp(open, "settings")) ui::push_document(std::make_unique<ui::SettingsWindow>());
         else if (!std::strcmp(open, "trophies")) ui::push_document(std::make_unique<ui::TrophiesWindow>());
         else if (!std::strcmp(open, "osk")) open_test_osk();
+        else if (!std::strcmp(open, "setup"))
+            ui::push_document(
+                std::make_unique<ui::SetupWindow>(ui::SetupWindow::Props{.request = ui::setup::request_from_env()}));
     }
 }
 

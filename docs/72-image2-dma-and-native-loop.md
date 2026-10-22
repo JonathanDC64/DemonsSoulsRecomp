@@ -102,7 +102,7 @@ All four sit on the frame's path. No single thread is the limit any more.
 
 ## Next candidates (inferred, for the decisions list)
 
-1. **The put-pointer store's lock** (HighGraphics, about 12%). Every PPU store to a reserved line takes the stripe lock, notifies and unlocks.
+1. **The put-pointer store's lock** (HighGraphics, about 12%). Every PPU store to a reserved line takes the stripe lock, notifies and unlocks. *Update 2026-10-21: built behind `SPU_COH_FAST` and measured, +0.4% (inside the noise). HighGraphics waits on image 2, so the time it saves does not reach the frame. Parked; see docs/78.*
    - An exact cheaper path needs a reservation design that does not lock plain stores. RPCS3 instead compares data at PUTLLC time.
    - That is a design change on the path that froze the game before (docs/48 risks, the lwarx and PUTLLC notes). It needs its own plan.
 2. **Commands 31-34 natively** (docs/48 Stage 4). About a quarter of image 2. Region 0x8CB8 alone is about 1,950 SPU instructions, so this is a project of its own.

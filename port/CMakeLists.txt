@@ -364,7 +364,9 @@ endif()
 #             (or PS3_GAME_MODULE).
 # Both take their sources, include folders, definitions and options from
 # des_boot itself, so they follow it; this section stays last. Windows
-# (clang-cl) only, and not with DES_SHADOW_STACK.
+# (clang-cl) only, and not with DES_SHADOW_STACK. DES_SPLIT_FREESTANDING=ON
+# builds des_game.dll with no C runtime, SDK or C++ library of its own
+# (cmake/DesGameFreestanding.cmake, docs/84); use its own build directory.
 option(DES_SPLIT "Also build des_host.exe and des_game.dll (the lifted code as a DLL)" OFF)
 if(DES_SPLIT)
     if(NOT MSVC)
@@ -516,6 +518,11 @@ if(DES_SPLIT)
         add_custom_command(TARGET des_host POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E echo "des_host: DEVELOPER BUILD (DES_DEV=ON), the cheats are compiled in. Never share it."
             VERBATIM)
+    endif()
+    # A freestanding des_game.dll: the same targets, changed in place.
+    option(DES_SPLIT_FREESTANDING "Build des_game.dll freestanding: no C runtime, SDK or C++ library (docs/84)" OFF)
+    if(DES_SPLIT_FREESTANDING)
+        include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DesGameFreestanding.cmake")
     endif()
     message(STATUS "des_boot: split build ON: des_host.exe + des_game.dll (runtime ${PS3RECOMP_SPLIT_LIB}, ${_des_nfns} port functions for the lift)")
 endif()

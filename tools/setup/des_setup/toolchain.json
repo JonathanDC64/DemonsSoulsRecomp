@@ -1,0 +1,23 @@
+{
+ "comment": "The tools setup fetches, each at one exact version, checked by size and SHA-256 (fetch.py). An entry whose sha256 is null is not pinned yet and fetch.py refuses it. 'route' says which answer to setup question Q2 needs it: 'both', or 'B' (everything built on the player's PC with llvm-mingw). Sizes are the publishers' (docs/52 section 13); the sums are measured when the files are first downloaded.",
+ "tools": [
+  {
+   "name": "python-embed",
+   "version": "3.13.9",
+   "route": "both",
+   "url": "https://www.python.org/ftp/python/3.13.9/python-3.13.9-embed-amd64.zip",
+   "size": 10926675,
+   "sha256": null,
+   "why": "Runs the lifters and this setup."
+  },
+  {
+   "name": "llvm-mingw",
+   "version": "20261006",
+   "route": "B",
+   "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20261006/llvm-mingw-20261006-ucrt-x86_64.zip",
+   "size": 190836485,
+   "sha256": null,
+   "why": "Compiles and links everything with its own headers against the Universal CRT that Windows 10 and 11 already have, so nothing from Microsoft's SDK or runtime is shipped."
+  }
+ ]
+}

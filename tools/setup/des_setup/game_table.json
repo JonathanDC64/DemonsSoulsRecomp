@@ -1,0 +1,356 @@
+{
+ "comment": "BLUS30443 version 1.00, the one version the port supports (docs/51 appendix A). SHA-256 sums and sizes only: no bytes of the game. sha256 null = not measured yet; then the file is checked by its magic instead.",
+ "title_id": "BLUS30443",
+ "app_ver": "01.00",
+ "version": "01.00",
+ "other_titles": {
+  "BLES00932": "the European disc",
+  "BCAS20071": "the Asian disc",
+  "BCJS30022": "the Japanese disc",
+  "BLUD80018": "the US trade demo",
+  "NPUB30910": "the US PlayStation Store version",
+  "NPJA00102": "the Japanese PlayStation Store version"
+ },
+ "originals": [
+  {
+   "path": "PS3_GAME/PARAM.SFO",
+   "size": 1008,
+   "sha256": "13884a41803d9ad9955db48cf2f2c36b9c511f0770e511f91eccbda13b73c78b"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/EBOOT.BIN",
+   "size": 28224840,
+   "sha256": "77375fbf5c654b5a92b870831862a9a09bdc9e6052956d5b84503bda5704f3ac"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/c0000/c0000.esd.dcx.sdat",
+   "size": 33568,
+   "sha256": "b99189e0a18a5f4a0c63a853969f578d8395f12f0c217ed3d69c864c7146c843"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/enemycommon.esd.dcx.sdat",
+   "size": 8912,
+   "sha256": "09da58e5028881f7e1491cd8e39411075761d95243999cdcd81622773f6637c8"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m01.chresdbnd.dcx.sdat",
+   "size": 3264,
+   "sha256": "efb19f6bfef6e85f8f5f605687bfab2b19945001ec7950aa5dda8adf566b9bbe"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m02.chresdbnd.dcx.sdat",
+   "size": 30784,
+   "sha256": "c11f25a7e183e01c827515c3b3aa15e821ec40dbc4c7a3a5975396f1b752cb49"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m03.chresdbnd.dcx.sdat",
+   "size": 27168,
+   "sha256": "fda311345115b7101144665051f742a5a1cf3cd0a9f8a334a8ce2218cca9bf87"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m04.chresdbnd.dcx.sdat",
+   "size": 13680,
+   "sha256": "20bab94e9bb4033a9654176a4187cce6b280bcb80a979c3ce3e12941f1e9d4d4"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m05.chresdbnd.dcx.sdat",
+   "size": 13552,
+   "sha256": "e67fc9a66f6aa4c6330e1a0fc5659ca4db89bf1946faaae375143b69cc9cc567"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m06.chresdbnd.dcx.sdat",
+   "size": 22320,
+   "sha256": "6e49baf88aa33e3e635d946feb1cd9ea4edfe3932ff28460b723602507915afd"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m08.chresdbnd.dcx.sdat",
+   "size": 7984,
+   "sha256": "95e651468c7dbc2fdcb8862839e22e1ffa0d82437f3612740dbb4f7b78457c24"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m99.chresdbnd.dcx.sdat",
+   "size": 105184,
+   "sha256": "8ca5e413332071dc8ecb7594761e2a2923344fc9b3c1f2fc7258ac836ded1434"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/menu/common.menuesdbnd.dcx.sdat",
+   "size": 9616,
+   "sha256": "ed01e42e1fe9af9806a20af3e0ec8803498347b9df1e50315b35719c7faacbff"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/menu/ingame.menuesdbnd.dcx.sdat",
+   "size": 27152,
+   "sha256": "8800c6dcd7c65556bf3bbe97666b16b82956d3e752db88c444df73908b93da99"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/menu/title.menuesdbnd.dcx.sdat",
+   "size": 4304,
+   "sha256": "b141224c80b32abddb389114f47484949afceeafbbfec6100caaf451e623483f"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/m01.luabnd.dcx.sdat",
+   "size": 123504,
+   "sha256": "753b3e80024c71336f01e1cae7f28cc1f527668cb9b9d1186eac35e9fe59c78c"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/m02.luabnd.dcx.sdat",
+   "size": 214352,
+   "sha256": "cae0b75b6f317adceb84713a0b9ec665ac197c6967fea32c3ca5485e8f9c3ae7"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/m03.luabnd.dcx.sdat",
+   "size": 151568,
+   "sha256": "9a262026c4c62c349bcb34e828866467740b65e71f74d5d181c7c62bd5363f0e"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/m04.luabnd.dcx.sdat",
+   "size": 156608,
+   "sha256": "8a8d37ae77c70ccdf58744869d941957f4ea996e738f171685caa221adee5abf"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/m05.luabnd.dcx.sdat",
+   "size": 138208,
+   "sha256": "7878d9aead49e683a57247d133a63c6b5ec001547c9050cc8fbdcf6b24d049be"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/m06.luabnd.dcx.sdat",
+   "size": 154848,
+   "sha256": "3238a4f554c48137e3e8953dd685ac7fc93fed6e86e79278b246c61cf66e32ca"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/m08.luabnd.dcx.sdat",
+   "size": 99616,
+   "sha256": "3266881bf0fbe5a990ce0e1adf13f8dd22714d087aa5fa59f2e0830549f022ac"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/talk/m01.talkesdbnd.dcx.sdat",
+   "size": 26384,
+   "sha256": "b39a4eccb7d5e33b4e9d77ec14421546bb9bd518bca1d0e97ef5c49c96a40660"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/talk/m02.talkesdbnd.dcx.sdat",
+   "size": 12432,
+   "sha256": "6aadfdec449b7095ba318b3bd7ab8cebb91e2c43e54a58c9e6213e6e397bc9a5"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/talk/m03.talkesdbnd.dcx.sdat",
+   "size": 7440,
+   "sha256": "a6a78319d9db924796e961eecc4d3e6a82771ba64ab443c2830ef47baab2f0d2"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/talk/m04.talkesdbnd.dcx.sdat",
+   "size": 5232,
+   "sha256": "7b58617a223e909caaaf9a6add5fd6fce2fdb626d2552da12577abe2baef5f27"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/talk/m05.talkesdbnd.dcx.sdat",
+   "size": 5920,
+   "sha256": "b65627a772f59c06bff4d627dc13a429eb1b59f8d5afe6bd3dd9a9f4dc4b3849"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/talk/m06.talkesdbnd.dcx.sdat",
+   "size": 7872,
+   "sha256": "3dae370562eacd5a4f93029d0db058c8000c171d8c41b05d4b1c2234fe468efe"
+  }
+ ],
+ "decrypted": [
+  {
+   "path": "PS3_GAME/USRDIR/EBOOT.elf",
+   "of": "PS3_GAME/USRDIR/EBOOT.BIN",
+   "size": 28222408,
+   "sha256": "90eaa5e9e48b4874292badc311ccea253e6a622ff188bfbdbe76e6f6821269d8",
+   "magic": "7f454c46"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/c0000/c0000.esd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/chr/c0000/c0000.esd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/enemycommon.esd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/chr/enemycommon.esd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m01.chresdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/chr/m01.chresdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m02.chresdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/chr/m02.chresdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m03.chresdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/chr/m03.chresdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m04.chresdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/chr/m04.chresdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m05.chresdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/chr/m05.chresdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m06.chresdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/chr/m06.chresdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m08.chresdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/chr/m08.chresdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/chr/m99.chresdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/chr/m99.chresdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/menu/common.menuesdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/menu/common.menuesdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/menu/ingame.menuesdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/menu/ingame.menuesdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/menu/title.menuesdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/menu/title.menuesdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/m01.luabnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/script/m01.luabnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/m02.luabnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/script/m02.luabnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/m03.luabnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/script/m03.luabnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/m04.luabnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/script/m04.luabnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/m05.luabnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/script/m05.luabnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/m06.luabnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/script/m06.luabnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/m08.luabnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/script/m08.luabnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/talk/m01.talkesdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/script/talk/m01.talkesdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/talk/m02.talkesdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/script/talk/m02.talkesdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/talk/m03.talkesdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/script/talk/m03.talkesdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/talk/m04.talkesdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/script/talk/m04.talkesdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/talk/m05.talkesdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/script/talk/m05.talkesdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  },
+  {
+   "path": "PS3_GAME/USRDIR/script/talk/m06.talkesdbnd.dcx.sdat.unedat",
+   "of": "PS3_GAME/USRDIR/script/talk/m06.talkesdbnd.dcx.sdat",
+   "size": null,
+   "sha256": null,
+   "magic": "44435800"
+  }
+ ],
+ "firmware": [
+  {
+   "name": "libsre.prx",
+   "size": 239344,
+   "sha256": "115f9df9596dd0b358e5a8c4eaaf77ee44c1f3ec16f9056b3abc517b739140c9",
+   "magic": "7f454c46",
+   "from": "dev_flash/sys/external/libsre.sprx, decrypted"
+  }
+ ]
+}

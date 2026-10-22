@@ -24,7 +24,8 @@
  *   fading in (state 0) the last one, and treats the hold of state 2 as already
  *   over: the last logo's fade-in and fade-out still play, about 2 s.
  *   Either way the game takes its own exit path, so nothing downstream sees a
- *   state it would not see on hardware.
+ *   state it would not see on hardware. Read at each update, so a change in
+ *   the settings window applies to the logo on screen (or the next start).
  *
  * DES_SKIP_INTRO_MOVIE=1 — skip the opening movie (movie/ds_advertise.pam, the
  *   130 s advert after the logos; the title screen also replays it when left
@@ -96,7 +97,9 @@
  *   that clears the notices, the title's "press start", "load game" and the
  *   first save in the list. It never presses CIRCLE or the d-pad, so it only
  *   goes forwards and never moves a cursor off its default. It lets go for
- *   good when the level's script archive (script/m*.luabnd) opens.
+ *   good when the level's script archive (script/m*.luabnd) opens. Read at
+ *   each pad poll, so the settings window turns it on or off live until then;
+ *   after the first level there is nothing left for it to do.
  *
  * The dev cheats and the warp are in des_dev.cpp, compiled into developer
  *   builds only (cmake -DDES_DEV=ON; docs/55).
@@ -143,14 +146,23 @@ bool env_on(const char* name)
     return v && *v && strcmp(v, "0") != 0;
 }
 
-int s_skip_intro = 0;
+/* DES_SKIP_INTRO as it is now: 0, 1 or 2. The settings window changes it
+ * live; the logos only play at start, so a change shows there or at the
+ * next start. */
+int skip_intro()
+{
+    static int mode = 0;
+    PS3_KNOB(mode, env_on("DES_SKIP_INTRO") ? (atoi(getenv("DES_SKIP_INTRO")) == 2 ? 2 : 1) : 0);
+    return mode;
+}
 
 void logo_update_skip(ppu_context* ctx)
 {
     const uint32_t dlg = (uint32_t)ctx->gpr[3];
-    if (dlg && s_skip_intro == 1) {
+    const int mode = skip_intro();
+    if (dlg && mode == 1) {
         vm_write32(dlg + kAnimState, 3);   /* to the next logo, or out after the last */
-    } else if (dlg) {
+    } else if (dlg && mode == 2) {
         const uint32_t state = vm_read32(dlg + kAnimState);
         if (state == 0 && vm_read32(dlg + kCurLogType) < kLastLogType) {
             static bool said = false;
@@ -481,10 +493,17 @@ volatile bool s_auto_done = false;
 
 extern "C" int des_ui_start_screen_up(void);   /* port/ui/src/des_ui.cpp */
 
+bool auto_continue_on()   /* live: the settings window can turn it on or off before the first level */
+{
+    static bool on = false;
+    PS3_KNOB(on, env_on("DES_AUTO_CONTINUE"));
+    return on;
+}
+
 unsigned auto_continue_buttons()
 {
     /* From settings.ini the start screen still shows: press nothing until Play. */
-    if (s_auto_done || des_ui_start_screen_up()) return 0;
+    if (s_auto_done || !auto_continue_on() || des_ui_start_screen_up()) return 0;
     using clock = std::chrono::steady_clock;
     static const clock::time_point t0 = clock::now();
     const long long ms =
@@ -497,8 +516,8 @@ unsigned auto_continue_buttons()
 void auto_continue_on_open(const char* path)
 {
     if (!s_auto_done && strstr(path, "/script/m") && strstr(path, ".luabnd")) {
-        s_auto_done = true;
-        fprintf(stderr, "[des] DES_AUTO_CONTINUE: level loading (%s), pad released\n", path);
+        s_auto_done = true;   /* on or not: from the first level on there is nothing left to press through */
+        if (auto_continue_on()) fprintf(stderr, "[des] DES_AUTO_CONTINUE: level loading (%s), pad released\n", path);
     }
 }
 
@@ -2087,12 +2106,11 @@ extern "C" void ps3_title_options_init(void)
     des_aspect_init();     /* DES_ASPECT, DES_HUD: before the first camera is built */
     des_menu_sfx_init();   /* the UI's sounds through the game's menu sounds */
     des_chrins_init();     /* the character step's handshake without its lost-kick race */
-    if (env_on("DES_SKIP_INTRO")) {
-        s_skip_intro = atoi(getenv("DES_SKIP_INTRO")) == 2 ? 2 : 1;
-        ppu_register_function(kLogoUpdate, logo_update_skip);
-        fprintf(stderr, "[des] DES_SKIP_INTRO=%d: boot logos %s\n", s_skip_intro,
-                s_skip_intro == 1 ? "skipped" : "shortened");
-    }
+    /* DES_SKIP_INTRO and DES_AUTO_CONTINUE are read as they are used, so the
+     * settings window changes them live; their hooks are always on. */
+    ppu_register_function(kLogoUpdate, logo_update_skip);
+    if (const int mode = skip_intro())
+        fprintf(stderr, "[des] DES_SKIP_INTRO=%d: boot logos %s\n", mode, mode == 1 ? "skipped" : "shortened");
     if (env_on("DES_SKIP_INTRO_MOVIE") && !getenv("PS3_SAIL_SKIP")) {
         ps3_setenv("PS3_SAIL_SKIP", kOpeningMovie);
         fprintf(stderr, "[des] DES_SKIP_INTRO_MOVIE: the opening movie is skipped\n");
@@ -2131,9 +2149,8 @@ extern "C" void ps3_title_options_init(void)
             fprintf(stderr, "[des] DES_FRAMELOG: cannot open %s\n", f);
         }
     }
-    if (env_on("DES_AUTO_CONTINUE")) {
-        g_pad_title_hook = auto_continue_buttons;
-        g_fs_open_hook = auto_continue_on_open;
+    g_pad_title_hook = auto_continue_buttons;
+    g_fs_open_hook = auto_continue_on_open;
+    if (auto_continue_on())
         fprintf(stderr, "[des] DES_AUTO_CONTINUE: pressing through the menus to the last save\n");
-    }
 }

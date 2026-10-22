@@ -229,6 +229,8 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         choice_row(leftPane, rightPane, "Display mode", "DES_FULLSCREEN", {"0", "1"}, {"Window", "Fullscreen"},
             "Fullscreen fills the display the window is on. Alt+Enter also switches between the two."
             "<br/><br/>(DES_FULLSCREEN)");
+        bool_row(leftPane, rightPane, "Start maximized", "DES_MAXIMIZED",
+            "The window opens maximized, and comes back maximized from Fullscreen.<br/><br/>(DES_MAXIMIZED)");
         choice_row(leftPane, rightPane, "Aspect ratio", "DES_ASPECT",
             {"", "2560:1080", "3440:1440", "3840:1600", "32:9", "auto"},
             {"16:9 (original)", "21:9 (2560x1080)", "21:9 (3440x1440)", "21:9 (3840x1600)", "32:9", "Match the display"},

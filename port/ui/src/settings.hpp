@@ -64,7 +64,8 @@ std::string keys_with_layout(const std::string& changes);
 bool harness_run();
 bool scripted_run();
 // scripted_run() without DES_AUTO_CONTINUE: nobody plays the run. The close button closes at once only there; a
-// play session with DES_AUTO_CONTINUE on its command line skips the start screen but still asks.
+// play session with DES_AUTO_CONTINUE on its command line skips the start screen but still asks. The window opens
+// maximized (DES_MAXIMIZED) only outside it, unless DES_MAXIMIZED is given.
 bool unattended_run();
 
 // PS3_NO_USER_INPUT=1 (test runs; tools/des/deslib.sh sets it): the user's pads, keys and mouse do nothing. The

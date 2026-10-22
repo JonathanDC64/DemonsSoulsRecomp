@@ -58,6 +58,7 @@ and on every change.
 
 | Row (tab) | Key | Values | Applies |
 |---|---|---|---|
+| Start maximized (Display) | `DES_MAXIMIZED` (sets `RSX_MAXIMIZED`) | 1 / 0 | next start (the window is made once); not in test runs unless given |
 | Frame rate (Display) | `DES_FPS` | "" = 30 fps original, 30, 60, 120, 144, 165, 240 | at once (read at each flip request) |
 | Cutscene frame rate (Display) | `DES_CUTFPS` | 0 = 30 fps (original), 1 = the frame rate, the camera blended between its keys | at once (read at each flip request) |
 | V-sync (Display) | `DES_VSYNC` (sets `RSX_VSYNC`) | 1 / 0 | at once (live knob) |
@@ -112,11 +113,22 @@ before the first change and hands the vblank back to the PS3's 59.94 Hz. A
   large as other programs' text; moving it to a display of another scale
   takes the size Windows suggests. (It used to be the window's height /
   720, which made everything grow with the window.)
-- It opens centred on the primary display (its size the title's 1280x720
-  at the display's scale, made smaller if it would not fit), with a dark
+- It opens maximized on the primary display (Start maximized,
+  `DES_MAXIMIZED`, on by default; it sets the runtime's `RSX_MAXIMIZED`,
+  read once as the window is made, so a change takes effect at the next
+  start). Un-maximized, it is centred there, its size the title's 1280x720
+  at the display's scale (made smaller if it would not fit). It has a dark
   title bar (`RSX_DARK_TITLE=0` for the system's).
+- Runs nobody plays keep the centred window: tools/des test runs (all but
+  `play.sh`), `PAD_FILE` and `EXIT_AFTER_MS` runs, unless they pass
+  `DES_MAXIMIZED=1` (`unattended_run`, as for the close button). With
+  `PS3_NO_USER_INPUT=1`, which tools/des test runs set by default, it never
+  opens maximized: showing a window maximized always takes the focus. So a
+  test run of it needs `DES_MAXIMIZED=1 PS3_NO_USER_INPUT=0`. An
+  `RSX_MAXIMIZED` from the environment wins over the setting.
 - **Alt+Enter** switches to borderless fullscreen on the window's monitor
-  and back.
+  and back, to the window as it was, maximized or not. A maximized window
+  is restored before it goes fullscreen and maximized again after.
 - A resize happens between frames: the backend waits for the GPU, calls the
   overlay's `release` hook (the UI finishes its work on the buffers and drops
   its views of them), then ResizeBuffers.

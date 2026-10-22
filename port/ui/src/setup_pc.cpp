@@ -5,11 +5,14 @@
 
 #include "setup_engine.hpp"
 
+#include "host.hpp"
+
 #ifdef _WIN32
 #include <windows.h>
 // (after windows.h)
 #include <shlobj.h>
 #else
+#include <SDL.h>
 #include <unistd.h>
 #endif
 
@@ -73,6 +76,20 @@ Power platform_power() {
     out.battery = s.BatteryFlag != 128 && s.BatteryFlag != 255;
     out.onBattery = out.battery && s.ACLineStatus == 0;
     return out;
+}
+
+// dmPelsWidth and dmPelsHeight are the mode's pixels, whatever the process's DPI awareness (rcMonitor is scaled for
+// a process that is not aware).
+Display platform_display() {
+    HMONITOR monitor = MonitorFromWindow(static_cast<HWND>(host::window()), MONITOR_DEFAULTTOPRIMARY);
+    MONITORINFOEXW info{};
+    info.cbSize = sizeof info;
+    DEVMODEW mode{};
+    mode.dmSize = sizeof mode;
+    if (!GetMonitorInfoW(monitor, &info) || !EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode))
+        return {};
+    const int hz = mode.dmDisplayFrequency > 1 ? int(mode.dmDisplayFrequency) : 0;  // (0 and 1: the default rate)
+    return {int(mode.dmPelsWidth), int(mode.dmPelsHeight), hz};
 }
 
 #else
@@ -152,6 +169,14 @@ Power platform_power() {
     out.battery = battery;
     out.onBattery = battery && charger && !online;
     return out;
+}
+
+Display platform_display() {
+    auto* window = static_cast<SDL_Window*>(host::window());
+    const int index = window ? SDL_GetWindowDisplayIndex(window) : 0;
+    SDL_DisplayMode mode{};
+    if (SDL_GetCurrentDisplayMode(index < 0 ? 0 : index, &mode) != 0) return {};
+    return {mode.w, mode.h, mode.refresh_rate};
 }
 
 #endif
@@ -302,6 +327,10 @@ Estimate setup_time() {
 
 Power power() {
     return platform_power();
+}
+
+Display display() {
+    return platform_display();
 }
 
 }  // namespace ui::setup

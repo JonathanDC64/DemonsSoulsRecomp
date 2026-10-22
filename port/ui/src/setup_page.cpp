@@ -2,6 +2,7 @@
 #include "setup_page.hpp"
 
 #include "host.hpp"
+#include "settings.hpp"
 #include "ui.hpp"
 #include "version.hpp"
 
@@ -189,6 +190,14 @@ void SetupPage::set_rail(const std::vector<RailStep>& steps) {
         text(words, "setup-rail-name", s.name);
         if (!s.sub.empty()) text(words, "setup-rail-sub", s.sub);
     }
+}
+
+bool SetupPage::options_chosen() {
+    return !settings::get("setup_preset").empty();
+}
+
+SetupPage::RailStep SetupPage::options_step(RailStep::State state) {
+    return {"Options", "", options_chosen() ? RailStep::State::Done : state};
 }
 
 void SetupPage::set_heading(const std::string& title, const std::string& lede) {

@@ -1,9 +1,9 @@
 // Written for Demon's Souls. The setup screens' shell (docs/89): the whole window, as the setup design. A rail on the
-// left with the game's name, setup's steps (Your game, Build, Play) and the version; the page on the right with a
-// heading, the line under it, the page's own parts and its buttons, and the pad's buttons at the bottom. Only the parts
-// scroll: the buttons stay in view. The page scales with the window's height (720 px high is 1x; host.hpp). A question
-// (Stop the build?) opens over the page in the same document, the page dimmed behind it. The parts' looks are in
-// setup.rcss.
+// left with the game's name, setup's steps (Your game, Build, Options, Play) and the version; the page on the right
+// with a heading, the line under it, the page's own parts and its buttons, and the pad's buttons at the bottom. Only
+// the parts scroll: the buttons stay in view. The page scales with the window's height (720 px high is 1x; host.hpp).
+// A question (Stop the build?) opens over the page in the same document, the page dimmed behind it. The parts' looks
+// are in setup.rcss.
 //
 // The pad: Left and Right move along a line of buttons, Up and Down to the next line, Cross presses, Circle goes back
 // (back()) or answers a question with its last button; Start and F1 do nothing here. A button's action runs in
@@ -57,6 +57,10 @@ protected:
     explicit SetupPage(const char* pageClass);
 
     void set_rail(const std::vector<RailStep>& steps);
+    // The options were picked after a build (setup_preset, setup_options_window.hpp), and the rail's Options step:
+    // done then, else `state`.
+    static bool options_chosen();
+    static RailStep options_step(RailStep::State state = RailStep::State::Todo);
     void set_heading(const std::string& title, const std::string& lede);
     // The page's own parts go here, under the heading. They scroll when they do not fit.
     Rml::Element* content() const { return mContent; }

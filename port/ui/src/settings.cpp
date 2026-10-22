@@ -9,7 +9,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <iterator>
 #include <map>
+#include <random>
 #include <set>
 #include <string>
 
@@ -59,6 +61,7 @@ constexpr Def kDefs[] = {
     {"DES_NET_SYNC", "", Apply::Live},         // des_net_sync: position packets a second; "" = every 6th frame
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
     {"show_start_screen", "1", Apply::UiOnly},
+    {"setup_preset", "", Apply::UiOnly},       // the setup screens' preset (setup_options.hpp); "" = not picked yet
     {"menu_hint", "1", Apply::UiOnly},
     {"trophy_popups", "1", Apply::UiOnly},     // trophy_toasts.cpp; off hides the toast, the unlock is still kept
     {"trophies_show_hidden", "0", Apply::UiOnly},  // trophies_window.cpp: hidden trophies listed with their names
@@ -453,6 +456,13 @@ void set(std::string_view key, const std::string& value) {
     write_in_use();
 }
 
+void store(std::string_view key, const std::string& value) {
+    if (!find(key)) return;
+    sValues[std::string(key)] = value;
+    save();
+    write_in_use();
+}
+
 bool pinned(std::string_view key) {
     return sPinned.count(key) != 0;
 }
@@ -496,6 +506,20 @@ bool net_name_ok(std::string_view n) {
         if (!std::isalnum((unsigned char)c) && c != '-' && c != '_') return false;
     }
     return true;
+}
+
+std::string suggest_net_name() {
+    // Places and things of Boletaria, 11 letters at most, so that the dash and four digits fit in 16.
+    static const char* const kWords[] = {
+        "Boletaria", "Stonefang", "Latria", "Nexus", "Archstone", "Shrine", "Valley", "Bladestone",
+        "Crescent", "Pureblade", "Firestorm", "Vanguard", "Phalanx", "Demonbrandt", "Colorless", "Graystone",
+    };
+    std::random_device rd;
+    std::mt19937 rng(rd());
+    const char* word = kWords[std::uniform_int_distribution<size_t>(0, std::size(kWords) - 1)(rng)];
+    char name[24];
+    std::snprintf(name, sizeof name, "%s-%04u", word, unsigned(std::uniform_int_distribution<int>(0, 9999)(rng)));
+    return name;
 }
 
 std::string net_server_address() {

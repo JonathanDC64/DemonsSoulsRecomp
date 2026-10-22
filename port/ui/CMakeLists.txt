@@ -84,8 +84,9 @@ add_custom_command(
 # ---- The UI ----
 # Each platform's mouse and crash reports (docs/76): Win32 on Windows (with the crash dialog and the D3D11 renderer),
 # SDL elsewhere. The setup screens' files (child_process, setup_engine, setup_protocol, setup_page, setup_window,
-# setup_screens, setup_pc, folder_picker; docs/88, docs/89) build on both: child_process.cpp, setup_engine.cpp,
-# setup_pc.cpp and folder_picker.cpp hold their few functions for each platform inside.
+# setup_screens, setup_options, setup_options_window, setup_pc, folder_picker; docs/88, docs/89, docs/91) build on
+# both: child_process.cpp, setup_engine.cpp, setup_pc.cpp and folder_picker.cpp hold their few functions for each
+# platform inside.
 file(GLOB DES_UI_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 if(WIN32)
   set(DES_UI_OTHER mouse_sdl crash_report_posix)

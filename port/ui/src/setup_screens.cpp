@@ -11,6 +11,7 @@
 #include "host.hpp"
 #include "portable.hpp"
 #include "settings_window.hpp"
+#include "setup_options_window.hpp"
 #include "setup_window.hpp"
 #include "ui.hpp"
 #include "version.hpp"
@@ -198,49 +199,59 @@ void SetupStartWindow::refresh() {
               "Close the window at any point. Setup carries on where it stopped the next time.");
         row = footer_row();
         main.push_back({"Start", [this] { open_source(); }, Look::Primary});
-        set_rail({{"Your game", "", S::Now}, {"Build", time, S::Todo}, {"Play", "", S::Todo}});
+        set_rail({{"Your game", "", S::Now}, {"Build", time, S::Todo}, options_step(), {"Play", "", S::Todo}});
         break;
     }
     case State::Interrupted:
         welcome_back("info", "Setup was interrupted", "It carries on where it stopped. The finished parts are kept.");
         main.push_back({"Resume setup", [this] { run(mProps.request); }, Look::Primary});
         main.push_back({"Start over", [this] { open_source(); }, Look::Quiet});
-        set_rail({{"Your game", "", S::Done}, {"Build", "Stopped", S::Now}, {"Play", "", S::Todo}});
+        set_rail({{"Your game", "", S::Done}, {"Build", "Stopped", S::Now}, options_step(), {"Play", "", S::Todo}});
         break;
     case State::Outdated:
         welcome_back("info", "This version needs a rebuild",
                      "Your game files are kept, so there is nothing to choose. " + build_time() + " on this PC.");
         main.push_back({"Update now", [this] { run(mProps.request); }, Look::Primary});
-        set_rail({{"Your game", "", S::Done}, {"Build", "Needs a rebuild", S::Now}, {"Play", "", S::Todo}});
+        set_rail({{"Your game", "", S::Done}, {"Build", "Needs a rebuild", S::Now}, options_step(),
+                  {"Play", "", S::Todo}});
         break;
     case State::Damaged:
         welcome_back("warn", "Some of setup's files are missing",
                      "Some of the files setup made are missing or have changed. Repair builds only those again.");
         main.push_back({"Repair", [this] { run(mProps.request); }, Look::Primary});
-        set_rail({{"Your game", "", S::Done}, {"Build", "Needs a repair", S::Now}, {"Play", "", S::Todo}});
+        set_rail({{"Your game", "", S::Done}, {"Build", "Needs a repair", S::Now}, options_step(),
+                  {"Play", "", S::Todo}});
         break;
     case State::GameMoved:
         welcome_back("warn", "Your game folder moved",
                      "It is not in " + utf8(mLaunch.game) + " any more. Choose where it is now: nothing needs building.");
         main.push_back({"Choose the game folder", [this] { open_folder(); }, Look::Primary});
-        set_rail({{"Your game", "Moved", S::Now}, {"Build", "", S::Done}, {"Play", "", S::Todo}});
+        set_rail({{"Your game", "Moved", S::Now}, {"Build", "", S::Done}, options_step(), {"Play", "", S::Todo}});
         break;
-    case State::Ready:
-        set_heading("Ready to play", "The game is built for this PC.");
-        {
-            auto* box = panel(mBody);
-            if (!mLaunch.game.empty()) found(box, "setup-ok", "Your game", "From " + utf8(mLaunch.game) + ".");
-            found(box, "setup-ok", "Built", "des_game.dll for version " + std::string(kVersion) + ".");
-        }
+    case State::Ready: {  // (the options next, if they were not picked after the build)
+        const bool chosen = options_chosen();
+        if (chosen) set_heading("Ready to play", "The game is built for this PC and your options are set.");
+        else set_heading("The game is built", "Next, pick how you want to play.");
+        auto* box = panel(mBody);
+        if (!mLaunch.game.empty()) found(box, "setup-ok", "Your game", "From " + utf8(mLaunch.game) + ".");
+        found(box, "setup-ok", "Built", "des_game.dll for version " + std::string(kVersion) + ".");
+        if (chosen) found(box, "setup-ok", "Options", setup_options_summary());
         row = footer_row();
-        main.push_back({"Play",
-                        [this] {
-                            play_sound(kSoundPlay);
-                            play();
-                        },
-                        Look::Primary});
-        set_rail({{"Your game", "", S::Done}, {"Build", "Done", S::Done}, {"Play", "", S::Now}});
+        if (chosen) {
+            main.push_back({"Play",
+                            [this] {
+                                play_sound(kSoundPlay);
+                                play();
+                            },
+                            Look::Primary});
+        } else {
+            main.push_back(
+                {"Choose your options", [this] { push(std::make_unique<SetupPresetWindow>()); }, Look::Primary});
+        }
+        set_rail({{"Your game", "", S::Done}, {"Build", "Done", S::Done}, options_step(S::Now),
+                  {"Play", "", chosen ? S::Now : S::Todo}});
         break;
+    }
     }
     set_buttons(mMain, row, std::move(main));
     set_buttons(mMore, footer_end(),
@@ -312,7 +323,7 @@ void SetupStartWindow::back() {
 
 SetupSourceWindow::SetupSourceWindow(Props props) : SetupPage("setup-source"), mProps(std::move(props)) {
     using S = RailStep::State;
-    set_rail({{"Your game", "", S::Now}, {"Build", build_time(), S::Todo}, {"Play", "", S::Todo}});
+    set_rail({{"Your game", "", S::Now}, {"Build", build_time(), S::Todo}, options_step(), {"Play", "", S::Todo}});
     set_heading("Where is your game?", "Pick how setup gets your game's files. Every way ends in the same build.");
     auto* cards = append(content(), "setup-choices");
     struct Card {
@@ -379,7 +390,7 @@ SetupFilesWindow::SetupFilesWindow(Props props)
       mFound(std::make_shared<Mailbox<std::vector<setup::Place>>>()) {
     using S = RailStep::State;
     set_rail({{"Your game", mProps.moved.empty() ? "" : "Moved", S::Now},
-              {"Build", mProps.rebuild ? build_time() : "", mProps.rebuild ? S::Todo : S::Done},
+              {"Build", mProps.rebuild ? build_time() : "", mProps.rebuild ? S::Todo : S::Done}, options_step(),
               {"Play", "", S::Todo}});
     if (mProps.moved.empty())
         set_heading("Your game folder", "Pick the folder that holds PS3_GAME. Setup reads it and copies what it needs.");
@@ -667,7 +678,7 @@ void SetupFilesWindow::draw_check() {
 
 SetupHelpWindow::SetupHelpWindow(Props props) : SetupPage("setup-help"), mProps(std::move(props)) {
     using S = RailStep::State;
-    set_rail({{"Your game", "", S::Now}, {"Build", build_time(), S::Todo}, {"Play", "", S::Todo}});
+    set_rail({{"Your game", "", S::Now}, {"Build", build_time(), S::Todo}, options_step(), {"Play", "", S::Todo}});
     set_heading("Getting your game's files",
                 "Setup needs your own copy of the game: the US disc, BLUS30443 version 1.00, copied to a folder, "
                 "with 27 of its files decrypted once. Setup never decrypts anything itself.");
@@ -718,7 +729,7 @@ bool SetupHelpWindow::scroll(int pages) {
 
 SetupBeforeWindow::SetupBeforeWindow(Props props) : SetupPage("setup-before"), mProps(std::move(props)) {
     using S = RailStep::State;
-    set_rail({{"Your game", "", S::Now}, {"Build", build_time(), S::Todo}, {"Play", "", S::Todo}});
+    set_rail({{"Your game", "", S::Now}, {"Build", build_time(), S::Todo}, options_step(), {"Play", "", S::Todo}});
     set_heading("Ready to build", "Everything setup needs is here. The build runs on this PC and keeps its processor "
                                   "busy for a while.");
     mRows = append(content(), "setup-body");

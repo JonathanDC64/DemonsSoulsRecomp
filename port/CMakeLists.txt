@@ -121,8 +121,7 @@ endif()
 # CI builds it. des_boot is still defined, because des_host takes its sources
 # from it, but it is left out of the build and has no SPU workload table (a lift
 # file); des_game is not defined. RECOMP_DIR still has to hold hle_nid_table.cpp
-# (ps3recomp's tools/gen_hle_nids.py --all) and, until the header split, a
-# ppu_recomp.h.
+# (ps3recomp's tools/gen_hle_nids.py --all).
 option(DES_HOST_ONLY "With DES_SPLIT: configure des_host alone, with no lift" OFF)
 set(DES_SPU_WORKLOADS "${SPU_DIR}/_gen/spu_workloads.cpp")
 if(DES_HOST_ONLY)

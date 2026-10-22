@@ -4,8 +4,8 @@
 # the lift, so des_boot.exe and des_game.dll are not built here.
 #
 # It needs a ps3recomp.pin commit with the DLL split (PS3RECOMP_GAME_SPLIT) and the static runtime
-# (PS3RECOMP_STATIC_CRT and the /MT form of boot_main.cpp's getenv cache, docs/85 2.3). One step stands
-# in for the header split (marked HEADER SPLIT STOPGAP below).
+# (PS3RECOMP_STATIC_CRT and the /MT form of boot_main.cpp's getenv cache, docs/85 2.3), and the header
+# split: the host's sources include ps3recomp's include/ps3emu/ppu_lift.h, not the lift's ppu_recomp.h.
 name: Host exe
 
 on:
@@ -119,34 +119,6 @@ jobs:
                           "--out", lift + "/hle_nid_table.cpp"], check=True)
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
               f.write(f"HOST_LIFT={lift}\n")
-
-      # HEADER SPLIT STOPGAP. The other file is the lift's ppu_recomp.h. des_host's sources use only its
-      # fixed part: ppu_context, the condition-register helpers, the guest-memory and syscall prototypes,
-      # PPU_THREAD_LOCAL, the function table's type and DS_FRAME (docs/85 1.2). They use none of its
-      # per-game declarations (one per lifted function). Until ps3recomp ships that fixed part as a header
-      # of its own (the header split), this asks the pinned lifter for the header it writes for a lift with
-      # no functions: the same fixed text, with nothing of the game in it. Delete this step, and RECOMP_DIR's
-      # ppu_recomp.h, once the header split lands. Never commit or upload the file: check_game_files.py
-      # flags any file named ppu_recomp.h.
-      - name: "HEADER SPLIT STOPGAP: ppu_recomp.h of an empty lift"
-        shell: python
-        run: |
-          import os, sys
-          sys.path.insert(0, "ps3recomp/tools")   # ppu_lifter imports ppu_disasm from its own folder
-          import ppu_lifter
-          header = ppu_lifter.PPULifter().emit_header()
-          for need in ("typedef struct ppu_context", "function_table_count", "lv2_syscall",
-                       "PPU_THREAD_LOCAL", "DS_FRAME", "ppu_cr_pack"):
-              if need not in header:
-                  print(f"::error::the lifter's empty header has no {need}: the host's sources need it (docs/85 1.2)")
-                  sys.exit(1)
-          if "/* external */" in header or "/* override host impl */" in header:
-              print("::error::the lifter's empty header has per-game declarations")
-              sys.exit(1)
-          path = os.environ["HOST_LIFT"] + "/ppu_recomp.h"
-          with open(path, "w", encoding="utf-8", newline="\n") as f:
-              f.write(header)
-          print(f"wrote {path}: {len(header)} characters, {header.count(chr(10))} lines")
 
       # The port with only des_host in it (DES_HOST_ONLY: no des_boot or des_game build, no SPU workload
       # table), the hybrid CRT for every target (des_ui, FreeType and RmlUi too), exactly the pinned

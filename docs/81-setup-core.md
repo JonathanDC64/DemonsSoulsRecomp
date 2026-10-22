@@ -16,6 +16,7 @@ cd tools/setup
 python -m des_setup check <dump folder> [--decrypted DIR]... [--firmware libsre.prx]
 python -m des_setup stage <dump folder> [...] [--data DIR]
 python -m des_setup lift <dump folder> [...] [--data DIR] [-j N]
+python -m des_setup compile [--data DIR] [-j N] [--cc clang-cl --ld lld-link]
 python -m des_setup status | tools | fetch NAME
 python -m unittest discover -s tests
 ```
@@ -116,12 +117,61 @@ Entries today:
 - **Tested** on made-up trees (9 tests), then on the copy (section 2). Against a developer's `work/` from 10-19: the loader output, the 12 SPU images, the 2 job blobs and libsre's tables and image are byte for byte the same, and so are 30 of the 31 files of the SPU lifts the developer builds use. Every other difference comes from tonight's ps3recomp being newer than that lift (the condition-register fields, ASCII comments, 80 more NIDs), plus one generated header whose dash is UTF-8 under `-X utf8` and cp1252 without it.
 - **Against the README's commands with the same ps3recomp** (step 3 as written: no `-X utf8`, the lifter at `-j 16` against setup's `-j 8`, on the same `EBOOT.ELF`): the whole PPU lift (16 files, 436 MB), the loader output, the 12 SPU images, the 2 job blobs, all 6 libsre files and 30 of the 31 SPU lift files are byte for byte the same. The two that differ: the SPU registration's header comment, whose dash `-X utf8` writes as UTF-8 and a Windows console default as cp1252; and the libsre glue's image path (the next point). So the worker count does not change the lift, and setup makes what a developer makes.
 - **The libsre glue names the data folder.** `--runtime-image` is an absolute path into it, built into the game, so moving the data folder after setup breaks the game's libsre load. Either the runtime looks for the image beside the exe or in the data folder it is told at start, or setup reruns the glue step after a move. To decide with the compile step.
-- **The lifted SPU code includes `../../runtime/spu/...`.** Outside `ps3recomp/work_spu`, the compile step has to put `ps3recomp/runtime/spu` on the include path (its `../..` is ps3recomp).
+- **The lifted SPU code includes `../../runtime/spu/...`.** Outside `ps3recomp/work_spu` it still resolves, through the `ps3recomp/runtime/ppu` include folder the commands already have (section 7, measured).
 
 ## 6. Next, in order
 
 1. **The DLL split** (docs/57, local branch `feat/dll-split`, milestone 1 built on 10-19): `des_host.exe` and `des_game.dll`. Its frame-rate check was in profile windows; it needs a plain-window A/B (docs/83) on today's master before a PR.
 2. **The game part freestanding** (docs/52 section 7.8): no C runtime, Windows SDK or C++ library in `des_game.dll`, so the player's PC needs only clang, lld-link and clang's headers.
-3. **Compile and link in setup**, with the compiler download (section 3).
+3. **Compile and link in setup**, with the compiler download (section 3). Done for milestone 1's commands on 10-22: section 7.
 4. **The screens**, in the prebuilt RmlUi host.
 5. **The shaders step.** The build files stay (Q7 a).
+
+## 7. The compile (`compile.py`, 10-22)
+
+`compile` builds `des_game.dll` from the lift, each part a journal step. Everything it writes stays in the data folder, and each tool's output goes to `setup/logs/<step>.log`.
+
+| Step | What | Output |
+|---|---|---|
+| `gen` | `des_game_title_funcs.h` from `scripts/lift_ppu.json` and `port/insn_hooks.txt`, and the SPU workload table without its static constructor, made as `port/CMakeLists.txt` makes them for `DES_SPLIT` | `build/gen` |
+| `cc:<name>` | one per object (33): the 14 PPU chunks, the 12 SPU images and 2 jobs, the lifted libsre and its glue, the workload table, `game_module.c` and `des_game_module.cpp` | `build/obj/<name>.obj` |
+| `link` | the linker | `game/des_game.dll` |
+
+- **CMake's commands, kept as data.**
+  - `scripts/game_build_desc.py` reads `des_game`'s commands from a split build (ninja's compile database and its link command). It writes `tools/setup/des_setup/game_build.json`: one command per kind of object, with placeholders for the folders. `{src}` is the source tree, which the install mirrors; `{work}` is the lift; `{gen}` is `build/gen`. The compiler and the linker are passed in.
+  - It checks three things: every command expands back to CMake's exactly, no machine path is left, and all sources of one kind share one command.
+  - The compiler is `clang.exe --driver-mode=cl` from the `llvm-win64` download (docs/86), which has no `clang-cl.exe`; `--cc` and `--ld` name other ones.
+  - `--check` compares the build with the file. `--check --commands-only` needs only a configured build, so CI can run it with placeholder lift files.
+- **What the install needs.** The description lists the source-tree headers the compile reads, from ninja's recorded dependencies. Today that is 9 headers, in `ps3recomp/include/ps3emu` and `ps3recomp/runtime/{prx,spu}`. The install also needs `game_module.c`, `des_game_module.cpp`, `lift_ppu.json` and `insn_hooks.txt`. If a header is missing, setup stops and lists it.
+- **The lift's relative includes work as they are.**
+  - The SPU code includes `../../runtime/spu/...`, and the libsre glue includes `../../ps3recomp/runtime/prx/...`. From setup's `work/`, neither is found beside the source, so clang tries each include folder in turn.
+  - The SPU include resolves under `{src}/ps3recomp/runtime/ppu`, and the glue's under `{src}/port/compat`. Both folders are already on the commands.
+  - So the commands need no change. This is measured: the objects are identical (below). It corrects section 5's last point, which was inferred.
+- **Fingerprints.**
+  - An object's fingerprint covers its command, the compiler, its source's sum and the sums of every header it read last time. The compiler is identified by the archive it was unpacked from, or by its exe's sum. The headers come from clang's dependency file (`-clang:-MD -clang:-MF`). So a changed header rebuilds only the objects that read it.
+  - The link's fingerprint covers its command, the linker and the objects' fingerprints.
+- **Jobs.**
+  - The largest sources start first.
+  - The job count follows docs/52 4.4: the smaller of the CPU count and (available memory - 2 GB) / 3 GB, and at least 1. `-j` overrides it.
+  - A job that runs out of memory runs once more with one job fewer. This is detected from the message, or from exit status 0xC0000017 or 0xC000012D.
+  - After a failure, no new object starts. The next run resumes.
+- **The journal** can now run steps from several threads: it takes a lock, and each step's work runs outside it. It can also record a fingerprint that is known only after the step has run (the headers).
+- **Tested.**
+  - 17 unit tests, with a fake compiler and linker, cover these cases:
+    - the plan, and a build followed by a run with nothing to do;
+    - a changed header rebuilds only its readers, and a changed hook table rebuilds only the module;
+    - a failure, then a resume;
+    - the out-of-memory retry;
+    - a missing install header, and a missing lift;
+    - the generator's command splitting and folder mapping.
+  - On the real lift (10-22), in a data folder laid out as setup's, with clang-cl 22.1.8: 20 objects are byte for byte CMake's objects, apart from the time stamp. They are the smallest PPU chunk, the 12 SPU images, the 2 jobs, libsre, the glue, the workload table and both module files. With 1 job they took 86 s (only 3.6 GB of memory was available). A second run compiled nothing.
+  - The link took 2 s, with the other 13 chunks taken from the CMake build. The DLL's `.text`, `.rdata`, `.data`, `.pdata`, `.tls` and `.reloc` are identical to CMake's `des_game.dll`. CMake's has one more section, `.rsrc`: the 364-byte default manifest that `cmake -E vs_link_dll` embeds. Windows does not use it for a DLL.
+  - `clang.exe --driver-mode=cl` gives the same objects as `clang-cl.exe` (measured on an SPU image, the glue and `des_game_module.cpp`).
+  - Not run: all 14 chunks compiled by setup. That is about 35 minutes with 1 job, and the PC was short of memory.
+- **Today's description is milestone 1's.**
+  - Its commands use the Visual C++ headers and the Windows SDK, and the link takes the C runtime and Windows' import libraries. So it builds only on a PC with Visual Studio's build tools.
+  - Milestone 2 (docs/57 6.2, docs/52 7.8) changes the commands. The description is then written again from that build, and `compile.py` stays as it is.
+- **Open.**
+  - **Where the host finds the DLL.** Today the host loads the file named by `PS3_GAME_MODULE`, or else `des_game.dll` beside the exe (`game_host.c`). Setup writes the DLL to the data folder's `game/`. The screens step decides whether the launcher sets `PS3_GAME_MODULE` or the host looks in the data folder.
+  - **The glue's absolute libsre image path** (section 5). This goes with milestone 2, which moves the glue's file reads into the host anyway.
+  - **A CI job** that runs `game_build_desc.py --check --commands-only` on a configured split build, so the description cannot drift from CMake. It goes with the CI host build.

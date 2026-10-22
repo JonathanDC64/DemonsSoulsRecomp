@@ -177,11 +177,13 @@ perf_run_valid() {   # perf_run_valid <run> [map] [vblank mHz]
      grep -aq 'RSX_VSYNC=0: tearing is not supported' "$r/run.txt"; then
     echo "presented with vsync (no tearing support): held at the display's refresh"; return
   fi
-  ls "$r"/prof_*_summary.txt > /dev/null 2>&1 || { echo "no profile windows"; return; }
+  # (compgen, not ls: with pipefail an ls over a glob that matches nothing fails the pipe)
+  compgen -G "$r/prof_*_summary.txt" > /dev/null || compgen -G "$r/plain_*.txt" > /dev/null ||
+    { echo "no windows"; return; }
   # The vblank has to stay well above the frame rate measured: a window within
   # 10% of it may be held by it (at 240 Hz the Tutorial spot sat at 240.0).
   if [ -n "${3:-}" ]; then
-    hit=$(for f in "$r"/prof_*_summary.txt; do head -1 "$f"; done | grep -o '[0-9.]* fps average' |
+    hit=$(for f in "$r"/prof_*_summary.txt "$r"/plain_*.txt; do [ -f "$f" ] && head -1 "$f"; done | grep -o '[0-9.]* fps average' |
           awk -v cap="$3" '$1 + 0 >= 0.9 * cap / 1000 {print $1; exit}')
     [ -z "$hit" ] || { echo "near the vblank cap ($hit fps at $(( $3 / 1000 )) Hz; raise PERF_VBLANK)"; return; }
   fi

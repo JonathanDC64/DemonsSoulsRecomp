@@ -127,9 +127,45 @@ target_include_directories(des_boot PRIVATE
 # unwind cleanup per call, ~2.4% of the frame rate in Boletarian Palace. Off
 # by default; DES_SHADOW_STACK=ON keeps it for debugging. (A lift made without
 # --shadow-stack has no stack either way.)
+#
+# The lifted sources take DS_SHADOW_STACK from the lift's ppu_recomp.h, which
+# defines it for a --shadow-stack lift unless DS_NO_SHADOW_STACK is defined.
+# The runtime's boot scaffold and the port's own sources include only the fixed
+# part of that header (ps3recomp's ps3emu/ppu_lift.h), which cannot say how the
+# lift was made, so with DES_SHADOW_STACK=ON they get it here, on the same
+# condition: a lift made with --shadow-stack, as scripts/lift_ppu.json (the
+# flags of the README's lift and of setup) says. Their DS_FRAME (the ChrIns
+# loop's, des_chrins.cpp) then records a frame exactly when the lifted
+# functions' do, as when they included the lift's header. Only for these
+# sources: every lifted function has a DS_FRAME, and the lifted libsre is made
+# without --shadow-stack, so a definition for the whole target would turn on
+# libsre's frames. A new source that includes ps3emu/ppu_lift.h goes in the
+# list. (des_game_host.cpp is DES_SPLIT's, which has no shadow stack.)
 option(DES_SHADOW_STACK "Keep the guest shadow call stack of a --shadow-stack lift" OFF)
 if(NOT DES_SHADOW_STACK)
     target_compile_definitions(des_boot PRIVATE DS_NO_SHADOW_STACK)
+else()
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/lift_ppu.json" _des_lift_json)
+    string(JSON _des_lift_ss ERROR_VARIABLE _des_lift_err GET "${_des_lift_json}" shadow_stack)
+    if(_des_lift_ss)
+        set_property(SOURCE
+            "${PS3RECOMP_DIR}/runtime/ppu/ppu_loader.cpp"
+            "${PS3RECOMP_DIR}/runtime/ppu/ppu_hle.cpp"
+            "${PS3RECOMP_DIR}/runtime/ppu/ppu_fs.cpp"
+            "${PS3RECOMP_DIR}/runtime/ppu/ppu_sysprx.cpp"
+            "${PS3RECOMP_DIR}/runtime/ppu/tests/boot_main.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/missing_stubs.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/des_heap.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/des_options.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/des_aspect.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/des_menu_sfx.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/des_chrins.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/des_dev.cpp"
+            APPEND PROPERTY COMPILE_DEFINITIONS DS_SHADOW_STACK=1)
+    else()
+        message(WARNING "DES_SHADOW_STACK=ON, but scripts/lift_ppu.json lifts without --shadow-stack: "
+            "there is no shadow stack to keep")
+    endif()
 endif()
 
 # Developer builds (docs/55): the dev cheats and the settings window's Developer tab.

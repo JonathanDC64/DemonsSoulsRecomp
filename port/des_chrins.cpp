@@ -40,8 +40,8 @@
  * thread starts waiting for good. With the flag stored first it cannot
  * happen, so a line in the default mode means another cause.
  */
-#include "ppu_recomp.h"
-#include "des_game_calls.h"     /* DES_SPLIT: the lifted functions below are in the game DLL */
+#include "ps3emu/ppu_lift.h"   /* ppu_context, DS_FRAME: the fixed part of the lift's header */
+#include "des_game_calls.h"     /* the lifted functions below (the game DLL's with DES_SPLIT) */
 #include <atomic>
 #include <cstdint>
 #include <cstdio>

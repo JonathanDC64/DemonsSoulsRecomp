@@ -12,8 +12,8 @@
  * 0x0072D538 writes through a wild pointer (docs/33, "The eight IDs").
  * DES_UI_SOUND=0 keeps the UI silent. */
 
-#include "ppu_recomp.h"
-#include "des_game_calls.h"     /* DES_SPLIT: the lifted functions below are in the game DLL */
+#include "ps3emu/ppu_lift.h"   /* ppu_context: the fixed part of the lift's header */
+#include "des_game_calls.h"     /* the lifted functions below (the game DLL's with DES_SPLIT) */
 #include "ui/include/des_ui.h"
 #include <atomic>
 #include <chrono>

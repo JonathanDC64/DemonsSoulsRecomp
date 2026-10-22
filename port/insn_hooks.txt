@@ -90,6 +90,12 @@
 0x007B61D4=des_hud_onscreen   # lfs f13,0(r3): TargettingSite's update, the same test
 0x008AEB68=des_hud_onscreen   # lfs f13,0(r31): FloatingPCGauge's on-screen test, x
 0x007A6264=des_hud_onscreen   # lfs f13,0(r26): 0x007A61D8's on-screen test (the +0xBA0 slot), x
+# DES_ASPECT and DES_HUD changed while playing (port/des_aspect.cpp, "Live"):
+# the cameras built so far, and the render context that holds the HUD's matrix.
+0x0012F074=des_cam_ctor       # stfs f12,0x54(r29): a camera constructor's default aspect; lists the camera
+0x0012F0DC=des_cam_ctor       # stfs f12,0x54(r29): the other camera constructor, the same
+0x000D5B24=des_cam_own        # stfs f0,0x54(r19): 0x000D5980 gives its camera its target's shape; off the list
+0x00CD4854=des_hud_ctx        # rldicl r5,r9,0,32: the 0x3A handler, r5 = the command's first word, r3 = the context
 
 # ChrFollowCam update (0x00122C40).
 0x00123100=des_cam_rate   # k = +0x114

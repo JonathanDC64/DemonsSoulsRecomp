@@ -65,6 +65,17 @@ gap does not.
 (`KAB_ORDER` takes pairs of AB or BA), A with the knobs cleared, B with them
 set; `KAB_BOOTS` boots (default 1).
 
+The windows are plain: nothing is armed in them. Two console `stat` calls
+give the flip count at either end, the boot runs with `FRAME_LOG`, and after
+the boot `kabplain.py` finds each window's presents in `frames.log` by those
+flip counts (`lc_<boot>/plain_NNN.txt`). `KAB_PLAIN=0` takes profile windows
+instead, which add the per-thread and per-function tables, but the profile
+session times every texture, SRV and pipeline lookup on the FIFO thread. In
+profile windows the FIFO thread then holds the frame, and a cut there reads
+far bigger than in plain play: skipping the render-target write-back read
++6.5% in profile windows and +2.3% in plain ones (docs/83). Take verdicts
+from plain windows; use profile windows to see where the time goes.
+
     & "C:\Program Files\Git\bin\bash.exe" -c "KAB_BOOTS=3 tools/des/knobab.sh kab_try SOME_KNOB=1"
 
 A knobs file has one comparison per line (`KNOB=value` or
@@ -105,6 +116,7 @@ in the run's pid file (`des_boot.pids` in its DES_SCRATCH).
 | `EXEAB_ENV_A`, `EXEAB_ENV_B` | unset | exeab: `VAR=value` words for one side only |
 | `PERF_SETTLE` / `KAB_SETTLE` | 40 | seconds after the level starts loading |
 | `KAB_WIN`, `KAB_ORDER`, `KAB_BOOTS` | 6, ABBAAB, 1 | knobab |
+| `KAB_PLAIN` | 1 | knobab: plain windows (0: profile windows) |
 | `PERF_BAR_PROF`, `PERF_BAR_GAP`, `PERF_BAR_KNOB` | 2.8, 4.5, 1.5 | the noise bars, % |
 | `PERF_QUIET_MAX`, `PERF_QUIET_WAIT` | 30, 900 | the quiet check (`PERF_QUIET=0` skips it: try-outs only) |
 | `PERF_QUIET_OURS`, `PERF_QUIET_OUT` | unset | the share outside the batch's processes (local.env) |

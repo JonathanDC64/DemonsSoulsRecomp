@@ -1,0 +1,14 @@
+{
+ "comment": "The tools setup downloads, each at one exact version, checked by size and SHA-256 (fetch.py). An entry whose sha256 is null is not pinned yet and fetch.py refuses it. Sizes are the publishers'; each sum was measured on a first download and checked against the publisher's own checksum where it lists one.",
+ "tools": [
+  {
+   "name": "python-embed",
+   "version": "3.13.9",
+   "url": "https://www.python.org/ftp/python/3.13.9/python-3.13.9-embed-amd64.zip",
+   "size": 10926675,
+   "sha256": "91d828c2da3a029b41699e918674a0cb379c02cf20dab9c501306885f837402a",
+   "why": "Runs the lifters and this setup.",
+   "checked": "size and python.org's MD5 (f41c7640d30159cbbc708d9386d01d94), 2026-10-22"
+  }
+ ]
+}

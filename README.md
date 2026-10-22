@@ -74,7 +74,7 @@ This is the technical part. The full notes are in [`docs/`](docs/).
    python ps3recomp/tools/gen_hle_nids.py --all --out work/recomp/hle_nid_table.cpp
    python scripts/apply_boot_patches.py work/recomp
    ```
-   Then the SPU code with `scripts/build_spu.py` ([docs/09](docs/09-spu-spurs.md)), and libsre with `scripts/build_libsre.sh <libsre.prx>`.
+   Then the SPU code with `python scripts/build_spu.py --eboot work/game/EBOOT.ELF` ([docs/09](docs/09-spu-spurs.md)), which first cuts the SPU programs out of the EBOOT, and libsre with `python scripts/build_libsre.py <libsre.prx>`. The lifter's flags above are also in `scripts/lift_ppu.json`, which setup reads; change both together.
 4. Compile the runtime, then the game. On Windows:
    ```sh
    cmake -S ps3recomp -B ps3recomp/build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release

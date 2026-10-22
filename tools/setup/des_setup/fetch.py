@@ -125,12 +125,19 @@ def unpack(archive: Path, dest) -> Path:
     return dest
 
 
+def unpacked(e: dict, tools) -> bool:
+    """The tool is unpacked in tools/<name>-<version> from the archive the entry pins
+    (its stamp file says so). The host checks the same stamp for Python (docs/88)."""
+    stamp = Path(tools) / f"{e['name']}-{e['version']}" / ".des-setup-sha256"
+    return stamp.is_file() and stamp.read_text().strip() == e.get("sha256")
+
+
 def ensure(e: dict, cache, tools, progress=None, allow_http=False) -> Path:
     """The tool unpacked in tools/<name>-<version>, fetched first if needed.
     A stamp file records the SHA-256 it was unpacked from."""
     dest = Path(tools) / f"{e['name']}-{e['version']}"
     stamp = dest / ".des-setup-sha256"
-    if stamp.is_file() and stamp.read_text().strip() == e.get("sha256"):
+    if unpacked(e, tools):
         return dest
     a = fetch(e, cache, progress, allow_http)
     if a.suffix.lower() != ".zip":

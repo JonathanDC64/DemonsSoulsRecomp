@@ -4,7 +4,7 @@
   python -m des_setup stage GAME [--decrypted DIR]... [--firmware FILE] [--data DIR]
   python -m des_setup lift GAME [--decrypted DIR]... [--firmware FILE] [--data DIR] [-j N]
   python -m des_setup run [GAME] [--decrypted DIR]... [--firmware FILE] [--data DIR] [-j N] [--app VERSION]
-                          [--check-only]
+                          [--check-only] [--cc CLANG-CL --ld LLD-LINK]
   python -m des_setup compile [--data DIR] [-j N] [--cc CLANG-CL --ld LLD-LINK]
   python -m des_setup status [--data DIR] [--json [--app VERSION]]
   python -m des_setup tools
@@ -15,7 +15,9 @@ docs/88). GAME is the folder of the disc dump that holds PS3_GAME. `run` does
 every phase in order with the setup screens' line protocol (pipeline.py,
 protocol.py); without GAME it takes the folders the last run used. The data
 folder defaults to %LOCALAPPDATA%\\DemonsSoulsRecomp (Linux:
-$XDG_DATA_HOME/DemonsSoulsRecomp).
+$XDG_DATA_HOME/DemonsSoulsRecomp). A developer's compiler (--cc and --ld, or
+DES_SETUP_CC and DES_SETUP_LD in the environment, so the setup screens' runs
+use it too) replaces the pinned LLVM download, which is then not fetched.
 Exit status: 0 done, 1 something to fix (the lines say what), 2 usage.
 """
 import argparse
@@ -126,7 +128,7 @@ def cmd_lift(a) -> int:
 def cmd_run(a) -> int:
     """Every phase in order, with the setup screens' protocol (pipeline.py, docs/88)."""
     req = pipeline.make_request(a.game, a.decrypted, a.firmware) if a.game else None
-    return pipeline.run(Path(a.data), req, app=a.app, jobs=a.jobs, check_only=a.check_only)
+    return pipeline.run(Path(a.data), req, app=a.app, jobs=a.jobs, check_only=a.check_only, cc=a.cc, ld=a.ld)
 
 
 def cmd_compile(a) -> int:
@@ -212,6 +214,12 @@ def main(argv=None) -> int:
     def data_arg(sp):
         sp.add_argument("--data", default=str(default_data()), help="setup's data folder")
 
+    def toolchain_args(sp):
+        sp.add_argument("--cc", metavar="CLANG-CL", help="this clang-cl instead of the pinned download "
+                        "(default: DES_SETUP_CC)")
+        sp.add_argument("--ld", metavar="LLD-LINK", help="this lld-link instead of the pinned download "
+                        "(default: DES_SETUP_LD)")
+
     sp = sub.add_parser("check", help="check the game folder")
     game_args(sp)
     sp.set_defaults(fn=cmd_check)
@@ -233,12 +241,12 @@ def main(argv=None) -> int:
     sp.add_argument("-j", "--jobs", type=int, default=0, help="workers for the lift and the compile (default: auto)")
     sp.add_argument("--app", default="", metavar="VERSION", help="the host's version, kept in ready.txt")
     sp.add_argument("--check-only", action="store_true", help="only check the game files")
+    toolchain_args(sp)
     sp.set_defaults(fn=cmd_run)
     sp = sub.add_parser("compile", help="compile and link the lift into des_game.dll (resumes where it stopped)")
     data_arg(sp)
     sp.add_argument("-j", "--jobs", type=int, default=0, help="compiler jobs (default: by free memory, 3 GB a job)")
-    sp.add_argument("--cc", metavar="CLANG-CL", help="this clang-cl instead of the pinned download")
-    sp.add_argument("--ld", metavar="LLD-LINK", help="this lld-link instead of the pinned download")
+    toolchain_args(sp)
     sp.set_defaults(fn=cmd_compile)
     sp = sub.add_parser("status", help="show the journal")
     data_arg(sp)

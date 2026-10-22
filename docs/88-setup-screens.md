@@ -142,10 +142,12 @@ An example, a run resumed after the lift's PPU step failed once:
 **The command.** `<python> -X utf8 -u <install>/tools/setup/run_setup.py run ... --data <data> --app <version>`.
 - `-X utf8`: the tools' prints and outputs are UTF-8 whatever the code page (docs/52 13.3, measured there). `-u`: each line arrives as it is printed.
 - `run_setup.py` puts its own folder on `sys.path` first, because the embeddable Python's `._pth` file leaves the script's folder off it (docs/52 13.3, measured there).
-- The script is found beside the exe in a release (the install mirrors the source tree, docs/81 section 7), or up to three folders up in a developer's build.
+- The script is `DES_SETUP_SCRIPT` when that is set (a developer's source tree, for a real build from a build folder elsewhere). Else it is found beside the exe in a release (the install mirrors the source tree, docs/81 section 7), or up to three folders up in a developer's build.
 - The engine lowers its own priority to below normal (Windows; `nice` on Linux), which everything it starts inherits, and asks Windows to keep the PC awake until it ends (`SetThreadExecutionState`), then prints `@awake` (pipeline.py `quiet_and_awake`). In the engine, not the host, so a run from a terminal does the same (docs/52 4.1).
 
 **Which Python.** `DES_SETUP_PYTHON` (a developer's); else on Windows the embeddable Python in `<data>/tools/python-embed-3.13.9/` once its stamp names the pinned SHA-256 (the stamp `fetch.ensure` writes and `fetch.unpacked` checks); on Linux `python3` from `PATH`. The pin is in setup_engine.hpp as well as toolchain.json; a test checks that they agree.
+
+**Which compiler.** The pinned LLVM download (docs/86), which the fetch phase fetches. Or a developer's: `run --cc CLANG-CL --ld LLD-LINK`, or `DES_SETUP_CC` and `DES_SETUP_LD` in the environment, which the host's runs inherit. With one, the fetch phase skips the download (compile.py `local_toolchain`). So a developer can run a real build from the setup screens before the download is pinned: `DES_SETUP_PYTHON`, `DES_SETUP_SCRIPT` (a tree with `ps3recomp/` at the pinned commit, since the lift runs its tools), `DES_SETUP_CC`, `DES_SETUP_LD` and a scratch `DES_SETUP_DATA`.
 
 **The first Python, before there is a Python.** The host has to fetch it itself. Options:
 

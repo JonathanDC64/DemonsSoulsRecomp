@@ -292,6 +292,23 @@ class TestCompile(unittest.TestCase):
         with self.assertRaises(fetch.FetchError):
             cc.toolchain(self.t.data, "bin/clang-cl", None)
 
+    def test_toolchain_from_environment(self):
+        old = {k: os.environ.get(k) for k in ("DES_SETUP_CC", "DES_SETUP_LD")}
+        try:
+            os.environ.update(DES_SETUP_CC="bin/clang-cl", DES_SETUP_LD="bin/lld-link")
+            self.assertEqual(cc.toolchain(self.t.data), (["bin/clang-cl"], Path("bin/lld-link")))
+            self.assertEqual(cc.toolchain(self.t.data, "x/clang-cl", "x/lld-link"),
+                             (["x/clang-cl"], Path("x/lld-link")))     # the arguments win
+            os.environ["DES_SETUP_LD"] = ""
+            with self.assertRaises(fetch.FetchError):
+                cc.toolchain(self.t.data)
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
     def test_missing_header_in_install(self):
         (self.t.src / "inc/rt.h").unlink()
         with self.assertRaises(journal.StepFailed) as e:

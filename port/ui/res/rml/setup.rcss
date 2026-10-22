@@ -1,8 +1,8 @@
 /* Written for Demon's Souls. The setup screens (setup_page.cpp, docs/89): the whole window, as the setup design. A
-   dark backdrop; the rail on the left with the name, the steps (Your game, Build, Play) and the version; the page on
-   the right with a heading, a line under it, panels, buttons and the pad's buttons at the bottom; a question over it
-   all. Colours and fonts from theme.rcss. RmlUi draws no element it has no display for, and no bare text in a flex
-   row, so every tag here has one and every text sits in its own element. */
+   dark backdrop; the rail on the left with the name, the steps (Your game, Build, Options, Play) and the version; the
+   page on the right with a heading, a line under it, panels, buttons and the pad's buttons at the bottom; a question
+   over it all. Colours and fonts from theme.rcss. RmlUi draws no element it has no display for, and no bare text in a
+   flex row, so every tag here has one and every text sits in its own element. */
 body.setup-page {
     --setup-muted: rgba(var(--color-text-rgb), 62%);
     --setup-faint: rgba(var(--color-text-rgb), 38%);
@@ -895,4 +895,214 @@ setup-guide-item {
     margin-bottom: 6dp;
     font-size: var(--font-size-base);
     color: var(--setup-muted);
+}
+
+/* ---- The options pages (setup_options_window.cpp) ---- */
+
+/* The presets: picking a card selects it and the page stays, so the soul-white bar marks the picked card and the
+   pad's focus lights only its frame. */
+setup-choices.pick button.setup-choice:not(:disabled):hover,
+setup-choices.pick button.setup-choice:not(:disabled):focus-visible {
+    border-left-color: rgba(0, 0, 0, 0%);
+    background-color: rgba(var(--color-interactive-rgb), 6%);
+    box-shadow: rgb(var(--color-interactive-rgb)) 0 0 0 1dp;
+    decorator: none;
+}
+
+setup-choices.pick button.setup-choice:not(:disabled):selected {
+    border-left-color: rgb(var(--color-interactive-rgb));
+    background-color: rgba(0, 0, 0, 0%);
+    box-shadow: rgb(var(--color-border-rgb)) 0 0 0 1dp;
+    decorator: linear-gradient(to right, rgba(var(--color-interactive-rgb), 12%), rgba(var(--color-interactive-rgb), 3%));
+}
+
+setup-choices.pick button.setup-choice:not(:disabled):selected:hover,
+setup-choices.pick button.setup-choice:not(:disabled):selected:focus-visible {
+    border-left-color: rgb(var(--color-interactive-rgb));
+    box-shadow: rgb(var(--color-interactive-rgb)) 0 0 0 1dp;
+    decorator: linear-gradient(to right, rgba(var(--color-interactive-rgb), 16%), rgba(var(--color-interactive-rgb), 5%));
+}
+
+/* A card's list: a dot and a line each. */
+setup-choice-list {
+    display: flex;
+    flex-direction: column;
+    align-self: stretch;  /* (the card's width: shrunk to fit, its lines broke after every word) */
+    gap: var(--space-2xs);
+    margin-top: var(--space-xs);
+}
+
+setup-choice-item {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    font-size: var(--font-size-sm);
+    color: var(--setup-muted);
+}
+
+setup-dot {
+    display: block;
+    flex: 0 0 auto;
+    width: 4dp;
+    height: 4dp;
+    margin-top: 9dp;
+    border-radius: 2dp;
+    background-color: var(--setup-muted);
+}
+
+setup-choice-item-text {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* What changes: a row a setting, rules between them, no lines down. */
+setup-cmp {
+    display: block;
+    max-width: 960dp;
+    font-size: var(--font-size-sm);
+}
+
+setup-cmp-row {
+    display: flex;
+    flex-direction: row;
+    border-bottom: 1dp var(--setup-line);
+}
+
+setup-cmp-cell {
+    display: block;
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 5dp 10dp;
+    color: var(--color-text);
+}
+
+setup-cmp-cell.name {
+    color: var(--setup-muted);
+}
+
+setup-cmp-cell.on {
+    color: var(--color-accent);
+}
+
+setup-cmp-row.head setup-cmp-cell {
+    font-family: var(--font-family-display);
+    font-size: var(--font-size-2xs);
+    letter-spacing: 1.5dp;
+    text-transform: uppercase;
+    color: var(--setup-muted);
+}
+
+/* A few choices: an option a block (its name, its choices, a line about it), three to a row. */
+setup-opts {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: flex-start;
+    gap: var(--space-lg);
+    max-width: 960dp;
+}
+
+setup-opt {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    flex: 1 1 260dp;
+    min-width: 0;
+}
+
+setup-opt-label {
+    display: block;
+    font-family: var(--font-family-display);
+    font-size: var(--font-size-xs);
+    letter-spacing: 2dp;
+    text-transform: uppercase;
+    color: var(--setup-muted);
+}
+
+setup-opt-label.sub {
+    margin-top: var(--space-sm);
+}
+
+setup-opt-hint {
+    display: block;
+    font-size: var(--font-size-xs);
+    color: var(--setup-faint);
+}
+
+/* The choices of an option, side by side in one frame. */
+setup-seg {
+    display: flex;
+    flex-flow: row wrap;
+    max-width: 100%;
+    border: 1dp var(--setup-line-soft);
+}
+
+button.setup-seg-btn {
+    display: block;
+    padding: 7dp 14dp;
+    border-right: 1dp var(--setup-line-soft);
+    border-radius: 0;
+    font-size: var(--font-size-base);
+    text-align: center;
+    color: var(--setup-muted);
+    background-color: rgba(0, 0, 0, 0%);
+    box-shadow: none;
+    opacity: 1;
+    transition: none;
+}
+
+button.setup-seg-btn:last-child {
+    border-right-width: 0;
+}
+
+button.setup-seg-btn:not(:disabled):hover,
+button.setup-seg-btn:not(:disabled):focus-visible {
+    color: var(--color-text);
+    background-color: rgba(var(--color-interactive-rgb), 6%);
+}
+
+button.setup-seg-btn:not(:disabled):selected,
+button.setup-seg-btn:not(:disabled):selected:hover {
+    color: var(--color-accent);
+    background-color: rgba(var(--color-interactive-rgb), 20%);
+}
+
+button.setup-seg-btn:not(:disabled):focus-visible,
+button.setup-seg-btn:not(:disabled):selected:focus-visible {
+    box-shadow: rgb(var(--color-interactive-rgb)) 0 0 0 1dp inset;
+}
+
+/* The online name under Online play: the name in a field, and Change name. */
+setup-opt-more {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+}
+
+setup-name-button {
+    display: block;
+}
+
+setup-name {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+setup-name-text {
+    display: block;
+    min-width: 140dp;
+    padding: 7dp 12dp;
+    border: 1dp var(--setup-line-soft);
+    background-color: rgba(0, 0, 0, 50%);
+    color: var(--color-text);
+}
+
+button.setup-btn.small {
+    padding: 7dp 14dp;
+    font-size: var(--font-size-sm);
 }

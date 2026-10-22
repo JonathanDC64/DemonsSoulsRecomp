@@ -56,4 +56,11 @@ struct Power {
 };
 Power power();
 
+// The display the UI's window is on (else the primary one): its mode in pixels and its refresh rate. Zeros when it
+// cannot tell. For the options page's hints and the matched render resolution (docs/91).
+struct Display {
+    int width = 0, height = 0, hz = 0;
+};
+Display display();
+
 }  // namespace ui::setup

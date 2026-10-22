@@ -57,8 +57,9 @@ Launch launch_state();
 // The engine's Python: DES_SETUP_PYTHON (a developer's), else on Windows the downloaded one (empty until the host has
 // fetched it), elsewhere python3 from PATH.
 std::filesystem::path python();
-// tools/setup/run_setup.py: beside the exe in a release (the install mirrors the source tree), or up to three folders
-// up in a developer's build. Empty if it is not there.
+// tools/setup/run_setup.py: DES_SETUP_SCRIPT (a developer's, such as a source tree's, for a real build from a build
+// folder elsewhere), else beside the exe in a release (the install mirrors the source tree), or up to three folders up
+// in a developer's build. Empty if it is not there.
 std::filesystem::path engine_script();
 
 // One run of the engine: `run_setup.py run ...` under setup's Python, its lines read into a Status.

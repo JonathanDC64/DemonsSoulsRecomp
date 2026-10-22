@@ -9,6 +9,15 @@
    "sha256": "91d828c2da3a029b41699e918674a0cb379c02cf20dab9c501306885f837402a",
    "why": "Runs the lifters and this setup.",
    "checked": "size and python.org's MD5 (f41c7640d30159cbbc708d9386d01d94), 2026-10-22"
+  },
+  {
+   "name": "llvm-win64",
+   "version": "22.1.8-1",
+   "url": "https://github.com/JonathanDC64/DemonsSoulsRecomp/releases/download/llvm-22.1.8-1/llvm-win64-22.1.8-1.zip",
+   "size": null,
+   "sha256": null,
+   "why": "Compiles and links the game part: clang, lld-link and clang's headers from LLVM 22.1.8 (docs/86).",
+   "checked": null
   }
  ]
 }

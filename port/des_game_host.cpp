@@ -7,7 +7,7 @@
  * whatever the address registry maps that address to (the port wraps some of
  * these addresses with its own functions, which call these). */
 #ifdef PS3_GAME_SPLIT
-#include "ppu_recomp.h"
+#include "ps3emu/ppu_lift.h"   /* ppu_context, function_table: the fixed part of the lift's header */
 #include "des_game_calls.h"
 #include <cstdint>
 #include <cstdio>

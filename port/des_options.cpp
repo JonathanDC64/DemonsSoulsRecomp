@@ -104,8 +104,8 @@
  * The dev cheats and the warp are in des_dev.cpp, compiled into developer
  *   builds only (cmake -DDES_DEV=ON; docs/55).
  */
-#include "ppu_recomp.h"
-#include "des_game_calls.h"     /* DES_SPLIT: the lifted functions below are in the game DLL */
+#include "ps3emu/ppu_lift.h"   /* ppu_context: the fixed part of the lift's header */
+#include "des_game_calls.h"     /* the lifted functions below (the game DLL's with DES_SPLIT) */
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include "ui/include/des_ui.h"  /* the wrapper UI: settings.ini and the overlay (docs/32) */
 #include <atomic>

@@ -21,14 +21,24 @@ The lifted code is placed there (not work/) only because the SPU lifter emits re
 
 Usage:  python scripts/build_spu.py            # lift all + regenerate registration
         python scripts/build_spu.py --gen-only # only regenerate the registration (skip lifting)
+        python scripts/build_spu.py --eboot work/game/EBOOT.ELF -j 4
+                                               # cut the images and jobs out of the EBOOT first
+
+--eboot cuts the SPU images and the two SPURS job blobs out of EBOOT.ELF and checks each by
+its fingerprint in scripts/spu_table.json (addresses, sizes and hashes; no game bytes).
+--elf-dir, --job-dir, --out-dir and --ps3recomp move the inputs and outputs (setup keeps
+them in its data folder); --only lifts single images. The lifted files include
+"../../runtime/spu/...": outside ps3recomp/work_spu, compile them with ps3recomp/runtime/spu
+on the include path, whose ../.. is ps3recomp.
 """
-import glob, os, subprocess, sys
+import argparse, glob, json, os, struct, subprocess, sys
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ELF_DIR = os.path.join(ROOT, "work", "spu_images")
 JOB_DIR = os.path.join(ROOT, "work", "spu_jobs")
-OUT_DIR = os.path.join(ROOT, "ps3recomp", "work_spu")
-LIFTER  = os.path.join(ROOT, "ps3recomp", "tools", "spu_lifter.py")
+PS3RECOMP = os.path.join(ROOT, "ps3recomp")
+TABLE = os.path.join(ROOT, "scripts", "spu_table.json")
 
 
 # Lifted functions replaced by a host call (spu_lifter.py --native-hook): image ->
@@ -113,25 +123,123 @@ def fnv(b):  # FNV-1a-64, matching the runtime spu_workload_fingerprint
     return h
 
 
-def main():
-    gen_only = "--gen-only" in sys.argv
-    elfs = sorted(glob.glob(os.path.join(ELF_DIR, "*.elf")))
+def _write_if_changed(path, data):
+    """Write data to path through a temporary file, leaving an identical file
+    (and its time stamp) alone."""
+    try:
+        if open(path, "rb").read() == data:
+            return
+    except OSError:
+        pass
+    tmp = path + ".tmp"
+    open(tmp, "wb").write(data)
+    os.replace(tmp, path)
+
+
+def _load_segments(buf):
+    """(vaddr, file offset, file size) of each PT_LOAD of a 64-bit big-endian ELF."""
+    phoff = struct.unpack_from(">Q", buf, 0x20)[0]
+    phentsize, phnum = struct.unpack_from(">HH", buf, 0x36)
+    segs = []
+    for k in range(phnum):
+        t, _fl, off, va, _pa, fs = struct.unpack_from(">IIQQQQ", buf, phoff + k * phentsize)
+        if t == 1:
+            segs.append((va, off, fs))
+    return segs
+
+
+def cut(eboot, elf_dir, job_dir, ps3recomp, table=TABLE):
+    """Cut the SPU images and the SPURS job blobs out of EBOOT.ELF into elf_dir
+    and job_dir, each checked against the table. Returns the problems, one line
+    each (none: everything matched)."""
+    sys.path.insert(0, os.path.join(ps3recomp, "tools"))
+    from extract_spu_images import find_spu_images
+    t = json.load(open(table, encoding="utf-8"))
+    buf = open(eboot, "rb").read()
+    os.makedirs(elf_dir, exist_ok=True)
+    os.makedirs(job_dir, exist_ok=True)
+    bad, found = [], set()
+    for idx, (off, size) in enumerate(find_spu_images(buf)):
+        name = f"spu_{idx:04d}_at_{off:08X}"
+        b = buf[off:off + size]
+        want = t["images"].get(name)
+        if want is None or int(want["fnv"], 16) != fnv(b[:img_size(b)]):
+            bad.append(f"{name}: not an SPU image the table lists")
+            continue
+        found.add(name)
+        _write_if_changed(os.path.join(elf_dir, name + ".elf"), b)
+    bad += [f"{name}: not found in the EBOOT" for name in t["images"] if name not in found]
+    segs = _load_segments(buf)
+    for name, j in t["jobs"].items():
+        va, size = int(j["vaddr"], 16), j["size"]
+        fo = next((off + va - sva for sva, off, fs in segs if sva <= va and va + size <= sva + fs), None)
+        raw = buf[fo:fo + size] if fo is not None else b""
+        if fnv(raw) != int(j["fnv"], 16):
+            bad.append(f"{name}: the bytes at 0x{va:08X} are not the job the table lists")
+            continue
+        _write_if_changed(os.path.join(job_dir, name + ".bin"), raw)
+    return bad
+
+
+def _lift(name, cmd):
+    print(f"lifting {name} ...", flush=True)
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        return f"{name}: the lifter failed\n{r.stdout[-2000:]}\n{r.stderr[-2000:]}"
+    return None
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--gen-only", action="store_true",
+                    help="only regenerate the registration (skip lifting)")
+    ap.add_argument("--eboot", metavar="ELF",
+                    help="first cut the SPU images and jobs out of this EBOOT.ELF (checked against "
+                         "scripts/spu_table.json)")
+    ap.add_argument("--elf-dir", default=ELF_DIR, help="the SPU images (default work/spu_images)")
+    ap.add_argument("--job-dir", default=JOB_DIR, help="the SPURS job blobs (default work/spu_jobs)")
+    ap.add_argument("--ps3recomp", default=PS3RECOMP, help="the ps3recomp checkout (its tools/)")
+    ap.add_argument("--out-dir", help="the lifted code (default <ps3recomp>/work_spu)")
+    ap.add_argument("--only", action="append", default=[], metavar="NAME",
+                    help="lift only this image or job (repeatable); the registration still lists all")
+    ap.add_argument("-j", "--jobs", type=int, default=1, help="lifts to run at once (default 1)")
+    a = ap.parse_args(argv)
+    lifter = os.path.join(a.ps3recomp, "tools", "spu_lifter.py")
+    out_dir = a.out_dir or os.path.join(a.ps3recomp, "work_spu")
+    gen_only = a.gen_only
+
+    if a.eboot:
+        bad = cut(a.eboot, a.elf_dir, a.job_dir, a.ps3recomp)
+        for line in bad:
+            print(f"ERROR: {line}", file=sys.stderr)
+        if bad:
+            return 1
+
+    elfs = sorted(glob.glob(os.path.join(a.elf_dir, "*.elf")))
     if not elfs:
-        print(f"ERROR: no SPU images in {ELF_DIR}\n"
-              f"  run: python ps3recomp/tools/extract_spu_images.py work/game/EBOOT.ELF --out work/spu_images",
+        print(f"ERROR: no SPU images in {a.elf_dir}\n"
+              f"  run: python scripts/build_spu.py --eboot work/game/EBOOT.ELF",
               file=sys.stderr)
         return 1
+    jobs = sorted(glob.glob(os.path.join(a.job_dir, "*.bin")))
+    names = [os.path.splitext(os.path.basename(f))[0] for f in elfs + jobs]
+    unknown = [n for n in a.only if n not in names]
+    if unknown:
+        print(f"ERROR: no image or job named {', '.join(unknown)}", file=sys.stderr)
+        return 1
 
-    imgs = []
+    def wanted(name):
+        return not gen_only and (not a.only or name in a.only)
+
+    imgs, tasks = [], []
     for f in elfs:
         img = os.path.splitext(os.path.basename(f))[0]
         b = open(f, "rb").read()
         imgs.append((img, fnv(b[:img_size(b)]), be32(b, 0x18)))  # name, fingerprint, e_entry
 
-        if not gen_only:
-            out = os.path.join(OUT_DIR, img)
+        if wanted(img):
+            out = os.path.join(out_dir, img)
             os.makedirs(out, exist_ok=True)
-            print(f"lifting {img} ...", flush=True)
             hooks, blocks, tables = [], [], []
             if img in NATIVE_HOOKS:
                 want, hooks = NATIVE_HOOKS[img]
@@ -151,36 +259,33 @@ def main():
                     print(f"  {img}: fingerprint 0x{imgs[-1][1]:016X} is not the one its "
                           f"jump tables were written for; lifting without them")
                     tables = []
-            r = subprocess.run([sys.executable, LIFTER, "--auto-functions", f,
+            tasks.append((img, [sys.executable, lifter, "--auto-functions", f,
                                 "--symbol-prefix", img + "_", "-o", out] +
                                (["--regions"] if img in REGIONS else []) +
-                               [a for h in hooks for a in ("--native-hook", h)] +
-                               [a for h in blocks for a in ("--native-block", h)] +
-                               [a for h in tables for a in ("--bi-switch", h)],
-                               capture_output=True, text=True)
-            if r.returncode != 0:
-                print(r.stdout[-2000:], r.stderr[-2000:], file=sys.stderr)
-                return 1
+                               [x for h in hooks for x in ("--native-hook", h)] +
+                               [x for h in blocks for x in ("--native-block", h)] +
+                               [x for h in tables for x in ("--bi-switch", h)]))
 
     # Raw SPURS job binaries: wrap at LS 0 (entry 0), fingerprint the raw bytes.
-    sys.path.insert(0, os.path.join(ROOT, "ps3recomp", "tools"))
+    sys.path.insert(0, os.path.join(a.ps3recomp, "tools"))
     from wrap_spu_elf import wrap
-    for f in sorted(glob.glob(os.path.join(JOB_DIR, "*.bin"))):
+    for f in jobs:
         img = os.path.splitext(os.path.basename(f))[0]
         raw = open(f, "rb").read()
         imgs.append((img, fnv(raw), 0))
-        if not gen_only:
-            out = os.path.join(OUT_DIR, img)
+        if wanted(img):
+            out = os.path.join(out_dir, img)
             os.makedirs(out, exist_ok=True)
             elf = os.path.join(out, img + ".elf")
             open(elf, "wb").write(wrap(raw, base=0, entry=0))
-            print(f"lifting job {img} ...", flush=True)
-            r = subprocess.run([sys.executable, LIFTER, "--auto-functions", elf,
-                                "--symbol-prefix", img + "_", "-o", out],
-                               capture_output=True, text=True)
-            if r.returncode != 0:
-                print(r.stdout[-2000:], r.stderr[-2000:], file=sys.stderr)
-                return 1
+            tasks.append((img, [sys.executable, lifter, "--auto-functions", elf,
+                                "--symbol-prefix", img + "_", "-o", out]))
+
+    with ThreadPoolExecutor(max_workers=max(1, a.jobs)) as ex:
+        errors = [e for e in ex.map(lambda t: _lift(*t), tasks) if e]
+    if errors:
+        print("\n".join(errors), file=sys.stderr)
+        return 1
 
     # Registration TU (compiled as C++: extern "C" bridges to the C-lifted symbols).
     L = ['/* GENERATED by scripts/build_spu.py — registers DeS lifted SPU images with the',
@@ -200,7 +305,7 @@ def main():
     L.append('}')
     L.append('')
     L.append('__attribute__((constructor)) static void des_spu_autoreg(void) { des_spu_register_all(); }')
-    gen_dir = os.path.join(OUT_DIR, "_gen")
+    gen_dir = os.path.join(out_dir, "_gen")
     os.makedirs(gen_dir, exist_ok=True)
     open(os.path.join(gen_dir, "spu_workloads.cpp"), "w", newline="").write("\n".join(L) + "\n")
     print(f"wrote {gen_dir}/spu_workloads.cpp for {len(imgs)} images")

@@ -1,0 +1,14 @@
+{
+ "about": [
+  "The PPU lifter's flags for Demon's Souls (BLUS30443 1.00), shared by the README's step 3 and setup",
+  "(tools/setup/des_setup/lift.py). tools/setup/tests checks that the README's command matches this file."
+ ],
+ "override_funcs": [
+  "0x167AC88=ds_malloc",
+  "0x167AC58=ds_free",
+  "0x273D38=des_move_post",
+  "0x724E40=des_menu_tick"
+ ],
+ "insn_hooks": "port/insn_hooks.txt",
+ "shadow_stack": true
+}

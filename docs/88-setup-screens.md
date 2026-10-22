@@ -221,7 +221,7 @@ The steps (inferred design; section 10 item 3):
 
 ## 11. Tested
 
-- **Unit tests** (measured): `cd tools/setup && python -m unittest discover -s tests`, 50 tests in 7.0 s, all pass. The 17 new ones (test_pipeline.py), on test_setup's made-up dump and test_lift's fake tools:
+- **Unit tests** (measured): `cd tools/setup && python -m unittest discover -s tests`, 50 tests in 7 to 8 s, all pass. The 17 new ones (test_pipeline.py), on test_setup's made-up dump and test_lift's fake tools:
   - a full run, its protocol lines, the bar never going back, `run.log` equal to what was printed; then a second run with every phase skipped and no tool called;
   - `--check-only`; missing decrypted files (`@error game`, `@done fix`, a `@check missing` line); the saved folders; no folders at all;
   - a failed lifter (`@error step ppu`, `@log`), then a resume that starts at the lifter;
@@ -229,7 +229,9 @@ The steps (inferred design; section 10 item 3):
   - `ready.txt` from a fake compile phase, then `status --json`'s ready, outdated and damaged; a later failed run leaves no `ready.txt`; interrupted and missing;
   - the emitter's lines; the two checks that the C++ agrees with the Python (keywords, error codes, the protocol version, the Python pin).
 - **The command** (measured): `run_setup.py status --json` on an empty folder says `missing`; `run` with no folders says `@error game check Choose the game folder first.`; `run --check-only` on a folder with no dump prints the game check's sentence as `@check` and `@error` lines and exits 1. The engine printed `@awake` on this PC.
-- **Not built, not run**: the C++ (child_process, setup_engine, setup_protocol, setup_window, the des_ui.cpp and report.cpp changes) was written without a compiler; the frame-rate A/B on this PC had the build slots. To see the screen: build `des_boot` as usual, then start it with `DES_UI_OPEN=setup DES_SETUP_GAME=<dump folder> DES_SETUP_DATA=<a scratch folder>` (and `DES_SETUP_PYTHON=python` if the embeddable Python is not fetched). The screen comes up over the game's start; a run with every step already done takes seconds, a fresh one about 80 s for the lift (docs/81 section 2).
+- **Built and seen** (measured 10-22): `des_ui` and `des_boot` build with clang-cl, no warning in the new files. `des_boot` started with `DES_UI_OPEN=setup`, a scratch `DES_SETUP_DATA`, `DES_SETUP_PYTHON=python` and no game folder: the host started the engine under Python, which ended with `@done fix` and the `game` error. The screen showed "Some game files need fixing", "Choose the game folder first.", "Then check again." and the buttons Check again (focused), Details and Close, steady from frame 240 to 900.
+- **Not run yet:** a run with a real dump (check, stage, lift; the fetch then stops while the compiler entry has no sums), Cancel during a run, the gamepad and mouse on the buttons, and the Linux build.
+- One log line to look at: `[ui] a window's close transition did not run; hidden without it` came after the run ended (inferred: a window closed while the setup window was open; harmless in the shots).
 
 ## 12. Open questions
 

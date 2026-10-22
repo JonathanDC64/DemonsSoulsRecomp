@@ -3,6 +3,7 @@
 
 #include "component.hpp"
 
+#include <climits>
 #include <functional>
 
 namespace ui {

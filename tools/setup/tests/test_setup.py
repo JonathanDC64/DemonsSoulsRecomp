@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from des_setup import fetch, gamefiles, journal, sfo  # noqa: E402
-from des_setup.__main__ import stage  # noqa: E402
+from des_setup.__main__ import lift_blockers, stage  # noqa: E402
 
 
 def sha(b: bytes) -> str:
@@ -179,6 +179,19 @@ class CheckTest(unittest.TestCase):
             self.assertTrue(self.check(t, firmware=fw).ok)
             fw.write_bytes(b"\x7fELFsrX")
             self.assertFalse(self.check(t, firmware=fw).ok)
+        finally:
+            t.close()
+
+    def test_lift_goes_on_without_the_sdat_files(self):
+        t = GameTree()
+        try:
+            (t.root / "PS3_GAME/USRDIR/script/m01.luabnd.dcx.sdat.unedat").unlink()
+            rep = self.check(t)
+            self.assertFalse(rep.ok)
+            self.assertEqual(lift_blockers(rep), [])
+            (t.root / "PS3_GAME/USRDIR/EBOOT.elf").unlink()
+            rep = self.check(t)
+            self.assertEqual([i.name for i in lift_blockers(rep)], ["PS3_GAME/USRDIR/EBOOT.elf"])
         finally:
             t.close()
 

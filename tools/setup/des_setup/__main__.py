@@ -106,12 +106,21 @@ def cmd_stage(a) -> int:
     return 0
 
 
+def lift_blockers(rep) -> list:
+    """The problems that stop the lift. The decrypted .sdat files are only the
+    game's run-time inputs (docs/52), so the lift goes on without them."""
+    return [i for i in rep.problems() if not (i.kind == "decrypted" and i.name != lift.EBOOT)]
+
+
 def cmd_lift(a) -> int:
     """Check, stage, then the lift steps (lift.py), each skipped when done."""
     rep = gamefiles.check(a.game, a.decrypted, a.firmware)
-    if not rep.ok:
+    if lift_blockers(rep):
         _print_report(rep)
         return 1
+    if not rep.ok:
+        _print_report(rep)
+        print("     The lift needs only EBOOT.elf (and libsre.prx); the game needs the rest to run. Lifting now.")
     data = Path(a.data)
     jr = journal.Journal(data / "setup" / "journal.json")
     shown = {}

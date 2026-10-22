@@ -159,7 +159,7 @@ def cmd_tools(a) -> int:
     m = fetch.load_manifest()
     for e in m["tools"]:
         pinned = "pinned" if e.get("sha256") else "NOT PINNED (no SHA-256 yet)"
-        print(f"{e['name']} {e['version']} ({e['size']:,} bytes, route {e['route']}): {pinned}")
+        print(f"{e['name']} {e['version']} ({e['size']:,} bytes): {pinned}")
     return 0
 
 

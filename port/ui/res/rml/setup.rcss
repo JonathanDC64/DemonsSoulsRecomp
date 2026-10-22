@@ -415,15 +415,19 @@ icon.setup-info { decorator: text("&#xe88e;" center center); color: var(--color-
 icon.setup-wait { decorator: text("&#xe836;" center center); color: var(--setup-faint); }    /* radio_button_unchecked */
 icon.setup-tick { decorator: text("&#xe5ca;" center center); }                               /* check */
 
+/* The spinner: the progress_activity glyph, turning. Not a ring of border: RmlUi draws borders without smoothing,
+   so a small round one comes out uneven; a glyph is smoothed. */
 setup-spin {
     display: block;
-    width: 12dp;
-    height: 12dp;
-    margin: 1dp;
-    border: 2dp rgba(var(--color-interactive-rgb), 25%);
-    border-top-color: var(--color-accent);
-    border-radius: 8dp;
-    animation: 0.9s linear-in-out infinite setup-spin;
+    width: 18dp;
+    height: 18dp;
+    font-family: var(--font-family-icons);
+    font-weight: normal;
+    font-size: 18dp;
+    line-height: 1;
+    color: var(--color-accent);
+    decorator: text("&#xe9d0;" center center);  /* progress_activity */
+    animation: 1s linear-in-out infinite setup-spin;
 }
 
 @keyframes setup-spin {

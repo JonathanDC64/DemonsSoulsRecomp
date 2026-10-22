@@ -52,6 +52,12 @@ windows (bar 4.5 %). A change counts only if it clears the bar, p < 0.05 and B
 is on the same side in all rounds but one. `abthreads.txt` has the per-thread
 busy shares. An A/A batch (the same exe twice) shows the noise of the day.
 
+A knob on one exe: give the exe twice and the knob to one side,
+`EXEAB_ENV_B="SOME_KNOB=1"` (`EXEAB_ENV_A` for side A). Unlike knobab.sh this
+gives the gap fps too, which matters for a change on the FIFO thread: the
+profile session loads that thread, so a profile window can show a gain the
+gap does not.
+
 ## Live knobs in one boot: knobab.sh
 
 `knobab.sh <tag> <KNOB=value[,KNOB2=value] | knobs-file> [ENV...]` on
@@ -96,6 +102,7 @@ in the run's pid file (`des_boot.pids` in its DES_SCRATCH).
 | `PERF_SAVE` | `work/tmp/regress/save` | exeab, knobab: the save to boot (levelcap's `LC_SAVE`) |
 | `PERF_MAP` | `m08` (only with the pinned save) | exeab, knobab: the map each boot must load |
 | `PERF_VBLANK` | 960000 | exeab, knobab: `VBLANK_MHZ`, well above the frame rate |
+| `EXEAB_ENV_A`, `EXEAB_ENV_B` | unset | exeab: `VAR=value` words for one side only |
 | `PERF_SETTLE` / `KAB_SETTLE` | 40 | seconds after the level starts loading |
 | `KAB_WIN`, `KAB_ORDER`, `KAB_BOOTS` | 6, ABBAAB, 1 | knobab |
 | `PERF_BAR_PROF`, `PERF_BAR_GAP`, `PERF_BAR_KNOB` | 2.8, 4.5, 1.5 | the noise bars, % |

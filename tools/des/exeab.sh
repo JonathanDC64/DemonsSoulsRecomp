@@ -10,7 +10,10 @@
 # windows, each followed by 10 s with nothing armed. FRAME_LOG records every
 # present, so abstat.py gives two frame rates per window: the profile
 # session's own (it times every lookup and guest syscall, so it reads low) and
-# the gap after it (unperturbed). Extra ENV... go to every boot (both sides).
+# the gap after it (unperturbed). Extra ENV... go to every boot (both sides);
+# EXEAB_ENV_A and EXEAB_ENV_B (VAR=value words) go to one side only, so the
+# same exe twice with EXEAB_ENV_B="SOME_KNOB=1" is a knob A/B with the gap fps,
+# which knobab.sh does not have (its windows are all profile windows).
 #
 # The vblank has to stay well above the frame rate measured. At 120 Hz with
 # builds at ~117 fps, frames under 8.3 ms waited for the vblank, and a change
@@ -64,6 +67,7 @@ export DES_SCRATCH=$D
   echo "A $A  md5 $(perf_md5 "$A")"
   echo "B $B  md5 $(perf_md5 "$B")"
   echo "env DES_FPS=60 VBLANK_MHZ=$VB RSX_VSYNC=$RSX_VSYNC PS3_PRIORITY=normal PS3_AFFINITY=all DES_AUTO_CONTINUE=1 $*"
+  echo "A only: ${EXEAB_ENV_A:-}  B only: ${EXEAB_ENV_B:-}"
 } > "$D/batch.txt"
 cat "$D/batch.txt"
 printf '%s\n' "sleep $SETTLE" profile "sleep 8" profile "sleep 10" profile "sleep 8" profile "sleep 10" > "$D/cmds.txt"
@@ -77,6 +81,7 @@ for r in $(seq 1 "$R"); do
   if [ $((r % 2)) = 1 ]; then order="A B"; else order="B A"; fi
   for k in $order; do
     [ "$k" = A ] && X=$A || X=$B
+    [ "$k" = A ] && XE=${EXEAB_ENV_A:-} || XE=${EXEAB_ENV_B:-}
     N=${TAG}_${k}$r; RUN=$D/lc_$N
     perf_no_game 20 || { echo "[ab] a des_boot.exe is running; stopping before $N"; ec=3; break 2; }
     perf_present_ok || { echo "[ab] the session locked under a presenting batch; stopping before $N"; ec=4; break 2; }
@@ -85,7 +90,7 @@ for r in $(seq 1 "$R"); do
     DES_EXE=$X LC_SAVE=$SAVE LC_NOPRESS=1 LC_SETTLE=1 LC_MAX=$((600 + SETTLE)) LC_DUMP=0 \
       bash tools/des/levelcap.sh "$N" "$D/cmds.txt" PS3_PRIORITY=normal PS3_AFFINITY=all \
       PROF_DIR="$(cygpath -m "$RUN")" FRAME_LOG="$(cygpath -m "$RUN")/frames.log" \
-      DES_AUTO_CONTINUE=1 DES_FPS=60 VBLANK_MHZ="$VB" RSX_VSYNC="$RSX_VSYNC" "$@" > "$D/$N.lc" 2>&1 &
+      DES_AUTO_CONTINUE=1 DES_FPS=60 VBLANK_MHZ="$VB" RSX_VSYNC="$RSX_VSYNC" "$@" $XE > "$D/$N.lc" 2>&1 &
     lc=$!
     while kill -0 "$lc" 2>/dev/null; do
       [ -f "$RUN/run.txt" ] && perf_skip_cutscene "$RUN" 90 >> "$D/$N.skip" 2>&1

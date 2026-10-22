@@ -7,6 +7,7 @@ import http.server
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -371,6 +372,39 @@ class FetchTest(unittest.TestCase):
         for e in m["tools"]:
             self.assertTrue(e["url"].startswith("https://"))
             self.assertIn("why", e)
+
+    def test_real_entries_pinned_or_refused(self):
+        """Each real entry is pinned (a size and a SHA-256), or both are null and
+        fetch refuses it before downloading anything."""
+        for e in fetch.load_manifest()["tools"]:
+            if e["sha256"] is None:
+                self.assertIsNone(e["size"], e["name"])
+                with tempfile.TemporaryDirectory() as d:
+                    with self.assertRaises(fetch.FetchError):
+                        fetch.fetch(e, d)
+                    self.assertEqual(os.listdir(d), [])
+            else:
+                self.assertIsInstance(e["size"], int)
+                self.assertRegex(e["sha256"], r"^[0-9a-f]{64}$")
+
+    def test_compiler_entry(self):
+        """The compiler download (docs/86): the asset is named as setup caches it,
+        and a pinned size is that of a trimmed zip, not LLVM's 862 MB archive."""
+        e = next(t for t in fetch.load_manifest()["tools"] if t["name"] == "llvm-win64")
+        self.assertRegex(e["url"], r"^https://github\.com/[^/]+/[^/]+/releases/download/[^/]+/"
+                         + re.escape(f"{e['name']}-{e['version']}.zip") + "$")
+        self.assertTrue(e["version"].startswith("22.1.8-"))
+        if e["size"] is not None:
+            self.assertTrue(30_000_000 < e["size"] < 150_000_000, e["size"])
+
+    def test_lzma_zip_unpacks(self):
+        """The compiler zip's entries are LZMA by default; fetch.ensure reads them."""
+        b = io.BytesIO()
+        with zipfile.ZipFile(b, "w", compression=zipfile.ZIP_LZMA) as z:
+            z.writestr("bin/clang.exe", b"MZ" + b"x" * 4000)
+        with tempfile.TemporaryDirectory() as d:
+            p = fetch.ensure(self.entry(b.getvalue()), Path(d) / "dl", Path(d) / "tools", allow_http=True)
+            self.assertEqual((p / "bin/clang.exe").read_bytes(), b"MZ" + b"x" * 4000)
 
 
 if __name__ == "__main__":

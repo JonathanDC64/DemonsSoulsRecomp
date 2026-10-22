@@ -24,12 +24,8 @@ import shutil
 import traceback
 from pathlib import Path
 
+from . import compile as compile_step
 from . import fetch, gamefiles, journal, lift, protocol
-
-try:
-    from . import compile as compile_step          # feat/setup-compile, until it merges (docs/88 section 9)
-except ImportError:
-    compile_step = None
 
 READY = "ready.txt"
 REQUEST = "request.json"
@@ -42,7 +38,7 @@ PARTS = {"ppu": (0.05, 0.75), "spu": (0.75, 0.97), "compile": (0.0, 0.97)}
 NEED = {"fetch": GB // 2, "lift": GB, "compile": 2 * GB}
 OUTPUTS = {"fetch": ("downloads", "tools"), "lift": ("work",), "compile": ("build", "game")}
 # The tools the build downloads: the compiler (docs/86), once toolchain.json pins it.
-BUILD_TOOLS = ("llvm-win64",)
+BUILD_TOOLS = (compile_step.LLVM_ENTRY,)
 OOM = re.compile(r"out of memory|not enough memory|bad_alloc|MemoryError", re.I)
 NOSPACE = re.compile(r"no space left|not enough space on the disk|disk is full", re.I)
 FAILED = {"stage": "Copying the game files failed.", "lift": "Converting the game's code failed.",
@@ -50,7 +46,7 @@ FAILED = {"stage": "Copying the game files failed.", "lift": "Converting the gam
 
 
 def default_phases() -> list:
-    return ["check", "fetch", "stage", "lift"] + (["compile"] if compile_step is not None else [])
+    return ["check", "fetch", "stage", "lift", "compile"]
 
 
 # ---- the copy step (also `python -m des_setup stage`) ----
@@ -295,9 +291,7 @@ def _fetch(data, emit, total, manifest) -> bool:
 
 
 def _compile(data, jr, jobs, progress):
-    """The compile phase, with compile.py's hooks (docs/88 section 9)."""
-    if compile_step is None:
-        raise journal.StepFailed("compile", "this tree has no compile step (des_setup/compile.py)")
+    """The compile phase (compile.py): the downloaded compiler, unpacked by the fetch phase."""
     cc, ld = compile_step.toolchain(data)
     return compile_step.Compile(data, jr, cc, ld, jobs=jobs, progress=progress).run_all()
 
@@ -394,7 +388,7 @@ def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phase
                                "module_sha256": gamefiles.sha256_file(module)})
             emit.text(f"ok   the game is ready: {module}")
         elif not check_only:
-            emit.text("ok   every phase is done; this tree has no compile step, so the game is not built yet")
+            emit.text("ok   every phase is done; the compile was not in this run, so the game is not built yet")
         emit.overall(1.0)
         emit.done("ok")
         return 0

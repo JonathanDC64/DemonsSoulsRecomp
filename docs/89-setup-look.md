@@ -2,7 +2,7 @@
 
 The progress screen merged in #125 (docs/88) used the wrapper UI's small modal. The setup design (the demo page shown on 10-21) draws setup as the whole window. This note lists how the two differed, describes the shell that the screens now share, and says where the build still differs from the demo, and why.
 
-Code: the port branch `feat/setup-look`, from master e99b4f0. Labels: **measured** (a run says so), **read** (seen in the code or a doc), **inferred** (reasoned, not run).
+Code: the port branch `feat/setup-look`, from master 2d66556. Labels: **measured** (a run says so), **read** (seen in the code or a doc), **inferred** (reasoned, not run).
 
 ## Short answer
 
@@ -104,6 +104,7 @@ The user's decisions (10-22):
 
 - **No title bar.** The window has the system's own.
 - **No dashed rings.** RmlUi draws only solid borders (read, StyleSheetSpecification.cpp has no border-style). So the busy rail mark is a dimmer solid ring, and a task still to do uses the radio_button_unchecked glyph.
+- **The spinner is a glyph, turning.** It was a 16px ring of border with one bright side, and it came out uneven: RmlUi draws borders without smoothing (seen in the 10-22 shots). It is now Material Symbols' progress_activity arc, which the font draws smoothed.
 - **No fixed-width font for the log's lines.** The UI embeds Cinzel, Alegreya Sans and Material Symbols only (port/ui/CMakeLists.txt), so the lines use the body font, smaller.
 - **No outline on the focused button.** RmlUi has no outline, so the focused button looks like the hovered one: soul-white frame, a lighter background and a glow.
 - **No Options step on the rail yet.** It comes with the options screens. Link, Check the build and Prepare shaders are not tasks either: the engine links inside its compile, and has no check or shaders phase yet (docs/49).

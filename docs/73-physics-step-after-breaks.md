@@ -72,6 +72,8 @@ Copies are kept locally in `work/tmp/scratch_20261021/breaks/`, with a README; `
 
 ## What is left (inferred)
 
+Update 2026-10-21: docs/77 profiled image 8 on its own. It mostly waits for the Havok PPU Thread, whose `usleep(1)` polls sometimes lost the core (fixed in ps3recomp #97). Items 1 and 2 below were tried there: the region lift is not a consistent gain, and spin-then-sleep lowers the frame rate.
+
 1. **A faster SPU path for Havok's image 8**, as was done for image 2 (docs/48, docs/60, docs/72). The step's tail is image 8's lifted code plus the runtime's per-hop cost (`spu_step_check`, `spu_drain_call` and the DMA helpers show in the pool workers' profiles). This needs a profile of image 8 on its own first, since the pool threads also run images 3-6, 9 and 10.
 2. **A spin-then-sleep wait** (spin for some tens of microseconds, then nap; start from `lr_wait.patch`) would keep the fast handoff and free the cores in long waits. The free cores showed no fps gain in these runs, so this is for CPU use, not frame rate.
 3. Stepping more often with smaller steps (`DES_PHYS_HZ=60`) does not help. The cost of a step does not shrink with dt (the solver iterates a fixed number of times), so it would double the physics work (inferred from docs/71).

@@ -376,6 +376,7 @@ All of these keep game-derived output (screenshots, captures) in the scratch dir
   - `knobab.sh <tag> <KNOB=val>`: one run, profile windows in `KAB_ORDER` (default `ABBAAB`) with the live knob cleared (A) or set (B).
   - `kprof.sh <tag>` with `PF_PAT=<thread name ERE>`: `prof <tid>` (or `PF_VERB=profrip` for instruction addresses) on the matching threads; `profsym.py port/build/des_boot.map <out>` sums the result by function.
   - `soak.sh <tag> [exe]`: six minutes at `DES_FPS=120`, walking, with `stat` lines; for changes to the atomics. Point `LC_SAVE` at a Nexus save.
+- **Developer keys only** (2026-10-21): F9 (capture), F10 (present burst), F11 (profile session) and F8 (a `MARK` line in a `DES_FRAMELOG` log) work only with `RSX_DEV_HOTKEYS=1` (ps3recomp's `ps3_knob.h`, live). A player's build ignores them. A developer build (`-DDES_DEV=ON`) sets it at start when it is unset, and `des_env_defaults` sets it for every `tools/des` run, `play.sh` included, so the capture and `capdiff.py` workflow is unchanged. `RSX_DEV_HOTKEYS=0` shows what a player gets. F10 is still taken by the window with the keys off, so it never opens the window menu. F1 (or L3 + R3), Alt+Enter and Report an issue work in every build; the report takes its own screenshot. The console's profile toggle does not need the knob.
 
 ## Frame rate (2026-10-14)
 

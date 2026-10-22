@@ -338,8 +338,9 @@ bool player_pos(float* x, float* y, float* z, int* stamina, float* speed)
 
 /* DES_FRAMELOG=<file>: one line per flip request (time, interval, the step the
  * game was handed, cutscene, player position) and every half second a summary
- * of the player's ground speed and the sum of steps against real time. F8
- * writes a MARK line, so a player can tag the moment something looks wrong. */
+ * of the player's ground speed and the sum of steps against real time. With
+ * the developer keys on (RSX_DEV_HOTKEYS=1: a developer build, or a tools/des
+ * run), F8 writes a MARK line, to tag the moment something looks wrong. */
 FILE* s_framelog = nullptr;
 char s_framelog_path[260];
 
@@ -446,7 +447,8 @@ void frame_log()
     have_pos = pos; px = x; pz = z;
     win_dt += dt; win_n++;
 #ifdef _WIN32
-    const bool f8 = !ps3_env_int("PS3_NO_USER_INPUT", 0) && (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
+    const bool f8 = !ps3_env_int("PS3_NO_USER_INPUT", 0) && ps3_env_int("RSX_DEV_HOTKEYS", 0) &&
+                    (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
 #else
     const bool f8 = false;   /* (the F8 mark is Windows-only for now) */
 #endif
@@ -2124,7 +2126,7 @@ extern "C" void ps3_title_options_init(void)
             snprintf(s_framelog_path, sizeof s_framelog_path, "%s", f);
             fprintf(s_framelog, "# t_ms interval_ms step_ms cutscene pad buttons lstick reads empty [x y z stamina want_m/s speed_factor hp mp]; SUM t fps speed m/s game/real; MARK t (F8)\n");
             g_gcm_flip_request_hook = on_flip_request;
-            fprintf(stderr, "[des] DES_FRAMELOG: %s (F8 marks)\n", f);
+            fprintf(stderr, "[des] DES_FRAMELOG: %s%s\n", f, ps3_env_int("RSX_DEV_HOTKEYS", 0) ? " (F8 marks)" : "");
         } else if (*f) {
             fprintf(stderr, "[des] DES_FRAMELOG: cannot open %s\n", f);
         }

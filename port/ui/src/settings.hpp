@@ -48,6 +48,12 @@ bool is_default(std::string_view key);
 // per-session value is never written).
 void set(std::string_view key, const std::string& value);
 
+// Stores the value and saves settings.ini, without applying it: for the setup screens, which run before the game. The
+// game, started after them, reads the file; a value put in this process's environment would reach it as one set from
+// outside, and its row would show as pinned. (Display mode still takes effect at once: the window follows the stored
+// value each frame, des_ui.cpp's sync_fullscreen.)
+void store(std::string_view key, const std::string& value);
+
 // The variable was set in the environment when the game started (not by settings.ini): it wins over the file.
 bool pinned(std::string_view key);
 std::string pinned_value(std::string_view key);
@@ -105,6 +111,9 @@ inline constexpr int kNetP2pPortMax = 65535;
 const NetServer* net_server(std::string_view key);  // null for a key not in the table
 bool net_address_ok(std::string_view address);       // an IPv4 address or a host name, nothing else
 bool net_name_ok(std::string_view name);             // 3-16 letters, digits, '-' or '_' (a PSN online ID)
+// An online name for a player who has none: a word from the game and four digits ("Stonefang-4821"), which
+// net_name_ok accepts. Setup offers it, and the Network tab falls back to it rather than leave the name empty.
+std::string suggest_net_name();
 // The chosen server's address (DES_NET_SERVER, DES_NET_CUSTOM for Custom), or "" when there is none or it is not
 // a valid address.
 std::string net_server_address();

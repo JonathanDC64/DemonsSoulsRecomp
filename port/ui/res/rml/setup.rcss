@@ -700,3 +700,162 @@ setup-question-text {
         font-size: var(--font-size-4xl);
     }
 }
+
+/* The screens before a run (setup_screens.cpp) */
+setup-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    max-width: 960dp;
+}
+
+setup-actions.near {
+    margin-top: 10dp;
+}
+
+setup-callout-body setup-actions {
+    margin-top: 10dp;
+}
+
+setup-row.start {
+    justify-content: flex-start;
+}
+
+setup-text.note {
+    font-size: var(--font-size-sm);
+    color: var(--setup-muted);
+}
+
+setup-row-end {
+    display: block;
+    flex: 0 0 auto;
+}
+
+icon.setup-folder { decorator: text("&#xe2c7;" center center); color: var(--color-info); }  /* folder */
+
+/* The folder chosen */
+setup-field.folder {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-sm);
+    max-width: 960dp;
+    margin-top: 0;
+}
+
+setup-field.folder icon {
+    flex: 0 0 auto;
+    width: 18dp;
+    height: 18dp;
+    font-size: 18dp;
+}
+
+setup-field-text {
+    display: block;
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: var(--font-size-sm);
+    word-break: break-all;
+}
+
+setup-field-text.none {
+    color: var(--setup-muted);
+}
+
+/* The ways to the game's files: a card each */
+setup-choices {
+    display: flex;
+    flex-flow: row wrap;
+    gap: var(--space-md);
+    max-width: 960dp;
+}
+
+button.setup-choice {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    flex: 1 1 230dp;
+    padding: var(--space-lg) var(--space-lg) var(--space-lg) var(--space-xl);
+    border-left: 2dp rgba(0, 0, 0, 0%);
+    border-radius: var(--radius-small);
+    font-size: var(--font-size-base);
+    text-align: left;
+    color: var(--color-text);
+    background-color: rgba(0, 0, 0, 45%);
+    box-shadow: var(--setup-line-soft) 0 0 0 1dp;
+    opacity: 1;
+}
+
+button.setup-choice:not(:disabled):hover,
+button.setup-choice:not(:disabled):focus-visible {
+    border-left-color: rgb(var(--color-interactive-rgb));
+    background-color: rgba(0, 0, 0, 0%);
+    box-shadow: rgb(var(--color-border-rgb)) 0 0 0 1dp;
+    decorator: linear-gradient(to right, rgba(var(--color-interactive-rgb), 12%), rgba(var(--color-interactive-rgb), 3%));
+}
+
+setup-choice-title,
+setup-choice-text {
+    display: block;
+}
+
+setup-choice-title {
+    font-family: var(--font-family-display);
+    font-size: var(--font-size-lg);
+    letter-spacing: 1dp;
+    color: var(--color-accent);
+}
+
+setup-choice-text {
+    font-size: var(--font-size-base);
+    color: var(--setup-muted);
+}
+
+/* The dumps found in the usual places: a row each */
+setup-places {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    max-width: 960dp;
+}
+
+button.setup-place {
+    display: block;
+    padding: var(--space-sm) var(--space-md);
+    border-left: 2dp rgba(0, 0, 0, 0%);
+    border-radius: var(--radius-small);
+    font-size: var(--font-size-sm);
+    text-align: left;
+    color: var(--color-text);
+    background-color: rgba(0, 0, 0, 45%);
+    box-shadow: var(--setup-line-soft) 0 0 0 1dp;
+    opacity: 1;
+    word-break: break-all;
+}
+
+button.setup-place:not(:disabled):hover,
+button.setup-place:not(:disabled):focus-visible {
+    background-color: rgba(var(--color-interactive-rgb), 6%);
+    box-shadow: rgb(var(--color-border-rgb)) 0 0 0 1dp;
+}
+
+button.setup-place:selected {
+    border-left-color: rgb(var(--color-interactive-rgb));
+    color: var(--color-accent);
+}
+
+/* How to: numbered steps under a callout's line */
+setup-guide {
+    display: block;
+    margin-top: var(--space-md);
+    padding: var(--space-sm) var(--space-lg);
+    border-left: 2dp var(--setup-line-soft);
+}
+
+setup-guide-item {
+    display: block;
+    margin-bottom: 6dp;
+    font-size: var(--font-size-base);
+    color: var(--setup-muted);
+}

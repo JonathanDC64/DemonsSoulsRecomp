@@ -18,6 +18,9 @@ void shutdown();
 bool is_initialized();
 
 Rml::Context* context();
+// The window init was given (an HWND on Windows, an SDL_Window* elsewhere), or null before init: what a dialog of the
+// system's belongs to (folder_picker.hpp).
+void* window();
 
 // The UI's size: 0 is automatic (1 dp = 1 px at 720p), anything else multiplies that.
 void set_ui_scale(float scale);

@@ -17,6 +17,7 @@
 #include <initializer_list>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ui {
@@ -61,6 +62,16 @@ protected:
     // `actions` as buttons in `parent`, in place of `buttons` (the old ones' listeners go before their elements). If
     // one of the old ones had the focus, the one in its place gets it.
     void set_buttons(Buttons& buttons, Rml::Element* parent, std::vector<Action> actions);
+    // Scrolls the focused button into view on the next frame: a button made this frame has no place in the layout
+    // until the frame is drawn, so focusing it scrolls nowhere.
+    void reveal_focus() { mRevealFocus = true; }
+    // One of the page's buttons has the focus. After a redraw, test this, not has_focus(): when the focused button
+    // is removed, RmlUi leaves the focus on its parent, still in this document, and the next key only refocuses.
+    bool button_focused() const;
+    // Where the focus is among nav_lines(), as {line, index} ({-1, -1}: on none of them), and the focus put back on
+    // the button now in that place, if there is one.
+    std::pair<int, int> focus_place() const;
+    bool focus_at(std::pair<int, int> place);
     // The row of the pad's buttons at the bottom of the page.
     void set_hints(std::initializer_list<Hint> hints);
     static std::vector<Button*> line(const Buttons& buttons);
@@ -108,6 +119,8 @@ private:
     Buttons mQuestionButtons;
     std::vector<std::function<void()>> mQuestionActionsRun;  // each button's, the question closed first
     bool mAsking = false;
+    std::pair<int, int> mQuestionFrom{-1, -1};  // where the focus was when the question opened
+    bool mRevealFocus = false;
     CloseFallback mCloseFallback;
 };
 

@@ -300,6 +300,7 @@ void release_buffers() {
 
 bool is_initialized() { return s.initialised; }
 Rml::Context* context() { return s.rml; }
+void* window() { return sWindow; }
 
 void set_ui_scale(float scale) { s.ui_scale = std::clamp(scale, 0.0f, 4.0f); }
 

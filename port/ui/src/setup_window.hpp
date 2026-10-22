@@ -2,8 +2,8 @@
 // and its bar, then the build's tasks, each with its mark and count; Stop (which asks first) and Details (the engine's
 // last lines). A run that fails says what failed and what to do, with the engine's last lines, Try again (or Check
 // again), Report the problem and Show the full log; a stopped one offers Resume; a finished one, Play. The page is
-// the setup shell's (setup_page.hpp). The game files' checklist, the folder pickers and the start screen's states are
-// the next screens (docs/88 section 10).
+// the setup shell's (setup_page.hpp). The screens before it (the start screen, the game, Ready to build) are in
+// setup_screens.hpp.
 #pragma once
 
 #include "setup_engine.hpp"

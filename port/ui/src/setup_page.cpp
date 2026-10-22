@@ -105,6 +105,13 @@ bool SetupPage::visible() const {
 }
 
 void SetupPage::update() {
+    if (std::exchange(mRevealFocus, false)) {  // (the last frame's layout has the buttons made before it)
+        Rml::Context* context = mDocument->GetContext();
+        Rml::Element* focused = context ? context->GetFocusElement() : nullptr;
+        if (focused && focused->GetOwnerDocument() == mDocument)
+            focused->ScrollIntoView({Rml::ScrollAlignment::Adaptive, Rml::ScrollAlignment::Nearest,
+                                     Rml::ScrollBehavior::Smooth, Rml::ScrollParentage::Closest});
+    }
     if (mPending) {
         auto action = std::exchange(mPending, {});
         action();
@@ -115,6 +122,36 @@ void SetupPage::update() {
     for (const auto& button : mQuestionButtons) button->update();
     if (!mShell->HasAttribute("open") && Document::visible() && mCloseFallback.due()) Document::hide(mPendingClose);
     Document::update();
+}
+
+bool SetupPage::button_focused() const {
+    Rml::Context* context = mDocument->GetContext();
+    Rml::Element* focused = context ? context->GetFocusElement() : nullptr;
+    if (!focused || focused->GetOwnerDocument() != mDocument) return false;
+    for (const auto& buttons : nav_lines())
+        for (Button* button : buttons)
+            if (button->contains(focused)) return true;
+    for (const auto& button : mQuestionButtons)
+        if (button->contains(focused)) return true;
+    return false;
+}
+
+std::pair<int, int> SetupPage::focus_place() const {
+    Rml::Context* context = mDocument->GetContext();
+    Rml::Element* focused = context ? context->GetFocusElement() : nullptr;
+    if (!focused || focused->GetOwnerDocument() != mDocument) return {-1, -1};
+    const auto lines = nav_lines();
+    for (int l = 0; l < int(lines.size()); ++l)
+        for (int i = 0; i < int(lines[size_t(l)].size()); ++i)
+            if (lines[size_t(l)][size_t(i)]->contains(focused)) return {l, i};
+    return {-1, -1};
+}
+
+bool SetupPage::focus_at(std::pair<int, int> place) {
+    const auto lines = nav_lines();
+    if (place.first < 0 || place.first >= int(lines.size())) return false;
+    const auto& line = lines[size_t(place.first)];
+    return place.second >= 0 && place.second < int(line.size()) && line[size_t(place.second)]->focus();
 }
 
 bool SetupPage::focus() {
@@ -174,6 +211,7 @@ void SetupPage::set_buttons(Buttons& buttons, Rml::Element* parent, std::vector<
         buttons.push_back(std::move(button));
     }
     if (had >= 0 && !mAsking && !(had < int(buttons.size()) && buttons[size_t(had)]->focus())) focus();
+    if (had >= 0) reveal_focus();
 }
 
 void SetupPage::set_hints(std::initializer_list<Hint> hints) {
@@ -196,6 +234,7 @@ void SetupPage::ask(const std::string& title, const std::string& bodyRml, std::v
                     size_t focused) {
     set_text_content(mQuestionTitle, title);
     set_question_body(bodyRml);
+    if (!mAsking) mQuestionFrom = focus_place();  // (a second question keeps the first one's)
     mAsking = true;
     mLayer->SetAttribute("open", "");
     set_question_actions(std::move(actions), focused);
@@ -235,7 +274,7 @@ void SetupPage::close_question() {
     mQuestionButtons.clear();
     mQuestionActionsRun.clear();
     clear_children(mQuestionActions);
-    focus();
+    if (!focus_at(mQuestionFrom)) focus();  // (back on the button that opened it)
 }
 
 Rml::Element* SetupPage::icon(Rml::Element* parent, const char* name) {

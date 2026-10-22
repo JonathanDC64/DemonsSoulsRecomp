@@ -31,6 +31,7 @@
 #include "report.hpp"
 #include "settings.hpp"
 #include "settings_window.hpp"
+#include "setup_engine.hpp"
 #include "setup_screens.hpp"
 #include "setup_window.hpp"
 #include "trophies_window.hpp"
@@ -48,6 +49,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -129,6 +131,7 @@ std::atomic<bool> sCapturing{false};  // a document is up: the wndproc takes the
 std::atomic<int> sBufferW{1280}, sBufferH{720};
 
 bool sStartScreen = false;
+bool sSetupOnly = false;  // setup's screens alone, no game (des_ui_launch)
 std::atomic<bool> sStartUp{false};
 // The window's close button (and Alt+F4) asks first, as Quit does; a test run's window closes at once.
 bool sCloseAsks = false;
@@ -438,10 +441,34 @@ void open_test_osk() {
     osk_open(kPrompt, kText, 16);
 }
 
+// Play on setup alone: the game in a new process of this program (crash_report::start_again: with the environment
+// this one started with, so the game reads what setup stored in settings.ini), then this one closes.
+void play_from_setup() {
+    if (!ui::crash_report::start_again()) std::fprintf(stderr, "[setup] play: the game could not be started\n");
+    else std::fprintf(stderr, "[setup] play: the game starts in a new process\n");
+    ui::app().quit();
+}
+
+// Setup's screens: the start screen, or setup-run's build at once. On setup alone their Play starts the game; over a
+// running game (a runtime without the launch hook) it only closes them.
+void push_setup(const char* open) {
+    const std::function<void()> onPlay = sSetupOnly ? std::function<void()>(play_from_setup) : nullptr;
+    if (open && !std::strcmp(open, "setup-run"))
+        ui::push_document(std::make_unique<ui::SetupWindow>(
+            ui::SetupWindow::Props{.request = ui::setup::request_from_env(), .onPlay = onPlay}));
+    else
+        ui::push_document(std::make_unique<ui::SetupStartWindow>(
+            ui::SetupStartWindow::Props{.request = ui::setup::request_from_env(), .onPlay = onPlay}));
+}
+
 void push_documents() {
     if (sDocumentsPushed) return;
     sDocumentsPushed = true;
     ui::push_document(std::make_unique<ui::Overlay>(), true, true);
+    if (sSetupOnly) {  // (no game: no menu and none of the game's screens)
+        push_setup(std::getenv("DES_UI_OPEN"));
+        return;
+    }
     ui::push_document(std::make_unique<ui::MenuBar>(), false);
     if (sStartScreen) ui::push_document(std::make_unique<ui::Prelaunch>());
 
@@ -453,12 +480,7 @@ void push_documents() {
         else if (!std::strcmp(open, "settings")) ui::push_document(std::make_unique<ui::SettingsWindow>());
         else if (!std::strcmp(open, "trophies")) ui::push_document(std::make_unique<ui::TrophiesWindow>());
         else if (!std::strcmp(open, "osk")) open_test_osk();
-        else if (!std::strcmp(open, "setup"))
-            ui::push_document(std::make_unique<ui::SetupStartWindow>(
-                ui::SetupStartWindow::Props{.request = ui::setup::request_from_env()}));
-        else if (!std::strcmp(open, "setup-run"))
-            ui::push_document(
-                std::make_unique<ui::SetupWindow>(ui::SetupWindow::Props{.request = ui::setup::request_from_env()}));
+        else if (!std::strcmp(open, "setup") || !std::strcmp(open, "setup-run")) push_setup(open);
     }
 }
 
@@ -911,6 +933,60 @@ App& app() {
 // For des_options.cpp: the start screen is up (or about to be), so DES_AUTO_CONTINUE waits for Play.
 extern "C" int des_ui_start_screen_up(void) { return sStartUp.load() ? 1 : 0; }
 
+namespace {
+
+// An ELF on the command line, as main reads it: an argument that is not one of its flags (--username and --psnr, with
+// their value after = or as the next argument).
+bool elf_given(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        const char* a = argv[i];
+        if (std::strncmp(a, "--username", 10) && std::strncmp(a, "--psnr", 6)) return true;
+        if (!std::strchr(a, '=')) ++i;
+    }
+    return false;
+}
+
+// Setup alone: each pass of the window's thread presents, so V-sync paces it; the last build's pipeline library stays
+// shut (its threads would compete with the compile); and the title bar has the game's name (no PARAM.SFO is read).
+void setup_only_env() {
+    ps3_setenv("RSX_VSYNC", "1");
+    ps3_setenv("PS3_PSO_LIBRARY", "0");
+    if (!env_on("PS3_TITLE")) ps3_setenv("PS3_TITLE", "Demon's Souls");
+}
+
+}  // namespace
+
+extern "C" int des_ui_launch(int* argc, char*** argv) {
+    if (const char* v = std::getenv("DES_UI"); v && !std::strcmp(v, "0")) return -1;
+    if (const char* open = std::getenv("DES_UI_OPEN");
+        open && (!std::strcmp(open, "setup") || !std::strcmp(open, "setup-run")))
+        return -2;
+    if (elf_given(*argc, *argv)) return -1;
+    const ui::setup::Launch launch = ui::setup::launch_state();
+    if (launch.state != ui::setup::State::Ready) {
+        std::fprintf(stderr, "[setup] launch: the game is not set up yet, setup opens\n");
+        return -2;
+    }
+    // The game setup built (docs/88 section 7): its module, the game's folder and its EBOOT.elf as main's ELF.
+    if (!std::getenv("PS3_GAME_MODULE")) ps3_setenv("PS3_GAME_MODULE", launch.module.string().c_str());
+    ps3_setenv("PS3_VFS_ROOT", launch.game.string().c_str());
+    static std::string eboot;
+    static std::vector<char*> args;
+    eboot = launch.eboot.string();
+    args.assign(*argv, *argv + *argc);
+    args.insert(args.begin() + 1, eboot.data());
+    args.push_back(nullptr);
+    *argc += 1;
+    *argv = args.data();
+    std::fprintf(stderr, "[setup] launch: the game setup built, %s\n", eboot.c_str());
+    return -1;
+}
+
+extern "C" void des_ui_setup_only_init(void) {
+    sSetupOnly = true;
+    des_ui_early_init();
+}
+
 extern "C" void des_ui_early_init(void) {
     std::fprintf(stderr, "[des] DemonsSoulsRecomp %s, ps3recomp %s, game dump %.12s\n", ui::kVersion,
                  ui::kPs3recompVersion, *ui::kDumpSha256 ? ui::kDumpSha256 : "unknown");
@@ -919,16 +995,17 @@ extern "C" void des_ui_early_init(void) {
         return;
     }
     ui::settings::load_and_apply_env();
+    if (sSetupOnly) setup_only_env();
     parse_debug_knobs();
-    sOpenPending = env_on("DES_UI_OPEN");
+    sOpenPending = sSetupOnly || env_on("DES_UI_OPEN");
     sChordMask = ui::input::chord_mask(ui::settings::get_int("pad_menu_chord"));
 
-    sStartScreen = env_on("DES_UI_START") ||
-                   (ui::settings::get_int("show_start_screen") != 0 && !env_on("DES_SKIP_UI") && !ui::settings::scripted_run());
+    sStartScreen = !sSetupOnly && (env_on("DES_UI_START") || (ui::settings::get_int("show_start_screen") != 0 &&
+                                                              !env_on("DES_SKIP_UI") && !ui::settings::scripted_run()));
     sStartUp.store(sStartScreen);
     ui::mouse::set_ui_open(sStartScreen);  // (until the first frame pushes it)
 
-    sCloseAsks = !ui::settings::unattended_run();
+    sCloseAsks = !sSetupOnly && !ui::settings::unattended_run();  // (setup alone: nothing to lose, it carries on next time)
     ui::app().quit = [] {
         sQuitConfirmed.store(true);
         rsx_d3d12_post_message(WM_CLOSE, 0, 0);
@@ -939,6 +1016,7 @@ extern "C" void des_ui_early_init(void) {
     rsx_d3d12_set_overlay(&kOverlay);
     static const CellOskDialogHost kOsk = {osk_open, osk_close};
     cellOskDialog_set_host(&kOsk);
+    if (sSetupOnly) return;  // (no game: no trophies, and no frames to watch)
     ui::trophies::install();
     std::thread(watch_thread).detach();
 }

@@ -185,6 +185,21 @@ des_running() {
   return 1
 }
 
+# des_wait_own <secs>: wait, at most <secs>, for the des_boot processes of the
+# pid file that still run to end. Setup's Play (the launch hook, docs/88
+# section 7) starts the game as a new process of the same exe and ends the
+# first, so a run goes on past the process it started.
+des_wait_own() {
+  local pid ids=""
+  [ "${1:-0}" -gt 0 ] && [ -f "$DES_PIDFILE" ] || return 0
+  while read -r pid; do pid="${pid//[!0-9]/}"
+    [ -n "$pid" ] && tasklist //FI "PID eq $pid" //FO CSV //NH 2>/dev/null | grep -qi 'des_boot' && ids="${ids:+$ids,}$pid"
+  done < "$DES_PIDFILE"
+  [ -n "$ids" ] || return 0
+  powershell -NoProfile -Command "Wait-Process -Id $ids -Timeout $1 -ErrorAction SilentlyContinue" > /dev/null 2>&1
+  return 0
+}
+
 # des_console <cmdfile-base> <command> [cap-secs]: send one debug-console
 # command and print the reply once it has been written (no fixed sleep; the
 # cap defaults to 15 s, longer for commands like `prof <tid> <secs>`).

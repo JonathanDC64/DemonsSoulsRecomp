@@ -9,6 +9,12 @@ void (*g_des_ui_sound)(int id) = nullptr;
 
 void des_ui_early_init(void) {}
 
+int des_ui_launch(int*, char***) {
+    return -1;  // (no setup screens: the game, as before)
+}
+
+void des_ui_setup_only_init(void) {}
+
 void des_mouse_take(int* dx, int* dy) {
     *dx = 0;
     *dy = 0;

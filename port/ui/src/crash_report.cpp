@@ -395,6 +395,19 @@ int run_dialog(int argc, LPWSTR* argv) {
     return 0;
 }
 
+// A start by setup's Play (start_again): the setup process is still closing. Wait for it to end (at most 10 s), so
+// that this one gets des.log and shows the only window.
+void wait_for_launcher() {
+    wchar_t pid[32];
+    const DWORD n = GetEnvironmentVariableW(L"DES_LAUNCH_AFTER", pid, 32);
+    if (n == 0 || n >= 32) return;
+    _wputenv_s(L"DES_LAUNCH_AFTER", L"");  // (not in the environment saved below: a restart is no launch)
+    if (HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, DWORD(std::wcstoul(pid, nullptr, 10)))) {
+        WaitForSingleObject(h, 10000);
+        CloseHandle(h);
+    }
+}
+
 // Before main(), after every other static initializer (see below): the crash dialog process runs the dialog here and
 // ends, without ever starting the game; the game saves its environment and starts its log.
 void startup_hook() {
@@ -405,6 +418,7 @@ void startup_hook() {
         ExitProcess(UINT(rc));
     }
     if (argv) LocalFree(argv);
+    wait_for_launcher();
     if (LPWCH env = GetEnvironmentStringsW()) {
         const wchar_t* p = env;
         while (*p) p += std::wcslen(p) + 1;
@@ -474,6 +488,70 @@ void install() {
     g_prev_filter = SetUnhandledExceptionFilter(on_unhandled);
     g_prev_abort = std::signal(SIGABRT, on_abort);
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);  // no "abort() has been called" dialog
+}
+
+bool start_again() {
+    // The environment block it started with (name=value strings, each ended by a 0), less setup's variables, plus the
+    // two for the new one, sorted by name as CreateProcess wants it.
+    std::vector<std::wstring> vars;
+    for (const wchar_t* p = g_environment.empty() ? L"" : g_environment.data(); *p; p += std::wcslen(p) + 1) {
+        bool drop = false;
+        for (const wchar_t* name : {L"DES_UI_OPEN=", L"DES_SKIP_UI=", L"DES_LAUNCH_AFTER="})
+            drop = drop || _wcsnicmp(p, name, std::wcslen(name)) == 0;
+        if (!drop) vars.emplace_back(p);
+    }
+    vars.emplace_back(L"DES_SKIP_UI=1");
+    vars.emplace_back(L"DES_LAUNCH_AFTER=" + std::to_wstring(GetCurrentProcessId()));
+    std::sort(vars.begin(), vars.end(), [](const std::wstring& a, const std::wstring& b) {
+        return _wcsicmp(a.substr(0, a.find(L'=', 1)).c_str(), b.substr(0, b.find(L'=', 1)).c_str()) < 0;
+    });
+    std::vector<wchar_t> env;
+    for (const std::wstring& v : vars) env.insert(env.end(), v.c_str(), v.c_str() + v.size() + 1);
+    env.push_back(L'\0');
+
+    // Its standard output and error are this one's (a test run's log); no other handle of this one goes with it (an
+    // open des.log would keep the new one from its log).
+    std::vector<HANDLE> inherit;
+    for (DWORD which : {STD_OUTPUT_HANDLE, STD_ERROR_HANDLE}) {
+        HANDLE h = GetStdHandle(which);
+        if (h && h != INVALID_HANDLE_VALUE && std::find(inherit.begin(), inherit.end(), h) == inherit.end() &&
+            SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT))
+            inherit.push_back(h);
+    }
+    STARTUPINFOEXW startup{};
+    startup.StartupInfo.cb = sizeof startup;
+    SIZE_T size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+    std::vector<char> attributes(size);
+    auto* list = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
+    const bool listed = !inherit.empty() && size && InitializeProcThreadAttributeList(list, 1, 0, &size) &&
+                        UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit.data(),
+                                                  inherit.size() * sizeof(HANDLE), nullptr, nullptr);
+    if (listed) {
+        startup.lpAttributeList = list;
+        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+        startup.StartupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    }
+    wchar_t exe[MAX_PATH];
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    std::wstring command = GetCommandLineW();
+    PROCESS_INFORMATION process{};
+    const BOOL ok = CreateProcessW(exe, command.data(), nullptr, nullptr, listed ? TRUE : FALSE,
+                                   CREATE_UNICODE_ENVIRONMENT | (listed ? EXTENDED_STARTUPINFO_PRESENT : 0), env.data(),
+                                   nullptr, &startup.StartupInfo, &process);
+    if (listed) DeleteProcThreadAttributeList(list);
+    if (!ok) return false;
+    // A test run's PS3_PIDFILE (each process appends itself, late in its boot): the new one goes in now, so the script
+    // that started this one sees the game at once, to wait for it or stop it.
+    if (const char* pids = std::getenv("PS3_PIDFILE"); pids && *pids)
+        if (FILE* f = std::fopen(pids, "a")) {
+            std::fprintf(f, "%lu\n", static_cast<unsigned long>(process.dwProcessId));
+            std::fclose(f);
+        }
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return true;
 }
 
 }  // namespace ui::crash_report

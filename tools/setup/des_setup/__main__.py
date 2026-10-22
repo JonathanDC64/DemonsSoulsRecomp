@@ -2,6 +2,7 @@
 
   python -m des_setup check GAME [--decrypted DIR]... [--firmware FILE]
   python -m des_setup stage GAME [--decrypted DIR]... [--firmware FILE] [--data DIR]
+  python -m des_setup lift GAME [--decrypted DIR]... [--firmware FILE] [--data DIR] [-j N]
   python -m des_setup status [--data DIR]
   python -m des_setup tools
   python -m des_setup fetch NAME [--data DIR]
@@ -17,7 +18,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import fetch, gamefiles, journal
+from . import fetch, gamefiles, journal, lift
 
 NAME = "DemonsSoulsRecomp"
 
@@ -105,6 +106,33 @@ def cmd_stage(a) -> int:
     return 0
 
 
+def cmd_lift(a) -> int:
+    """Check, stage, then the lift steps (lift.py), each skipped when done."""
+    rep = gamefiles.check(a.game, a.decrypted, a.firmware)
+    if not rep.ok:
+        _print_report(rep)
+        return 1
+    data = Path(a.data)
+    jr = journal.Journal(data / "setup" / "journal.json")
+    shown = {}
+
+    def prog(step, done, total):
+        pct = done * 100 // max(1, total)
+        if shown.get(step) != pct:
+            shown[step] = pct
+            print(f"@progress {step} {done}/{total}", flush=True)
+
+    sums = {i.name: i.sha256 for i in rep.inputs()}
+    try:
+        stage(rep, data, jr)
+        lift.Lift(data, jr, workers=a.jobs, progress=prog).run_all(sums.get(lift.EBOOT), sums.get("libsre.prx"))
+    except journal.StepFailed as e:
+        print(f"FIX  {e}" + (f" (log: {e.log})" if e.log else ""))
+        return 1
+    print(f"ok   the lift is in {data / 'work'}")
+    return 0
+
+
 def cmd_status(a) -> int:
     jr = journal.Journal(Path(a.data) / "setup" / "journal.json")
     steps = jr.data["steps"]
@@ -166,6 +194,11 @@ def main(argv=None) -> int:
     game_args(sp)
     data_arg(sp)
     sp.set_defaults(fn=cmd_stage)
+    sp = sub.add_parser("lift", help="check, stage, then convert the game's code (resumes where it stopped)")
+    game_args(sp)
+    data_arg(sp)
+    sp.add_argument("-j", "--jobs", type=int, default=0, help="lifter workers (default: up to 16)")
+    sp.set_defaults(fn=cmd_lift)
     sp = sub.add_parser("status", help="show the journal")
     data_arg(sp)
     sp.set_defaults(fn=cmd_status)

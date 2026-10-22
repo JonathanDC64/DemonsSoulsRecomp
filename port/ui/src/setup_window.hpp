@@ -1,24 +1,21 @@
-// The setup screen (docs/88 section 2): while the setup engine runs, its phases with a mark each, the current step's
-// bar and count, the whole run's bar and the time left, Details (the engine's last lines) and Stop. A run that fails
-// opens a window that says what failed and what to do, with Try again (or Check again), Report and Close; a finished
-// one offers Play, or Close. The game files' checklist, the folder pickers and the start screen's states are the next
-// screens (docs/88 section 10).
+// The setup screen (docs/88 section 2, docs/89): while the setup engine runs, the whole run's percent, the time left
+// and its bar, then the build's tasks, each with its mark and count; Stop (which asks first) and Details (the engine's
+// last lines). A run that fails says what failed and what to do, with the engine's last lines, Try again (or Check
+// again), Report the problem and Show the full log; a stopped one offers Resume; a finished one, Play. The page is
+// the setup shell's (setup_page.hpp). The game files' checklist, the folder pickers and the start screen's states are
+// the next screens (docs/88 section 10).
 #pragma once
 
-#include "button.hpp"
 #include "setup_engine.hpp"
-#include "window.hpp"
+#include "setup_page.hpp"
 
 #include <functional>
-#include <memory>
 #include <string>
 #include <vector>
 
 namespace ui {
 
-class Modal;
-
-class SetupWindow : public WindowSmall {
+class SetupWindow : public SetupPage {
 public:
     struct Props {
         setup::Request request;         // empty: the folders the last run used
@@ -28,31 +25,43 @@ public:
 
     explicit SetupWindow(Props props);
 
-    void update() override;
-    bool focus() override;
-    bool obscures_game() const override { return true; }
-
 protected:
-    bool handle_nav_command(Rml::Event& event, NavCommand cmd) override;
+    std::vector<std::vector<Button*>> nav_lines() const override;
+    void tick() override;
+    void back() override;
 
 private:
     enum class Phase { Running, Stopping, Stopped, Failed, Done };
-    struct Action {
-        Rml::String label;
-        std::function<void()> onPressed;  // none: shown, but it cannot be pressed
+    // A line of the task list: a phase of the plan, or one of its steps (the lift's two).
+    struct Task {
+        std::string id;     // "check", "ppu", ...
+        size_t phase = 0;   // its phase in the plan
+        int state = -1;     // as drawn (Status::State)
+        std::string count;  // as drawn
+        Rml::Element* row = nullptr;
+        Rml::Element* mark = nullptr;
+        Rml::Element* sub = nullptr;
+        Rml::Element* num = nullptr;
     };
 
     void start();
     void stop_run();
     void finish();
     void close(bool play);
+    void draw_running();
+    void draw_failed();
+    void draw_stopped();
+    void draw_done();
+    void draw_rail(const std::string& buildSub);
+    void build_tasks();
     void refresh(unsigned long long now);
-    void build_steps();
-    void set_actions(std::vector<Action> actions, const char* circle);
+    void set_actions(std::vector<Action> actions, const std::string& note = {});
     void toggle_details();
     void ask_stop();
-    void show_failure();
-    void show_details(Modal& over);
+    void ask_report();
+    void open_log();
+    std::filesystem::path log_file() const;
+    std::string log_tail(size_t lines) const;
     std::string send_report();
     void put(Rml::Element* element, std::string& shown, const std::string& text);
 
@@ -61,24 +70,20 @@ private:
     setup::Eta mEta;
     Phase mPhase = Phase::Running;
     bool mDetailsShown = false;
-    std::function<void()> mPending;  // a button's action, run in update() (it may rebuild the buttons)
+    unsigned long long mStartMs = 0;
 
-    Rml::Element* mTitle = nullptr;
-    Rml::Element* mIntro = nullptr;
-    Rml::Element* mSteps = nullptr;
-    std::vector<Rml::Element*> mStepRows;
-    std::vector<std::string> mStepNames;
-    std::vector<int> mStepStates;  // as drawn
-    Rml::Element* mCurrent = nullptr;
-    Rml::Element* mCurrentBar = nullptr;
-    Rml::Element* mOverall = nullptr;
-    Rml::Element* mOverallBar = nullptr;
-    Rml::Element* mAwake = nullptr;
+    Rml::Element* mBody = nullptr;  // the page's parts under the heading, drawn again for each phase
+    Rml::Element* mPercent = nullptr;
+    Rml::Element* mEtaText = nullptr;
+    Rml::Element* mBar = nullptr;
+    Rml::Element* mTasks = nullptr;
     Rml::Element* mDetails = nullptr;
     Rml::Element* mActions = nullptr;
-    Rml::Element* mHints = nullptr;
-    std::string mShownCurrent, mShownOverall, mShownAwake, mShownDetails;
-    std::vector<std::unique_ptr<Button>> mButtons;
+    Rml::Element* mNote = nullptr;
+    std::vector<Task> mTaskRows;
+    std::vector<std::string> mTaskPlan;  // the plan the rows were made for
+    std::string mShownPercent, mShownEta, mShownNote, mShownDetails, mShownRail;
+    Buttons mButtons;
     setup::Engine mEngine;  // (last: destroyed first, which ends a run still going)
 };
 

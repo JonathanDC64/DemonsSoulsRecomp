@@ -359,7 +359,7 @@ Every function that loads one of these constants through the TOC:
 | B | Anamorphic host targets: axis rule in `rt_host_dim`, two scales for the UV clamp, init and apply, present from the host size, copy audit. | 2 to 4 | a copy path that assumes one scale; memory and fps cost of k |
 | H3 | Edge-anchored HUD. Anchor table by class, offset the roots, check the clip rect, test every HUD state (normal, soul form, lock-on, boss, pickups, messages, phantoms, Nexus, death). | 4 to 6 | children not relative to the parent; dialogs rebuilt every frame; clip rects |
 | H4 | HUD size. Centred through the canvas; corner-anchored inside H3. | 1 to 2 (plus 1 to 2 with H3) | small text gets hard to read |
-| Live | Change aspect and HUD without a restart: camera list from the constructor hooks, rewrite the canvas words, `rsx_scale_apply` for the targets. | 1 to 2 | freed cameras (check the vtable and the old value first) |
+| Live | Change aspect and HUD without a restart: camera list from the constructor hooks, rewrite the canvas words, `rsx_scale_apply` for the targets. *Done 2026-10-21 (docs/79): the camera list as planned; the HUD through the render context's matrix, since the canvas words are not replayed (section 7).* | 1 to 2 | freed cameras (check the vtable and the old value first) |
 | Vert+ | Optional: 16:10 and 4:3 fill the screen. FOV in the camera, taller canvas. | 1 to 2 | every place that writes fov |
 
 **Totals:**
@@ -536,3 +536,4 @@ Found while building the first ultrawide version (branch `feat/ultrawide`, 2026-
 - **Plate rects.** FadePlate's and CommonBackPlate's rect is stored in the dialog at +0x74 (left, top, right, bottom). It is not set through vtable +0x50 and read through +0x58, as "Dialog layout and anchors" and the full-screen plates fix say.
 - **A fourth on-screen test.** 0x007A61D8, listed as unclassified in the 1280/720 table, is a fourth on-screen test. It loads x at 0x007A6264. It needs the same treatment as the other three; the implementation hooks all four.
 - **WorldToScreen's callers.** 0x0079F780 does not call WorldToScreen. Its callers among the HUD anchor updates are 0x0079EFA0, 0x0079F4A8 and 0x0079FCB8.
+- **The canvas record is not replayed (R2, measured 2026-10-21, docs/79).** After boot the six words are nowhere in guest memory but the game's constant. The 0x3A handler (0x00CD4800) turns them into an ortho matrix at +0x90 of the render context once, and that matrix is what the HUD is drawn with. A live HUD change rewrites that matrix (`des_hud_ctx`), not the canvas words.

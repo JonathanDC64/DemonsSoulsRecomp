@@ -22,8 +22,11 @@ Rml::Context* context();
 // system's belongs to (folder_picker.hpp).
 void* window();
 
-// The UI's size: 0 is automatic (1 dp = 1 px at 720p), anything else multiplies that.
+// The UI's size: 0 is automatic (1 dp = 1 px at the display's DPI), anything else multiplies that.
 void set_ui_scale(float scale);
+// While on, the UI's base scale also follows the window's height, 720 px = 1 dp a px (never below the DPI's): for
+// documents drawn as the whole window, the setup screens (Document::scales_with_window). ui::update sets it.
+void set_follow_height(bool on);
 
 // The window's DPI (96 is 100%), 0 if not known.
 unsigned window_dpi();

@@ -134,6 +134,7 @@ private:
     void start();
     void draw_folder();
     void draw_places();
+    void show_places_note();
     void draw_check();
 
     Props mProps;

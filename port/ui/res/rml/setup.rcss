@@ -190,12 +190,49 @@ setup-main {
     padding: var(--space-2xl) var(--space-2xl) var(--space-lg) var(--space-2xl);
 }
 
+/* The parts are as tall as they are, and shrink (and scroll) only when the page is short of room. The buttons
+   under them never scroll: on a short page they follow the parts, on a long one they sit above the pad's buttons. */
 setup-content {
     display: block;
-    flex: 1 1 0;
+    flex: 0 1 auto;
     min-height: 0;
     padding-right: var(--space-lg);
     overflow: hidden auto;
+}
+
+setup-footer {
+    display: flex;
+    flex-flow: row wrap;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--space-md);
+    max-width: 960dp;
+    margin-top: var(--space-xl);
+    padding-right: var(--space-lg);
+}
+
+setup-footer.first {
+    margin-top: 0;
+}
+
+/* The parts scroll behind the buttons: a line between them */
+setup-footer.edge {
+    margin-top: 0;
+    padding-top: var(--space-md);
+    border-top: 1dp var(--setup-line);
+}
+
+setup-footer setup-actions {
+    margin-top: 0;
+}
+
+setup-footer #actions-end {
+    margin-left: auto;
+}
+
+setup-main-space {
+    display: block;
+    flex: 1 1 auto;
 }
 
 /* The page's parts */
@@ -473,7 +510,7 @@ setup-task {
     flex-direction: row;
     align-items: center;
     gap: var(--space-md);
-    padding: 9dp 0;
+    padding: 6dp 0;
     border-bottom: 1dp rgba(var(--color-border-rgb), 12%);
     color: var(--setup-faint);
 }

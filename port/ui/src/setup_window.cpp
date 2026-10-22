@@ -204,8 +204,7 @@ void SetupWindow::draw_rail(const std::string& buildSub) {
 }
 
 void SetupWindow::draw_running() {
-    set_heading("Building the game for this PC",
-                "Setup translates the game's PS3 code into a program for this PC. The first time takes a while.");
+    set_heading("Building the game for this PC", "Setup turns the game's PS3 code into a program for this PC.");
     mButtons.clear();  // (their listeners go before their elements)
     clear_children(mBody);
     mShownPercent.clear();
@@ -225,7 +224,7 @@ void SetupWindow::draw_running() {
     mTaskPlan.clear();
     mDetails = append(mBody, "setup-log");
     set_display(mDetails, Rml::Style::Display::None);
-    mActions = actions_row(mBody);
+    mActions = footer_row();
     set_actions({{"Stop", [this] { ask_stop(); }, Look::Danger},
                  {"Details", [this] { toggle_details(); }, Look::Quiet}});
     set_hints({{"cross", nullptr, "Select"}, {"circle", nullptr, "Stop"}});
@@ -363,7 +362,7 @@ void SetupWindow::draw_failed() {
     if (const std::string tail = log_tail(12); !tail.empty())
         append(body, "setup-log")->SetInnerRML(escape_lines(tail));
 
-    mActions = actions_row(mBody);
+    mActions = footer_row();
     const char* again = kind.fix == Fix::CheckAgain ? "Check again" : "Try again";
     std::vector<Action> actions;
     if (kind.fix == Fix::Report) {
@@ -385,8 +384,7 @@ void SetupWindow::draw_stopped() {
     mButtons.clear();  // (their listeners go before their elements)
     clear_children(mBody);
     mDetails = nullptr;
-    mActions = actions_row(mBody);
-    mActions->SetClass("first", true);  // (straight under the heading)
+    mActions = footer_row(true);  // (straight under the heading)
     set_actions({{"Resume", [this] { start(); }, Look::Primary}, {"Close", [this] { close(false); }, Look::Quiet}});
     set_hints({{"cross", nullptr, "Select"}, {"circle", nullptr, "Close"}});
     mShownRail.clear();
@@ -405,7 +403,7 @@ void SetupWindow::draw_done() {
     } else {
         set_heading("Setup finished", "This version has no build step yet, so the game is not built.");
     }
-    mActions = actions_row(mBody);
+    mActions = footer_row();
     if (ready && mProps.onPlay) set_actions({{"Play", [this] { close(true); }, Look::Primary}});
     else set_actions({{"Close", [this] { close(false); }, Look::Primary}});
     if (ready) {

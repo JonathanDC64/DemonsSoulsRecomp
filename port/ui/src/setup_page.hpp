@@ -1,6 +1,7 @@
 // Written for Demon's Souls. The setup screens' shell (docs/89): the whole window, as the setup design. A rail on the
 // left with the game's name, setup's steps (Your game, Build, Play) and the version; the page on the right with a
-// heading, the line under it, the page's own parts and its buttons, and the pad's buttons at the bottom. A question
+// heading, the line under it, the page's own parts and its buttons, and the pad's buttons at the bottom. Only the parts
+// scroll: the buttons stay in view. The page scales with the window's height (720 px high is 1x; host.hpp). A question
 // (Stop the build?) opens over the page in the same document, the page dimmed behind it. The parts' looks are in
 // setup.rcss.
 //
@@ -30,6 +31,7 @@ public:
     bool focus() override;
     bool visible() const override;
     bool obscures_game() const override { return true; }
+    bool scales_with_window() const override { return true; }
 
 protected:
     enum class Look { Plain, Primary, Danger, Quiet };
@@ -56,8 +58,13 @@ protected:
 
     void set_rail(const std::vector<RailStep>& steps);
     void set_heading(const std::string& title, const std::string& lede);
-    // The page's own parts go here, under the heading.
+    // The page's own parts go here, under the heading. They scroll when they do not fit.
     Rml::Element* content() const { return mContent; }
+    // The page's own buttons (Continue, Back, ...) go here, under the parts: they stay in view when the parts scroll.
+    // footer_row() is the row for them, footer_end() a second one at its right end; set_buttons empties either. `first`:
+    // straight under the heading, for a page with no parts.
+    Rml::Element* footer_row(bool first = false);
+    Rml::Element* footer_end() const { return mFooterEnd; }
 
     // `actions` as buttons in `parent`, in place of `buttons` (the old ones' listeners go before their elements). If
     // one of the old ones had the focus, the one in its place gets it.
@@ -92,7 +99,7 @@ protected:
     static Rml::Element* callout(Rml::Element* parent, const char* kind, const std::string& title,
                                  const std::string& text);
     static Rml::Element* text(Rml::Element* parent, const char* tag, const std::string& text);
-    static Rml::Element* actions_row(Rml::Element* parent);
+    static Rml::Element* actions_row(Rml::Element* parent);  // a row of buttons among the parts
 
     // The buttons as the pad moves through them: lines from the top, each from the left.
     virtual std::vector<std::vector<Button*>> nav_lines() const = 0;
@@ -111,6 +118,9 @@ private:
     Rml::Element* mTitle = nullptr;
     Rml::Element* mLede = nullptr;
     Rml::Element* mContent = nullptr;
+    Rml::Element* mFooter = nullptr;
+    Rml::Element* mFooterRow = nullptr;
+    Rml::Element* mFooterEnd = nullptr;
     Rml::Element* mHints = nullptr;
     Rml::Element* mLayer = nullptr;
     Rml::Element* mQuestionTitle = nullptr;

@@ -20,6 +20,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -189,6 +190,7 @@ struct State {
     std::unique_ptr<Renderer> renderer;
     Rml::Context* rml = nullptr;
     float ui_scale = 0.0f;
+    bool follow_height = false;
     bool initialised = false;
 };
 State s;
@@ -303,17 +305,39 @@ Rml::Context* context() { return s.rml; }
 void* window() { return sWindow; }
 
 void set_ui_scale(float scale) { s.ui_scale = std::clamp(scale, 0.0f, 4.0f); }
+void set_follow_height(bool on) { s.follow_height = on; }
 
 unsigned window_dpi() { return dpi_of_window(); }
+
+// After a change of the dp ratio. RmlUi works a length out again only where it is written in dp: one taken from a
+// variable (var(--space-md), most of the theme's sizes) keeps its old size. A document given a new copy of its style
+// sheet works every property out again, the variables' too.
+static void restyle_documents() {
+    static const Rml::StyleSheetContainer kNothing;
+    for (int i = 0; i < s.rml->GetNumDocuments(); ++i) {
+        Rml::ElementDocument* doc = s.rml->GetDocument(i);
+        if (const Rml::StyleSheetContainer* sheet = doc ? doc->GetStyleSheetContainer() : nullptr)
+            doc->SetStyleSheetContainer(sheet->CombineStyleSheetContainer(kNothing));
+    }
+}
 
 void render(void* back_buffer, unsigned index, int width, int height, const char* shot_path) {
     if (!s.initialised) return;
     if (s.rml->GetDimensions() != Rml::Vector2i{width, height}) s.rml->SetDimensions({width, height});
     // Dusklight's (and FFCCEOT-Recomp's) rule: the display's scale (its DPI), times the UI scale setting. The
     // window's size does not scale the UI: a larger window gives the documents more room, as for any program.
+    // Except while a full-window page is open (set_follow_height, the setup screens): then the height scales it too,
+    // in quarter steps rounded down, so the page always has at least 720 dp of height (1080p 1.5, 1440p 2) and a
+    // window drag lays it out again only every 180 px. Text is drawn at whole pixel sizes, so no step blurs it.
     const unsigned dpi = window_dpi();
-    const float display = dpi ? float(dpi) / 96.0f : 1.0f;
-    s.rml->SetDensityIndependentPixelRatio((s.ui_scale > 0.0f ? s.ui_scale : 1.0f) * display);
+    float base = dpi ? float(dpi) / 96.0f : 1.0f;
+    if (s.follow_height && height > 0)
+        base = std::max(base, std::min(4.0f, std::floor(float(height) / 720.0f * 4.0f) / 4.0f));
+    if (const float ratio = (s.ui_scale > 0.0f ? s.ui_scale : 1.0f) * base;
+        ratio != s.rml->GetDensityIndependentPixelRatio()) {
+        s.rml->SetDensityIndependentPixelRatio(ratio);
+        restyle_documents();
+    }
     s.rml->Update();
     if (!s.renderer->begin_frame(back_buffer, index, width, height)) return;
     s.rml->Render();

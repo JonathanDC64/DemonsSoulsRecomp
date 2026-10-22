@@ -138,8 +138,8 @@ std::string list_name(const std::string& name) {
     return at == std::string::npos ? name : name.substr(at + 7);
 }
 
-// The rows of the files to fix that the game folder page lists before "And N more".
-constexpr int kListedFiles = 6;
+// The rows of the files to fix that the game folder page lists before "And N more" (few, so the page fits 720 dp).
+constexpr int kListedFiles = 3;
 
 // L1 and R1: the page's content up or down by most of its height.
 bool scroll_page(Rml::Element* page, int pages) {
@@ -178,7 +178,8 @@ void SetupStartWindow::refresh() {
     Rml::Element* row = nullptr;
     const auto welcome_back = [&](const char* kind, const std::string& title, const std::string& line) {
         set_heading("Welcome back", "Here is where setup stands.");
-        row = actions_row(callout(mBody, kind, title, line));
+        callout(mBody, kind, title, line);
+        row = footer_row();
     };
     switch (mLaunch.state) {
     case State::Missing: {
@@ -195,7 +196,7 @@ void SetupStartWindow::refresh() {
               "The compiler and the tools it needs, each checked before it is used. Later builds use the same copy.");
         found(box, "setup-info", "You can stop and come back",
               "Close the window at any point. Setup carries on where it stopped the next time.");
-        row = actions_row(mBody);
+        row = footer_row();
         main.push_back({"Start", [this] { open_source(); }, Look::Primary});
         set_rail({{"Your game", "", S::Now}, {"Build", time, S::Todo}, {"Play", "", S::Todo}});
         break;
@@ -231,7 +232,7 @@ void SetupStartWindow::refresh() {
             if (!mLaunch.game.empty()) found(box, "setup-ok", "Your game", "From " + utf8(mLaunch.game) + ".");
             found(box, "setup-ok", "Built", "des_game.dll for version " + std::string(kVersion) + ".");
         }
-        row = actions_row(mBody);
+        row = footer_row();
         main.push_back({"Play",
                         [this] {
                             play_sound(kSoundPlay);
@@ -242,7 +243,7 @@ void SetupStartWindow::refresh() {
         break;
     }
     set_buttons(mMain, row, std::move(main));
-    set_buttons(mMore, actions_row(mBody),
+    set_buttons(mMore, footer_end(),
                 {{"Settings", [this] { push(std::make_unique<SettingsWindow>(true)); }, Look::Quiet},
                  {"Quit", [this] { ask_quit(); }, Look::Quiet}});
     std::fprintf(stderr, "[setup] the start screen: %s\n", state_name(mLaunch.state));
@@ -296,8 +297,11 @@ void SetupStartWindow::ask_quit() {
         1);
 }
 
+// One line: Settings and Quit are at the end of the main buttons' row.
 std::vector<std::vector<Button*>> SetupStartWindow::nav_lines() const {
-    return {line(mMain), line(mMore)};
+    std::vector<Button*> all = line(mMain);
+    for (Button* button : line(mMore)) all.push_back(button);
+    return {all};
 }
 
 void SetupStartWindow::back() {
@@ -338,7 +342,7 @@ SetupSourceWindow::SetupSourceWindow(Props props) : SetupPage("setup-source"), m
         });
         mCards.push_back(std::move(button));
     }
-    set_buttons(mActions, actions_row(content()), {{"Back", [this] { back(); }, Look::Quiet}});
+    set_buttons(mActions, footer_row(), {{"Back", [this] { back(); }, Look::Quiet}});
     set_hints({{"cross", nullptr, "Select"}, {"circle", nullptr, "Back"}});
 }
 
@@ -393,7 +397,7 @@ SetupFilesWindow::SetupFilesWindow(Props props)
     mCheck = append(content(), "setup-body");
     mLinks = append(content(), "setup-actions");
     mLinks->SetClass("near", true);
-    mActionsRow = actions_row(content());
+    mActionsRow = footer_row();
     set_hints({{"cross", nullptr, "Select"}, {"circle", nullptr, "Back"}, {nullptr, "L1 R1", "Scroll"}});
 
     set_buttons(mChooseButton, mChooseRow, {{"Choose folder", [this] { choose(Picking::Game); }, Look::Plain}});
@@ -520,7 +524,14 @@ void SetupFilesWindow::draw_folder() {
     else if (!mProps.moved.empty()) shown = "Not found: " + utf8(mProps.moved);
     set_text_content(mFolderText, shown);
     mFolderText->SetClass("none", mRequest.game.empty());
+    show_places_note();
     if (!mChooseButton.empty()) mChooseButton[0]->set_text(mRequest.game.empty() ? "Choose folder" : "Change folder");
+}
+
+// The heading over the dumps found. "Nothing found in the usual places" goes once a folder is chosen.
+void SetupFilesWindow::show_places_note() {
+    const bool none = mScanned && mPlaces.empty() && !mRequest.game.empty();
+    set_display(mPlacesNote, none ? Rml::Style::Display::None : Rml::Style::Display::Block);
 }
 
 // The dumps found, one button each: "BLUS30443 version 01.00 in D:\Games\Demon's Souls".
@@ -541,6 +552,7 @@ void SetupFilesWindow::draw_places() {
     set_buttons(mPlaceButtons, mPlacesList, std::move(actions));
     for (const auto& b : mPlaceButtons) b->root()->SetClass("setup-place", true);
     set_display(mPlacesList, mPlaces.empty() ? Rml::Style::Display::None : Rml::Style::Display::Flex);
+    show_places_note();
     for (size_t i = 0; i < mPlaces.size() && i < mPlaceButtons.size(); ++i)
         mPlaceButtons[i]->set_selected(mPlaces[i].folder == mRequest.game);
 }
@@ -600,18 +612,24 @@ void SetupFilesWindow::draw_check() {
                   mStatus.errorText.empty() ? std::string("Check again.") : mStatus.errorText);
         }
         if (isGame && !files.empty()) {
-            text(mCheck, "setup-heading", "The game's decrypted files");
-            text(mCheck, "setup-text",
-                 "The game's code and 26 of its files are encrypted on the disc. You decrypt them once with a PS3 "
-                 "tool; setup checks each one against the right copy.")
-                ->SetClass("note", true);
-            auto* list = panel(mCheck);
             const auto missing = std::count_if(files.begin(), files.end(), bad);
+            const std::string place =
+                mRequest.decrypted.empty() ? "Next to the originals" : "In " + utf8(mRequest.decrypted[0]);
+            // All there: one more row in the game's panel. Some missing: what they are, then the list.
+            Rml::Element* list = box;
+            if (missing) {
+                text(mCheck, "setup-heading", "The game's decrypted files");
+                text(mCheck, "setup-text",
+                     "The game's code and 26 of its files are encrypted on the disc. You decrypt them once with a "
+                     "PS3 tool; setup checks each one against the right copy.")
+                    ->SetClass("note", true);
+                list = panel(mCheck);
+            }
             found(list, missing ? "setup-warn" : "setup-ok",
                   missing ? std::to_string(files.size() - size_t(missing)) + " of " + std::to_string(files.size()) +
-                                " found"
-                          : "All " + std::to_string(files.size()) + " found, all match",
-                  mRequest.decrypted.empty() ? "Next to the originals" : "In " + utf8(mRequest.decrypted[0]));
+                                " decrypted files found"
+                          : "All " + std::to_string(files.size()) + " decrypted files found, all match",
+                  place);
             std::stable_partition(files.begin(), files.end(), bad);
             int listed = 0;
             for (const setup::Line* c : files) {
@@ -680,7 +698,7 @@ SetupHelpWindow::SetupHelpWindow(Props props) : SetupPage("setup-help"), mProps(
                            },
                            Look::Primary});
     actions.push_back({"Back", [this] { back(); }, Look::Quiet});
-    set_buttons(mActions, actions_row(content()), std::move(actions));
+    set_buttons(mActions, footer_row(), std::move(actions));
     set_hints({{"cross", nullptr, "Select"}, {"circle", nullptr, "Back"}, {nullptr, "L1 R1", "Scroll"}});
 }
 
@@ -704,7 +722,7 @@ SetupBeforeWindow::SetupBeforeWindow(Props props) : SetupPage("setup-before"), m
     set_heading("Ready to build", "Everything setup needs is here. The build runs on this PC and keeps its processor "
                                   "busy for a while.");
     mRows = append(content(), "setup-body");
-    mActionsRow = actions_row(content());
+    mActionsRow = footer_row();
     set_buttons(mActions, mActionsRow,
                 {{"Start building", [this] { start(); }, Look::Primary}, {"Back", [this] { back(); }, Look::Quiet}});
     set_hints({{"cross", nullptr, "Select"}, {"circle", nullptr, "Back"}});

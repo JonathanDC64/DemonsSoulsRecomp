@@ -38,6 +38,11 @@ const Rml::String kSource = R"RML(
                 <setup-title id="title"/>
                 <setup-lede id="lede"/>
             </setup-content>
+            <setup-footer id="footer">
+                <setup-actions id="actions"/>
+                <setup-actions id="actions-end"/>
+            </setup-footer>
+            <setup-main-space/>
             <setup-hints id="hints"/>
         </setup-main>
     </setup-shell>
@@ -69,7 +74,9 @@ SetupPage::SetupPage(const char* pageClass)
     : Document(kSource, false, DocumentScope::Window), mShell(mDocument->GetElementById("shell")),
       mRail(mDocument->GetElementById("rail")), mTitle(mDocument->GetElementById("title")),
       mLede(mDocument->GetElementById("lede")), mContent(mDocument->GetElementById("content")),
-      mHints(mDocument->GetElementById("hints")), mLayer(mDocument->GetElementById("layer")),
+      mFooter(mDocument->GetElementById("footer")), mFooterRow(mDocument->GetElementById("actions")),
+      mFooterEnd(mDocument->GetElementById("actions-end")), mHints(mDocument->GetElementById("hints")),
+      mLayer(mDocument->GetElementById("layer")),
       mQuestionTitle(mDocument->GetElementById("question-title")),
       mQuestionBody(mDocument->GetElementById("question-body")),
       mQuestionActions(mDocument->GetElementById("question-actions")) {
@@ -117,6 +124,8 @@ void SetupPage::update() {
         action();
     }
     tick();
+    // A line over the buttons while the parts scroll behind them (the last frame's layout).
+    mFooter->SetClass("edge", mContent->GetScrollHeight() > mContent->GetClientHeight() + 1.f);
     for (const auto& buttons : nav_lines())
         for (Button* button : buttons) button->update();
     for (const auto& button : mQuestionButtons) button->update();
@@ -323,6 +332,11 @@ Rml::Element* SetupPage::text(Rml::Element* parent, const char* tag, const std::
 
 Rml::Element* SetupPage::actions_row(Rml::Element* parent) {
     return append(parent, "setup-actions");
+}
+
+Rml::Element* SetupPage::footer_row(bool first) {
+    mFooter->SetClass("first", first);
+    return mFooterRow;
 }
 
 bool SetupPage::handle_nav_command(Rml::Event& event, NavCommand cmd) {

@@ -1,0 +1,203 @@
+# Builds des_host.exe, the half of the split build (docs/57) with no game code in it, the way players will
+# get it (docs/85): the Visual C++ runtime and the C++ library linked in, the UCRT of Windows 10 and 11
+# used as a DLL. Then it checks that the exe imports no Visual C++ runtime DLL and uploads it. CI never has
+# the lift, so des_boot.exe and des_game.dll are not built here.
+#
+# It needs a ps3recomp.pin commit with the DLL split (PS3RECOMP_GAME_SPLIT) and the static runtime
+# (PS3RECOMP_STATIC_CRT and the /MT form of boot_main.cpp's getenv cache, docs/85 2.3). One step stands
+# in for the header split (marked HEADER SPLIT STOPGAP below).
+name: Host exe
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: host-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host:
+    name: des_host.exe (Windows, clang-cl, hybrid CRT)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0   # the version counts the commits since the last v tag (port/cmake/DesVersion.cmake)
+
+      # A fixed version, as in ci.yml. The lifter needs 3.10 or newer (its type hints).
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      # ps3recomp.pin names one commit of the fork (docs/54). DES_REQUIRE_PIN=ON below checks that the
+      # checkout is exactly that commit, and pin.yml checks that the commit is on the fork's master.
+      - name: Read the ps3recomp pin
+        id: pin
+        shell: python
+        run: |
+          import os, re, sys
+          keys = {}
+          with open("ps3recomp.pin", encoding="utf-8") as f:
+              for line in f:
+                  m = re.match(r"\s*(repo|tag|commit)\s*=\s*(\S*)", line)
+                  if m:
+                      keys[m.group(1)] = m.group(2)
+          repo = re.fullmatch(r"https://github\.com/([\w.-]+/[\w.-]+?)(?:\.git)?/?", keys.get("repo", ""))
+          commit = keys.get("commit", "")
+          if not repo or not re.fullmatch(r"[0-9a-f]{40}", commit):
+              print("::error file=ps3recomp.pin::needs repo=https://github.com/<owner>/<name> and a 40-digit commit=")
+              sys.exit(1)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"repo={repo.group(1)}\ncommit={commit}\n")
+          print(f"ps3recomp: {repo.group(1)} at {commit}")
+
+      # port/CMakeLists.txt finds ps3recomp beside port/ (PS3RECOMP_DIR defaults to ../ps3recomp), as on a
+      # developer's PC. The port's .gitignore leaves /ps3recomp/ out.
+      - name: Check out the pinned ps3recomp
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.commit }}
+          path: ps3recomp
+          persist-credentials: false
+
+      # clang-cl compiles, but needs the MSVC headers and libraries (the static Visual C++ runtime among
+      # them) and the Windows SDK (ucrt.lib) on the path.
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+
+      - name: Install Ninja
+        run: choco install ninja -y --no-progress
+
+      # docs/54 section 5.4 wants CI on the LLVM that players get (22.1.8), failing on any other. Not yet:
+      # the runner's clang-cl is used, as in ci.yml, and another version is a warning (docs/85, open questions).
+      - name: Show toolchain
+        shell: bash
+        run: |
+          clang-cl --version
+          lld-link --version || echo "(no lld-link on the path: CMake links with link.exe)"
+          cmake --version
+          ninja --version
+          v=$(clang-cl --version | sed -n 's/.*clang version \([0-9][0-9.]*\).*/\1/p' | head -n 1)
+          if [ "$v" != "22.1.8" ]; then
+            echo "::warning::clang-cl $v, not the 22.1.8 of the player builds (docs/54 5.4, docs/85)"
+          fi
+
+      # The runtime library des_host links: PS3RECOMP_GAME_SPLIT=ON (docs/57), and the static Visual C++
+      # runtime (/MT), because a /MT exe cannot link C++ objects built /MD.
+      - name: Configure the runtime library
+        run: >
+          cmake -S ps3recomp -B ps3recomp/build_split -G Ninja
+          -DCMAKE_C_COMPILER=clang-cl
+          -DCMAKE_CXX_COMPILER=clang-cl
+          -DCMAKE_BUILD_TYPE=Release
+          -DPS3RECOMP_GAME_SPLIT=ON
+          -DPS3RECOMP_STATIC_CRT=ON
+
+      - name: Build the runtime library
+        run: cmake --build ps3recomp/build_split --target ps3recomp_runtime
+
+      # des_host takes two files from the lift folder (RECOMP_DIR). This one is ps3recomp's own: a table of
+      # the HLE functions it implements, made from its sources alone (tools/gen_hle_nids.py --all, as
+      # setup's "nids" step makes it). It goes to the runner's temp folder, never into the repository.
+      - name: The HLE NID table, from ps3recomp alone
+        shell: python
+        run: |
+          import os, subprocess, sys
+          lift = os.path.join(os.environ["RUNNER_TEMP"], "host_lift").replace("\\", "/")
+          os.makedirs(lift, exist_ok=True)
+          subprocess.run([sys.executable, "ps3recomp/tools/gen_hle_nids.py", "--all",
+                          "--out", lift + "/hle_nid_table.cpp"], check=True)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+              f.write(f"HOST_LIFT={lift}\n")
+
+      # HEADER SPLIT STOPGAP. The other file is the lift's ppu_recomp.h. des_host's sources use only its
+      # fixed part: ppu_context, the condition-register helpers, the guest-memory and syscall prototypes,
+      # PPU_THREAD_LOCAL, the function table's type and DS_FRAME (docs/85 1.2). They use none of its
+      # per-game declarations (one per lifted function). Until ps3recomp ships that fixed part as a header
+      # of its own (the header split), this asks the pinned lifter for the header it writes for a lift with
+      # no functions: the same fixed text, with nothing of the game in it. Delete this step, and RECOMP_DIR's
+      # ppu_recomp.h, once the header split lands. Never commit or upload the file: check_game_files.py
+      # flags any file named ppu_recomp.h.
+      - name: "HEADER SPLIT STOPGAP: ppu_recomp.h of an empty lift"
+        shell: python
+        run: |
+          import os, sys
+          sys.path.insert(0, "ps3recomp/tools")   # ppu_lifter imports ppu_disasm from its own folder
+          import ppu_lifter
+          header = ppu_lifter.PPULifter().emit_header()
+          for need in ("typedef struct ppu_context", "function_table_count", "lv2_syscall",
+                       "PPU_THREAD_LOCAL", "DS_FRAME", "ppu_cr_pack"):
+              if need not in header:
+                  print(f"::error::the lifter's empty header has no {need}: the host's sources need it (docs/85 1.2)")
+                  sys.exit(1)
+          if "/* external */" in header or "/* override host impl */" in header:
+              print("::error::the lifter's empty header has per-game declarations")
+              sys.exit(1)
+          path = os.environ["HOST_LIFT"] + "/ppu_recomp.h"
+          with open(path, "w", encoding="utf-8", newline="\n") as f:
+              f.write(header)
+          print(f"wrote {path}: {len(header)} characters, {header.count(chr(10))} lines")
+
+      # The port with only des_host in it (DES_HOST_ONLY: no des_boot or des_game build, no SPU workload
+      # table), the hybrid CRT for every target (des_ui, FreeType and RmlUi too), exactly the pinned
+      # ps3recomp, and no developer code. No build type, as in README.md and ci.yml.
+      - name: Configure des_host
+        run: >
+          cmake -S port -B build/host -G Ninja
+          -DCMAKE_C_COMPILER=clang-cl
+          -DCMAKE_CXX_COMPILER=clang-cl
+          -DCMAKE_BUILD_TYPE=
+          -DCMAKE_CXX_FLAGS_DEBUG=
+          -DCMAKE_C_FLAGS_DEBUG=
+          -DRECOMP_DIR=${{ env.HOST_LIFT }}
+          -DDES_SPLIT=ON
+          -DDES_HOST_ONLY=ON
+          -DDES_HOST_STATIC_CRT=ON
+          -DDES_REQUIRE_PIN=ON
+          -DDES_DEV=OFF
+
+      - name: Build des_host
+        run: cmake --build build/host --target des_host
+
+      - name: Import check, self-test
+        run: python tools/ci/check_host_imports.py --self-test
+
+      - name: No Visual C++ runtime DLL among the imports
+        run: python tools/ci/check_host_imports.py --require-ucrt build/host/des_host.exe
+
+      - name: Not a developer build
+        run: python tools/ci/check_release_no_dev.py build/host/des_host.exe
+
+      # The map symbolizes crash addresses in the exe (des_game.map is the DLL's, made on the player's PC).
+      - name: Stage the artifact
+        shell: bash
+        run: |
+          mkdir -p dist/host
+          cp build/host/des_host.exe build/host/des_host.map dist/host/
+          ls -la dist/host
+          sha256sum dist/host/*
+
+      # The check treats every .exe and .map as holding the compiled game. These two are built from no lift,
+      # so a list of their own lets them through (.github/host-files-allow.txt, docs/85 3.3); anything else
+      # in the folder still fails. --allow replaces the default list, so both are named.
+      - name: No game-derived files in the artifact
+        run: >
+          python .github/scripts/check_game_files.py --dir dist/host
+          --allow .github/game-files-allow.txt --allow .github/host-files-allow.txt
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: des_host-${{ github.sha }}
+          path: dist/host/
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,3 @@
+# host.yml's artifact folder only (docs/85)
+des_host.exe   # the host exe
+des_host.map   # its linker map

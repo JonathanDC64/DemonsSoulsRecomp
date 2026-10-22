@@ -5,6 +5,33 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# --- The C and C++ runtime libraries (docs/85) -------------------------------
+# By default every target uses the DLL runtime (/MD): the exe then imports
+# MSVCP140.dll, VCRUNTIME140.dll and VCRUNTIME140_1.dll, which only the Visual C++
+# redistributable installs. DES_HOST_STATIC_CRT=ON links the Visual C++ runtime
+# and the C++ library into each binary (/MT) and takes the C library from the
+# UCRT that Windows 10 and 11 include (ucrt.lib in place of libucrt.lib): the
+# "hybrid" CRT, as CI builds des_host.exe. It holds for the whole build
+# directory, since /MT and /MD C++ objects do not link together (the STL's
+# RuntimeLibrary check): the UI, FreeType and RmlUi follow it, and the ps3recomp
+# runtime libraries linked here must be built with PS3RECOMP_STATIC_CRT=ON.
+option(DES_HOST_STATIC_CRT "Link the Visual C++ runtime into each binary and use the UCRT of Windows (hybrid CRT)" OFF)
+if(DES_HOST_STATIC_CRT)
+    if(NOT MSVC)
+        message(FATAL_ERROR "DES_HOST_STATIC_CRT is for clang-cl on Windows")
+    endif()
+    # cmake_minimum_required(3.20) sets CMP0091 to NEW: this is the runtime of every
+    # target made after it, add_subdirectory(ui) and FetchContent's included.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
+    # At each exe and DLL link: the UCRT's import library in place of its static
+    # copy, and none of the DLL runtime's libraries, so a stray /MD object stops
+    # the link instead of importing VCRUNTIME140.dll on a player's PC.
+    set(DES_HYBRID_CRT_LINK
+        /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib
+        /NODEFAULTLIB:msvcrt.lib /NODEFAULTLIB:msvcprt.lib /NODEFAULTLIB:vcruntime.lib)
+    message(STATUS "des_boot: hybrid CRT (DES_HOST_STATIC_CRT): /MT, and the UCRT of Windows")
+endif()
+
 # --- Locations -------------------------------------------------------------
 # The ps3recomp checkout and the (gitignored) generated/derived tree.
 set(PS3RECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ps3recomp" CACHE PATH "ps3recomp checkout")
@@ -89,13 +116,26 @@ else()
     message(STATUS "des_boot: libsre LLE not built (HLE cellSpurs only)")
 endif()
 
+# --- Host only (docs/85) -----------------------------------------------------
+# DES_HOST_ONLY=ON, with DES_SPLIT=ON, configures des_host.exe with no lift, as
+# CI builds it. des_boot is still defined, because des_host takes its sources
+# from it, but it is left out of the build and has no SPU workload table (a lift
+# file); des_game is not defined. RECOMP_DIR still has to hold hle_nid_table.cpp
+# (ps3recomp's tools/gen_hle_nids.py --all) and, until the header split, a
+# ppu_recomp.h.
+option(DES_HOST_ONLY "With DES_SPLIT: configure des_host alone, with no lift" OFF)
+set(DES_SPU_WORKLOADS "${SPU_DIR}/_gen/spu_workloads.cpp")
+if(DES_HOST_ONLY)
+    set(DES_SPU_WORKLOADS "")
+endif()
+
 # --- The boot executable ---------------------------------------------------
 add_executable(des_boot
     ${RECOMP_CHUNKS}
     ${SPU_CHUNKS}                                           # lifted SPU images
     ${LIBSRE_SOURCES}                                       # real lifted SPURS kernel (opt-in)
     ${TSP_SOURCES}                                          # real SPURS taskset policy (blob + lifted, optional)
-    "${SPU_DIR}/_gen/spu_workloads.cpp"                     # SPU workload registration (auto at startup)
+    ${DES_SPU_WORKLOADS}                                    # SPU workload registration (auto at startup)
     "${RECOMP_DIR}/hle_nid_table.cpp"                       # generated NID->handler table
     "${PS3RECOMP_DIR}/runtime/ppu/ppu_loader.cpp"           # image load, vm, registry, dispatch
     "${PS3RECOMP_DIR}/runtime/ppu/ppu_hle.cpp"              # NID -> HLE bridge
@@ -302,6 +342,12 @@ else()
 endif()
 
 target_link_libraries(des_boot PRIVATE ps3recomp_runtime)
+if(DES_HOST_STATIC_CRT)
+    target_link_options(des_boot PRIVATE ${DES_HYBRID_CRT_LINK})
+endif()
+if(DES_HOST_ONLY)
+    set_target_properties(des_boot PROPERTIES EXCLUDE_FROM_ALL ON)   # only des_host's source list
+endif()
 if(WIN32)
     target_link_libraries(des_boot PRIVATE
         ws2_32 xinput ole32 bcrypt          # winsock / gamepad / COM(WASAPI) / RNG
@@ -404,6 +450,9 @@ endif()
 # builds des_game.dll with no C runtime, SDK or C++ library of its own
 # (cmake/DesGameFreestanding.cmake, docs/84); use its own build directory.
 option(DES_SPLIT "Also build des_host.exe and des_game.dll (the lifted code as a DLL)" OFF)
+if(DES_HOST_ONLY AND NOT DES_SPLIT)
+    message(FATAL_ERROR "DES_HOST_ONLY needs -DDES_SPLIT=ON")
+endif()
 if(DES_SPLIT)
     if(NOT MSVC)
         message(FATAL_ERROR "DES_SPLIT needs clang-cl")
@@ -433,16 +482,19 @@ if(DES_SPLIT)
     # in the build directory, so the include of the runtime header is absolute.
     set(DES_SPLIT_WL_IN "${SPU_DIR}/_gen/spu_workloads.cpp")
     set(DES_SPLIT_WL "${DES_SPLIT_GEN}/spu_workloads.cpp")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${DES_SPLIT_WL_IN}")
-    file(READ "${DES_SPLIT_WL_IN}" _des_wl)
-    string(REPLACE "__attribute__((constructor)) static void des_spu_autoreg(void)"
-                   "[[maybe_unused]] static void des_spu_autoreg(void)" _des_wl "${_des_wl}")
-    string(REPLACE "#include \"../../runtime/spu/" "#include \"${PS3RECOMP_DIR}/runtime/spu/" _des_wl "${_des_wl}")
-    string(FIND "${_des_wl}" "constructor" _des_wl_ctor)
-    if(NOT _des_wl_ctor EQUAL -1)
-        message(FATAL_ERROR "DES_SPLIT: ${DES_SPLIT_WL_IN} still has a static constructor")
+    # (Not with DES_HOST_ONLY: there is no lift, and des_host does not compile it.)
+    if(NOT DES_HOST_ONLY)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${DES_SPLIT_WL_IN}")
+        file(READ "${DES_SPLIT_WL_IN}" _des_wl)
+        string(REPLACE "__attribute__((constructor)) static void des_spu_autoreg(void)"
+                       "[[maybe_unused]] static void des_spu_autoreg(void)" _des_wl "${_des_wl}")
+        string(REPLACE "#include \"../../runtime/spu/" "#include \"${PS3RECOMP_DIR}/runtime/spu/" _des_wl "${_des_wl}")
+        string(FIND "${_des_wl}" "constructor" _des_wl_ctor)
+        if(NOT _des_wl_ctor EQUAL -1)
+            message(FATAL_ERROR "DES_SPLIT: ${DES_SPLIT_WL_IN} still has a static constructor")
+        endif()
+        _des_split_write("${DES_SPLIT_WL}" "${_des_wl}")
     endif()
-    _des_split_write("${DES_SPLIT_WL}" "${_des_wl}")
 
     # The port functions the lifted code calls by name: the function overrides
     # (scripts/lift_ppu.json) and the instruction hooks (insn_hooks.txt), read
@@ -487,37 +539,42 @@ if(DES_SPLIT)
         endif()
     endforeach()
 
-    # The game DLL. Its lifted sources get exactly des_boot's definitions and
-    # options; the glue gets PS3_GAME_MODULE on its own.
-    set(DES_GAME_GLUE
-        "${PS3RECOMP_DIR}/runtime/ppu/game_module.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/des_game_module.cpp"
-    )
-    set_source_files_properties(${DES_GAME_GLUE} PROPERTIES COMPILE_DEFINITIONS PS3_GAME_MODULE)
-    set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/des_game_module.cpp"
-        APPEND PROPERTY INCLUDE_DIRECTORIES "${DES_SPLIT_GEN}")
-    set(DES_GAME_LIBSRE "")
-    if(LIBSRE_SOURCES)
-        set(DES_GAME_LIBSRE "${LIBSRE_LIFTED}" "${LIBSRE_GLUE}")
+    if(NOT DES_HOST_ONLY)
+        # The game DLL. Its lifted sources get exactly des_boot's definitions and
+        # options; the glue gets PS3_GAME_MODULE on its own.
+        set(DES_GAME_GLUE
+            "${PS3RECOMP_DIR}/runtime/ppu/game_module.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/des_game_module.cpp"
+        )
+        set_source_files_properties(${DES_GAME_GLUE} PROPERTIES COMPILE_DEFINITIONS PS3_GAME_MODULE)
         set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/des_game_module.cpp"
-            APPEND PROPERTY COMPILE_DEFINITIONS DES_GAME_HAS_LIBSRE)
-    endif()
-    add_library(des_game SHARED
-        ${RECOMP_CHUNKS}
-        ${SPU_CHUNKS}
-        ${DES_GAME_LIBSRE}
-        "${DES_SPLIT_WL}"
-        ${DES_GAME_GLUE}
-    )
-    # No des_game_EXPORTS definition: the lifted sources then compile with
-    # des_boot's command line exactly (the export is declared in its source).
-    set_target_properties(des_game PROPERTIES DEFINE_SYMBOL "")
-    target_include_directories(des_game PRIVATE ${_des_boot_INCLUDE_DIRECTORIES})
-    target_compile_definitions(des_game PRIVATE ${_des_boot_COMPILE_DEFINITIONS})
-    target_compile_options(des_game PRIVATE ${_des_boot_COMPILE_OPTIONS})
-    target_link_options(des_game PRIVATE "/MAP:des_game.map")
-    if(DES_DEBUG_INFO)
-        target_link_options(des_game PRIVATE /DEBUG /OPT:REF /OPT:ICF)
+            APPEND PROPERTY INCLUDE_DIRECTORIES "${DES_SPLIT_GEN}")
+        set(DES_GAME_LIBSRE "")
+        if(LIBSRE_SOURCES)
+            set(DES_GAME_LIBSRE "${LIBSRE_LIFTED}" "${LIBSRE_GLUE}")
+            set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/des_game_module.cpp"
+                APPEND PROPERTY COMPILE_DEFINITIONS DES_GAME_HAS_LIBSRE)
+        endif()
+        add_library(des_game SHARED
+            ${RECOMP_CHUNKS}
+            ${SPU_CHUNKS}
+            ${DES_GAME_LIBSRE}
+            "${DES_SPLIT_WL}"
+            ${DES_GAME_GLUE}
+        )
+        # No des_game_EXPORTS definition: the lifted sources then compile with
+        # des_boot's command line exactly (the export is declared in its source).
+        set_target_properties(des_game PROPERTIES DEFINE_SYMBOL "")
+        target_include_directories(des_game PRIVATE ${_des_boot_INCLUDE_DIRECTORIES})
+        target_compile_definitions(des_game PRIVATE ${_des_boot_COMPILE_DEFINITIONS})
+        target_compile_options(des_game PRIVATE ${_des_boot_COMPILE_OPTIONS})
+        target_link_options(des_game PRIVATE "/MAP:des_game.map")
+        if(DES_DEBUG_INFO)
+            target_link_options(des_game PRIVATE /DEBUG /OPT:REF /OPT:ICF)
+        endif()
+        if(DES_HOST_STATIC_CRT)
+            target_link_options(des_game PRIVATE ${DES_HYBRID_CRT_LINK})
+        endif()
     endif()
 
     # The exe: des_boot's sources minus the lifted ones, plus the loader and the
@@ -549,16 +606,27 @@ if(DES_SPLIT)
     if(DES_DEBUG_INFO)
         target_link_options(des_host PRIVATE /DEBUG /OPT:REF /OPT:ICF)
     endif()
-    add_dependencies(des_host des_game des_version)
+    add_dependencies(des_host des_version)
+    if(NOT DES_HOST_ONLY)
+        add_dependencies(des_host des_game)   # built together, so a run finds a matching DLL beside the exe
+    endif()
+    if(DES_HOST_STATIC_CRT)
+        target_link_options(des_host PRIVATE ${DES_HYBRID_CRT_LINK})
+    endif()
     if(DES_DEV)
         add_custom_command(TARGET des_host POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E echo "des_host: DEVELOPER BUILD (DES_DEV=ON), the cheats are compiled in. Never share it."
             VERBATIM)
     endif()
-    # A freestanding des_game.dll: the same targets, changed in place.
+    # A freestanding des_game.dll: the same targets, changed in place (not with DES_HOST_ONLY: there is no des_game).
     option(DES_SPLIT_FREESTANDING "Build des_game.dll freestanding: no C runtime, SDK or C++ library (docs/84)" OFF)
-    if(DES_SPLIT_FREESTANDING)
+    if(DES_SPLIT_FREESTANDING AND NOT DES_HOST_ONLY)
         include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DesGameFreestanding.cmake")
     endif()
-    message(STATUS "des_boot: split build ON: des_host.exe + des_game.dll (runtime ${PS3RECOMP_SPLIT_LIB}, ${_des_nfns} port functions for the lift)")
+    if(DES_HOST_ONLY)
+        set(_des_split_what "des_host.exe only (DES_HOST_ONLY)")
+    else()
+        set(_des_split_what "des_host.exe + des_game.dll")
+    endif()
+    message(STATUS "des_boot: split build ON: ${_des_split_what} (runtime ${PS3RECOMP_SPLIT_LIB}, ${_des_nfns} port functions for the lift)")
 endif()

@@ -13,6 +13,7 @@ so a crash never leaves half of it.
 import hashlib
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -35,6 +36,7 @@ class Journal:
     def __init__(self, path):
         self.path = Path(path)
         self.data = {"version": self.VERSION, "steps": {}}
+        self._lock = threading.RLock()      # the compile runs steps from several threads
         if self.path.is_file():
             try:
                 d = json.loads(self.path.read_text(encoding="utf-8"))
@@ -44,46 +46,60 @@ class Journal:
                 pass                        # unreadable: start over, every step runs again
 
     def _save(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps(self.data, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-        os.replace(tmp, self.path)
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_name(self.path.name + ".tmp")
+            tmp.write_text(json.dumps(self.data, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+            os.replace(tmp, self.path)
 
     def state(self, name) -> dict:
-        return self.data["steps"].get(name, {})
+        with self._lock:
+            return dict(self.data["steps"].get(name, {}))
 
     def is_done(self, name, fp, outputs=()) -> bool:
         s = self.state(name)
         return s.get("state") == "done" and s.get("inputs") == fp and all(Path(o).exists() for o in outputs)
 
-    def run(self, name, fp, fn, outputs=(), log=None):
+    def run(self, name, fp, fn, outputs=(), log=None, refingerprint=None):
         """Run fn() unless the step is done with these inputs. fn returns a dict
-        of results to keep (or None). Returns (ran, results)."""
-        if self.is_done(name, fp, outputs):
-            return False, self.state(name).get("results", {})
-        self.data["steps"][name] = {"state": "running", "inputs": fp, "start": time.time()}
-        self._save()
+        of results to keep (or None). Returns (ran, results).
+
+        refingerprint(results), when given, is the fingerprint recorded once fn
+        is done, for a step that learns some of its inputs only by running (the
+        headers a compile read). Steps may run from several threads at once; fn
+        runs outside the lock."""
+        with self._lock:
+            if self.is_done(name, fp, outputs):
+                return False, self.state(name).get("results", {})
+            self.data["steps"][name] = {"state": "running", "inputs": fp, "start": time.time()}
+            self._save()
         try:
             res = fn() or {}
+            done_fp = refingerprint(res) if refingerprint else fp
         except StepFailed as e:
-            self.data["steps"][name] = {"state": "failed", "inputs": fp, "message": e.message,
-                                        "log": str(e.log or log or ""), "end": time.time()}
-            self._save()
+            with self._lock:
+                self.data["steps"][name] = {"state": "failed", "inputs": fp, "message": e.message,
+                                            "log": str(e.log or log or ""), "end": time.time()}
+                self._save()
             raise
         except Exception as e:
-            self.data["steps"][name] = {"state": "failed", "inputs": fp, "message": f"{type(e).__name__}: {e}",
-                                        "log": str(log or ""), "end": time.time()}
-            self._save()
+            with self._lock:
+                self.data["steps"][name] = {"state": "failed", "inputs": fp,
+                                            "message": f"{type(e).__name__}: {e}", "log": str(log or ""),
+                                            "end": time.time()}
+                self._save()
             raise StepFailed(name, str(e), log) from e
-        s = self.data["steps"][name]
-        s.update(state="done", results=res, end=time.time())
-        self._save()
+        with self._lock:
+            s = self.data["steps"][name]
+            s.update(state="done", inputs=done_fp, results=res, end=time.time())
+            self._save()
         return True, res
 
     def forget(self, name=None):
         """Mark one step (or all) as not done, so it runs again."""
-        if name is None:
-            self.data["steps"] = {}
-        else:
-            self.data["steps"].pop(name, None)
-        self._save()
+        with self._lock:
+            if name is None:
+                self.data["steps"] = {}
+            else:
+                self.data["steps"].pop(name, None)
+            self._save()

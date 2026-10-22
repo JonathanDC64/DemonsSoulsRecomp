@@ -19,7 +19,7 @@ Labels: **measured** (a run says so), **read** (seen in the code or a doc), **in
 ## 1. What was there
 
 - **The engine** (read): `check`, `stage`, `lift`, `status`, `tools`, `fetch` (`tools/setup/des_setup/__main__.py`), a journal with fingerprints (journal.py), `@progress <step> n/m` lines from `lift` (`__main__.py:128-132` on master). Logs in `<data>/setup/logs/<step>.log` (lift.py:65-83).
-- **The compile** (read, `feat/setup-compile`, not merged): `compile.py` with `Compile(...).run_all()` returning `game/des_game.dll` (compile.py:154, 228, 338), its own `@progress compile n/m` (compile.py:272, 294), and `__main__.compiler()` for the pinned LLVM (`__main__.py:146-161` there).
+- **The compile** (`feat/setup-compile`, section 9): `compile.py` with `Compile(...).run_all()` returning `game/des_game.dll`, its own `@progress compile n/m`, and a function for the pinned LLVM.
 - **The host's loader** (read, ps3recomp `feat/dll-split`): `runtime/ppu/game_host.c` loads the file named by `PS3_GAME_MODULE`, else `PS3_GAME_MODULE_NAME` beside the exe (game_host.c:84-96); the port sets that name to `des_game.dll` (port/CMakeLists.txt:506 there).
 - **The UI** (read): every document is drawn by the overlay hook on the game's D3D12 device (des_ui.cpp, host.cpp). The one exception is the crash dialog: a second process of the same exe, picked by `--crash-dialog` in a startup hook before `main` (crash_report.cpp:400-415, 483), with a Win32 window and a D3D12 device of its own (crash_dialog.cpp:111-205). It has no Linux version (crash_report_posix.cpp:1-4).
 
@@ -178,7 +178,7 @@ The steps (inferred design; section 10 item 3):
 
 - **Disk** is checked before each phase that writes much (fetch 0.5 GB, lift 1 GB, compile 2 GB from scratch, docs/52 10.2), less what that phase's folders already hold, so a resumed run is not refused for space it has already used. A full disk during a step is caught from the error text or `ENOSPC`.
 - **Details** shows the engine's last 20 lines and the failed step's log path. The full logs are in `<data>/setup/logs/`.
-- **Report** writes a zip in the reports folder through report.hpp, as the menu's report does, and opens the issue form: `system.txt` (this PC's facts), `setup.log` (the run's log), `step.log` (the failed step's log: its first 20 lines and last 64 KB) and `journal.json`, all through `report::redact`. No game file, no lift, no module. The step logs hold step names, counts, addresses and the tools' messages (read, lift.py; inferred for a compiler error, which is why section 9 asks for `-fno-caret-diagnostics`). Nothing is sent: the player attaches the zip.
+- **Report** writes a zip in the reports folder through report.hpp, as the menu's report does, and opens the issue form: `system.txt` (this PC's facts), `setup.log` (the run's log), `step.log` (the failed step's log: its first 20 lines and last 64 KB) and `journal.json`, all through `report::redact`. No game file, no lift, no module. The step logs hold step names, counts, addresses and the tools' messages (read, lift.py; inferred for a compiler error, which is why the compile passes `-fno-caret-diagnostics`, section 9). Nothing is sent: the player attaches the zip.
 
 ## 7. Where the DLL goes, and how the host loads it
 
@@ -198,15 +198,24 @@ The steps (inferred design; section 10 item 3):
 - Facts that differ, one function each: the local data folder and which Python (setup_engine.cpp), and the process calls (child_process.cpp). The Python is the system's `python3`, since python.org's embeddable package is for Windows only (read, docs/52 6.2); no first download there.
 - Not done there: keeping the PC awake (it needs the desktop's session bus; `systemd-inhibit` as a wrapper is the likely way, inferred) and the setup window itself (SDL with vkd3d, as the game's window, docs/76). The compile has no Linux commands yet (compile.py's description is clang-cl's).
 
-## 9. Hooks needed from `feat/setup-compile` (not copied into this branch)
+## 9. The compile step's hooks (done with `feat/setup-compile`)
 
-`run` takes the compile phase from `des_setup/compile.py` when it is there (`pipeline.compile_step`), and leaves the phase out of the plan when it is not. Once that branch merges, `run` needs:
+`run`'s compile phase is `des_setup/compile.py` (docs/81 section 7). What it needed from that branch, now in it:
 
-1. **`compile.toolchain(data) -> (cc command, ld path)`**: `__main__.compiler(a, data)` (`__main__.py:149-161` there) moved into compile.py without the argparse namespace. `run`'s compile phase calls it, then `Compile(data, jr, cc, ld, jobs=jobs, progress=...).run_all()` as it is (compile.py:154, 228).
-2. **One name for the compiler's entry**: `LLVM_ENTRY = "llvm-win64"` (`__main__.py:146` there) and `pipeline.BUILD_TOOLS` should be the same constant, in compile.py. `run`'s fetch phase downloads it with a bar; `toolchain()` then finds it unpacked.
-3. **An out-of-memory failure says so.** After its one retry with a job fewer, `_cc`'s `StepFailed` message should contain "out of memory" also when only the exit status told (0xC0000017, 0xC000012D; compile.py:38-39, 318-321), so `run` reports the `memory` code (pipeline.py `OOM`).
-4. **`-fno-caret-diagnostics`** on the compile commands (game_build.json), so a failed compile's log never quotes lifted source lines; reports attach its tail.
-5. **The merge itself**: `__main__.py` meets at the import lines only (both add a module); keep both. journal.py's thread-safe version is compatible: `run` reads `jr.data["steps"]` only between phases.
+1. **`compile.toolchain(data, cc=None, ld=None) -> (cc command, ld path)`**: the given pair, or the pinned compiler
+   unpacked under the data folder. `run` calls it with the data folder only; `python -m des_setup compile --cc --ld`
+   passes its own.
+2. **One name for the compiler's entry**: `compile.LLVM_ENTRY` (`"llvm-win64"`); `pipeline.BUILD_TOOLS` is made from
+   it, so the fetch phase downloads what the compile phase looks for.
+3. **An out-of-memory failure says so**: after its one retry with a job fewer, an object whose compiler ran out of
+   memory fails with "the compiler ran out of memory", also when only the exit status told (0xC0000017,
+   0xC000012D), so `run` reports the `memory` code (pipeline.py `OOM`).
+4. **No source lines in the logs**: the compile adds `-clang:-fno-caret-diagnostics` to every object's command, so
+   a failed compile's log never quotes lifted source lines; reports attach its tail.
+5. The compile phase is always in `run`'s plan now (the fallback for a tree without compile.py is gone).
+
+Tested (measured): the unit tests (section 11), with three new ones for these hooks (the exit-status one on Windows
+only). Not run yet: `run` with the real compiler download, which waits for the archive's first release (docs/86).
 
 ## 10. Next steps, in order
 

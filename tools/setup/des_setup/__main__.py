@@ -5,6 +5,7 @@
   python -m des_setup lift GAME [--decrypted DIR]... [--firmware FILE] [--data DIR] [-j N]
   python -m des_setup run [GAME] [--decrypted DIR]... [--firmware FILE] [--data DIR] [-j N] [--app VERSION]
                           [--check-only]
+  python -m des_setup compile [--data DIR] [-j N] [--cc CLANG-CL --ld LLD-LINK]
   python -m des_setup status [--data DIR] [--json [--app VERSION]]
   python -m des_setup tools
   python -m des_setup fetch NAME [--data DIR]
@@ -23,7 +24,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import fetch, gamefiles, journal, lift
+from . import compile as compile_step, fetch, gamefiles, journal, lift
 from . import pipeline
 from .pipeline import stage  # noqa: F401 (the copy step; the tests import it from here)
 
@@ -128,6 +129,31 @@ def cmd_run(a) -> int:
     return pipeline.run(Path(a.data), req, app=a.app, jobs=a.jobs, check_only=a.check_only)
 
 
+def cmd_compile(a) -> int:
+    """The lift compiled and linked into des_game.dll (compile.py), each object
+    skipped when done. The lift must have run."""
+    data = Path(a.data)
+    jr = journal.Journal(data / "setup" / "journal.json")
+    shown = {}
+
+    def prog(step, done, total):
+        if shown.get(step) != done:
+            shown[step] = done
+            print(f"@progress {step} {done}/{total}", flush=True)
+
+    try:
+        cc, ld = compile_step.toolchain(data, a.cc, a.ld)
+        dll = compile_step.Compile(data, jr, cc, ld, jobs=a.jobs, progress=prog).run_all()
+    except fetch.FetchError as e:
+        print(f"FIX  {e}")
+        return 1
+    except journal.StepFailed as e:
+        print(f"FIX  {e}" + (f" (log: {e.log})" if e.log else ""))
+        return 1
+    print(f"ok   {dll}")
+    return 0
+
+
 def cmd_status(a) -> int:
     if a.json:
         print(json.dumps(pipeline.status(Path(a.data), a.app), indent=1, sort_keys=True))
@@ -208,6 +234,12 @@ def main(argv=None) -> int:
     sp.add_argument("--app", default="", metavar="VERSION", help="the host's version, kept in ready.txt")
     sp.add_argument("--check-only", action="store_true", help="only check the game files")
     sp.set_defaults(fn=cmd_run)
+    sp = sub.add_parser("compile", help="compile and link the lift into des_game.dll (resumes where it stopped)")
+    data_arg(sp)
+    sp.add_argument("-j", "--jobs", type=int, default=0, help="compiler jobs (default: by free memory, 3 GB a job)")
+    sp.add_argument("--cc", metavar="CLANG-CL", help="this clang-cl instead of the pinned download")
+    sp.add_argument("--ld", metavar="LLD-LINK", help="this lld-link instead of the pinned download")
+    sp.set_defaults(fn=cmd_compile)
     sp = sub.add_parser("status", help="show the journal")
     data_arg(sp)
     sp.add_argument("--json", action="store_true", help="the state and the journal as JSON (docs/88)")

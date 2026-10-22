@@ -121,6 +121,7 @@ extern "C" unsigned (*g_pad_title_hook)(void);
 extern "C" void (*g_fs_open_hook)(const char* guest_path);
 extern "C" void ps3_vblank_set_mhz(int mhz);   /* boot_main.cpp; 0 = VBLANK_MHZ */
 extern "C" void des_aspect_init(void);         /* des_aspect.cpp: DES_ASPECT, DES_HUD */
+extern "C" void des_aspect_poll(void);         /* des_aspect.cpp: their live changes */
 extern "C" volatile unsigned g_pad0_reads, g_pad0_empty_reads, g_pad0_buttons, g_pad0_lstick;   /* cellPad.c */
 extern "C" void cellPad_host_stick(int stick, unsigned char x, unsigned char y, unsigned reads);   /* cellPad.c */
 #ifdef _WIN32
@@ -471,6 +472,7 @@ std::atomic<unsigned> s_flips{0};
 void on_flip_request()
 {
     des_report_flip_hook();   /* (a test knob: DES_HANG_AT_FRAME) */
+    des_aspect_poll();        /* DES_ASPECT, DES_HUD changed while playing */
     s_flips.fetch_add(1, std::memory_order_relaxed);
     fps_on_flip_request();
     if (s_framelog) frame_log();

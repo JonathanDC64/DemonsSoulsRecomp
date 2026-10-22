@@ -14,14 +14,20 @@
 #include "version.hpp"
 
 #include <execinfo.h>
+#include <spawn.h>
 #include <unistd.h>
 
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <fstream>
 #include <string>
+#include <vector>
+
+extern char** environ;
 
 extern "C" uint32_t g_last_hle_nid;  // ppu_hle.cpp: the last HLE call (any thread)
 extern "C" const char* g_last_hle_name;
@@ -55,6 +61,32 @@ bool g_installed = false;
 volatile sig_atomic_t g_reported = 0;
 Filter g_prev_filter = nullptr;            // boot_main's, if any
 void (*g_prev_abort)(int) = nullptr;       // boot_main's (prints a backtrace, then exits)
+
+// The environment and the command line as the program started (start_again's), saved before main, before anything
+// changed the environment. (Function statics: the saving may run before this file's other static initializers.)
+std::vector<std::string>& started_environment() {
+    static std::vector<std::string> vars;
+    return vars;
+}
+std::vector<std::string>& started_arguments() {
+    static std::vector<std::string> args;
+    return args;
+}
+__attribute__((constructor)) void save_start() {
+    for (char** e = environ; e && *e; ++e) started_environment().emplace_back(*e);
+    std::ifstream cmdline("/proc/self/cmdline", std::ios::binary);  // the arguments, each ended by a 0
+    for (std::string arg; std::getline(cmdline, arg, '\0');) started_arguments().push_back(arg);
+}
+
+// A start by setup's Play (start_again): the setup process is still closing. Wait for it to end (at most 10 s), so
+// that this one gets des.log and shows the only window.
+void wait_for_launcher() {
+    const char* pid = std::getenv("DES_LAUNCH_AFTER");
+    if (!pid || !*pid) return;
+    const pid_t setup = pid_t(std::strtol(pid, nullptr, 10));
+    unsetenv("DES_LAUNCH_AFTER");
+    for (int i = 0; i < 200 && setup > 0 && kill(setup, 0) == 0; ++i) usleep(50000);
+}
 
 // "<kind>-<local time>" in the crashes folder.
 std::string stem_of(const char* kind) {
@@ -139,6 +171,7 @@ void report_hang(long long ms_since_frame) {
 }
 
 void install() {
+    wait_for_launcher();
     if (g_installed || report::data_dir().empty()) return;  // test runs: nothing
     g_installed = true;
     report::start_log();
@@ -148,6 +181,23 @@ void install() {
     g_dir = dir.string() + "/";
     g_prev_filter = SetUnhandledExceptionFilter(on_unhandled);
     g_prev_abort = std::signal(SIGABRT, on_abort);
+}
+
+bool start_again() {
+    std::vector<std::string> vars;
+    for (const std::string& v : started_environment())
+        if (v.rfind("DES_UI_OPEN=", 0) && v.rfind("DES_SKIP_UI=", 0) && v.rfind("DES_LAUNCH_AFTER=", 0)) vars.push_back(v);
+    vars.push_back("DES_SKIP_UI=1");
+    vars.push_back("DES_LAUNCH_AFTER=" + std::to_string(getpid()));
+    std::vector<std::string> args = started_arguments();
+    if (args.empty()) return false;
+    std::vector<char*> envp, argv;
+    for (std::string& v : vars) envp.push_back(v.data());
+    envp.push_back(nullptr);
+    for (std::string& a : args) argv.push_back(a.data());
+    argv.push_back(nullptr);
+    pid_t child = 0;
+    return posix_spawn(&child, "/proc/self/exe", nullptr, nullptr, argv.data(), envp.data()) == 0;
 }
 
 }  // namespace ui::crash_report

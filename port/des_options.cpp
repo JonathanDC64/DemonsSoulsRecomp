@@ -2101,6 +2101,20 @@ extern "C" void des_mouse_look(ppu_context* ctx, uint32_t addr)
 extern "C" void des_menu_sfx_init(void);   /* des_menu_sfx.cpp */
 extern "C" void des_chrins_init(void);     /* des_chrins.cpp */
 
+/* First thing in main (ps3recomp's launch hook, docs/88 section 3): setup's
+ * screens alone, or the game (des_ui_launch). */
+extern "C" int ps3_title_launch(int* argc, char*** argv)
+{
+    return des_ui_launch(argc, argv);
+}
+
+/* Setup's screens alone, in place of ps3_title_options_init: no game, so none
+ * of the game's options, hooks or menu sounds. */
+extern "C" void ps3_title_window_only_init(void)
+{
+    des_ui_setup_only_init();
+}
+
 extern "C" void ps3_title_options_init(void)
 {
     /* First: settings.ini fills in the options not set in the environment. */

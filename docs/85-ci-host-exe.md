@@ -2,8 +2,9 @@
 
 Date: 2026-10-22. Status: built and checked on this PC. The workflow's steps ran by hand (a local script),
 with ps3recomp at the split commit (bae620c, ps3recomp #101) plus the static-runtime change (ps3recomp
-#102). The workflow itself has not run on GitHub: it needs a pin with both (open question 1). Not done yet:
-a boot of the hybrid exe, and its frame-rate A/B (section 5).
+#102); both are on the fork's master now (555b043), which this branch pins. The workflow itself has not run
+on GitHub yet. The hybrid exe boots with the split build's game DLL. Whether it costs frame rate is not
+settled: the two direct A/Bs put it 1 to 4% slower, the two half steps show nothing (section 5, point 6).
 
 Files: `.github/workflows/host.yml` (the workflow), `tools/ci/check_host_imports.py` (the import check),
 `.github/host-files-allow.txt` (the artifact's game-file exceptions), and two options in
@@ -331,20 +332,34 @@ What to check, and what it gave on 10-22:
 3. **The size.** +0.11 MB against a `/MD` host of the same tree (2.5); docs/81's test program gave +0.14 MB.
 4. **The same objects.** Not done yet. Build `des_host` once more with `RECOMP_DIR=work/recomp` (the real lift) and
    compare its objects with the stub build's (1.2, section 4).
-5. **A boot.** Not done yet. Put a `des_game.dll` from the usual split build (the same port and ps3recomp commits) beside
-   the new exe, or name it with `PS3_GAME_MODULE`. Then boot through `play.sh` with
-   `DES_EXE=port/build_host/des_host.exe` and the pinned save. Look for `[game-host] loaded`, the title, the
-   level, and no crash lines. Try the console's setenv on a knob the DLL reads (2.4), and quit to the title
-   and continue (guest threads exit: 2.4).
-6. **The frame rate.** Not done yet. A plain-window A/B (docs/83) of the hybrid host against today's `/MD` host, both with
-   the same DLL. Inferred: no change, or a little faster (direct calls to `memcpy` and the UCRT instead of
-   calls through the import table).
+5. **A boot.** Measured: the hybrid exe beside the usual split build's `des_game.dll` (`/MD`, the same port and
+   ps3recomp commits) loads it (`[game-host] loaded ... 94017 functions`) and reaches the Palace from the deep
+   save, with no crash or refusal line, in all 16 of its boots in the A/Bs below. Not tried yet: the console's
+   setenv on a knob the DLL reads (2.4), and quit to the title and continue (guest threads exit: 2.4).
+6. **The frame rate.** Measured, not settled. Plain-window A/Bs (docs/83), deep Palace, 8 rounds a side,
+   `RSX_VSYNC=0 DES_VSYNC=0 DES_FPS=unlocked`, every host with the same split build's DLL. Three hosts:
+   `split` (the usual split build, `/MD`), `host-only` (`DES_HOST_ONLY`, `/MD`: CI's tree) and `hybrid`
+   (`DES_HOST_ONLY` and `DES_HOST_STATIC_CRT`: CI's exe). The PC was not quiet: other work used 6 to 29% of
+   the processor in the background during every batch.
+
+   | A/B | What differs | B against A (median) | Rounds B slower | paired t |
+   |---|---|---|---|---|
+   | split vs hybrid | both | -2.86% | 8 of 8 | p = 0.006 |
+   | split vs hybrid, again | both | -3.88% | 7 of 8 | p = 0.68 (one A round at 115 fps) |
+   | host-only vs hybrid | the CRT alone | +0.48% | 5 of 8 | p = 0.31 |
+   | split vs host-only | the tree alone | -1.18% | 6 of 8 | p = 0.91 |
+
+   The halves do not add up to the whole: by the batch means, the two half steps together come to about
+   -0.8 fps, the direct runs to -3.9 and -1.8 fps. The same host also read 143 fps in one batch and 149 in
+   another. Inferred: the background load moves whole batches by more than the effect, and the direct runs
+   lean slower. Next: the split vs hybrid A/B again on a quiet PC, before the hybrid CRT becomes the
+   release default (open question 12).
 
 ## 6. Open questions
 
-1. **The pinned commit on the fork.** CI checks ps3recomp out by the pin, and `DES_REQUIRE_PIN` wants exactly
-   that commit. It needs both the split (ps3recomp #101) and the static runtime (ps3recomp #102). Once both are
-   merged, this branch moves the pin to the fork's master, and the workflow can run.
+1. **The pinned commit on the fork.** Done: CI checks ps3recomp out by the pin, and `DES_REQUIRE_PIN` wants
+   exactly that commit. Both the split (ps3recomp #101) and the static runtime (ps3recomp #102) are merged,
+   and this branch pins the fork's master (555b043), so the workflow can run.
 2. **The compiler.** The runner's clang-cl is not pinned. docs/54 5.4 wants CI on 22.1.8, failing on any
    other. CI could use the same trimmed LLVM 22.1.8 archive it will make for players (docs/81): the host and
    the DLL then come from one compiler.
@@ -370,4 +385,5 @@ What to check, and what it gave on 10-22:
 11. **The NID table** from a workflow step (the draft) or from CMake in host-only mode (optional text in the
     CMake draft). CMake's way also serves local host-only builds.
 12. **`DES_HOST_STATIC_CRT` for developers.** Off by default, so `des_boot.exe` stays `/MD`. Make the hybrid
-    CRT the default everywhere later, after the A/B (5, point 6)?
+    CRT the default everywhere later, after a quiet A/B (5, point 6)? If that run confirms a cost, the other
+    way to need no install is the `/MD` host with the Visual C++ runtime DLLs beside it (app-local).

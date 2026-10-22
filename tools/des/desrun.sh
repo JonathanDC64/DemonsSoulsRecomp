@@ -24,8 +24,10 @@ for kv in "$@"; do export "$kv"; done
 des_kill_own
 if [ "${COLD_CACHE:-0}" = 1 ]; then rm -rf "$(des_cache_dir)"; fi
 EXE="$(des_stage_exe)" || { echo "desrun: could not stage the exe"; exit 1; }
+START=$SECONDS
 timeout "$TIMEOUT" "$EXE" work/game/EBOOT.ELF > "$OUT" 2>&1
 rc=$?
+des_wait_own $((TIMEOUT - (SECONDS - START)))   # the game that setup's Play started, if any
 des_kill_own
 echo "exit=$rc lines=$(wc -l < "$OUT")  out=$OUT"
 echo "=== threads created ==="

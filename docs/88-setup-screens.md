@@ -2,12 +2,13 @@
 
 The fourth part of the player setup (docs/81 section 6, item 4): the RmlUi screens in the prebuilt host that run setup's engine (`tools/setup/des_setup`) as a child process and show its progress, its errors and its resume. docs/52 sections 1 and 4 are the spec.
 
-Code: the port branch `feat/setup-screens`, from master af06c0f. It has the engine's `run` command with the protocol, the host's process runner, the protocol reader, and the progress screen with its failure, stop and done states. The screens before a run (start, "Where is your game?", the game folder, the help page and Ready to build) are on `feat/setup-start-screens`, on the setup shell of docs/89: built, and seen in screenshots with a stand-in engine (sections 2a and 11). The rest is section 10.
+Code: the port branch `feat/setup-screens`, from master af06c0f. It has the engine's `run` command with the protocol, the host's process runner, the protocol reader, and the progress screen with its failure, stop and done states. The screens before a run (start, "Where is your game?", the game folder, the help page and Ready to build) are on `feat/setup-start-screens`, on the setup shell of docs/89: built, and seen in screenshots with a stand-in engine (sections 2a and 11). The launch hook (section 3) is ps3recomp #104 and the port's `feat/setup-launch`: built and measured (section 11). The rest is section 10.
 
 Labels: **measured** (a run says so), **read** (seen in the code or a doc), **inferred** (reasoned, not run).
 
 ## Short answer
 
+- **Built differently (10-22): the screens run in the game's own window, with no game under it** (the window alone, section 3), so no second window or D3D12 loop was needed. What follows was the reasoning before.
 - **The screens run in a window of the host's own, before the game boots** (inferred from the boot order, read). Without `des_game.dll` the boot stops at `ps3_game_load` (boot_main.cpp:2300 on `feat/dll-split`), before the frame ticker opens the game's window, and `main` needs the ELF path on its command line (boot_main.cpp:2216). So setup cannot be an overlay on the game's window, as the menus are. docs/52 1.2 already says this: its own D3D12 device, as the crash dialog has.
 - **A weak hook at the top of `main` decides** (needs a ps3recomp change, section 3). With no ELF on the command line (the player's double click), the title's hook reads `setup/ready.txt`. Ready: it sets the ELF, `PS3_GAME_MODULE` and `PS3_VFS_ROOT`, and the boot goes on. Not ready: it shows the setup window. A developer's run passes the ELF and never sees setup.
 - **The host finds the DLL through `PS3_GAME_MODULE`, set by that hook** from `ready.txt`, unless it is already set. `game_host.c` stays as it is (section 7). This answers docs/81 section 7's open question.
@@ -115,6 +116,29 @@ module_sha256=<sum>
 - The full SHA-256 of the module is in the file for Repair and for reports; the start check uses the size only (inferred: a module that antivirus removed or a disk error cut short changes its size; a same-size change is not a case we expect).
 - `python -m des_setup status --json [--app VERSION]` prints the same state from the engine's side (`ready`, `damaged`, `outdated`, `game-moved`, `running`, `interrupted`, `failed`, `partial`, `missing`), with the journal's steps and the saved folders. It is for tools, tests and reports; the host does not need it at start.
 - `run` saves the folders the player chose in `setup/request.json`. A `run` with no game folder takes them, so Resume, Set up again and Repair ask for nothing.
+
+**The launch hook, as built (10-22; ps3recomp #104, the port's `feat/setup-launch`).**
+
+- **ps3recomp** (`boot_main.cpp`): two weak hooks.
+  - `ps3_title_launch(int* argc, char*** argv)` runs first in `main`. It returns `PS3_LAUNCH_BOOT` (-1) to boot, `PS3_LAUNCH_WINDOW` (-2) for the window alone, or 0 or more to exit with.
+  - The window alone runs `ps3_title_window_only_init` in place of the options init, then only the present thread (`vblank_ticker`): no game module, ELF, HLE, guest thread, SPU or audio.
+  - That thread presents with no guest frame, as it does before the first flip, so the overlay draws setup's screens until the window closes. Each pass presents, paced by vsync.
+- **The port** (`des_ui_launch` in des_ui.cpp, called by `ps3_title_launch` in des_options.cpp), in this order:
+  - `DES_UI=0`: boot, as before.
+  - `DES_UI_OPEN=setup` or `setup-run`: the window alone.
+  - An ELF on the command line (a developer's run): boot.
+  - `launch_state()` is Ready: it sets `PS3_GAME_MODULE` (unless set), `PS3_VFS_ROOT` and the ELF argument (section 7), then boots. Anything else: the window alone.
+- **Setup alone** (`des_ui_setup_only_init`):
+  - settings.ini, the overlay and the start screen (or setup-run's progress page);
+  - no menu bar, start screen, trophies or frame watch, and the close button asks nothing;
+  - it sets `RSX_VSYNC=1` (vsync paces each pass), `PS3_PSO_LIBRARY=0` (the last build's pipeline library stays shut) and a `PS3_TITLE` (no PARAM.SFO is read).
+- **Play** on setup alone starts the game in a new process (section 7) and closes this one. Over a running game (a runtime without the hook), Play only closes the screens, as before.
+- **Known limits:**
+  - The menu sounds are silent on setup alone: they come from the game's sound engine (read).
+  - On Linux the gamepad does nothing on setup alone, since cellPad opens the pads only at the game's `cellPadInit` (read; not built there).
+  - The ELF path from `ready.txt` goes to `main` as a narrow (ANSI) string, so a dump folder with characters outside the system's code page may fail (inferred, not tried).
+
+The plan as written before it was built:
 
 **The launch hook (needs ps3recomp).** `main` (boot_main.cpp:2200 on `feat/dll-split`) gets a weak hook first thing, as it has `ps3_title_prework` last (boot_main.cpp:76-81, 2386):
 
@@ -235,6 +259,11 @@ The steps (inferred design; section 10 item 3):
   - and the ELF argument, the staged `EBOOT.elf`.
   Then `main` goes on, and `ps3_game_load` loads the module as it does today (game_host.c:85-96).
 - **Why not the other two ways.** Teaching `game_host.c` to look in this title's data folder puts the port's folder names into ps3recomp. A separate launcher exe that sets `PS3_GAME_MODULE` is a second program to ship and sign, for what the host's own hook does in a few lines (inferred).
+- **Play, as built** (`crash_report::start_again`, 10-22):
+  - It starts this exe again with the same command line and the environment the process started with (saved before `main`, so the setup-alone variables are not in it), minus `DES_UI_OPEN`, plus `DES_SKIP_UI=1` (no start screen: Play was the choice) and `DES_LAUNCH_AFTER=<this pid>`. Then this one quits.
+  - The new process waits up to 10 s for that pid to end before it opens its log, so it gets des.log and the only window.
+  - Not `ChildProcess`: its job object would end the game when setup's process ends.
+  - Measured in section 11.
 - **Play** after setup starts the host again, as a new process with the same command line, and ends this one. The new one finds Ready and boots. That avoids starting RmlUi and a second D3D12 device again inside one process (inferred: a fresh process is the case every start already tests). It costs a second or so (inferred).
 - **The libsre glue's absolute image path** (docs/81 section 5) stays as it is; it goes with milestone 2.
 
@@ -266,8 +295,8 @@ only). Not run yet: `run` with the real compiler download, which waits for the a
 
 ## 10. Next steps, in order
 
-1. **The launch hook** in the ps3recomp fork (section 3), and the port's `ps3_title_launch`: Ready fills in the ELF and the environment (section 7); otherwise the setup window; Play restarts the host.
-2. **The window of its own.** Move the crash dialog's window and D3D12 loop (crash_dialog.cpp:111-205, 210-345) into one shared file, used by both; then its Linux version on SDL and vkd3d. `SetupWindow` runs in it unchanged.
+1. **The launch hook** in the ps3recomp fork (section 3), and the port's `ps3_title_launch`: Ready fills in the ELF and the environment (section 7); otherwise the setup window; Play restarts the host. **Built and measured** (10-22, section 11).
+2. ~~**The window of its own.**~~ Not needed: the window alone (section 3) shows the screens in the game's own window.
 3. **The first Python download** (section 5): the host's SHA-256, then curl and tar through `ChildProcess`.
 4. **The start screen** (section 3's states), **"Where is your game?"**, **the game folder** and **the help page**: the folder picker (a function for each platform: the shell's folder dialog on Windows, the desktop portal on Linux), the scan of likely places, the check's rows from `run --check-only`. **Built and seen** with the stand-in engine (section 11). Next: the folder dialog and a real dump; the RPCS3 card (docs/89 section 6).
 5. **Ready to build**: the free space and time estimate, and "Plug it in first" on battery (docs/52 1.2 point 3). **Built and seen.** The time is a model from one PC's numbers; a whole setup on a second PC would check it.
@@ -293,10 +322,15 @@ only). Not run yet: `run` with the real compiler download, which waits for the a
   The user's save was the same after each run.
 - **Not exercised yet:** the folder dialog (a test cannot press it), the places scan on a PC with copies in the usual places, the battery rows, the pad and mouse by hand, and the Linux build: libdbus's `dbus_*` calls are declared by hand in folder_picker.cpp, from dbus-message.h and dbus-bus.h as remembered, and no compiler has checked them.
 - One log line to look at: `[ui] a window's close transition did not run; hidden without it` came after the run ended (inferred: a window closed while the setup window was open; harmless in the shots).
+- **The launch hook** (measured 10-22). The build was the port's launch commit with ps3recomp #104. The test used an empty working folder, a stand-in `ready.txt` (Ready) and a settings.ini with Enhanced, `RSX_SCALE = 150` and `DES_FPS = 60`:
+  - `DES_UI_OPEN=setup`, no key pressed: the start screen, "Ready to play", in 26 log lines, with no game boot (no module load, no guest thread).
+  - The same with Enter on Play: the log says "play: the game starts in a new process", and the setup process exits 0. The new process boots the game and applies the stored settings ("render targets at 150%", "FlipMode 60FPS(NO SKIP)"), then stops on `EXIT_AFTER_MS`.
+  - A player's start: no arguments, and no `DES_UI_OPEN`, `PS3_GAME_MODULE` or `PS3_VFS_ROOT`, with a `ready.txt` naming the real module and game folder. The log says "launch: the game setup built", the module loads from the path in `ready.txt`, and the VFS root is its game folder. It boots with the stored settings.
+  - Not run: Linux.
 
 ## 12. Open questions
 
-1. **The launch hook in ps3recomp** (section 3), a weak `ps3_title_launch(int* argc, char*** argv)` at the top of `main`. Recommendation: yes. It is the one way that works on both platforms and lets the host start with no arguments.
+1. **The launch hook in ps3recomp** (section 3), a weak `ps3_title_launch(int* argc, char*** argv)` at the top of `main`. Built (ps3recomp #104). Recommendation: yes. It is the one way that works on both platforms and lets the host start with no arguments.
 2. **The first Python through Windows' `curl.exe` and `tar.exe`** (section 5), with the host checking the SHA-256. Recommendation: yes. The other way is a few hundred lines of HTTP and zip code in the host.
-3. **Play restarts the host** after setup (section 7). Recommendation: yes, for a clean boot. The other way keeps one process and starts RmlUi and D3D12 a second time in it.
+3. **Play restarts the host** after setup (section 7). Built that way. Recommendation: yes, for a clean boot. The other way keeps one process and starts RmlUi and D3D12 a second time in it.
 4. **Reports from setup include the failed step's log tail** (section 6), with names and addresses but no game code once the compile runs with `-fno-caret-diagnostics`. Recommendation: yes; the player sees the zip before attaching it.

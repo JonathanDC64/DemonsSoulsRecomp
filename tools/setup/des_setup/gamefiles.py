@@ -107,6 +107,20 @@ def _resolve(root: Path, rel: str) -> Path:
     return p
 
 
+def _find_decrypted(folder: Path, rel: str) -> Path:
+    """A decrypted file in a folder the player picked: by its name at the top, or at
+    its own path under the folder (RPCS3 writes beside each input, so a decrypted
+    copy of USRDIR, PS3_GAME or the whole dump keeps the game's subfolders)."""
+    hit = _find_ci(folder, rel.rsplit("/", 1)[-1])
+    if hit:
+        return folder / hit
+    for cut in (rel, rel.split("PS3_GAME/", 1)[-1], rel.split("USRDIR/", 1)[-1]):
+        p = _resolve(folder, cut)
+        if p is not None:
+            return p
+    return None
+
+
 def _magic(path: Path, n=4) -> bytes:
     with open(path, "rb") as f:
         return f.read(n)
@@ -160,8 +174,7 @@ def check(folder, decrypted_dirs=(), firmware=None, table=None, progress=None) -
         for d in decrypted_dirs:
             if p is not None:
                 break
-            hit = _find_ci(Path(d), base)
-            p = Path(d) / hit if hit else None
+            p = _find_decrypted(Path(d), e["path"])
         src = e["of"].rsplit("/", 1)[-1]
         rep.items.append(_check_file("decrypted", e, p, progress,
                                      missing=f"{base} is missing: decrypt {src} first (in RPCS3: Utilities, "

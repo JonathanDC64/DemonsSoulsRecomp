@@ -144,6 +144,20 @@ class CheckTest(unittest.TestCase):
         finally:
             t.close()
 
+    def test_extra_folder_keeps_the_game_subfolders(self):
+        t = GameTree(decrypted=False)
+        try:
+            for top in ("", "USRDIR", "PS3_GAME/USRDIR"):
+                extra = Path(t.tmp.name) / ("tree_" + top.replace("/", "_"))
+                d = extra / top if top else extra
+                (d / "script").mkdir(parents=True)
+                (d / "EBOOT.elf").write_bytes(EBOOT_ELF)
+                (d / "script" / "m01.luabnd.dcx.sdat.unedat").write_bytes(SDAT_DEC)
+                rep = self.check(t, decrypted_dirs=[extra])
+                self.assertTrue(rep.ok, (top, [i.message for i in rep.problems()]))
+        finally:
+            t.close()
+
     def test_still_encrypted(self):
         t = GameTree()
         try:
@@ -356,7 +370,7 @@ class FetchTest(unittest.TestCase):
         m = fetch.load_manifest()
         for e in m["tools"]:
             self.assertTrue(e["url"].startswith("https://"))
-            self.assertIn(e["route"], ("both", "A", "B"))
+            self.assertIn("why", e)
 
 
 if __name__ == "__main__":

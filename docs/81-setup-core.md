@@ -6,8 +6,10 @@ The first part of the player setup (docs/52, and the setup plan page): the game 
 - Q2 = A, a prebuilt host: CI builds the host exe, and the player's PC lifts and compiles only the game part (docs/52's "CI host, game DLL on the player's PC" route). The compiler and every other tool the build needs are downloaded by the host during setup, each pinned by version and SHA-256; none is bundled.
 - Q7: a. the build files are kept after setup, because an update needs them to rebuild; b. the Enhanced preset is a fixed preset, with no benchmark; c. button prompts other than the PS3's are left for later.
 - The game table and `scripts/spu_table.json` (sums, sizes and offsets only) are committed.
+- Later on 10-22: **the compiler download** is a smaller archive that CI makes from LLVM's own 22.1.8 archive (clang, lld-link and clang's headers) and attaches to the release, pinned by SHA-256 like the other downloads.
+- **The host exe builds in the Visual C++ runtime and the C++ library** and uses the UCRT that Windows 10 and 11 include, so players need no Visual C++ redistributable. Measured on 10-22 by linking the 254 runtime functions today's exe imports into a test program: +0.14 MB this way, +0.47 MB with the UCRT built in too (plain `/MT`), on a host of 7.4 MB (docs/57). Today's exe links them as DLLs (`/MD`): `MSVCP140.dll`, `VCRUNTIME140.dll` and `VCRUNTIME140_1.dll`.
 
-Code: `tools/setup/` on the port branch `feat/setup-core` (local, not pushed). Standard-library Python only, so it runs on the embeddable Python that setup will bring.
+Code: `tools/setup/` (port PR #121). Standard-library Python only, so it runs on the embeddable Python that setup will bring.
 
 ```
 cd tools/setup
@@ -80,7 +82,7 @@ Entries today:
 | Python, embeddable | 3.13.9 | 10,926,675 bytes | pinned 2026-10-22: the size and python.org's MD5 checked on the first download |
 
 - llvm-mingw was only for Q2 = B and is out of the table.
-- The compiler for the game part is not in the table yet. LLVM 22.1.8, the version the builds use today, is published as `clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz` (862,053,924 bytes) and as the `LLVM-22.1.8-win64.exe` installer (455,545,840 bytes). An installer would install, so it is out. The choice between the full archive and a smaller one made from it is open.
+- The compiler for the game part is not in the table yet. LLVM 22.1.8, the version the builds use today, is published as `clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz` (862,053,924 bytes) and as the `LLVM-22.1.8-win64.exe` installer (455,545,840 bytes). An installer would install, so it is out. Setup will download the smaller archive CI makes from the first one (Decided); it is not in the table until CI makes it.
 
 ## 4. The journal (`journal.py`)
 

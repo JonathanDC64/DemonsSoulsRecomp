@@ -105,6 +105,7 @@
  *   builds only (cmake -DDES_DEV=ON; docs/55).
  */
 #include "ppu_recomp.h"
+#include "des_game_calls.h"     /* DES_SPLIT: the lifted functions below are in the game DLL */
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include "ui/include/des_ui.h"  /* the wrapper UI: settings.ini and the overlay (docs/32) */
 #include <atomic>
@@ -835,7 +836,9 @@ extern "C" void des_dof(ppu_context* ctx, uint32_t addr)
     vm_writef(blend + 0x14, 0.0f);
 }
 
+#ifndef PS3_GAME_SPLIT   /* DES_SPLIT: the game DLL's (ps3emu/game_split.h) */
 extern "C" PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);
+#endif
 
 /* Lifted in place of 0x00273D38 (--override-funcs), which is only
  * `0x002EC2B8(*(r3 + 0x20), f1 = step)`: the movement object's step after

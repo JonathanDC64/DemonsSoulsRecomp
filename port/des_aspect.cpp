@@ -85,6 +85,7 @@
  */
 
 #include "ppu_recomp.h"
+#include "des_game_calls.h"     /* DES_SPLIT: the lifted functions below are in the game DLL */
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include <cmath>
 #include <cstdint>

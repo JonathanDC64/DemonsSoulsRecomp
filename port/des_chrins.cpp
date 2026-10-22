@@ -41,6 +41,7 @@
  * happen, so a line in the default mode means another cause.
  */
 #include "ppu_recomp.h"
+#include "des_game_calls.h"     /* DES_SPLIT: the lifted functions below are in the game DLL */
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -48,7 +49,9 @@
 #include <cstring>
 
 extern "C" void ppu_register_function(uint64_t addr, void (*fn)(ppu_context*));
+#ifndef PS3_GAME_SPLIT   /* DES_SPLIT: the game DLL's (ps3emu/game_split.h) */
 extern "C" PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);
+#endif
 
 namespace {
 

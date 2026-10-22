@@ -152,6 +152,10 @@ std::filesystem::path python() {
 
 std::filesystem::path engine_script() {
     std::error_code ec;
+    if (const std::string given = env("DES_SETUP_SCRIPT"); !given.empty()) {
+        const auto script = from_utf8(given);
+        return std::filesystem::is_regular_file(script, ec) ? script : std::filesystem::path{};
+    }
     std::filesystem::path dir = report::program_dir();
     for (int up = 0; up <= 3 && !dir.empty(); ++up) {
         const auto script = dir / "tools" / "setup" / "run_setup.py";

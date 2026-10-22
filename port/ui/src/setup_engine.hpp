@@ -34,8 +34,8 @@ struct Request {
     std::vector<std::filesystem::path> decrypted;  // more folders to look in for the decrypted files
     std::filesystem::path firmware;                // the decrypted libsre.prx, while libsre is lifted
 };
-// For DES_UI_OPEN=setup (a developer's test of the screen): DES_SETUP_GAME, DES_SETUP_DECRYPTED (folders split by ';')
-// and DES_SETUP_FIRMWARE.
+// For DES_UI_OPEN=setup and setup-run (a developer's test of the screens): DES_SETUP_GAME, DES_SETUP_DECRYPTED (folders
+// split by ';') and DES_SETUP_FIRMWARE.
 Request request_from_env();
 
 // The state at start, from setup/ready.txt and the journal's presence only: no Python and no hashing, so it costs
@@ -57,8 +57,9 @@ Launch launch_state();
 // The engine's Python: DES_SETUP_PYTHON (a developer's), else on Windows the downloaded one (empty until the host has
 // fetched it), elsewhere python3 from PATH.
 std::filesystem::path python();
-// tools/setup/run_setup.py: beside the exe in a release (the install mirrors the source tree), or up to three folders
-// up in a developer's build. Empty if it is not there.
+// tools/setup/run_setup.py: DES_SETUP_SCRIPT (a developer's, such as a source tree's, for a real build from a build
+// folder elsewhere), else beside the exe in a release (the install mirrors the source tree), or up to three folders up
+// in a developer's build. Empty if it is not there.
 std::filesystem::path engine_script();
 
 // One run of the engine: `run_setup.py run ...` under setup's Python, its lines read into a Status.

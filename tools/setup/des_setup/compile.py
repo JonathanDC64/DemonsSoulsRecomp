@@ -146,13 +146,22 @@ def split_workloads(text: bytes, ps3recomp: Path) -> bytes:
     return text
 
 
+def local_toolchain(cc=None, ld=None):
+    """A developer's compiler, (clang-cl, lld-link): cc and ld when given, else
+    DES_SETUP_CC and DES_SETUP_LD from the environment; (None, None) for the
+    pinned download. The fetch phase skips the download when there is one."""
+    return (cc or os.environ.get("DES_SETUP_CC") or None), (ld or os.environ.get("DES_SETUP_LD") or None)
+
+
 def toolchain(data: Path, cc=None, ld=None):
-    """(clang-cl command, lld-link): cc and ld when given (both or neither), else the
-    pinned LLVM download unpacked under data/tools (fetched first if it is not).
-    The download has clang.exe only, which is clang-cl with --driver-mode=cl."""
+    """(clang-cl command, lld-link): a developer's (local_toolchain, both or
+    neither), else the pinned LLVM download unpacked under data/tools (fetched
+    first if it is not). The download has clang.exe only, which is clang-cl with
+    --driver-mode=cl."""
+    cc, ld = local_toolchain(cc, ld)
     if cc or ld:
         if not (cc and ld):
-            raise fetch.FetchError("--cc and --ld go together")
+            raise fetch.FetchError("--cc and --ld (DES_SETUP_CC and DES_SETUP_LD) go together")
         return [str(cc)], Path(ld)
     e = next((t for t in fetch.load_manifest()["tools"] if t["name"] == LLVM_ENTRY), None)
     if e is None:

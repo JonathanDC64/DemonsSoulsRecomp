@@ -7,7 +7,9 @@ FAKE_SETUP_MODE (from the environment the host passes down):
   ok      every phase, about FAKE_SETUP_SECONDS (default 60) in all, then @done ok
   fail    the same until the compile is about half done, then a failed object and @done failed
   hold    the same, but it stops at 40% of the compile and waits there (until the host ends it)
-  check   `run --check-only`: a few @check lines (3 decrypted files missing) and @done fix
+  check   as `run --check-only`
+`run --check-only` reads the game's files for a second, then says each is fine (FAKE_SETUP_CHECK=ok: @done ok) or
+that 3 of the 27 decrypted files are missing (the default: @done fix). It does not count as a run below.
 FAKE_SETUP_MODES ("hold,fail,ok"): one mode for each run in turn, counted in fake_runs.txt in DES_SETUP_DATA (the last
 one repeats), so that one test goes through a stop, a failure and a finished run. A failed run writes its step's log
 in DES_SETUP_DATA/setup/logs. FAKE_SETUP_APP (the host's version, des_version.h's DES_VERSION): a finished run leaves
@@ -34,7 +36,8 @@ def pick_mode():
     return modes[min(n, len(modes) - 1)]
 
 
-MODE = pick_mode()
+CHECK_ONLY = "--check-only" in sys.argv
+MODE = "check" if CHECK_ONLY else pick_mode()
 TOTAL = float(os.environ.get("FAKE_SETUP_SECONDS", "60"))
 # Each phase's share of the run (pipeline.WEIGHTS) and its own steps.
 PHASES = [("check", 2), ("fetch", 4), ("stage", 1), ("lift", 13), ("compile", 80)]
@@ -66,21 +69,38 @@ def count(step, n, m, phase_w, part=(0.0, 1.0), seconds=1.0, stop_at=None, fail_
     return m
 
 
-def main():
-    global done_w
-    if "--check-only" in sys.argv or MODE == "check":
-        say("@setup 1")
-        say("@plan check")
-        say("@step check start")
-        say("@check ok PS3_GAME The game folder holds PS3_GAME.")
-        say("@check ok TITLE_ID BLUS30443, version 01.00.")
-        say("@check ok EBOOT.elf EBOOT.elf matches.")
-        for name in ("chr/c5320.luabnd.dcx.sdat.unedat", "script/talk/m02_00.talkesdbnd.dcx.sdat.unedat",
-                     "menu/menu.esdbnd.dcx.sdat.unedat"):
-            say(f"@check missing USRDIR/{name} Not found.")
-        say("@error game check 3 of the game files have a problem.")
+# The 27 files the player decrypts, as the table names them (tools/setup/des_setup/game_table.json), in its folders.
+DECRYPTED = ["PS3_GAME/USRDIR/EBOOT.elf"] + [
+    f"PS3_GAME/USRDIR/{folder}/file{i:02d}.sdat.unedat"
+    for folder, n in (("chr", 9), ("chr/c0000", 1), ("menu", 3), ("script", 7), ("script/talk", 6))
+    for i in range(n)]
+
+
+def check(missing):
+    say("@setup 1")
+    say("@plan check")
+    say("@step check start")
+    count("check", 0, 5100 << 20, 100, seconds=1.0)
+    say("@check ok PS3_GAME The game folder holds PS3_GAME.")
+    say("@check ok TITLE_ID BLUS30443, version 01.00.")
+    for i in range(4):
+        say(f"@check ok PS3_GAME/USRDIR/disc{i}.bin Matches.")
+    gone = set(DECRYPTED[2:5]) if missing else set()
+    for name in DECRYPTED:
+        say(f"@check missing {name} Not found." if name in gone else f"@check ok {name} Matches.")
+    if gone:
+        say(f"@error game check {len(gone)} of the game files have a problem.")
         say("@done fix")
         return 1
+    say("@step check done")
+    say("@done ok")
+    return 0
+
+
+def main():
+    global done_w
+    if MODE == "check":
+        return check(os.environ.get("FAKE_SETUP_CHECK", "missing") != "ok")
     say("@setup 1")
     say("@plan " + " ".join(p for p, _ in PHASES))
     say("@awake")

@@ -272,10 +272,12 @@ def _game_problem(probs) -> str:
     return f"{len(probs)} of the game files have a problem."
 
 
-def _fetch(data, emit, total, manifest) -> bool:
-    """The build's tools; True if anything was downloaded or unpacked."""
+def _fetch(data, emit, total, manifest, cc=None, ld=None) -> bool:
+    """The build's tools; True if anything was downloaded or unpacked. A
+    developer's compiler (compile.local_toolchain) replaces the download."""
     m = manifest or fetch.load_manifest()
-    tools = [e for e in m["tools"] if e["name"] in BUILD_TOOLS]
+    local = compile_step.local_toolchain(cc, ld) != (None, None)
+    tools = [e for e in m["tools"] if e["name"] in BUILD_TOOLS and not (local and e["name"] == compile_step.LLVM_ENTRY)]
     did = False
     for k, e in enumerate(tools):
         if fetch.unpacked(e, data / "tools"):
@@ -290,9 +292,9 @@ def _fetch(data, emit, total, manifest) -> bool:
     return did
 
 
-def _compile(data, jr, jobs, progress):
-    """The compile phase (compile.py): the downloaded compiler, unpacked by the fetch phase."""
-    cc, ld = compile_step.toolchain(data)
+def _compile(data, jr, jobs, progress, cc=None, ld=None):
+    """The compile phase (compile.py): the downloaded compiler, unpacked by the fetch phase, or a developer's."""
+    cc, ld = compile_step.toolchain(data, cc, ld)
     return compile_step.Compile(data, jr, cc, ld, jobs=jobs, progress=progress).run_all()
 
 
@@ -307,12 +309,16 @@ def _classify(phase, e: journal.StepFailed):
 
 
 def run(data, request=None, app="", jobs=0, check_only=False, emit=None, src=None, table=None,
-        manifest=None, phases=None, compile_fn=None, quiet=True) -> int:
+        manifest=None, phases=None, compile_fn=None, quiet=True, cc=None, ld=None) -> int:
     """Every phase in order (or only the check), with the protocol on `emit`.
     request: make_request's dict, or None for the one the last run saved. app: the
-    host's version, recorded in ready.txt (a new version is set up again).
+    host's version, recorded in ready.txt (a new version is set up again). cc, ld:
+    a developer's compiler (compile.local_toolchain), else the pinned download.
     Returns the exit status: 0 done, 1 something to fix or a failure."""
     data = Path(data)
+    if compile_fn is None:
+        def compile_fn(d, j, n, p):
+            return _compile(d, j, n, p, cc, ld)
     emit = emit or protocol.Emitter()
     held = lock(data / "setup" / "run.lock")
     if held is None:
@@ -324,13 +330,13 @@ def run(data, request=None, app="", jobs=0, check_only=False, emit=None, src=Non
         emit.open_log(data / "setup" / "logs" / "run.log")
         emit.setup()
         return _run(data, request, app, jobs, check_only, emit, src, table, manifest, phases,
-                    compile_fn or _compile, quiet)
+                    compile_fn, quiet, cc, ld)
     finally:
         emit.close()
         held.close()
 
 
-def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phases, compile_fn, quiet) -> int:
+def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phases, compile_fn, quiet, cc, ld) -> int:
     if quiet:
         quiet_and_awake(emit)
     req = request or load_request(data)
@@ -368,7 +374,7 @@ def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phase
                     return 1
                 save_request(data, req)
             elif phase == "fetch":
-                skipped = not _fetch(data, emit, total, manifest)
+                skipped = not _fetch(data, emit, total, manifest, cc, ld)
             elif phase == "stage":
                 stage(rep, data, jr)
             elif phase == "lift":

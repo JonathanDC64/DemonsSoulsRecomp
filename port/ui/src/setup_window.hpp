@@ -1,9 +1,9 @@
 // The setup screen (docs/88 section 2, docs/89): while the setup engine runs, the whole run's percent, the time left
 // and its bar, then the build's tasks, each with its mark and count; Stop (which asks first) and Details (the engine's
 // last lines). A run that fails says what failed and what to do, with the engine's last lines, Try again (or Check
-// again), Report the problem and Show the full log; a stopped one offers Resume; a finished one, Play. The page is
-// the setup shell's (setup_page.hpp). The game files' checklist, the folder pickers and the start screen's states are
-// the next screens (docs/88 section 10).
+// again), Report the problem and Show the full log; a stopped one offers Resume; a finished one, Choose your options
+// (setup_options_window.hpp), then Play. The page is the setup shell's (setup_page.hpp). The screens before it (the
+// start screen, the game, Ready to build) are in setup_screens.hpp.
 #pragma once
 
 #include "setup_engine.hpp"
@@ -24,6 +24,8 @@ public:
     };
 
     explicit SetupWindow(Props props);
+
+    void uncover() override;
 
 protected:
     std::vector<std::vector<Button*>> nav_lines() const override;
@@ -71,6 +73,7 @@ private:
     Phase mPhase = Phase::Running;
     bool mDetailsShown = false;
     unsigned long long mStartMs = 0;
+    std::string mTook;  // how long the finished run took ("It took about 9 minutes.")
 
     Rml::Element* mBody = nullptr;  // the page's parts under the heading, drawn again for each phase
     Rml::Element* mPercent = nullptr;

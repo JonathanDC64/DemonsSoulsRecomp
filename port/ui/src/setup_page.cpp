@@ -2,6 +2,7 @@
 #include "setup_page.hpp"
 
 #include "host.hpp"
+#include "settings.hpp"
 #include "ui.hpp"
 #include "version.hpp"
 
@@ -38,6 +39,11 @@ const Rml::String kSource = R"RML(
                 <setup-title id="title"/>
                 <setup-lede id="lede"/>
             </setup-content>
+            <setup-footer id="footer">
+                <setup-actions id="actions"/>
+                <setup-actions id="actions-end"/>
+            </setup-footer>
+            <setup-main-space/>
             <setup-hints id="hints"/>
         </setup-main>
     </setup-shell>
@@ -69,7 +75,9 @@ SetupPage::SetupPage(const char* pageClass)
     : Document(kSource, false, DocumentScope::Window), mShell(mDocument->GetElementById("shell")),
       mRail(mDocument->GetElementById("rail")), mTitle(mDocument->GetElementById("title")),
       mLede(mDocument->GetElementById("lede")), mContent(mDocument->GetElementById("content")),
-      mHints(mDocument->GetElementById("hints")), mLayer(mDocument->GetElementById("layer")),
+      mFooter(mDocument->GetElementById("footer")), mFooterRow(mDocument->GetElementById("actions")),
+      mFooterEnd(mDocument->GetElementById("actions-end")), mHints(mDocument->GetElementById("hints")),
+      mLayer(mDocument->GetElementById("layer")),
       mQuestionTitle(mDocument->GetElementById("question-title")),
       mQuestionBody(mDocument->GetElementById("question-body")),
       mQuestionActions(mDocument->GetElementById("question-actions")) {
@@ -105,16 +113,55 @@ bool SetupPage::visible() const {
 }
 
 void SetupPage::update() {
+    if (std::exchange(mRevealFocus, false)) {  // (the last frame's layout has the buttons made before it)
+        Rml::Context* context = mDocument->GetContext();
+        Rml::Element* focused = context ? context->GetFocusElement() : nullptr;
+        if (focused && focused->GetOwnerDocument() == mDocument)
+            focused->ScrollIntoView({Rml::ScrollAlignment::Adaptive, Rml::ScrollAlignment::Nearest,
+                                     Rml::ScrollBehavior::Smooth, Rml::ScrollParentage::Closest});
+    }
     if (mPending) {
         auto action = std::exchange(mPending, {});
         action();
     }
     tick();
+    // A line over the buttons while the parts scroll behind them (the last frame's layout).
+    mFooter->SetClass("edge", mContent->GetScrollHeight() > mContent->GetClientHeight() + 1.f);
     for (const auto& buttons : nav_lines())
         for (Button* button : buttons) button->update();
     for (const auto& button : mQuestionButtons) button->update();
     if (!mShell->HasAttribute("open") && Document::visible() && mCloseFallback.due()) Document::hide(mPendingClose);
     Document::update();
+}
+
+bool SetupPage::button_focused() const {
+    Rml::Context* context = mDocument->GetContext();
+    Rml::Element* focused = context ? context->GetFocusElement() : nullptr;
+    if (!focused || focused->GetOwnerDocument() != mDocument) return false;
+    for (const auto& buttons : nav_lines())
+        for (Button* button : buttons)
+            if (button->contains(focused)) return true;
+    for (const auto& button : mQuestionButtons)
+        if (button->contains(focused)) return true;
+    return false;
+}
+
+std::pair<int, int> SetupPage::focus_place() const {
+    Rml::Context* context = mDocument->GetContext();
+    Rml::Element* focused = context ? context->GetFocusElement() : nullptr;
+    if (!focused || focused->GetOwnerDocument() != mDocument) return {-1, -1};
+    const auto lines = nav_lines();
+    for (int l = 0; l < int(lines.size()); ++l)
+        for (int i = 0; i < int(lines[size_t(l)].size()); ++i)
+            if (lines[size_t(l)][size_t(i)]->contains(focused)) return {l, i};
+    return {-1, -1};
+}
+
+bool SetupPage::focus_at(std::pair<int, int> place) {
+    const auto lines = nav_lines();
+    if (place.first < 0 || place.first >= int(lines.size())) return false;
+    const auto& line = lines[size_t(place.first)];
+    return place.second >= 0 && place.second < int(line.size()) && line[size_t(place.second)]->focus();
 }
 
 bool SetupPage::focus() {
@@ -143,6 +190,14 @@ void SetupPage::set_rail(const std::vector<RailStep>& steps) {
         text(words, "setup-rail-name", s.name);
         if (!s.sub.empty()) text(words, "setup-rail-sub", s.sub);
     }
+}
+
+bool SetupPage::options_chosen() {
+    return !settings::get("setup_preset").empty();
+}
+
+SetupPage::RailStep SetupPage::options_step(RailStep::State state) {
+    return {"Options", "", options_chosen() ? RailStep::State::Done : state};
 }
 
 void SetupPage::set_heading(const std::string& title, const std::string& lede) {
@@ -174,6 +229,7 @@ void SetupPage::set_buttons(Buttons& buttons, Rml::Element* parent, std::vector<
         buttons.push_back(std::move(button));
     }
     if (had >= 0 && !mAsking && !(had < int(buttons.size()) && buttons[size_t(had)]->focus())) focus();
+    if (had >= 0) reveal_focus();
 }
 
 void SetupPage::set_hints(std::initializer_list<Hint> hints) {
@@ -196,6 +252,7 @@ void SetupPage::ask(const std::string& title, const std::string& bodyRml, std::v
                     size_t focused) {
     set_text_content(mQuestionTitle, title);
     set_question_body(bodyRml);
+    if (!mAsking) mQuestionFrom = focus_place();  // (a second question keeps the first one's)
     mAsking = true;
     mLayer->SetAttribute("open", "");
     set_question_actions(std::move(actions), focused);
@@ -235,7 +292,7 @@ void SetupPage::close_question() {
     mQuestionButtons.clear();
     mQuestionActionsRun.clear();
     clear_children(mQuestionActions);
-    focus();
+    if (!focus_at(mQuestionFrom)) focus();  // (back on the button that opened it)
 }
 
 Rml::Element* SetupPage::icon(Rml::Element* parent, const char* name) {
@@ -284,6 +341,11 @@ Rml::Element* SetupPage::text(Rml::Element* parent, const char* tag, const std::
 
 Rml::Element* SetupPage::actions_row(Rml::Element* parent) {
     return append(parent, "setup-actions");
+}
+
+Rml::Element* SetupPage::footer_row(bool first) {
+    mFooter->SetClass("first", first);
+    return mFooterRow;
 }
 
 bool SetupPage::handle_nav_command(Rml::Event& event, NavCommand cmd) {

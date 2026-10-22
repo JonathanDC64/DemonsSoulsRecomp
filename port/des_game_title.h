@@ -11,7 +11,8 @@
  * DES_GAME_CALLS: the lifted functions the port's own code calls by name, by
  * guest address. In the exe each name is a forwarder through a pointer that
  * des_game_host.cpp resolves from the lift's function table at the load
- * (des_game_calls.h). */
+ * (des_game_calls.h). A single exe declares the same names as the lift's own
+ * functions there, since the port's sources include only ps3emu/ppu_lift.h. */
 #pragma once
 
 #define DES_GAME_CALLS(X)                                                        \

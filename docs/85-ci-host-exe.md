@@ -31,7 +31,8 @@ CI log or a release: not the lift, the EBOOT, firmware, or an icon made from the
      `des_game` (line 514). A new option, `DES_HOST_ONLY`, configures `des_host` alone.
   2. The host's sources include the lift's `ppu_recomp.h`. They use only its fixed part (1.2). Until the
      header split, CI asks the pinned lifter for the header it writes for a lift with no functions: the same
-     fixed text, nothing of the game (section 4).
+     fixed text, nothing of the game (section 4). **Done:** the header split landed (ps3recomp #103), the
+     host's sources include its `ps3emu/ppu_lift.h`, and that step is gone.
   3. For the hybrid CRT, `boot_main.cpp`'s getenv cache defines the import slot `__imp_getenv`
      (`boot_main.cpp:201`). Under `/MT` nothing reads that slot, and the link stops on a duplicate symbol
      (measured). The fix defines `getenv` itself under `/MT` (2.3, ps3recomp #102).
@@ -66,7 +67,7 @@ unless a file is named.
 | Include folders: ps3recomp's `include/`, `runtime/ppu`, `libs/video`; the port's `compat/` (a `dirent.h` for `ppu_fs.cpp`) | 114-123 | plain source | the checkouts |
 | `split_gen/des_game_title_funcs.h`: the port functions the lift calls | 409-442, from `scripts/lift_ppu.json` and `port/insn_hooks.txt` | generated from committed files (names, addresses) | configure writes it |
 | `hle_nid_table.cpp`, in `RECOMP_DIR` | 99 | generated from ps3recomp alone: `tools/gen_hle_nids.py --all` takes the function names in `libs/**/*.c` (`discover_all`, line 55; the writer, line 144) | a CI step makes it |
-| `ppu_recomp.h`, in `RECOMP_DIR` (an include folder, line 119) | 119 | **game-derived** as a whole: one declaration per lifted function, plus a fixed part | stopgap until the header split: the pinned lifter's header of an empty lift (section 4) |
+| `ppu_recomp.h`, in `RECOMP_DIR` (an include folder, line 119) | 119 | **game-derived** as a whole: one declaration per lifted function, plus a fixed part | none since the header split: the host includes `ps3emu/ppu_lift.h` from the pinned checkout (section 4) |
 | The SPU workload table, ps3recomp's `work_spu/_gen/spu_workloads.cpp` | 98; read again at 396-407 | **game-derived**: made from the game's SPU images (`check_game_files.py` lists it) | not compiled into `des_host` (line 488 removes it), but configure needs it; `DES_HOST_ONLY` drops it |
 | `des_game.dll`, which `des_host` depends on | 467-473, 514 | **game-derived** | `DES_HOST_ONLY`: not defined, no dependency |
 | The lifted PPU chunks and SPU images | 29, 39 | **game-derived** | none; the globs come back empty |
@@ -127,7 +128,7 @@ So the host needs exactly the preamble and the `DS_FRAME` block (section 4).
 |---|---|---|---|
 | 1 | configure fails: the SPU workload table is a listed source and is read | `port/CMakeLists.txt:98`, `:399` | `DES_HOST_ONLY` (2.6) |
 | 2 | building `des_host` builds `des_game`, from the lift | `port/CMakeLists.txt:514` | `DES_HOST_ONLY` |
-| 3 | no `ppu_recomp.h` without a lift | include folder, line 119 | the empty-lift header (stopgap); then the header split |
+| 3 | no `ppu_recomp.h` without a lift | include folder, line 119 | the header split (done, section 4) |
 | 4 | no `hle_nid_table.cpp` without a lift | line 99 | `gen_hle_nids.py --all` in a step (or from CMake, optional) |
 | 5 | the hybrid CRT: the `__imp_getenv` definition | ps3recomp `boot_main.cpp:201` | the `/MT` form (2.3), ps3recomp #102 |
 | 6 | the hybrid CRT: the runtime library is `/MD` | ps3recomp `CMakeLists.txt` | `PS3RECOMP_STATIC_CRT`, ps3recomp #102 |
@@ -246,8 +247,7 @@ action SHAs (`actions/checkout` v4.4.0, `ilammy/msvc-dev-cmd` v1.13.0, `actions/
 3. Show the toolchain. A clang-cl other than 22.1.8 is a warning for now (open question 2).
 4. Configure and build the runtime library: `PS3RECOMP_GAME_SPLIT=ON`, `PS3RECOMP_STATIC_CRT=ON`, Release.
 5. Make `hle_nid_table.cpp` with `gen_hle_nids.py --all` in the runner's temp folder.
-6. **HEADER SPLIT STOPGAP:** write `ppu_recomp.h` there from `ppu_lifter.PPULifter().emit_header()`. It
-   checks that the declarations of 1.2 are in it and no per-game ones.
+6. (Gone with the header split: the stopgap that wrote an empty lift's `ppu_recomp.h` there, section 4.)
 7. Configure the port: `DES_SPLIT`, `DES_HOST_ONLY`, `DES_HOST_STATIC_CRT`, `DES_REQUIRE_PIN` on;
    `DES_DEV` off; `RECOMP_DIR` the temp folder; no build type, as in `ci.yml`.
 8. Build `--target des_host`.
@@ -283,6 +283,10 @@ other file in the folder still fails the check.
 
 ## 4. What waits on the header split
 
+- **Landed.** ps3recomp #103 (`00d2882`) made the fixed part `include/ps3emu/ppu_lift.h`. The pin has it
+  since port #126, the host's sources include it, and step 6 of the workflow is gone. (It could not stay: the
+  lifter's header now includes that file in place of the fixed text, so the step's check failed on CI,
+  10-22.) The bullets below are the plan as it was written.
 - **Today.** The host compiles against a `ppu_recomp.h`. CI makes one from the pinned lifter
   (`PPULifter().emit_header()` with no functions): the preamble and the shadow-stack block, which are
   exactly what the host uses (1.2). ps3recomp already does the same for its scaffold check
@@ -312,10 +316,9 @@ Not while an A/B or another build runs. Fresh build folders, so the usual `port/
 cmake -S ps3recomp -B ps3recomp/build_split_mt -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DPS3RECOMP_GAME_SPLIT=ON -DPS3RECOMP_STATIC_CRT=ON
 cmake --build ps3recomp/build_split_mt --target ps3recomp_runtime
 
-# The lift folder of CI: the NID table and the empty-lift header (host.yml steps 5 and 6)
+# The lift folder of CI: the NID table (host.yml step 5)
 mkdir -p "$SCRATCH/host_lift"
 python ps3recomp/tools/gen_hle_nids.py --all --out "$SCRATCH/host_lift/hle_nid_table.cpp"
-python -c "import sys; sys.path.insert(0, 'ps3recomp/tools'); import ppu_lifter; open(sys.argv[1], 'w', newline='\n').write(ppu_lifter.PPULifter().emit_header())" "$SCRATCH/host_lift/ppu_recomp.h"
 
 # The host alone, hybrid CRT
 cmake -S port -B port/build_host -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE= -DRECOMP_DIR="$SCRATCH/host_lift" -DPS3RECOMP_SPLIT_LIB=ps3recomp/build_split_mt/ps3recomp_runtime.lib -DDES_SPLIT=ON -DDES_HOST_ONLY=ON -DDES_HOST_STATIC_CRT=ON

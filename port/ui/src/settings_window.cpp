@@ -193,6 +193,24 @@ std::string trim_spaces(const std::string& s) {
     return s.substr(a, s.find_last_not_of(" \t") - a + 1);
 }
 
+// The Online name row never stores an empty or invalid name: online play needs one, and a player who cleared it would
+// stay offline without knowing why. It keeps the last good name (with none, a suggested one) and says so here.
+std::string sNameNote;
+
+void set_net_name(const std::string& typed) {
+    const std::string name = trim_spaces(typed);
+    if (settings::net_name_ok(name)) {
+        sNameNote.clear();
+        settings::set("DES_NET_NAME", name);
+        return;
+    }
+    const std::string old = settings::get("DES_NET_NAME");
+    const std::string kept = settings::net_name_ok(old) ? old : settings::suggest_net_name();
+    sNameNote = std::string(name.empty() ? "Online play needs a name" : "Names are 3 to 16 letters, digits, - or _") +
+                (kept == old ? ", so " + kept + " was kept." : ", so it is " + kept + " for now.");
+    settings::set("DES_NET_NAME", kept);
+}
+
 int net_p2p_port() {
     const int port = std::atoi(net_value("DES_NET_P2P_PORT").c_str());
     return port < settings::kNetP2pPortMin || port > settings::kNetP2pPortMax ? settings::kNetP2pPortDefault : port;
@@ -229,6 +247,8 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         choice_row(leftPane, rightPane, "Display mode", "DES_FULLSCREEN", {"0", "1"}, {"Window", "Fullscreen"},
             "Fullscreen fills the display the window is on. Alt+Enter also switches between the two."
             "<br/><br/>(DES_FULLSCREEN)");
+        bool_row(leftPane, rightPane, "Start maximized", "DES_MAXIMIZED",
+            "The window opens maximized, and comes back maximized from Fullscreen.<br/><br/>(DES_MAXIMIZED)");
         choice_row(leftPane, rightPane, "Aspect ratio", "DES_ASPECT",
             {"", "2560:1080", "3440:1440", "3840:1600", "32:9", "auto"},
             {"16:9 (original)", "21:9 (2560x1080)", "21:9 (3440x1440)", "21:9 (3840x1600)", "32:9", "Match the display"},
@@ -489,7 +509,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                     if (settings::pinned("DES_NET_NAME")) {
                         return;
                     }
-                    settings::set("DES_NET_NAME", trim_spaces(value));
+                    set_net_name(value);
                 },
             .isDisabled = [] { return settings::pinned("DES_NET_NAME"); },
             .isModified = [] { return !settings::is_default("DES_NET_NAME"); },
@@ -499,14 +519,17 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             pane.clear();
             Rml::String help;
             const std::string v = net_value("DES_NET_NAME");
-            if (v.empty()) {
+            if (!sNameNote.empty() && !settings::pinned("DES_NET_NAME")) {
+                help = "<status-badge class=\"info\">" + Rml::String(sNameNote) + "</status-badge><br/>";
+            } else if (v.empty()) {
                 help = "<status-badge class=\"info\">No name yet, so you stay offline.</status-badge><br/>";
             } else if (!settings::net_name_ok(v)) {
                 help = "<status-badge class=\"warning\">Not valid, so you stay offline.</status-badge><br/>";
             }
             pane.add_rml(help + with_note("DES_NET_NAME",
-                "Your name online: 3 to 16 letters, digits, - or _. Pick one nobody else uses.<br/><br/>"
-                "(DES_NET_NAME)"));
+                "Your name online: 3 to 16 letters, digits, - or _. Pick one nobody else uses. A new name makes you "
+                "a new player to the server: your old messages stay, but their ratings no longer reach you."
+                "<br/><br/>(DES_NET_NAME)"));
         });
 
         auto& password = leftPane.add_child<StringButton>(StringButton::Props{

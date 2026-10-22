@@ -2,12 +2,13 @@
 
 The fourth part of the player setup (docs/81 section 6, item 4): the RmlUi screens in the prebuilt host that run setup's engine (`tools/setup/des_setup`) as a child process and show its progress, its errors and its resume. docs/52 sections 1 and 4 are the spec.
 
-Code: the port branch `feat/setup-screens`, from master af06c0f. It has the engine's `run` command with the protocol, the host's process runner, the protocol reader, and the progress screen with its failure, stop and done states. The rest of the screens are section 10.
+Code: the port branch `feat/setup-screens`, from master af06c0f. It has the engine's `run` command with the protocol, the host's process runner, the protocol reader, and the progress screen with its failure, stop and done states. The screens before a run (start, "Where is your game?", the game folder, the help page and Ready to build) are on `feat/setup-start-screens`, on the setup shell of docs/89: built, and seen in screenshots with a stand-in engine (sections 2a and 11). The launch hook (section 3) is ps3recomp #104 and the port's `feat/setup-launch`: built and measured (section 11). The rest is section 10.
 
 Labels: **measured** (a run says so), **read** (seen in the code or a doc), **inferred** (reasoned, not run).
 
 ## Short answer
 
+- **Built differently (10-22): the screens run in the game's own window, with no game under it** (the window alone, section 3), so no second window or D3D12 loop was needed. What follows was the reasoning before.
 - **The screens run in a window of the host's own, before the game boots** (inferred from the boot order, read). Without `des_game.dll` the boot stops at `ps3_game_load` (boot_main.cpp:2300 on `feat/dll-split`), before the frame ticker opens the game's window, and `main` needs the ELF path on its command line (boot_main.cpp:2216). So setup cannot be an overlay on the game's window, as the menus are. docs/52 1.2 already says this: its own D3D12 device, as the crash dialog has.
 - **A weak hook at the top of `main` decides** (needs a ps3recomp change, section 3). With no ELF on the command line (the player's double click), the title's hook reads `setup/ready.txt`. Ready: it sets the ELF, `PS3_GAME_MODULE` and `PS3_VFS_ROOT`, and the boot goes on. Not ready: it shows the setup window. A developer's run passes the ELF and never sees setup.
 - **The host finds the DLL through `PS3_GAME_MODULE`, set by that hook** from `ready.txt`, unless it is already set. `game_host.c` stays as it is (section 7). This answers docs/81 section 7's open question.
@@ -15,6 +16,7 @@ Labels: **measured** (a run says so), **read** (seen in the code or a doc), **in
 - **The first Python comes from Windows' own `curl.exe` and `tar.exe`** (section 5), run by the same process runner, with the size and SHA-256 checked by the host before anything is unpacked. On Linux, the system's `python3`.
 - **Cancel ends the engine and everything it started at once** (a job object on Windows, a process group on Linux). The journal makes that safe: the next run carries on at the step that was running (section 6).
 - **Tested** (measured): the 50 setup tests pass in 7.0 s, 17 of them new. The C++ was not built or run (section 11).
+- **The screens before a run** (section 2a) are built and seen, in the setup design's order: the start screen, "Where is your game?", the game folder (or the help page), Ready to build. The likely places are found by the host in C++, the folder dialog is the shell's on Windows and the desktop portal on Linux (the Linux build has SDL2, so not SDL3's dialog), and Before Start's time is a model from one PC's measured build.
 
 ## 1. What was there
 
@@ -29,18 +31,61 @@ The flow (docs/52 1.2), with what this patch has:
 
 | # | Screen | Shows | The player can | In this patch |
 |---|---|---|---|---|
-| 1 | Start | One status line and one main button, by the state at start (section 3): Set up the game, Resume setup (with Start over), Set up again, Repair, Play; and Choose the game folder again when it moved | press the main button, Settings, Quit | no |
-| 2 | Game files | The game folder (picker, and the likely places found), the 27 decrypted files as a checklist (found, missing, wrong), "How do I make these?" | pick folders, Check again, Start | no; the engine side is there (`run --check-only` prints a `@check` line per file) |
-| 3 | Before Start | "Setup needs about N GB free on C: and takes about T." | Start, Back | no |
-| 4 | Progress | The phases, each with a mark (to do, running, done, already done, failed); the current step and its count ("Convert the game's code: 1,200 of 94,017 functions") with its bar; the whole run's bar and the time left; "Your PC stays awake until setup is done." when the engine says so; Details: the engine's last 12 lines | Details, Stop (asks first: "It carries on from here the next time.") | **yes** (setup_window.cpp) |
-| 5 | Failed | A danger window: what failed (the engine's sentence), what to do (the host's, by the error's code), the files to fix when it was the game check | Try again or Check again, Report (step and internal errors), Details, Close | **yes** |
-| 6 | Stopped | "Setup stopped. It carries on from here the next time." | Resume, Close | **yes** |
-| 7 | Done | "The game is ready." | Play | **yes**; Play hands over to the boot (section 7) |
-| 8 | Shaders | The same progress screen, one more phase (`shaders`, docs/52 5) | as 4 | the label only |
+| 1 | Start | By the state at start (section 3). The first time: "Set up Demon's Souls" and three rows (your copy of the game, the build tools downloaded once, stop and come back). Else "Welcome back" and what setup found: interrupted, a new version, setup's files missing, the game folder moved. Or "Ready to play" | Start; Resume setup or Start over; Update now; Repair; Choose the game folder; Play. Then Settings, Quit | **yes** (setup_screens.cpp, section 2a) |
+| 1a | Where is your game? | A card for each way to the game's files: "I have decrypted files" and "Show me how". The RPCS3 card comes with the RPCS3 route (docs/89 section 6) | pick a card, Back | **yes** |
+| 2 | Your game folder | The folder (the system's dialog, and the copies found in the usual places), then the check's rows: the game, and the 27 decrypted files (a count, and up to 6 files to fix) | Choose folder, pick a copy found, choose the decrypted files' folder, How do I make these?, Check again, Continue, Back | **yes**; the rows read `run --check-only`'s `@check` lines |
+| 2a | Getting your game's files | Copy your disc; decrypt the 27 files with RPCS3's Decrypt PS3 Binaries | I have decrypted files, Back | **yes** |
+| 3 | Ready to build | Rows: the game; the disk space ("Setup needs about 4 GB free on C: while it builds."); this PC, its time and how many files at a time; On battery or On a laptop | Start building, Back | **yes** |
+| 4 | Progress | The percent, the time left and one bar, then the tasks, each with a spinner, a tick or a cross and its count (docs/89 section 3); "Your PC stays awake until setup is done." when the engine says so; Details: the engine's last 12 lines | Stop (asks first: "Stop the build?"), Details | **yes** (setup_window.cpp) |
+| 5 | Failed | A page: "The build stopped" or "Some game files need fixing", a red callout with the engine's sentence (and the files to fix after the game check), the engine's last lines | Report the problem and Try again (step and internal errors), else Try again or Check again; Show the full log; Close | **yes** |
+| 6 | Stopped | "The build is stopped" | Resume, Close | **yes** |
+| 7 | Done | "Ready to play" | Play | **yes**; Play hands over to the boot (section 7) |
+| 8 | Shaders | The same progress screen, one more task (`shaders`, docs/52 5) | as 4 | the label only |
 
-On every screen the pad works as in the other windows (read, document.cpp, modal.cpp): Left and Right move between the buttons, Cross presses one, Circle asks to stop or closes. A row under the buttons shows the PS3 buttons and what they do, as the on-screen keyboard's does (osk_window.cpp:45-53, 127-136). Start and F1 do nothing here.
+Every screen is a page of the setup shell (docs/89 section 2): the whole window, the rail of steps on the left. The pad: Left and Right move along a line of buttons, Up and Down between the lines, Cross presses one, Circle goes back. On the start screen Circle asks before it quits; on the progress screen it asks to stop. L1 and R1 (Page Up and Page Down) scroll the game folder and help pages. When a question or a page above the start screen closes, the focus goes back to the button that opened it. The pad's buttons and what they do show small at the bottom. Start and F1 do nothing here.
 
-On-screen text is short and plain. Step names, file names and counts come from the engine; their words come from the host (`phase_label`, `count_text` in setup_window.cpp).
+On-screen text is short and plain. Step names, file names and counts come from the engine; their words come from the host (`kTasks`, `count_text` in setup_window.cpp).
+
+### 2a. The screens before a run: what was decided (10-22)
+
+Code (`feat/setup-start-screens`): `port/ui/src/setup_screens.cpp` (the five pages, each a `SetupPage`), `setup_pc.cpp` (this PC's facts), `folder_picker.cpp` (the system's folder dialog), and `host::window()` for the dialog's owner. Built, and seen in screenshots with the stand-in engine (section 11).
+
+**How they open and stack.**
+- `DES_UI_OPEN=setup` now opens the start screen, with `DES_SETUP_GAME` (and the rest of `request_from_env`) as the folders to begin with. `DES_UI_OPEN=setup-run` opens the progress screen at once, as `setup` did before; section 11's test uses it now.
+- Each page opens the next over itself: the start screen opens "Where is your game?", whose cards open the game folder or the help page; the game folder opens Ready to build. Start building closes the pages above the start screen without uncovering anything and opens the progress screen over the start screen. When the progress screen closes, the start screen comes back and reads `launch_state()` again.
+- The main buttons: Start and Start over go to "Where is your game?", then the game folder, then Ready to build. Choose the game folder (GameMoved) goes to the game folder, then straight to the run: nothing is rebuilt, so no Ready to build. Resume setup, Update now and Repair start the run at once, with the folders the last run saved (`request.json`). Play calls `Props::onPlay`, then the setup screens close; without an `onPlay` (over the game, `DES_UI_OPEN=setup`) Play only closes them.
+- **Start over deletes nothing.** It lets the player choose the folders again; the journal still skips each step whose inputs are the same. A clean rebuild would need an engine option (a `run --fresh`), not in this patch.
+- **Settings** opens the settings window as the start screen over the game does (`SettingsWindow(true)`, prelaunch.cpp). **Quit** and Circle ask first ("Quit setup?", "What setup has done so far is kept.", with Quit in red and Cancel focused), then call `app().quit`. Not the menu's question: its sentence is about the game's saves.
+
+**The likely places: in the host, in C++** (setup_pc.cpp `likely_places`), not in the engine.
+- Why: the screen shows them when it opens, before any Python exists (on Windows the host fetches Python before the first run, section 5) and with no process to start. It is a few directory listings. The usual folders come from the system (`SHGetKnownFolderPath`; `user-dirs.dirs` on Linux, which holds their local names).
+- The verdict stays the engine's. The host reads only `TITLE_ID` and `APP_VER` from `PARAM.SFO`, in the layout sfo.py reads, to label each dump ("BLUS30443 version 01.00 in D:\Games\...") and put BLUS30443 first. Other titles show with "(not supported)"; picking one gets the engine's sentence that names it.
+- Where: on Windows, Downloads, Documents and Desktop, then the roots of the fixed and removable drives (not A:, B:, network or optical drives). On Linux, Downloads, Documents, Desktop and the home folder, then each folder under `/mnt`, `/media/<user>` and `/run/media/<user>`.
+- How deep: each place, its folders, and the folders inside folders with a usual name for games (PS3, PS3 Games, Games, ISO, ISOs, Dumps, Backups, RPCS3), two such levels at most (so `RPCS3/games/<dump>` too). Hidden folders and Windows' `$` folders are skipped. At most 400 entries a folder and 12 dumps; 4 are shown.
+- It runs on a thread of its own: a sleeping disk wakes up for it. The screen says "Looking for the game in the usual places..." until it ends. Not measured: how long it takes on a PC with many drives.
+
+**The folder dialog** (folder_picker.cpp: one function for each platform, the thread shared).
+- Windows: `IFileOpenDialog` with `FOS_PICKFOLDERS`, `FOS_FORCEFILESYSTEM` and `FOS_PATHMUSTEXIST`, on a thread of its own in a single-threaded COM apartment, owned by the game's window.
+- Linux: **not SDL3's `SDL_ShowOpenFolderDialog`: the Linux build links SDL2** (read, port/CMakeLists.txt `find_package(SDL2)`, port/ui/CMakeLists.txt, docs/76), which has no dialog, and SDL3 would be a new dependency. It does what SDL3 does instead: the desktop portal (`org.freedesktop.portal.FileChooser.OpenFile` with `directory`) over D-Bus, with `libdbus-1.so.3` opened by `dlopen` when the dialog first opens. Nothing to build against; every desktop with a portal has libdbus, and SDL2 opens it the same way. Without a portal: zenity, then kdialog, as SDL3 falls back. The dialog has no parent window (that needs the X11 or Wayland handle).
+- The answer comes back through a mailbox the screen reads once a frame, so the UI draws on while the dialog is open.
+
+**The check's rows** read `run --check-only`'s `@check` lines, with no change to the protocol. A spinner row shows while the check runs, with the MB read. The host sorts the lines by the table name:
+- `PS3_GAME`, `PARAM.SFO`, `TITLE_ID` and `APP_VER` are the folder and the title: one row, "Demon's Souls, US disc, version 1.00" with the folder, or "This is not a copy setup can use" with the engine's sentence.
+- Other paths, not decrypted files, are the disc's own: a sentence on that row ("The disc's 4 files match.", or the first that does not).
+- Names ending in `.elf`, `.unedat` or `.prx` are the files the player decrypts: a count ("24 of 27 found", or "All 27 found, all match"), then up to 6 files to fix, each by its path under USRDIR (Missing, Still encrypted, Does not match), then "And N more".
+
+Continue is pressable only after a check that ended `ok`; it then has the focus. "They are in another folder" chooses a second folder, passed as `--decrypted`.
+
+**"How do I make these?"** (and "Show me how") opens the help page, "Getting your game's files", with two callouts: Copy your disc (PS3 Disc Dumper with a Blu-ray drive, or multiMAN or IRISMAN on a PS3 with custom firmware), and Decrypt the 27 files (RPCS3's Utilities, Decrypt PS3 Binaries; EBOOT.BIN, then the `.sdat` files in chr, chr/c0000, menu, script and script/talk; RPCS3 writes each next to its original). No links: there is no player guide page yet. It names RPCS3, as the engine's own messages already do (gamefiles.py). docs/51 section 8 question 2 (whether a guide may name it) is still open.
+
+**The firmware** (`libsre.prx`, while libsre stays LLE) has no picker on the screen; `DES_SETUP_FIRMWARE` still passes it in a test. docs/51's HLE removes it. Until then a run from the screens lifts no libsre.
+
+**Ready to build's numbers** (setup_pc.cpp).
+- Disk: 4 GB (`kNeedBytes`), docs/52 10.2: about 2.5 GB at the peak, and it asks for 4 GB, after docs/45. Inferred from measured parts; no whole run has been measured. The free space is `std::filesystem::space` on the nearest folder of the data folder that exists. The disk is named by its drive letter, or by the folder on Linux, as the engine's own sentence names it. Below 4 GB the row turns red, with Check again, but Start building stays: the engine checks each phase less what its folders already hold (section 6).
+- Time: no player's PC has been measured, so it is a range from named constants. 75 s for the check, the copy and the lift (docs/53 section 1), plus the compile: about 2,250 s of CPU (the 14 chunks without `/Zi`, 2,128 s, docs/53 section 2, plus about 2 minutes for SPU and libsre, docs/45 3.1) over the jobs, but never less than the longest job (chunk 008, 261 s). Jobs: the logical CPUs, at most (RAM - 4 GB) / 2.5 GB (docs/53 7.3). The low end is that PC's speed per core (measured there); the high end takes cores 2 times slower on a desktop and 4 times on a laptop, one with a battery (inferred, from docs/45 3.1's guesses: a 6-core desktop about 20 minutes and a 4-core laptop 35 to 50, against 10.7 measured). Rounded to 5 minutes, or 10 above an hour. The compiler's download is not in it.
+- What the model gives (inferred, not run): this PC (16 threads, 31 GB, 10 jobs) "about 5 to 10 minutes"; a 4-core laptop with 16 GB (4 jobs) "10 to 45 minutes"; one with 8 GB (1 job) "40 minutes to 2 hours 40 minutes". docs/45 guessed 1 to 2 hours for the last.
+- The compile's own job count is compile.py's (on `feat/setup-compile`); when it merges, its rule and this one should be the same.
+- "On battery: Plug it in first" shows while `power().onBattery` ("On a laptop" while plugged in): on Windows `GetSystemPowerStatus` (a battery, and `ACLineStatus` 0); on Linux `/sys/class/power_supply` (a battery of scope System, a `Mains` or `USB` supply, and none of them online). It is asked again every 2 s.
 
 ## 3. Setup or the game: the state at start
 
@@ -71,6 +116,29 @@ module_sha256=<sum>
 - The full SHA-256 of the module is in the file for Repair and for reports; the start check uses the size only (inferred: a module that antivirus removed or a disk error cut short changes its size; a same-size change is not a case we expect).
 - `python -m des_setup status --json [--app VERSION]` prints the same state from the engine's side (`ready`, `damaged`, `outdated`, `game-moved`, `running`, `interrupted`, `failed`, `partial`, `missing`), with the journal's steps and the saved folders. It is for tools, tests and reports; the host does not need it at start.
 - `run` saves the folders the player chose in `setup/request.json`. A `run` with no game folder takes them, so Resume, Set up again and Repair ask for nothing.
+
+**The launch hook, as built (10-22; ps3recomp #104, the port's `feat/setup-launch`).**
+
+- **ps3recomp** (`boot_main.cpp`): two weak hooks.
+  - `ps3_title_launch(int* argc, char*** argv)` runs first in `main`. It returns `PS3_LAUNCH_BOOT` (-1) to boot, `PS3_LAUNCH_WINDOW` (-2) for the window alone, or 0 or more to exit with.
+  - The window alone runs `ps3_title_window_only_init` in place of the options init, then only the present thread (`vblank_ticker`): no game module, ELF, HLE, guest thread, SPU or audio.
+  - That thread presents with no guest frame, as it does before the first flip, so the overlay draws setup's screens until the window closes. Each pass presents, paced by vsync.
+- **The port** (`des_ui_launch` in des_ui.cpp, called by `ps3_title_launch` in des_options.cpp), in this order:
+  - `DES_UI=0`: boot, as before.
+  - `DES_UI_OPEN=setup` or `setup-run`: the window alone.
+  - An ELF on the command line (a developer's run): boot.
+  - `launch_state()` is Ready: it sets `PS3_GAME_MODULE` (unless set), `PS3_VFS_ROOT` and the ELF argument (section 7), then boots. Anything else: the window alone.
+- **Setup alone** (`des_ui_setup_only_init`):
+  - settings.ini, the overlay and the start screen (or setup-run's progress page);
+  - no menu bar, start screen, trophies or frame watch, and the close button asks nothing;
+  - it sets `RSX_VSYNC=1` (vsync paces each pass), `PS3_PSO_LIBRARY=0` (the last build's pipeline library stays shut) and a `PS3_TITLE` (no PARAM.SFO is read).
+- **Play** on setup alone starts the game in a new process (section 7) and closes this one. Over a running game (a runtime without the hook), Play only closes the screens, as before.
+- **Known limits:**
+  - The menu sounds are silent on setup alone: they come from the game's sound engine (read).
+  - On Linux the gamepad does nothing on setup alone, since cellPad opens the pads only at the game's `cellPadInit` (read; not built there).
+  - The ELF path from `ready.txt` goes to `main` as a narrow (ANSI) string, so a dump folder with characters outside the system's code page may fail (inferred, not tried).
+
+The plan as written before it was built:
 
 **The launch hook (needs ps3recomp).** `main` (boot_main.cpp:2200 on `feat/dll-split`) gets a weak hook first thing, as it has `ps3_title_prework` last (boot_main.cpp:76-81, 2386):
 
@@ -142,10 +210,12 @@ An example, a run resumed after the lift's PPU step failed once:
 **The command.** `<python> -X utf8 -u <install>/tools/setup/run_setup.py run ... --data <data> --app <version>`.
 - `-X utf8`: the tools' prints and outputs are UTF-8 whatever the code page (docs/52 13.3, measured there). `-u`: each line arrives as it is printed.
 - `run_setup.py` puts its own folder on `sys.path` first, because the embeddable Python's `._pth` file leaves the script's folder off it (docs/52 13.3, measured there).
-- The script is found beside the exe in a release (the install mirrors the source tree, docs/81 section 7), or up to three folders up in a developer's build.
+- The script is `DES_SETUP_SCRIPT` when that is set (a developer's source tree, for a real build from a build folder elsewhere). Else it is found beside the exe in a release (the install mirrors the source tree, docs/81 section 7), or up to three folders up in a developer's build.
 - The engine lowers its own priority to below normal (Windows; `nice` on Linux), which everything it starts inherits, and asks Windows to keep the PC awake until it ends (`SetThreadExecutionState`), then prints `@awake` (pipeline.py `quiet_and_awake`). In the engine, not the host, so a run from a terminal does the same (docs/52 4.1).
 
 **Which Python.** `DES_SETUP_PYTHON` (a developer's); else on Windows the embeddable Python in `<data>/tools/python-embed-3.13.9/` once its stamp names the pinned SHA-256 (the stamp `fetch.ensure` writes and `fetch.unpacked` checks); on Linux `python3` from `PATH`. The pin is in setup_engine.hpp as well as toolchain.json; a test checks that they agree.
+
+**Which compiler.** The pinned LLVM download (docs/86), which the fetch phase fetches. Or a developer's: `run --cc CLANG-CL --ld LLD-LINK`, or `DES_SETUP_CC` and `DES_SETUP_LD` in the environment, which the host's runs inherit. With one, the fetch phase skips the download (compile.py `local_toolchain`). So a developer can run a real build from the setup screens before the download is pinned: `DES_SETUP_PYTHON`, `DES_SETUP_SCRIPT` (a tree with `ps3recomp/` at the pinned commit, since the lift runs its tools), `DES_SETUP_CC`, `DES_SETUP_LD` and a scratch `DES_SETUP_DATA`.
 
 **The first Python, before there is a Python.** The host has to fetch it itself. Options:
 
@@ -189,6 +259,11 @@ The steps (inferred design; section 10 item 3):
   - and the ELF argument, the staged `EBOOT.elf`.
   Then `main` goes on, and `ps3_game_load` loads the module as it does today (game_host.c:85-96).
 - **Why not the other two ways.** Teaching `game_host.c` to look in this title's data folder puts the port's folder names into ps3recomp. A separate launcher exe that sets `PS3_GAME_MODULE` is a second program to ship and sign, for what the host's own hook does in a few lines (inferred).
+- **Play, as built** (`crash_report::start_again`, 10-22):
+  - It starts this exe again with the same command line and the environment the process started with (saved before `main`, so the setup-alone variables are not in it), minus `DES_UI_OPEN`, plus `DES_SKIP_UI=1` (no start screen: Play was the choice) and `DES_LAUNCH_AFTER=<this pid>`. Then this one quits.
+  - The new process waits up to 10 s for that pid to end before it opens its log, so it gets des.log and the only window.
+  - Not `ChildProcess`: its job object would end the game when setup's process ends.
+  - Measured in section 11.
 - **Play** after setup starts the host again, as a new process with the same command line, and ends this one. The new one finds Ready and boots. That avoids starting RmlUi and a second D3D12 device again inside one process (inferred: a fresh process is the case every start already tests). It costs a second or so (inferred).
 - **The libsre glue's absolute image path** (docs/81 section 5) stays as it is; it goes with milestone 2.
 
@@ -197,6 +272,7 @@ The steps (inferred design; section 10 item 3):
 - Portable as it stands: the protocol reader, the screen, the engine command, the data folder (`$XDG_DATA_HOME/DemonsSoulsRecomp`, else `~/.local/share/...`), and the process runner (`posix_spawn`, a process group).
 - Facts that differ, one function each: the local data folder and which Python (setup_engine.cpp), and the process calls (child_process.cpp). The Python is the system's `python3`, since python.org's embeddable package is for Windows only (read, docs/52 6.2); no first download there.
 - Not done there: keeping the PC awake (it needs the desktop's session bus; `systemd-inhibit` as a wrapper is the likely way, inferred) and the setup window itself (SDL with vkd3d, as the game's window, docs/76). The compile has no Linux commands yet (compile.py's description is clang-cl's).
+- Written for Linux with the screens before a run (section 2a), not built there: the folder dialog (the desktop portal through libdbus opened at run time, then zenity or kdialog), the usual folders (`user-dirs.dirs`, the mounted drives), the memory (`sysconf`) and the battery (`/sys/class/power_supply`). The link line gains `CMAKE_DL_LIBS` for `dlopen`.
 
 ## 9. The compile step's hooks (done with `feat/setup-compile`)
 
@@ -219,11 +295,11 @@ only). Not run yet: `run` with the real compiler download, which waits for the a
 
 ## 10. Next steps, in order
 
-1. **The launch hook** in the ps3recomp fork (section 3), and the port's `ps3_title_launch`: Ready fills in the ELF and the environment (section 7); otherwise the setup window; Play restarts the host.
-2. **The window of its own.** Move the crash dialog's window and D3D12 loop (crash_dialog.cpp:111-205, 210-345) into one shared file, used by both; then its Linux version on SDL and vkd3d. `SetupWindow` runs in it unchanged.
+1. **The launch hook** in the ps3recomp fork (section 3), and the port's `ps3_title_launch`: Ready fills in the ELF and the environment (section 7); otherwise the setup window; Play restarts the host. **Built and measured** (10-22, section 11).
+2. ~~**The window of its own.**~~ Not needed: the window alone (section 3) shows the screens in the game's own window.
 3. **The first Python download** (section 5): the host's SHA-256, then curl and tar through `ChildProcess`.
-4. **The start screen** (section 3's states) and **the game files screen**: the folder picker (a function for each platform: the shell's folder dialog on Windows, the desktop portal on Linux), the scan of likely places, the checklist from `run --check-only`, the guide link.
-5. **Before Start**: the free space and time estimate, and "Plug in first" on battery (docs/52 1.2 point 3).
+4. **The start screen** (section 3's states), **"Where is your game?"**, **the game folder** and **the help page**: the folder picker (a function for each platform: the shell's folder dialog on Windows, the desktop portal on Linux), the scan of likely places, the check's rows from `run --check-only`. **Built and seen** with the stand-in engine (section 11). Next: the folder dialog and a real dump; the RPCS3 card (docs/89 section 6).
+5. **Ready to build**: the free space and time estimate, and "Plug it in first" on battery (docs/52 1.2 point 3). **Built and seen.** The time is a model from one PC's numbers; a whole setup on a second PC would check it.
 6. **The shaders phase** (docs/52 section 5): one more phase in `run`'s plan; the screen already has its label.
 7. **Keeping Linux awake.**
 8. **A test of the C++ protocol reader** that runs in CI (`parse_line`, `Status`, `Eta` are pure). port/ui has no C++ test target yet.
@@ -238,13 +314,23 @@ only). Not run yet: `run` with the real compiler download, which waits for the a
   - `ready.txt` from a fake compile phase, then `status --json`'s ready, outdated and damaged; a later failed run leaves no `ready.txt`; interrupted and missing;
   - the emitter's lines; the two checks that the C++ agrees with the Python (keywords, error codes, the protocol version, the Python pin).
 - **The command** (measured): `run_setup.py status --json` on an empty folder says `missing`; `run` with no folders says `@error game check Choose the game folder first.`; `run --check-only` on a folder with no dump prints the game check's sentence as `@check` and `@error` lines and exits 1. The engine printed `@awake` on this PC.
-- **Built and seen** (measured 10-22): `des_ui` and `des_boot` build with clang-cl, no warning in the new files. `des_boot` started with `DES_UI_OPEN=setup`, a scratch `DES_SETUP_DATA`, `DES_SETUP_PYTHON=python` and no game folder: the host started the engine under Python, which ended with `@done fix` and the `game` error. The screen showed "Some game files need fixing", "Choose the game folder first.", "Then check again." and the buttons Check again (focused), Details and Close, steady from frame 240 to 900.
+- **Built and seen** (measured 10-22): `des_ui` and `des_boot` build with clang-cl, no warning in the new files. `des_boot` started with `DES_UI_OPEN=setup` (now `DES_UI_OPEN=setup-run`: `setup` opens the start screen, section 2a), a scratch `DES_SETUP_DATA`, `DES_SETUP_PYTHON=python` and no game folder: the host started the engine under Python, which ended with `@done fix` and the `game` error. The screen showed "Some game files need fixing", "Choose the game folder first.", "Then check again." and the buttons Check again (focused), Details and Close, steady from frame 240 to 900.
 - **Not run yet:** a run with a real dump (check, stage, lift; the fetch then stops while the compiler entry has no sums), Cancel during a run, the gamepad and mouse on the buttons, and the Linux build.
+- **The screens before a run, built and seen** (measured 10-22). `des_ui` and `des_boot` build with clang-cl on Windows, with no warning. Two scripted runs with `DES_UI_OPEN=setup`, the stand-in engine (docs/89 section 5) and a made-up `DES_SETUP_GAME`:
+  - A first start: the welcome, "Where is your game?", the help page, the game folder with the check's rows (3 decrypted files missing), and the quit question.
+  - An interrupted start (a `journal.json` left in the data folder): "Welcome back" with Resume setup and Start over; Start over, "Where is your game?", the game folder with every file found (Continue gets the focus and scrolls into view), Ready to build, the progress page, "Ready to play", and the start screen again, now Ready.
+  The user's save was the same after each run.
+- **Not exercised yet:** the folder dialog (a test cannot press it), the places scan on a PC with copies in the usual places, the battery rows, the pad and mouse by hand, and the Linux build: libdbus's `dbus_*` calls are declared by hand in folder_picker.cpp, from dbus-message.h and dbus-bus.h as remembered, and no compiler has checked them.
 - One log line to look at: `[ui] a window's close transition did not run; hidden without it` came after the run ended (inferred: a window closed while the setup window was open; harmless in the shots).
+- **The launch hook** (measured 10-22). The build was the port's launch commit with ps3recomp #104. The test used an empty working folder, a stand-in `ready.txt` (Ready) and a settings.ini with Enhanced, `RSX_SCALE = 150` and `DES_FPS = 60`:
+  - `DES_UI_OPEN=setup`, no key pressed: the start screen, "Ready to play", in 26 log lines, with no game boot (no module load, no guest thread).
+  - The same with Enter on Play: the log says "play: the game starts in a new process", and the setup process exits 0. The new process boots the game and applies the stored settings ("render targets at 150%", "FlipMode 60FPS(NO SKIP)"), then stops on `EXIT_AFTER_MS`.
+  - A player's start: no arguments, and no `DES_UI_OPEN`, `PS3_GAME_MODULE` or `PS3_VFS_ROOT`, with a `ready.txt` naming the real module and game folder. The log says "launch: the game setup built", the module loads from the path in `ready.txt`, and the VFS root is its game folder. It boots with the stored settings.
+  - Not run: Linux.
 
 ## 12. Open questions
 
-1. **The launch hook in ps3recomp** (section 3), a weak `ps3_title_launch(int* argc, char*** argv)` at the top of `main`. Recommendation: yes. It is the one way that works on both platforms and lets the host start with no arguments.
+1. **The launch hook in ps3recomp** (section 3), a weak `ps3_title_launch(int* argc, char*** argv)` at the top of `main`. Built (ps3recomp #104). Recommendation: yes. It is the one way that works on both platforms and lets the host start with no arguments.
 2. **The first Python through Windows' `curl.exe` and `tar.exe`** (section 5), with the host checking the SHA-256. Recommendation: yes. The other way is a few hundred lines of HTTP and zip code in the host.
-3. **Play restarts the host** after setup (section 7). Recommendation: yes, for a clean boot. The other way keeps one process and starts RmlUi and D3D12 a second time in it.
+3. **Play restarts the host** after setup (section 7). Built that way. Recommendation: yes, for a clean boot. The other way keeps one process and starts RmlUi and D3D12 a second time in it.
 4. **Reports from setup include the failed step's log tail** (section 6), with names and addresses but no game code once the compile runs with `-fno-caret-diagnostics`. Recommendation: yes; the player sees the zip before attaching it.

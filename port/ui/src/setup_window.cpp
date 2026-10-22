@@ -7,6 +7,8 @@
 #include "portable.hpp"
 #include "report.hpp"
 #include "settings.hpp"
+#include "settings_window.hpp"
+#include "setup_options_window.hpp"
 #include "ui.hpp"
 #include "version.hpp"
 
@@ -144,6 +146,7 @@ void SetupWindow::finish() {
     const std::string& r = mStatus.result;
     if (r == "ok") {
         mPhase = Phase::Done;
+        mTook = took(now_ms() - mStartMs);
         draw_done();
     } else if (r == "stopped") {
         mPhase = Phase::Stopped;
@@ -175,6 +178,14 @@ void SetupWindow::tick() {
     if (mPhase == Phase::Running || mPhase == Phase::Stopping) refresh(now);
 }
 
+// Back from the options or Settings: what they changed shows.
+void SetupWindow::uncover() {
+    SetupPage::uncover();
+    if (mPhase != Phase::Done) return;
+    draw_done();
+    if (visible() && !button_focused()) focus();
+}
+
 std::vector<std::vector<Button*>> SetupWindow::nav_lines() const {
     return {line(mButtons)};
 }
@@ -190,22 +201,23 @@ void SetupWindow::put(Rml::Element* element, std::string& shown, const std::stri
     set_text_content(element, text);
 }
 
-// The rail: the game is in hand (this screen runs with it), the build is where this screen is, Play comes last.
+// The rail: the game is in hand (this screen runs with it), the build is where this screen is, then the options (done
+// already after a rebuild) and Play. A finished build with the options still to pick stays the step it is on.
 void SetupWindow::draw_rail(const std::string& buildSub) {
     if (buildSub == mShownRail && !mShownRail.empty()) return;
     mShownRail = buildSub;
     using S = RailStep::State;
-    const bool done = mPhase == Phase::Done;
+    const bool ready = mPhase == Phase::Done && options_chosen();
     set_rail({
         {"Your game", "", S::Done},
-        {"Build", buildSub, done ? S::Done : S::Now},
-        {"Play", "", done ? S::Now : S::Todo},
+        {"Build", buildSub, ready ? S::Done : S::Now},
+        options_step(),
+        {"Play", "", ready ? S::Now : S::Todo},
     });
 }
 
 void SetupWindow::draw_running() {
-    set_heading("Building the game for this PC",
-                "Setup translates the game's PS3 code into a program for this PC. The first time takes a while.");
+    set_heading("Building the game for this PC", "Setup turns the game's PS3 code into a program for this PC.");
     mButtons.clear();  // (their listeners go before their elements)
     clear_children(mBody);
     mShownPercent.clear();
@@ -225,7 +237,7 @@ void SetupWindow::draw_running() {
     mTaskPlan.clear();
     mDetails = append(mBody, "setup-log");
     set_display(mDetails, Rml::Style::Display::None);
-    mActions = actions_row(mBody);
+    mActions = footer_row();
     set_actions({{"Stop", [this] { ask_stop(); }, Look::Danger},
                  {"Details", [this] { toggle_details(); }, Look::Quiet}});
     set_hints({{"cross", nullptr, "Select"}, {"circle", nullptr, "Stop"}});
@@ -363,7 +375,7 @@ void SetupWindow::draw_failed() {
     if (const std::string tail = log_tail(12); !tail.empty())
         append(body, "setup-log")->SetInnerRML(escape_lines(tail));
 
-    mActions = actions_row(mBody);
+    mActions = footer_row();
     const char* again = kind.fix == Fix::CheckAgain ? "Check again" : "Try again";
     std::vector<Action> actions;
     if (kind.fix == Fix::Report) {
@@ -385,29 +397,41 @@ void SetupWindow::draw_stopped() {
     mButtons.clear();  // (their listeners go before their elements)
     clear_children(mBody);
     mDetails = nullptr;
-    mActions = actions_row(mBody);
-    mActions->SetClass("first", true);  // (straight under the heading)
+    mActions = footer_row(true);  // (straight under the heading)
     set_actions({{"Resume", [this] { start(); }, Look::Primary}, {"Close", [this] { close(false); }, Look::Quiet}});
     set_hints({{"cross", nullptr, "Select"}, {"circle", nullptr, "Close"}});
     mShownRail.clear();
     draw_rail("Stopped");
 }
 
+// The build is done: the options next (docs/91), or Ready to play once they are picked (after a rebuild, at once).
 void SetupWindow::draw_done() {
-    const bool ready = setup::launch_state().state == setup::State::Ready;
+    const bool built = setup::launch_state().state == setup::State::Ready;
+    const bool ready = built && options_chosen();
     mButtons.clear();  // (their listeners go before their elements)
     clear_children(mBody);
     mDetails = nullptr;
+    const std::string builtLine = "des_game.dll for version " + std::string(kVersion) + ". " + mTook;
     if (ready) {
-        set_heading("Ready to play", "The game is built for this PC.");
-        found(panel(mBody), "setup-ok", "Built", "des_game.dll for version " + std::string(kVersion) + ". " +
-                                                     took(now_ms() - mStartMs));
+        set_heading("Ready to play", "The game is built for this PC and your options are set.");
+        auto* box = panel(mBody);
+        found(box, "setup-ok", "Built", builtLine);
+        found(box, "setup-ok", "Options", setup_options_summary());
+    } else if (built) {
+        set_heading("The game is built", "Done. Next, pick how you want to play.");
+        found(panel(mBody), "setup-ok", "Built", builtLine);
     } else {
         set_heading("Setup finished", "This version has no build step yet, so the game is not built.");
     }
-    mActions = actions_row(mBody);
-    if (ready && mProps.onPlay) set_actions({{"Play", [this] { close(true); }, Look::Primary}});
-    else set_actions({{"Close", [this] { close(false); }, Look::Primary}});
+    mActions = footer_row();
+    if (built && !ready) {
+        set_actions({{"Choose your options", [this] { push(std::make_unique<SetupPresetWindow>()); }, Look::Primary}});
+    } else if (ready && mProps.onPlay) {
+        set_actions({{"Play", [this] { close(true); }, Look::Primary},
+                     {"Settings", [this] { push(std::make_unique<SettingsWindow>(true)); }, Look::Plain}});
+    } else {
+        set_actions({{"Close", [this] { close(false); }, Look::Primary}});
+    }
     if (ready) {
         text(mBody, "setup-note", "In the game, F1 or " +
                                       std::string(input::chord_label(settings::get_int("pad_menu_chord"))) +

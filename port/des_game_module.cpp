@@ -9,8 +9,10 @@
 #ifndef PS3_GAME_MODULE
 #define PS3_GAME_MODULE 1
 #endif
-#include <cstdint>
-#include <cstdio>
+/* The C headers, not <cstdio>: a freestanding DLL (DES_SPLIT_FREESTANDING,
+ * docs/84) has no C++ library, only ps3recomp's include/ps3emu/game_libc/. */
+#include <stdint.h>
+#include <stdio.h>
 #include "ps3emu/game_module.h"
 #include "des_game_title_funcs.h"   /* DES_GAME_TITLE_FUNCS, from the build directory */
 
@@ -35,7 +37,7 @@ extern "C" __declspec(dllexport) int des_game_init(const ps3_host_api* host, ps3
     int missing = 0;
 #define DES_GM_FILL_(n)                                                          \
     if (!(ps3_gt_##n = host->title_fn(#n))) {                                     \
-        std::fprintf(stderr, "[des_game] the exe has no %s%c", #n, 10);           \
+        fprintf(stderr, "[des_game] the exe has no %s%c", #n, 10);                \
         missing++;                                                               \
     }
     DES_GAME_TITLE_FUNCS(DES_GM_FILL_)

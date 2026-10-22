@@ -13,7 +13,7 @@
  * build failing to link. (Lifter robustness fix candidate: route out-of-range
  * branch targets to ppu_unlifted_stub at generation time.)
  */
-#include "ppu_recomp.h"
+#include "ps3emu/ppu_lift.h"   /* ppu_context: the fixed part of the lift's header */
 #include <cstdint>
 
 extern "C" void ppu_unlifted_stub(uint64_t addr, ppu_context* ctx);
@@ -25,7 +25,7 @@ void func_FFFFFFE8(ppu_context* ctx) { ppu_unlifted_stub(0xFFFFFFE8ull, ctx); }
  *
  * The PPU lift is produced with `--shadow-stack`, so every lifted function emits
  * a DS_FRAME guard that pushes its guest address onto these thread-local arrays
- * (declared `extern DS_TLS` in work/recomp/ppu_recomp.h). That gives a reliable
+ * (declared `extern DS_TLS` in ps3emu/ppu_lift.h). That gives a reliable
  * guest backtrace where the host back-chain is useless -- which is how the
  * NULL-vtable use-before-construction bug was localized.
  *

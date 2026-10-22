@@ -25,4 +25,11 @@ void report_hang(long long ms_since_frame);
 // A hang dialog report_hang started is still open.
 bool hang_dialog_open();
 
+// Play on setup alone (des_ui.cpp): starts this program again as a new process, with the command line and the
+// environment it started with, less DES_UI_OPEN (setup's opener), plus DES_SKIP_UI=1 (setup's Play was the start screen)
+// and DES_LAUNCH_AFTER=<this process's id>: the new one waits for this one to end before it starts its log, so one
+// window shows. The environment it started with, not this process's: settings.ini put its values in this one's, and
+// the new one would take them as set from outside, over what setup stored since. False if it could not start.
+bool start_again();
+
 }  // namespace ui::crash_report

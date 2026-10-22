@@ -9,7 +9,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <iterator>
 #include <map>
+#include <random>
 #include <set>
 #include <string>
 
@@ -25,6 +27,7 @@ constexpr Def kDefs[] = {
     {"DES_SPEED", "1", Apply::Session},
 #endif
     {"DES_FULLSCREEN", "0", Apply::Live},      // 1 = borderless fullscreen; des_ui.cpp's sync_fullscreen, each frame
+    {"DES_MAXIMIZED", "1", Apply::Restart},    // 1 = the window opens maximized (apply_window: RSX_MAXIMIZED)
     {"DES_FPS", "", Apply::Live},              // "" = the game's own 30 fps mode; read at each flip
     {"fps_custom", "90", Apply::UiOnly},       // Frame rate's Custom number, kept while a fixed rate is chosen
     {"DES_CUTFPS", "0", Apply::Live},          // des_options.cpp's cutfps_on, read at each flip
@@ -58,6 +61,7 @@ constexpr Def kDefs[] = {
     {"DES_NET_SYNC", "", Apply::Live},         // des_net_sync: position packets a second; "" = every 6th frame
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
     {"show_start_screen", "1", Apply::UiOnly},
+    {"setup_preset", "", Apply::UiOnly},       // the setup screens' preset (setup_options.hpp); "" = not picked yet
     {"menu_hint", "1", Apply::UiOnly},
     {"trophy_popups", "1", Apply::UiOnly},     // trophy_toasts.cpp; off hides the toast, the unlock is still kept
     {"trophies_show_hidden", "0", Apply::UiOnly},  // trophies_window.cpp: hidden trophies listed with their names
@@ -376,6 +380,17 @@ void apply_match_group() {
     std::fprintf(stderr, "[ui] network: matchmaking password %s\n", header.empty() ? "cleared" : "changed");
 }
 
+// Start maximized -> RSX_MAXIMIZED, which the runtime reads once as it makes the window (at boot, after this). Set at
+// the default too: the runtime's own default is off. A run nobody plays (unattended_run: a test harness run, PAD_FILE
+// or EXIT_AFTER_MS) keeps the window at its usual size unless DES_MAXIMIZED is given; an RSX_MAXIMIZED from the
+// environment wins.
+void apply_window() {
+    if (env_set("RSX_MAXIMIZED")) return;
+    if (unattended_run() && !pinned("DES_MAXIMIZED")) return;  // (nor does the runtime with PS3_NO_USER_INPUT=1)
+    const std::string v = effective("DES_MAXIMIZED");
+    ps3_setenv("RSX_MAXIMIZED", !v.empty() && v != "0" ? "1" : "0");  // (as bool_row reads it)
+}
+
 // logs\settings.txt: describe(), kept current for the crash and hang dialog. It is a process of its own that reads
 // no settings, and settings.ini alone has neither the defaults nor what the environment set (and a player who never
 // changed a setting has none).
@@ -411,6 +426,7 @@ void load_and_apply_env() {
     std::fprintf(stderr, "[ui] keyboard and mouse: the Souls layout%s%s\n", keys.empty() ? "" : ", changed by ",
                  keys.c_str());
     apply_network();
+    apply_window();
     write_in_use();
 }
 
@@ -436,6 +452,13 @@ void set(std::string_view key, const std::string& value) {
     if ((d->apply == Apply::Live || d->apply == Apply::Session) && !pinned(key))
         apply_env(key, value.empty() ? d->def : value);
     if (key == "DES_NET_PASSWORD" && !pinned(key)) apply_match_group();
+    save();
+    write_in_use();
+}
+
+void store(std::string_view key, const std::string& value) {
+    if (!find(key)) return;
+    sValues[std::string(key)] = value;
     save();
     write_in_use();
 }
@@ -483,6 +506,20 @@ bool net_name_ok(std::string_view n) {
         if (!std::isalnum((unsigned char)c) && c != '-' && c != '_') return false;
     }
     return true;
+}
+
+std::string suggest_net_name() {
+    // Places and things of Boletaria, 11 letters at most, so that the dash and four digits fit in 16.
+    static const char* const kWords[] = {
+        "Boletaria", "Stonefang", "Latria", "Nexus", "Archstone", "Shrine", "Valley", "Bladestone",
+        "Crescent", "Pureblade", "Firestorm", "Vanguard", "Phalanx", "Demonbrandt", "Colorless", "Graystone",
+    };
+    std::random_device rd;
+    std::mt19937 rng(rd());
+    const char* word = kWords[std::uniform_int_distribution<size_t>(0, std::size(kWords) - 1)(rng)];
+    char name[24];
+    std::snprintf(name, sizeof name, "%s-%04u", word, unsigned(std::uniform_int_distribution<int>(0, 9999)(rng)));
+    return name;
 }
 
 std::string net_server_address() {

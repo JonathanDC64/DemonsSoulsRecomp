@@ -48,13 +48,15 @@ The user's decisions (10-22):
 
 - **Backdrop.** Three layers, as the design's: a linear gradient to the right, a vignette, and a faint glow at 72% / 40%. It is opaque, so the game below does not show.
 - **The rail.** Each screen calls `set_rail` with its steps, and each step is Todo, Now, Busy or Done, with an optional line under it. Now has the soul-white bar and the gradient. Done has the tick. The foot shows the version and ps3recomp's.
-- **The page.** `set_heading(title, lede)`, then the screen's parts in `content()`. The parts come from helpers:
+- **The page.** `set_heading(title, lede)`, then the screen's parts in `content()`, and its buttons in `footer_row()` (with `footer_end()`, a second row at its right end: the start page's Settings and Quit). Only the parts scroll. The buttons stay in view: on a short page they follow the parts, on a long one they sit above the pad's buttons, with a line between them while the parts scroll behind. The parts come from helpers:
   - `panel` (stacked or not);
   - `found` (a mark, a key and a value);
   - `callout` (err, warn or info);
   - `text` (any tag);
   - `actions_row`.
   In setup.rcss there are also `setup-log`, `setup-field`, `setup-tag` and `progress.setup-meter`.
+- **Size.** While a setup page is open (anywhere in the stack, so Settings or the on-screen keyboard over it keep its size), the UI scales with the window's height: 720 px high is 1x, in quarter steps rounded down (1080p 1.5x, 1440p 2x, 2160p 3x), never below the display's DPI scale, times the UI scale setting (host.cpp `render`). So a page has the same layout at 720p, 1080p and 1440p, and each page fits in 720 dp with nothing to scroll (measured, 10-22: every page at 1280x720 and at 2560x1440). Three pages were trimmed to fit: the game folder page (when all the decrypted files are there, their row joins the game's panel; three missing files are listed, not six), the build page (a one-line lede, closer task rows) and the preset page (docs/91).
+- **A ratio change and RmlUi.** After the dp ratio changes, RmlUi works a length out again only where it is written in dp. A length from a variable (`var(--space-md)`, most of the theme's sizes) kept its old size: at 1440p the start page, made before the change, was drawn at half size (measured). So a change gives each document a new copy of its style sheet (host.cpp `restyle_documents`), which works every property out again. It happens only on a change: a DPI change, or the window's height crossing a step.
 - **Buttons.** `set_buttons(buttons, parent, actions)` takes an action list, each with a label, a function and a look (Plain, Primary, Danger or Quiet). A button with no function is shown but cannot be pressed. A pressed button's action runs in `update()`, because it may rebuild the buttons. If the old button had the focus, the new button in its place gets it.
 - **The pad.**
   - Lines of buttons come from `nav_lines()`. Left and Right move along a line, and Up and Down go to the next line.
@@ -113,6 +115,7 @@ The user's decisions (10-22):
 - **Before saving, the Report question does not show the file's name.** The name has the time it is saved in it.
 - **Details stays on the running page** as a quiet button. It is not in the demo; it is what the screen already had.
 - **The pad's buttons stay**, small, at the bottom (the user's choice).
+- **The page's buttons never scroll.** In the demo they scroll with the page. The user asked that Continue, Back and the like never need scrolling, and that pages need as little scrolling as possible at the usual sizes.
 
 ## 5. Testing the screens without a build
 

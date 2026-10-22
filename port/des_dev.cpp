@@ -57,8 +57,8 @@
  * code runs for every character, so each site first checks that it is the
  * player's. The sites and their registers are in docs/55 section 2.4; each
  * was checked against the instructions around it. */
-#include "ppu_recomp.h"
-#include "des_game_calls.h"     /* DES_SPLIT: the lifted functions below are in the game DLL */
+#include "ps3emu/ppu_lift.h"   /* ppu_context: the fixed part of the lift's header */
+#include "des_game_calls.h"     /* the lifted functions below (the game DLL's with DES_SPLIT) */
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include "des_dev_marker.h"
 #include <atomic>

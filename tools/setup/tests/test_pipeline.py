@@ -35,9 +35,10 @@ class Setup:
     def run(self, request="mine", **kw):
         out = io.StringIO()
         kw.setdefault("phases", PHASES)
+        kw.setdefault("manifest", {"tools": []})
         rc = pipeline.run(self.data, self.request() if request == "mine" else request, app="1.0",
                           emit=protocol.Emitter(out), src=self.tree.src, table=self.game.table,
-                          manifest={"tools": []}, quiet=False, **kw)
+                          quiet=False, **kw)
         return rc, out.getvalue().splitlines()
 
     def close(self):
@@ -173,6 +174,42 @@ class RunTest(unittest.TestCase):
         jr.data["steps"]["ppu"] = {"state": "running", "inputs": "x"}
         jr._save()
         self.assertEqual(pipeline.status(self.s.data)["state"], "interrupted")
+
+
+class LocalCompilerTest(unittest.TestCase):
+    """A developer's compiler (--cc and --ld, or DES_SETUP_CC and DES_SETUP_LD) replaces the LLVM download."""
+    LLVM = {"tools": [{"name": "llvm-win64", "version": "0", "url": "https://example.invalid/llvm.zip",
+                       "size": None, "sha256": None}]}
+
+    def setUp(self):
+        self.s = Setup()
+
+    def tearDown(self):
+        self.s.close()
+
+    def test_unpinned_download_fails_without_one(self):
+        rc, lines = self.s.run(manifest=self.LLVM)
+        self.assertEqual(rc, 1)
+        self.assertIn("@error download fetch A download did not finish.", lines)
+
+    def test_given_compiler_skips_the_download(self):
+        rc, lines = self.s.run(manifest=self.LLVM, cc="bin/clang-cl", ld="bin/lld-link")
+        self.assertEqual(rc, 0, lines)
+        self.assertIn("@step fetch skip", lines)
+
+    def test_environment_compiler_skips_the_download(self):
+        old = {k: os.environ.get(k) for k in ("DES_SETUP_CC", "DES_SETUP_LD")}
+        os.environ.update(DES_SETUP_CC="bin/clang-cl", DES_SETUP_LD="bin/lld-link")
+        try:
+            rc, lines = self.s.run(manifest=self.LLVM)
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        self.assertEqual(rc, 0, lines)
+        self.assertIn("@step fetch skip", lines)
 
 
 class EmitterTest(unittest.TestCase):

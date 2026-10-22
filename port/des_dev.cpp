@@ -26,6 +26,8 @@
  *   cutscene runs, then asks the game to save (tools/des/online_save.sh).
  * DES_DEVLOG=1 — a line for each change a cheat makes, at most one a site
  *   every 250 ms (with the count of the ones in between).
+ * RSX_DEV_HOTKEYS — not a cheat: des_dev_boot sets it to 1 when it is unset,
+ *   so the developer keys work (F8 in a frame log, ps3recomp's F9 to F11).
  *
  * All live (the console's setenv and the Developer tab change them), all off
  * by default, none kept in settings.ini. Out-of-range values are clamped; a
@@ -338,6 +340,9 @@ extern "C" void des_dev_hook(ppu_context* ctx, uint32_t addr)
 extern "C" void des_dev_boot(void)
 {
     fprintf(stderr, "[dev] %s\n", DES_DEV_MARKER);
+    /* The developer keys in the game window (F8 here, F9 to F11 in ps3recomp) are on in a developer build;
+     * RSX_DEV_HOTKEYS=0 turns them off, to see what a player's build does. */
+    if (!getenv("RSX_DEV_HOTKEYS")) ps3_setenv("RSX_DEV_HOTKEYS", "1");
     const char* warp = getenv("DES_WARP");
     const char* give = getenv("DES_GIVE");
     const bool cheat = god_knob() || atk_knob() != 1.0f || speed_knob() != 1.0f || (warp && *warp) ||

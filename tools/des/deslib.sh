@@ -76,6 +76,10 @@ des_env_defaults() {
   # (game-derived) captures in the scratch directory, never the repository.
   export RSX_HOTKEY_DIR="${RSX_HOTKEY_DIR:-$(cygpath -m "$DES_SCRATCH/rsx_hotkey" 2>/dev/null || echo "$DES_SCRATCH/rsx_hotkey")}"
   # F11 starts and stops a profile session (prof_NNN_summary.txt and friends).
+  # F8 to F11 are developer keys: a player's build ignores them, and these runs
+  # (play.sh too) turn them on (ps3recomp's RSX_DEV_HOTKEYS; docs/28).
+  # RSX_DEV_HOTKEYS=0 to see what a player gets.
+  export RSX_DEV_HOTKEYS="${RSX_DEV_HOTKEYS:-1}"
   export PROF_DIR="${PROF_DIR:-$(cygpath -m "$DES_SCRATCH/prof" 2>/dev/null || echo "$DES_SCRATCH/prof")}"
 }
 

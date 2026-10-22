@@ -25,6 +25,7 @@ constexpr Def kDefs[] = {
     {"DES_SPEED", "1", Apply::Session},
 #endif
     {"DES_FULLSCREEN", "0", Apply::Live},      // 1 = borderless fullscreen; des_ui.cpp's sync_fullscreen, each frame
+    {"DES_MAXIMIZED", "1", Apply::Restart},    // 1 = the window opens maximized (apply_window: RSX_MAXIMIZED)
     {"DES_FPS", "", Apply::Live},              // "" = the game's own 30 fps mode; read at each flip
     {"fps_custom", "90", Apply::UiOnly},       // Frame rate's Custom number, kept while a fixed rate is chosen
     {"DES_CUTFPS", "0", Apply::Live},          // des_options.cpp's cutfps_on, read at each flip
@@ -376,6 +377,17 @@ void apply_match_group() {
     std::fprintf(stderr, "[ui] network: matchmaking password %s\n", header.empty() ? "cleared" : "changed");
 }
 
+// Start maximized -> RSX_MAXIMIZED, which the runtime reads once as it makes the window (at boot, after this). Set at
+// the default too: the runtime's own default is off. A run nobody plays (unattended_run: a test harness run, PAD_FILE
+// or EXIT_AFTER_MS) keeps the window at its usual size unless DES_MAXIMIZED is given; an RSX_MAXIMIZED from the
+// environment wins.
+void apply_window() {
+    if (env_set("RSX_MAXIMIZED")) return;
+    if (unattended_run() && !pinned("DES_MAXIMIZED")) return;  // (nor does the runtime with PS3_NO_USER_INPUT=1)
+    const std::string v = effective("DES_MAXIMIZED");
+    ps3_setenv("RSX_MAXIMIZED", !v.empty() && v != "0" ? "1" : "0");  // (as bool_row reads it)
+}
+
 // logs\settings.txt: describe(), kept current for the crash and hang dialog. It is a process of its own that reads
 // no settings, and settings.ini alone has neither the defaults nor what the environment set (and a player who never
 // changed a setting has none).
@@ -411,6 +423,7 @@ void load_and_apply_env() {
     std::fprintf(stderr, "[ui] keyboard and mouse: the Souls layout%s%s\n", keys.empty() ? "" : ", changed by ",
                  keys.c_str());
     apply_network();
+    apply_window();
     write_in_use();
 }
 

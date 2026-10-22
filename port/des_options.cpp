@@ -909,6 +909,59 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
 }
 
+/* The foot IK (issue #140, docs/92). A character's movement object places its
+ * feet once an update: the driver 0x002F5B08 calls Havok's
+ * hkaFootPlacementIkSolver::doFootPlacement (0x00FF4DC0) for each leg, then
+ * moves the pelvis. Its smoothing is a fixed amount an update, tuned for 30 fps:
+ * the pelvis offset takes 0.2 of the lower foot's error (or keeps 0.6 of itself
+ * when neither foot hits the ground), the solver's weight eases by its onOffGain
+ * (0.8), and a foot's height by its gains' product (0.64). At 95 fps that
+ * settles three times as fast, so the hips and feet follow every bump. The
+ * lifter calls this after each of those loads (--insn-hooks): an ease k becomes
+ * 1 - (1 - k)^(30 dt) and a keep r becomes r^(30 dt), with dt the driver's own
+ * (kept at its start, 0x002F5B14, for the solver's sites inside the same call),
+ * so a second goes as at 30 fps. DES_IKFIX=0 turns it off live; DES_IKLOG=<file>
+ * writes the player's pelvis offset at each update. */
+static PPU_THREAD_LOCAL float s_ik_dt;
+static void ik_log(ppu_context* ctx, uint32_t addr)
+{
+    static int open = 0;
+    static FILE* f = nullptr;
+    if (!open) {
+        open = 1;
+        const char* path = getenv("DES_IKLOG");
+        if (path && *path && strcmp(path, "0") != 0 && (f = fopen(path, "w")) != nullptr)
+            fprintf(f, "# ms dt offset error (air: neither foot hits)\n");
+    }
+    if (!f) return;
+    uint32_t chr = vm_read32(kChrMan);
+    if (!guest_ptr_ok(chr) || !guest_ptr_ok(chr = vm_read32(chr + 0x1BC)) || vm_read32(chr + 0x20) != ctx->gpr[31])
+        return;   /* r31 is the movement object at both sites; only the player's */
+    static const auto t0 = std::chrono::steady_clock::now();
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (addr == 0x002F5DB8u)   /* f1 = the offset; r9 points at the lower foot's error (0x002F5DBC loads it) */
+        fprintf(f, "%.1f %.4f %.4f %.4f\n", ms, s_ik_dt, ctx->fpr[1], vm_readf((uint32_t)ctx->gpr[9]));
+    else
+        fprintf(f, "%.1f %.4f %.4f air\n", ms, s_ik_dt, ctx->fpr[1]);
+    fflush(f);   /* a test driver lines its phases up with the last line */
+}
+extern "C" void des_ik_rate(ppu_context* ctx, uint32_t addr)
+{
+    if (addr == 0x002F5B14u) {   /* fmr f30, f1: the driver's dt */
+        s_ik_dt = (float)ctx->fpr[30];
+        return;
+    }
+    if (addr == 0x002F5DB8u || addr == 0x002F5CCCu) ik_log(ctx, addr);
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_IKFIX", 1) != 0);
+    if (!on || s_fps <= 0) return;
+    const int fd = (vm_read32(addr) >> 21) & 31;   /* the lfs's or the fmuls's target */
+    const double k = ctx->fpr[fd];
+    const float steps = s_ik_dt * 30.0f;
+    if (!(k > 0.0 && k < 1.0) || !(steps > 0.0f) || steps == 1.0f) return;
+    ctx->fpr[fd] = (float)(addr == 0x002F5CCCu ? std::pow(k, (double)steps) : 1.0 - std::pow(1.0 - k, (double)steps));
+}
+
 /* DES_PHYS_HZ=<n> (default 30; 0 = step every frame): at most n Havok steps
  * a second. The physics update 0x001D1E30 steps the world once a frame with
  * the frame's dt (f31). Havok counts its solver passes and its sleep checks

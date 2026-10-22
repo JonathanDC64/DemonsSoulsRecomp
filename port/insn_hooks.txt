@@ -179,3 +179,14 @@
 0x00315030=des_ghost_rate  # li r9, 10: Update's frames to the next sample (+0x1E4)
 0x003147EC=des_ghost_rate  # lfs f12: 10.0, the next sample's move and turn split into per-frame steps
 0x00314ABC=des_ghost_rate  # lfs f12: 30.0, SetMoveVector's step-to-speed factor (walk or run)
+
+# des_ik_rate (port/des_options.cpp): the foot IK (issue #140, docs/92). The
+# driver 0x002F5B08 and Havok's foot placement solver (0x00FF4DC0) smooth by
+# a fixed amount an update, so above 30 fps the hips and feet settle faster
+# and follow every bump; the hooks make each ease and keep last as at 30 fps.
+0x002F5B14=des_ik_rate   # fmr f30, f1: the driver's dt, kept for the solver's sites in the same call
+0x002F5DB8=des_ik_rate   # lfs f13: 0.2, the pelvis offset's share of the lower foot's error (ease)
+0x002F5CCC=des_ik_rate   # lfs f0, 0x220(r31): 0.6, the pelvis offset kept with neither foot hitting (keep)
+0x00FF5680=des_ik_rate   # lfs f11, 0x68(r12): onOffGain 0.8, the solver's weight eased up (ease)
+0x00FF58CC=des_ik_rate   # lfs f11, 0x68(r12): onOffGain 0.8, the solver's weight eased down (ease)
+0x00FF54D4=des_ik_rate   # fmuls f13: the foot height's step, its two gains' product (0.64; ease)

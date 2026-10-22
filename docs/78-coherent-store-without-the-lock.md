@@ -98,6 +98,23 @@ Per 2 s, five readings in a row:
 - The knob frees HighGraphics. HighGraphics still waits for image 2's reply each frame, so it waits longer instead of finishing sooner.
 - With the render thread on as well, the FIFO thread also has room. That leaves image 2 and its exchange with HighGraphics as what sets the frame.
 
+### 3.4 Two more things ruled out the same night
+
+| Check | Result |
+|---|---|
+| The GPU (`nvidia-smi`, every 0.5 s for 15 s, master, 1280x720, about 155 fps) | 21-28% busy. The frame is not waiting on the GPU. |
+| Image 2's GETLLAR nap off (`SPU_LLAR_NAP=0`, knobab, 3 boots, master) | 149.10 → 148.43 fps (-0.45%, p 0.53). The wake from the nap is not what HighGraphics waits for. |
+
+The profile behind section 4 (`tools/des/kprof.sh`, master, 8 s each), in percent of the thread:
+
+| Image 2 | | HighGraphics | |
+|---|---|---|---|
+| `ring_loop` | 13.3 | usleep's wait (`ntdll`) | 10.9 |
+| `mfc_fast_xfer` | 9.4 | the lock-line path (lock, acquire, unlock, notify, `vm_write32`) | 13.8 |
+| a wait in `ntdll` | 9.2 | lifted game code, the rest | most |
+| the command regions (0x8CB8 9.1, 0x4498 5.7, 0x59C0 4.3, 0xCA40 4.2, 0x7140 4.0, 0xAB30 3.3, 0xC4D8 2.5) | 33.1 | | |
+| channel writes (`spu_wrch_word`, `spu_wrch`) | 9.0 | | |
+
 ## 4. Next
 
 1. **Image 2.** It is the busiest worker and the one HighGraphics waits on. docs/72 next #2 (commands 31-34 natively, about a quarter of image 2) is the large lever. docs/67 rank 2 (HighGraphics' reply wait on the reply word) shortens the wait between the two.

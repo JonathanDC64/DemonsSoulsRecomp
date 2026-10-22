@@ -1,15 +1,15 @@
 # 90. The setup screens' RPCS3 route (2026-10-22)
 
-The setup design's first card on "Where is your game?" is "Import from RPCS3". Setup finds the game in the player's RPCS3 library. It has the player's own RPCS3 unlock the 27 files the build needs. It can also bring the save, the trophies and some settings across. This note designs that route to the user's decisions of 10-22. It covers what each page says, what the engine does, what must be fixed first, and how to test it. Nothing here is built or run yet.
+The setup design's first card on "Where is your game?" is "Import from RPCS3". Setup finds the game in the player's RPCS3 library. It has the player's own RPCS3 unlock the 27 files the build needs. It can also bring the save, the trophies and some settings across. This note designs that route to the user's decisions of 10-22. It covers what each page says, what the engine does, what must be fixed first, and how to test it. Nothing here is built yet. One run of the player's RPCS3 (tests T1 and T3, section 5) has checked the redirect.
 
 It builds on docs/88 (the engine, its line protocol, the screens before a run), docs/89 (the shell), docs/91 (the options pages) and docs/51. In docs/51's terms this is option (c+), "setup runs the player's RPCS3". That doc's section 8 question 1, for a lawyer, still stands. The RPCS3 facts come from RPCS3's source at 065b490, through the 10-22 research on `rpcs3 --decrypt` and on where RPCS3 keeps things. Where a design point rests on a single line of that source, the line was read again here.
 
-Labels: **measured** (a run says so), **read** (seen in the code or a doc), **inferred** (reasoned, not run). **Nothing in this note is measured.** Paths such as `C:\Games\RPCS3` are examples only. `<data>` is setup's data folder, `%LOCALAPPDATA%\DemonsSoulsRecomp` (Linux: `$XDG_DATA_HOME/DemonsSoulsRecomp`). `<R>` is the player's RPCS3 config folder.
+Labels: **measured** (a run says so), **read** (seen in the code or a doc), **inferred** (reasoned, not run). Only section 5's first block is **measured**. Paths such as `C:\Games\RPCS3` are examples only. `<data>` is setup's data folder, `%LOCALAPPDATA%\DemonsSoulsRecomp` (Linux: `$XDG_DATA_HOME/DemonsSoulsRecomp`). `<R>` is the player's RPCS3 config folder.
 
 ## Short answer
 
 - **Setup runs the player's own RPCS3 with `--decrypt` on copies of the 27 files**, kept in setup's own folder (`<data>/setup/unlock/`). Setup ships no keys and no decryptor. It reads only a few header bytes, to make sure RPCS3 gets the right files. It checks each result's size and SHA-256 against the table it already has: game_table.json holds all 27 sums (read). RPCS3's exit code is not trusted, because it is 0 after a failure too (read).
-- **RPCS3 is given a folder of setup's own for its files.** This is **unverified**: it is inferred from the source, and section 7's first test checks it.
+- **RPCS3 is given a folder of setup's own for its files.** On Windows this is **measured** (one run, section 5): RPCS3 wrote everything in setup's folder and nothing in its own. Linux is still inferred.
   - On Windows, `RPCS3_CONFIG_DIR` points at `<data>/setup/unlock/rpcs3/`. On Linux, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` do.
   - RPCS3 writes a log, a lock, a config file and a dev_hdd0 tree at every start. With this, all of them land in setup's folder.
   - So nothing is written in the player's RPCS3 folder, and an RPCS3 the player has open gives no "Another instance" dialog.
@@ -164,7 +164,7 @@ These are the first sentences of `@error rpcs3 unlock ...` (section 3.4) and `@e
 
 ## 2. Running RPCS3 without touching its folder
 
-This is the design point the route rests on. **It is unverified: every conclusion in this section is inferred from RPCS3's source, and no run has checked it.**
+This is the design point the route rests on. It was inferred from RPCS3's source. One run on Windows has since checked it (section 5): the redirect works, and RPCS3 writes no log in this mode. The Linux half is still inferred.
 
 ### 2.1 What one start of RPCS3 changes, `--decrypt` included (read)
 
@@ -206,7 +206,7 @@ What this should give:
 - **The player's folder is untouched.** The child still reads its exe folder (Qt and RPCS3's DLLs) and checks whether `portable/` exists, but writes nothing there.
 - **The fresh `vfs.yml` is absent, so RPCS3 uses its defaults.** A `vfs.yml` of the player's that moves dev_hdd0 to another drive is never read.
 - **No "Another instance" clash with an RPCS3 the player has open.** The lock is in setup's folder.
-- **RPCS3's log is setup's to read.** `<data>/setup/unlock/rpcs3/log/RPCS3.log` holds the `DECRYPT:`, `SELF:` and `EDAT:` lines for each file (read: decrypt_binaries.cpp logs each result). The engine copies only those lines and RPCS3's version line into its step log, because the rest of RPCS3's log describes the PC.
+- **RPCS3 writes no log in this mode (measured).** The run left only an empty `log/TTY.log` in setup's folder, and no `RPCS3.log`, although decrypt_binaries.cpp logs each result (read). So the engine learns the result only from the output files. Its step log records each file's size and SHA-256, RPCS3's exit code, and RPCS3's version, read from the first line of the player's own `RPCS3.log` (read-only; `RPCS3 v0.0.43-20290-eda7621f Alpha | master` on the test PC). rpcs3.exe's version resource is empty (measured).
 
 The player may have set `RPCS3_CONFIG_DIR` themselves. Setup then reads their data from that folder (section 3.1), and the child gets setup's value instead.
 
@@ -250,7 +250,7 @@ The decrypt branch first calls `attach_console`. That tries `AttachConsole(ATTAC
   - A disc SELF decrypts from RPCS3's built-in key vault with no KLIC and no RAP. An SDAT's key is fixed, `dev_hash XOR SDAT_KEY`, and needs no file name check (unedat.cpp:811-816, read).
   - So with the known inputs, the prompt can only come from an RPCS3 build that cannot decrypt these exact files (inferred).
 - **The watchdog.**
-  - The engine polls every 250 ms. Progress is a new output file, a growing output or a growing RPCS3 log in setup's folder.
+  - The engine polls every 250 ms. Progress is a new output file or a growing one. RPCS3's log cannot count: it writes none in this mode (measured).
   - After 30 s with none, it ends this child only: its own process handle on Windows (`TerminateProcess`), or its own process group on Linux. It then names the first file with no output.
   - The normal end is the process exiting, and the stall clock restarts at every sign of progress, so the 30 s never cuts off a slow but working PC (inferred).
   - The engine never ends RPCS3 processes by name, and never uses `flatpak kill`: either would take the player's RPCS3 too.
@@ -488,7 +488,14 @@ These must land before the route ships. Items 1 and 2 also matter for the folder
 
 ## 5. What is verified and what is inferred
 
-Nothing is **measured**.
+**Measured** (10-22, one run: tests T1 and T3 together). RPCS3 v0.0.43-20290-eda7621f on Windows 11, closed beforehand, with no `portable` folder. The inputs were copies of EBOOT.BIN and `m06.talkesdbnd.dcx.sdat`, in one process with two `--decrypt` pairs. `RPCS3_CONFIG_DIR` was `%LOCALAPPDATA%\DemonsSoulsRecomp\setup\unlock-test\cfg\`, a fresh folder, removed afterwards.
+- Exit 0 after about 1 s, for both files.
+- `EBOOT.elf`'s SHA-256 is the table's. The `.sdat.unedat` is 7584 bytes with the table's sum.
+- In setup's folder RPCS3 wrote `RPCS3.buf`, `config/config.yml`, `config/uuid`, `dev_hdd0/home/00000001/localusername`, the two text files under `games/`, an empty `log/TTY.log`, and empty folders (captures, dev_bdvd, dev_flash 1-3, dev_hdd1, dev_usb000, patches, ppu_progs, savestates, shaderlog, sounds, spu_progs).
+- In the player's RPCS3 folder: `log/RPCS3.log` kept its SHA-256, `dev_hdd0/tmp` kept its items, and no file or folder in the top three levels was written or created during the run.
+- **No `RPCS3.log`** in setup's folder. I9 is wrong, and sections 2.3 and 2.7 now say so.
+
+So, on Windows: I1 holds, I3 holds for the EBOOT and one script file, I4's location check passes for a folder under `%LOCALAPPDATA%`, I10 holds for two files, I13 holds for one RPCS3 build, and I14 for one of the 26 script files.
 
 **Read**:
 - The `--decrypt` syntax, one value per option; the output names and silent overwrite; exit 0 after failures. (rpcs3.cpp:833-834, 1082-1141; decrypt_binaries.cpp:80-190.)
@@ -515,7 +522,7 @@ Nothing is **measured**.
 | I6 | RPCS3's console output never reaches the engine's protocol pipe | T7, T8 |
 | I7 | With inputs that match the table, the KLIC prompt is never reached. On Windows a prompt would wait forever; on Linux, stdin from the null device ends it | T5 |
 | I8 | Ending the child by its own handle or process group leaves no RPCS3, console host or terminal process behind. The host's job object covers RPCS3 on Cancel | T5, T7 |
-| I9 | RPCS3's log in setup's folder is written out by exit, and holds the `DECRYPT:`, `SELF:` and `EDAT:` lines, including `Failed to create` | T1, T5 |
+| I9 | ~~RPCS3's log in setup's folder is written out by exit, and holds the `DECRYPT:`, `SELF:` and `EDAT:` lines~~ **Wrong (measured): `--decrypt` writes no RPCS3.log** | T1 |
 | I10 | One process unlocks all 27 files in seconds, and RPCS3 handles the inputs in the order given | T3 |
 | I11 | An RPCS3 without `--decrypt` exits 1 with "Unknown option" on stderr when `QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES=1` is set | T6 |
 | I12 | An RPCS3 build that ignores `RPCS3_CONFIG_DIR` shows by leaving no `RPCS3.buf` in setup's folder | T4 |

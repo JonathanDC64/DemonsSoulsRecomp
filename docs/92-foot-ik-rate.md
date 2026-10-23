@@ -2,6 +2,8 @@
 
 Date: 2026-10-22. Status: the cause was found by reading the code, then measured. The fix is `des_ik_rate` behind `DES_IKFIX` (on by default), and it was measured too.
 
+2026-10-23: the feet that still twitch on uneven ground, at 30 fps too, are the ankle's tilt snapping to step edges. That is the original game; `DES_FOOTFIX=1` is an option that stops it, off by default. See [The ankle's tilt on step edges](#the-ankles-tilt-on-step-edges-des_footfix).
+
 ## The report
 
 Issue #140: on build 0.1.0-dev.677, native Linux, `DES_FPS=165` with V-sync off, the game ran at 86-108 fps. In the Tutorial's indoor halls the feet "do not place flatly ... contort to strange angles and jutter a little mid step". This happened while standing and turning on broken floor slabs, and while running down corridors. The reporter thought it might also be the original game.
@@ -25,7 +27,7 @@ Each runs once an update with a fixed amount, tuned for 30 updates a second. Abo
 | The solver's weight moves toward on or off | 0x00FF5680, 0x00FF58CC (`lfs f11, 0x68(r12)`, onOffGain) | ease 0.8 | 21 ms | 6.5 ms | 2.6 ms |
 | Each foot's height moves toward its target | 0x00FF54D4 (`fmuls f13`: the product of two 0.8 gains) | ease 0.64 | 33 ms | 10 ms | 4 ms |
 
-The ankle is turned to the ground's surface normal under each foot with no smoothing at any frame rate (read in the code, not measured). On broken slabs, that tilt is part of the original game's look at 30 fps too. The jitter and the fast snapping are the frame-rate part.
+The ankle is turned to the ground's surface normal under each foot with no smoothing at any frame rate. On step edges that tilt snaps at 30 fps too (measured on 2026-10-23, below). The jitter and the fast snapping above are the frame-rate part.
 
 ## The fix
 
@@ -69,8 +71,59 @@ At 30 fps the jitter is not there, so RPCS3 was not run for comparison. The firs
 
 Regress, with the fix on: all four shots ok at 30 fps (frame step 33.33 ms, game/real 0.999) and at 240 fps (`DES_FPS=240`, V-sync off; frame step 4.52 ms over the route). On this split build regress can stop at 20 s with "run ended before the level": the PID file appears only after the 289 MB game DLL loads, about 18 s in. A second try passed.
 
+## The ankle's tilt on step edges (DES_FOOTFIX)
+
+With `DES_IKFIX` on, the feet still twitched on uneven ground, at 30 fps too, and with `DES_IKFIX=0` and `DES_PHYS_HZ=0` alike. Enemy hits were ruled out: the test sends every enemy away first.
+
+### How the solver tilts the ankle
+
+Read in the lift and the decompile of 0x00FF4DC0, then logged:
+
+- Each update the solver casts two rays down past the foot: one at the ankle (0x00FF52C8, normal to r1+0xC0) and one at the toe (0x00FF5C90, normal to r1+0x80). The toe's is dropped if it faces down (0x00FF5CE8).
+- Whichever surface is higher wins (0x00FF5BAC), and its normal goes to r1+0xA0. Nothing from earlier updates is used. There is no hysteresis and no limit on the slope.
+- The ankle is turned from up to that normal, blended with the animation's ankle rotation only by the solver's weight (+0x90; 0x00FF5B48, 0x00FF5B9C).
+- The solver keeps the normal it used at +0xA0 (0x00FF56C0). It reads it back only when no ray hits.
+
+A ray that grazes a step's riser or the bevel on a curb returns that face's normal, nearly horizontal. The foot then turns almost onto its side for an update or a few.
+
+### Measured
+
+The test is a developer build on a copy of the pinned save, muted, with the opening cutscene skipped. A developer build's `DES_WARP_CLEAR` sends every enemy to the level start, and the player is warped 30 m along the recorded Tutorial route. An autopilot then walks the rest of the route to the top of the stairs (about 30 s), steering by the camera. The nearest enemy stayed 37 m away or more. `DES_FOOTLOG` logged both of the player's feet at every solver update.
+
+| Run | Jumps over 20° a second (worse foot) | Largest jump between updates |
+|---|---|---|
+| 30 fps, original | 0.2 | 74° |
+| 30 fps, `DES_FOOTFIX=1` | 0 | 13° |
+| 165 fps, original | 0.3 | 89° |
+| 165 fps, `DES_FOOTFIX=1` | 0 | 4° |
+
+- The ground on the route is mostly flat: the mean tilt is under 1°.
+- Every snap came from the ankle ray. Each lasted 1 to 3 updates, and the normals were 69° to 89° from up.
+- They happened at the same three places in every run and at both rates: (174.8, -0.7, -81.0), (167.8, -0.5, -75.1) and (134.4, -0.9, -54.9). All three are step or curb edges. At 165 fps there were more snaps, each shorter.
+- One of the 13 snaps came right after the IK came back on (weight 0.25 after 254 ms with no hit). The rest happened mid-walk with the weight at 1.
+- An earlier walk with the enemies left in had jumps of up to 104° between updates. That was one foot going from one steep face's normal (80° from up) to another's (70°, facing elsewhere), at the same first step edge, all from the ankle ray. One of its five steep updates came right after the IK came back on (after 300 ms with no hit).
+- Easing alone (keep 0.5, no slope limit) halved the largest jumps (74° to 43°) but did not stop them.
+
+### Original game
+
+This is the game's code and data. Havok's solver has no slope limit and the game sets none. The normal is the collision mesh's face, unit length and exact, and the same face shows up on both feet at the same place in every run. Nothing in the port changes which face a ray hits. So the fix is an option, off by default (the original-behaviour rule). RPCS3 was not run: driving it would need its window focused for keyboard input.
+
+### The fix
+
+`DES_FOOTFIX=1` (default 0, the original), in `des_ik_rate`'s hook at 0x00FF54D4 (`port/des_options.cpp`):
+
+- A normal steeper than 45° from up is not used. The solver keeps the last update's normal, or straight up if that one is steep too.
+- The rest eases from the last update's normal toward the new one, keeping half of the difference per 30 fps update (0.5^(30 dt) at other rates), so a change of slab glides over about 100 ms.
+- `DES_FOOTTILT=<degrees>` and `DES_FOOTSMOOTH=<share kept>` set the two parts; 0 turns one off. Live.
+- `DES_FOOTLOG=<file>` writes the player's feet at every update: time, solver, dt, weight, the picked and the used normal, the toe slot and the ankle ray, and the player's position.
+
+0x00FF54D4 runs on the solver's path with a hit and its weight above 0, after the normal is picked into r1+0xA0 and before the ankle is turned (0x00FF59BC). The solver stores the result at +0xA0 itself (0x00FF56C0), where the next update finds it. No new state and no new hook site: it was already hooked for the foot height. Every character with foot IK gets it.
+
+Regress, on a non-developer build of the fix: all four shots ok with `DES_FOOTFIX` off and on (30 fps, frame step 33.33 ms, game/real 0.999).
+
 ## Not done
 
 - The foot height and the solver's weight are fixed by the same rule, but only the pelvis was logged. Their effect was not measured on its own.
+- `DES_FOOTFIX` was measured on the player only. Enemies use the same solver.
 - The reporter's spot (the slabs by the crates in the indoor halls) was not reached; the stairs stood in for it.
 - Not run on Linux. The hooks are in the lifted game code, so they apply on every platform.

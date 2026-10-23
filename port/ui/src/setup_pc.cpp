@@ -338,18 +338,20 @@ Space data_space() {
 }
 
 // The build's numbers, measured on one PC (docs/53: 8 cores, 16 threads, 31 GB). The game part's compile is about
-// 2,250 s of CPU: the 14 PPU chunks without /Zi, 2,128 s (docs/53 section 2), and the SPU programs and libsre, about
-// 2 minutes (docs/45 3.1). Its longest job, chunk 008, takes 261 s, which no number of jobs shortens. The check, the
-// copy and the lift add about 75 s (docs/53 section 1). The jobs are the PPU chunks the compile can run at once in
-// the memory free now (compile.py, docs/81 section 8: 2 GB kept free, 2.6 GB a chunk before one is measured), and
-// half the threads when the memory cannot be read, as there. No other PC has been measured. The range's low end is
-// that PC's speed per core; its high end takes cores 2 times slower on a desktop and 4 times on a laptop (inferred,
-// from docs/45 3.1's guesses: a 6-core desktop at 4 jobs about 20 minutes, a 4-core laptop 35 to 50, against 10.7
-// measured on that PC). The compiler's download is not in it.
-constexpr double kCompileCpuSeconds = 2250.0;
-constexpr double kLongestJobSeconds = 261.0;
+// 1,500 s of CPU, one job at a time (docs/53 16.4: every object, PPU chunks, SPU programs and libsre; the 53 chunks
+// of #158 do the same work). With 53 chunks its longest job is short: about 60 s (inferred: 008, the slowest of the
+// 14, took 172 s, and is four chunks now). The check, the copy, the lift and the shaders add about 75 s (docs/53 16.6:
+// run G's 443 s less its 371 s compile). The jobs are the PPU chunks the compile can run at once in the memory free
+// now: compile.py keeps 2 GB free and counts a chunk it has not built by its size rule, about 1.4 GB for the 53
+// chunks' sources (0.15 GB plus 0.14 GB a MB, chunks of 6.7 to 10.7 MB); half the threads when the memory cannot be
+// read, as there. On that PC, with 8.3 to 9 GB free, this gives 4 jobs and about 7.5 minutes; run G took 7.4. No
+// other PC has been measured. The range's low end is that PC's speed per core; its high end takes cores 2 times
+// slower on a desktop and 4 times on a laptop (inferred, from docs/45 3.1's guesses). The compiler's download is not
+// in it.
+constexpr double kCompileCpuSeconds = 1500.0;
+constexpr double kLongestJobSeconds = 60.0;
 constexpr double kOtherSeconds = 75.0;
-constexpr unsigned long long kJobBytes = 26ull * (1ull << 30) / 10;  // compile.py's NEED["ppu"]
+constexpr unsigned long long kJobBytes = 14ull * (1ull << 30) / 10;  // compile.py's size rule for a 53rd of the lift
 constexpr unsigned long long kKeptBytes = 2ull << 30;                // and its KEEP
 constexpr double kSlowerDesktop = 2.0, kSlowerLaptop = 4.0;
 

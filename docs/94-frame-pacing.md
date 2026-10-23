@@ -120,6 +120,26 @@ Same walk, at `DES_FPS=144`. The test window never has the focus (`PS3_NO_USER_I
 
 On a display with VRR working, each frame should show as it comes, with no tearing (inferred).
 
+### 4.3 Two frames in one present (measured)
+
+The player still saw stutter at 144 fps with G-Sync on. Most of it was first-time work on a first start (docs/96). With that fixed, a 30 s walk at 138 fps still had 2-4 frames of about 15 ms, twice the period. Each was a present with twice the usual draws and one flip.
+
+- **Demon's Souls writes its frames on past its command buffer's end.** ps3recomp puts each flip into the command stream as a marker there, and presents at it.
+- **Now and then the flip came just short of the end**, in the buffer's last 4 KB. ps3recomp then flipped at once, outside the stream, as it does for a title that wraps its own buffer.
+- **With no flip in the stream, the next frame's draws went into the same present.** That frame stayed on screen two refreshes.
+- At 138 fps that was about one flip in 2,000. `GCM_RATES=1` shows it as a second with one more flip request than flip words.
+
+JonathanDC64/ps3recomp#114 keeps those flips in the stream, once the buffer has been seen past its end.
+
+| Same walk, 138 fps, first start | Before | After |
+|---|---|---|
+| Seconds with a flip outside the stream | 3 | 0 (in 78 s) |
+| Presents with twice the draws | 2 | 0 |
+| Frames over twice the period | 2 | 0 |
+| Worst frame | 15.7 ms | 11.5 ms |
+
+At the default 30 fps there were 30 presents a second, and no flip outside the stream in 80 s.
+
 ## 5. Not done
 
 - **Native Linux:**
@@ -129,4 +149,4 @@ On a display with VRR working, each frame should show as it comes, with no teari
 
   So there, Even frames gives the rate rounding and the step, but neither the hold nor the lock to the display's vblanks.
 - **The Enhanced preset** still sets 60 fps with V-sync On. On a 144 Hz display, that is the judder in section 1.
-- **First-use pipeline hitches** (docs/93 section 3) are separate from pacing, and still there on a first start.
+- **First-use pipeline hitches** (docs/93 section 3) are separate from pacing. docs/96 covers what was left of them on a first start.

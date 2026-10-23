@@ -32,12 +32,16 @@ jobs:
           python tools/release/changelog.py --out dist/notes.md
           cat dist/notes.md
 
+      # With a stand-in for host.yml's des_host.exe, which only Windows builds: the player's zip is made around it
+      # the same way, and the exe must land at the top of its tree.
       - name: Package, twice
         run: |
-          python tools/release/package.py build --rev HEAD --out dist --dry-run
-          python tools/release/package.py build --rev HEAD --out dist2 --dry-run
+          mkdir -p host && printf 'stand-in' > host/des_host.exe
+          python tools/release/package.py build --rev HEAD --host host/des_host.exe --out dist --dry-run
+          python tools/release/package.py build --rev HEAD --host host/des_host.exe --out dist2 --dry-run
           cmp dist/SHA256SUMS dist2/SHA256SUMS
           cat dist/SHA256SUMS
+          unzip -l dist/DemonsSoulsRecomp-*-windows.zip | grep -E ' DemonsSoulsRecomp-[^/]+/des_host\.exe$'
 
       - name: No game-derived files in the package
         run: |

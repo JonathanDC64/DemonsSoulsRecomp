@@ -18,8 +18,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # des_host.exe for the player's zip, built from the tag by host.yml itself (its checks included).
+  host:
+    name: The host exe
+    uses: ./.github/workflows/host.yml
+    permissions:
+      contents: read
+
   draft:
     name: Draft the release
+    needs: host
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -45,8 +53,13 @@ jobs:
       - name: Release notes
         run: python tools/release/changelog.py --to "$GITHUB_REF_NAME" --out dist/notes.md
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: des_host-${{ github.sha }}
+          path: host
+
       - name: Package
-        run: python tools/release/package.py build --rev "$GITHUB_REF_NAME" --out dist
+        run: python tools/release/package.py build --rev "$GITHUB_REF_NAME" --host host/des_host.exe --out dist
 
       - name: No game-derived files in the package
         run: |
@@ -55,6 +68,8 @@ jobs:
             exit 1
           fi
           python .github/scripts/check_game_files.py --dir dist/stage
+          python .github/scripts/check_game_files.py --dir host --allow .github/game-files-allow.txt \
+            --allow .github/host-files-allow.txt
 
       - name: Draft the release
         env:
@@ -64,4 +79,5 @@ jobs:
           pre=""
           case "$TAG" in *-*) pre="--prerelease" ;; esac
           gh release create "$TAG" --draft --verify-tag $pre --title "DemonsSoulsRecomp ${TAG#v}" \
-            --notes-file dist/notes.md dist/DemonsSoulsRecomp-*-source.zip dist/SHA256SUMS
+            --notes-file dist/notes.md dist/DemonsSoulsRecomp-*-source.zip dist/DemonsSoulsRecomp-*-windows.zip \
+            dist/SHA256SUMS

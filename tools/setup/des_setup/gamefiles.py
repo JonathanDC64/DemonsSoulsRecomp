@@ -3,7 +3,9 @@
 Setup accepts only files the player has already decrypted (docs/51, plan (c)):
 EBOOT.elf beside EBOOT.BIN and a .sdat.unedat beside each of the 26 .sdat
 files, as RPCS3's Decrypt PS3 Binaries writes them, or all of them in one
-folder the player picks. It never decrypts anything itself.
+folder the player picks. It never decrypts anything itself. On the RPCS3
+route (docs/90) the player's own RPCS3 makes the missing ones in the unlock
+phase (rpcs3.py), so the check only says which.
 
 The table (game_table.json) holds sizes and SHA-256 sums only. A decrypted
 file whose sum is not in the table yet (null) is checked by its first bytes
@@ -126,10 +128,14 @@ def _magic(path: Path, n=4) -> bytes:
         return f.read(n)
 
 
-def check(folder, decrypted_dirs=(), firmware=None, table=None, progress=None) -> Report:
+def check(folder, decrypted_dirs=(), firmware=None, table=None, progress=None, unlocks=False, also=None) -> Report:
     """Check a game folder. decrypted_dirs: more folders to look in for the
     decrypted files, by file name. firmware: the decrypted libsre.prx, or None
-    to leave it out of the check. progress(bytes) is called while hashing."""
+    to leave it out of the check. progress(bytes) is called while hashing.
+    unlocks: the RPCS3 route, where the unlock makes a missing decrypted file
+    (the sentences say so). also: {table path: [files]}, more files to try for
+    one decrypted file (PPU Debug's dump of the EBOOT). A decrypted file is
+    good when any of the places has a good copy."""
     t = table or load_table()
     rep = Report()
     root = find_root(folder)
@@ -167,19 +173,30 @@ def check(folder, decrypted_dirs=(), firmware=None, table=None, progress=None) -
                                      mismatch=f"{e['path']} does not match the US disc, version 1.00. The dump may "
                                               f"be damaged: dump the disc again."))
 
-    # The decrypted files the build reads.
+    # The decrypted files the build reads: the first good copy, else what is wrong with the first one found.
     for e in t["decrypted"]:
         base = e["path"].rsplit("/", 1)[-1]
-        p = _resolve(root, e["path"])
-        for d in decrypted_dirs:
-            if p is not None:
-                break
-            p = _find_decrypted(Path(d), e["path"])
         src = e["of"].rsplit("/", 1)[-1]
-        rep.items.append(_check_file("decrypted", e, p, progress,
-                                     missing=f"{base} is missing: decrypt {src} first (in RPCS3: Utilities, "
-                                             f"Decrypt PS3 Binaries).",
-                                     mismatch=f"{base} does not match: decrypt {src} again."))
+        if unlocks:
+            texts = dict(missing=f"{base} is missing: your RPCS3 unlocks it next.",
+                         mismatch=f"{base} does not match: your RPCS3 unlocks it again.")
+        else:
+            texts = dict(missing=f"{base} is missing: decrypt {src} first (in RPCS3: Utilities, "
+                                 f"Decrypt PS3 Binaries).",
+                         mismatch=f"{base} does not match: decrypt {src} again.")
+        places = [_resolve(root, e["path"])] + [_find_decrypted(Path(d), e["path"]) for d in decrypted_dirs]
+        places += [Path(p) for p in (also or {}).get(e["path"], ())]
+        first = None
+        for p in places:
+            if p is None or not p.is_file():
+                continue
+            item = _check_file("decrypted", e, p, progress, **texts)
+            if item.good:
+                break
+            first = first or item
+        else:
+            item = first or _check_file("decrypted", e, None, progress, **texts)
+        rep.items.append(item)
 
     # The firmware file, when asked for.
     for e in t.get("firmware", []):

@@ -16,8 +16,8 @@ struct KindName {
 constexpr KindName kKinds[] = {
     {"setup", Line::Kind::Setup},       {"plan", Line::Kind::Plan},   {"step", Line::Kind::Step},
     {"progress", Line::Kind::Progress}, {"overall", Line::Kind::Overall}, {"check", Line::Kind::Check},
-    {"awake", Line::Kind::Awake},       {"log", Line::Kind::Log},     {"error", Line::Kind::Error},
-    {"done", Line::Kind::Done},
+    {"file", Line::Kind::File},         {"rpcs3", Line::Kind::Rpcs3}, {"awake", Line::Kind::Awake},
+    {"log", Line::Kind::Log},           {"error", Line::Kind::Error}, {"done", Line::Kind::Done},
 };
 
 constexpr size_t kTailLines = 200;
@@ -87,6 +87,12 @@ Line parse_line(std::string_view text) {
         l.text = std::string(rest);
         if (l.key.empty() || l.key2.empty()) return plain;
         break;
+    case Line::Kind::File:
+    case Line::Kind::Rpcs3:
+        l.key = take_word(rest);
+        l.text = std::string(rest);
+        if (l.key.empty() || l.text.empty()) return plain;
+        break;
     case Line::Kind::Log:
         l.text = std::string(rest);
         if (l.text.empty()) return plain;
@@ -130,6 +136,7 @@ void Status::apply(const Line& l) {
         if (l.key2 == "start") {
             progress.clear();
             progressN = progressM = 0;
+            file.clear();
         }
         break;
     case Line::Kind::Progress:
@@ -142,6 +149,13 @@ void Status::apply(const Line& l) {
         break;
     case Line::Kind::Check:
         checks.push_back(l);
+        break;
+    case Line::Kind::File:
+        file = l.text;
+        break;
+    case Line::Kind::Rpcs3:
+        rpcs3State = l.key;
+        rpcs3Path = l.text;
         break;
     case Line::Kind::Awake:
         awake = true;

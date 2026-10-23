@@ -37,6 +37,7 @@ constexpr ErrorKind kErrors[] = {
      "Check the internet connection, then try again. The download carries on where it stopped."},
     {"memory", Fix::TryAgain, "Close other programs, then try again. Setup carries on where it stopped."},
     {"step", Fix::Report, "Try again. If it fails again, please report it."},
+    {"rpcs3", Fix::TryAgain, "Try again. If it keeps failing, you can unlock the files yourself."},
     {"internal", Fix::Report, "Try again. If it fails again, please report it."},
 };
 
@@ -54,6 +55,7 @@ struct TaskText {
 };
 constexpr TaskText kTasks[] = {
     {"check", "Check the game files", "Every file is read once"},
+    {"unlock", "Unlock the game files", "Your RPCS3 does this, on copies"},
     {"fetch", "Download the build tools", "Only the first time"},
     {"stage", "Copy the game files", "Into setup's own folder"},
     {"ppu", "Translate the main processor code", "The game's code, one function at a time"},

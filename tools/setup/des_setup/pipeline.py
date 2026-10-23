@@ -2,6 +2,7 @@
 made of journal steps, with the screens' line protocol on standard output.
 
   check     the game folder and the decrypted files (gamefiles.py)
+  unlock    on the RPCS3 route only: the missing decrypted files, made by the player's RPCS3 (rpcs3.py, docs/90)
   fetch     the pinned tools the build needs (fetch.py); Python is the host's to fetch
   stage     the decrypted files copied into the data folder
   lift      the game's code converted to C (lift.py)
@@ -25,13 +26,14 @@ import traceback
 from pathlib import Path
 
 from . import compile as compile_step
-from . import fetch, gamefiles, journal, lift, protocol
+from . import fetch, gamefiles, journal, lift, protocol, rpcs3
 
 READY = "ready.txt"
 REQUEST = "request.json"
+UNLOCK = "unlock"                  # setup/unlock: the unlock's copies, RPCS3's folder, then its outputs until the stage
 GB = 1 << 30
 # Each phase's share of a whole run, from its CPU time (docs/52 4.3: the compile is most of it).
-WEIGHTS = {"check": 2, "fetch": 4, "stage": 1, "lift": 13, "compile": 80}
+WEIGHTS = {"check": 2, "unlock": 1, "fetch": 4, "stage": 1, "lift": 13, "compile": 80}
 # Where a step's own count falls in its phase; the phase's small steps fill the rest.
 PARTS = {"ppu": (0.05, 0.75), "spu": (0.75, 0.97), "compile": (0.0, 0.97)}
 # The free space a phase needs from scratch (docs/52 10.2), less what its folders already hold.
@@ -41,12 +43,14 @@ OUTPUTS = {"fetch": ("downloads", "tools"), "lift": ("work",), "compile": ("buil
 BUILD_TOOLS = (compile_step.LLVM_ENTRY,)
 OOM = re.compile(r"out of memory|not enough memory|bad_alloc|MemoryError", re.I)
 NOSPACE = re.compile(r"no space left|not enough space on the disk|disk is full", re.I)
-FAILED = {"stage": "Copying the game files failed.", "lift": "Converting the game's code failed.",
-          "compile": "Building the game failed."}
+FAILED = {"unlock": "Copying the game files for RPCS3 failed.", "stage": "Copying the game files failed.",
+          "lift": "Converting the game's code failed.", "compile": "Building the game failed."}
 
 
-def default_phases() -> list:
-    return ["check", "fetch", "stage", "lift", "compile"]
+def default_phases(rpcs3_route=False) -> list:
+    """The whole build. On the RPCS3 route the unlock comes before the fetch, so
+    an RPCS3 problem shows before the large download (docs/90 3.2)."""
+    return ["check"] + (["unlock"] if rpcs3_route else []) + ["fetch", "stage", "lift", "compile"]
 
 
 # ---- the copy step (also `python -m des_setup stage`) ----
@@ -80,10 +84,12 @@ def _rel(item) -> str:
 
 # ---- what a run keeps in setup/ ----
 
-def make_request(game, decrypted=(), firmware=None) -> dict:
-    """What the player chose, with absolute paths (a later run may start elsewhere)."""
+def make_request(game, decrypted=(), firmware=None, rpcs3_path=None) -> dict:
+    """What the player chose, with absolute paths (a later run may start elsewhere).
+    rpcs3_path: the RPCS3 that unlocks the missing decrypted files (the RPCS3 route)."""
     return {"game": os.path.abspath(game), "decrypted": [os.path.abspath(d) for d in decrypted],
-            "firmware": os.path.abspath(firmware) if firmware else None}
+            "firmware": os.path.abspath(firmware) if firmware else None,
+            "rpcs3": os.path.abspath(rpcs3_path) if rpcs3_path else None}
 
 
 def save_request(data: Path, req: dict):
@@ -247,7 +253,7 @@ def _ends(jr) -> dict:
 
 # ---- the phases ----
 
-def _check(req, emit, total, table):
+def _check(req, emit, total, table, data=None, unlocks=False):
     t = table or gamefiles.load_table()
     size = sum(e.get("size") or 0 for e in t["originals"] + t["decrypted"]) or 1
     seen = [0]
@@ -257,10 +263,85 @@ def _check(req, emit, total, table):
         emit.progress("check", min(seen[0], size), size)
         total.part(seen[0] / size)
 
-    rep = gamefiles.check(req["game"], req.get("decrypted") or [], req.get("firmware"), table=t, progress=prog)
+    rep = _game_check(req, t, data, unlocks, progress=prog)
     for i in rep.items:
         emit.check(i)
     return rep
+
+
+def _game_check(req, t, data, unlocks, progress=None, unlocked=False):
+    """gamefiles.check on the request's folders. On the RPCS3 route the files an
+    earlier run kept in inputs/ count too (docs/90 3.3), as does PPU Debug's
+    dump of the EBOOT; after an unlock (`unlocked`), its outputs."""
+    dirs, also = list(req.get("decrypted") or []), None
+    if unlocks:
+        dirs.append(str(data / "inputs"))
+        if unlocked:
+            dirs.append(str(data / "setup" / UNLOCK / "in"))
+        exe = rpcs3.find(req.get("rpcs3"))
+        if exe:
+            also = {lift.EBOOT: rpcs3.ppu_debug_eboots(exe, t["title_id"])}
+    return gamefiles.check(req["game"], dirs, req.get("firmware"), table=t, progress=progress, unlocks=unlocks,
+                           also=also)
+
+
+def blocking(rep, unlocks=False) -> list:
+    """The check's problems that stop a run. On the RPCS3 route a decrypted file
+    that is missing or wrong is the unlock's to make, not the player's to fix."""
+    return [i for i in rep.problems() if not (unlocks and i.kind == "decrypted")]
+
+
+def _rpcs3_state(req, data):
+    """The RPCS3 of the request, and what @rpcs3 says about it: own, shared or missing."""
+    exe = rpcs3.find(req.get("rpcs3"))
+    if exe is None:
+        return None, "missing"
+    return exe, "shared" if rpcs3.is_shared(data, exe) else "own"
+
+
+def _unlock(rep, req, data, jr, emit, total, table, kw):
+    """The unlock phase (rpcs3.py, docs/90 3.4): the decrypted files the check did
+    not find, made by the player's RPCS3 from copies of the originals. Returns
+    the check again, which now finds them, and whether there was nothing to do.
+    The journal skips the step while its originals and outputs are unchanged."""
+    need = [i for i in rep.items if i.kind == "decrypted" and not i.good]
+    if not need:
+        return rep, True
+    t = table or gamefiles.load_table()
+    exe, state = _rpcs3_state(req, data)
+    if exe is None:
+        raise rpcs3.UnlockFailed("unlock", f"RPCS3 is not in {rpcs3.where(req['rpcs3'])} any more.")
+    if state == "shared" and rpcs3.running(exe):
+        raise rpcs3.UnlockFailed("unlock", "RPCS3 is open. Close it so setup can start it.")
+    found = {i.name: i.found for i in rep.items if i.kind == "original"}
+    origs = {e["path"]: e for e in t["originals"]}
+    decs = {e["path"]: e for e in t["decrypted"]}
+    jobs = [rpcs3.Job(Path(found[decs[i.name]["of"]]), origs[decs[i.name]["of"]], decs[i.name]) for i in need]
+    u = rpcs3.Unlock(exe, data / "setup" / UNLOCK, jobs, emit, data / "setup" / "logs" / "unlock.log",
+                     shared=state == "shared", progress=total.part, **(kw or {}))
+    fp = journal.fingerprint("unlock", sorted((j.orig["path"], j.orig.get("sha256")) for j in jobs))
+    try:
+        ran, _ = jr.run("unlock", fp, u.run, outputs=u.outputs(), log=u.log)
+        rep = _game_check(req, t, data, True, unlocked=True)
+        if not ran and [i for i in rep.problems() if i.kind == "decrypted"]:
+            jr.forget("unlock")                      # a kept output went bad since: unlock again
+            ran, _ = jr.run("unlock", fp, u.run, outputs=u.outputs(), log=u.log)
+            rep = _game_check(req, t, data, True, unlocked=True)
+    finally:
+        if u.ignored:
+            rpcs3.remember_shared(data, exe)
+    left = [i for i in rep.problems() if i.kind == "decrypted"]
+    if left:
+        raise rpcs3.UnlockFailed("unlock", f"{rpcs3.usrdir(left[0].name)} came out different from the known good "
+                                           f"version.", u.log)
+    emit.text(f"ok   {len(jobs)} file(s) unlocked by RPCS3 and checked" if ran else
+              f"ok   the {len(jobs)} file(s) RPCS3 unlocked last time are unchanged")
+    return rep, not ran
+
+
+def _drop_unlock(data):
+    """After the stage: the unlock's outputs are in inputs/ now, so its folder goes (docs/90 3.4 step 11)."""
+    shutil.rmtree(data / "setup" / UNLOCK, ignore_errors=True)
 
 
 def _game_problem(probs) -> str:
@@ -309,11 +390,15 @@ def _classify(phase, e: journal.StepFailed):
 
 
 def run(data, request=None, app="", jobs=0, check_only=False, emit=None, src=None, table=None,
-        manifest=None, phases=None, compile_fn=None, quiet=True, cc=None, ld=None) -> int:
+        manifest=None, phases=None, compile_fn=None, quiet=True, cc=None, ld=None, unlock_only=False,
+        rpcs3_path=None, unlock_kw=None) -> int:
     """Every phase in order (or only the check), with the protocol on `emit`.
     request: make_request's dict, or None for the one the last run saved. app: the
     host's version, recorded in ready.txt (a new version is set up again). cc, ld:
     a developer's compiler (compile.local_toolchain), else the pinned download.
+    rpcs3_path: the RPCS3 route's RPCS3 (its folder or program), over the
+    request's. unlock_only: the check and the unlock (the unlock page's run).
+    unlock_kw: rpcs3.Unlock's launch, stall and poll (the tests' stand-in).
     Returns the exit status: 0 done, 1 something to fix or a failure."""
     data = Path(data)
     if compile_fn is None:
@@ -330,13 +415,14 @@ def run(data, request=None, app="", jobs=0, check_only=False, emit=None, src=Non
         emit.open_log(data / "setup" / "logs" / "run.log")
         emit.setup()
         return _run(data, request, app, jobs, check_only, emit, src, table, manifest, phases,
-                    compile_fn, quiet, cc, ld)
+                    compile_fn, quiet, cc, ld, unlock_only, rpcs3_path, unlock_kw)
     finally:
         emit.close()
         held.close()
 
 
-def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phases, compile_fn, quiet, cc, ld) -> int:
+def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phases, compile_fn, quiet, cc, ld,
+         unlock_only, rpcs3_path, unlock_kw) -> int:
     if quiet:
         quiet_and_awake(emit)
     req = request or load_request(data)
@@ -344,8 +430,13 @@ def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phase
         emit.error("game", "check", "Choose the game folder first.")
         emit.done("fix")
         return 1
-    plan = ["check"] if check_only else list(phases or default_phases())
+    if rpcs3_path:
+        req = dict(req, rpcs3=os.path.abspath(rpcs3_path))
+    route = bool(req.get("rpcs3"))
+    plan = (["check"] if check_only else ["check", "unlock"] if unlock_only
+            else list(phases or default_phases(route)))
     assert plan[0] == "check", plan
+    unlocks = route and (check_only or "unlock" in plan)   # the unlock makes what the check misses
     emit.plan(plan)
     if not check_only and (data / "setup" / READY).exists():
         (data / "setup" / READY).unlink()            # not ready while a run is under way
@@ -364,19 +455,33 @@ def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phase
             before = _ends(jr)
             skipped = False
             if phase == "check":
-                rep = _check(req, emit, total, table)
-                if not rep.ok:
-                    probs = rep.problems()
+                exe = None
+                if unlocks:
+                    exe, state = _rpcs3_state(req, data)
+                    emit.rpcs3(state, rpcs3.where(exe or req["rpcs3"]))
+                rep = _check(req, emit, total, table, data, unlocks)
+                probs = blocking(rep, unlocks)
+                if probs or rep.root is None:
                     for i in probs:
                         emit.text(f"FIX  {i.message}")
                     emit.error("game", "check", _game_problem(probs))
                     emit.done("fix")
                     return 1
+                if unlocks and exe is None and rep.problems():
+                    emit.error("rpcs3", "check", f"RPCS3 is not in {rpcs3.where(req['rpcs3'])} any more.")
+                    emit.done("fix")
+                    return 1
                 save_request(data, req)
+            elif phase == "unlock":
+                if unlocks:
+                    rep, skipped = _unlock(rep, req, data, jr, emit, total, table, unlock_kw)
+                else:
+                    skipped = True
             elif phase == "fetch":
                 skipped = not _fetch(data, emit, total, manifest, cc, ld)
             elif phase == "stage":
                 stage(rep, data, jr)
+                _drop_unlock(data)
             elif phase == "lift":
                 sums = {i.name: i.sha256 for i in rep.inputs()}
                 lift.Lift(data, jr, src=src or lift.SRC, workers=jobs, progress=total.step).run_all(
@@ -401,6 +506,11 @@ def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phase
     except fetch.FetchError as e:
         emit.text(f"FIX  {e}")
         emit.error("download", phase, "A download did not finish.")
+    except rpcs3.UnlockFailed as e:
+        emit.text(f"FIX  {e.message}")
+        if e.log:
+            emit.log_path(e.log)
+        emit.error("rpcs3", e.step, e.message)
     except journal.StepFailed as e:
         emit.text(f"FIX  {e}")
         if e.log:

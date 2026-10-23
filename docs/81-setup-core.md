@@ -108,6 +108,10 @@ Entries today:
 | `libsre` | `build_libsre.py`, only when the firmware file was given | `work/libsre`, `work/gen/libsre_glue.c` |
 
 - **Fingerprints.** A step's fingerprint covers its input sums, one sum over every script that does the lifting (ps3recomp's `tools/`, this tree's `scripts/` and `port/insn_hooks.txt`) and its flags. So a new release redoes the lift, and a lift stopped anywhere resumes at the step it was in. The lifter's worker count is not part of it.
+- **Two sides at once (10-23).** The SPU steps and `libsre` read only the EBOOT and the firmware, so they run on a thread beside the first four steps instead of after them.
+  - Their progress is told once the first four are done, so the screens show one lift row at a time.
+  - When the PPU side fails, the other side ends after the step it is in, and the PPU side's failure is the one reported.
+  - **Measured (10-23)**, the lift alone (`Lift.run_all`) from the same inputs with the firmware, one run each on a quiet PC: 63.9 s before, 39.8 s after (24.1 s less). The other side's 16 steps end at 27.2 s, inside the PPU lift (35.4 s alone, 36.6 s beside them), so the lift now takes as long as the first four steps. Of the 87 files written, 86 are byte for byte the same; the libsre glue differs only in the data folder's path, which it names (a point below).
 - **UTF-8.** The tools run as `python -X utf8`, because the lifter opens its outputs without an encoding (docs/52).
 - **Progress.** The lifter's `lifted n/m functions` lines and the SPU step count come out as `@progress <step> n/m` lines, for the screens to read.
 - **Tooling it needed** (commit `57f426d`, its own commit):

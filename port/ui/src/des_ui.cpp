@@ -970,6 +970,18 @@ extern "C" int des_ui_launch(int* argc, char*** argv) {
     // The game setup built (docs/88 section 7): its module, the game's folder and its EBOOT.elf as main's ELF.
     if (!std::getenv("PS3_GAME_MODULE")) ps3_setenv("PS3_GAME_MODULE", launch.module.string().c_str());
     ps3_setenv("PS3_VFS_ROOT", launch.game.string().c_str());
+    // The game's folder is only read (docs/90 section 4): its .sdat files are opened as the decrypted copies setup
+    // staged, and the runtime's own decryption, if a file has no copy, and the game's HDD cache (/dev_hdd1) go to
+    // setup's data folder.
+    if (const auto& data = ui::setup::data_dir(); !data.empty()) {
+        if (!std::getenv("PS3_EDAT_PLAIN")) ps3_setenv("PS3_EDAT_PLAIN", (data / "inputs").string().c_str());
+        if (!std::getenv("PS3_EDAT_CACHE")) ps3_setenv("PS3_EDAT_CACHE", (data / "edat").string().c_str());
+        if (!std::getenv("PS3_HDD1_ROOT")) {
+            std::error_code ec;
+            std::filesystem::create_directories(data / "hdd1", ec);
+            ps3_setenv("PS3_HDD1_ROOT", (data / "hdd1").string().c_str());
+        }
+    }
     static std::string eboot;
     static std::vector<char*> args;
     eboot = launch.eboot.string();

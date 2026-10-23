@@ -11,7 +11,7 @@ made of journal steps, with the screens' line protocol on standard output.
   compile   the lift built into the game module (compile.py, docs/81 section 7), when this tree has it
   import    on the RPCS3 route, while request.json has a pending import: the save, trophies and settings the
             player ticked, brought across once (rpcs3_import.py, docs/90 3.5)
-  shaders   the game's shader cache filled by the host with no window (`<host> --shaders <game folder>`,
+  shaders   the game's shader cache filled by the host with no window (`<host> --shaders <game folder> <EBOOT.elf>`,
             docs/52 section 5), as the game's start fills it, so the first start finds it full
 
 A phase whose steps are all done with the same inputs is skipped, so a run
@@ -425,16 +425,18 @@ def _compile(data, jr, jobs, progress, cc=None, ld=None, memory=None):
 def _shaders(host, game, data, emit, total) -> bool:
     """The shaders phase (docs/52 section 5): the host fills the game's shader cache with no window, the pass the
     game's start runs (port/des_prework.cpp), so the first start finds the cache full; its own stamp makes a second
-    run quick. host: the program, or a command list ending in it. It never fails the run: what is not prepared here,
-    the game prepares at its start. Returns True when there was nothing to do (no host to run it, or the cache was up
-    to date)."""
+    run quick. It reads the game folder's shader archives and the executable the game starts with (ready.txt's
+    eboot), which holds the engine's own programs (docs/93). host: the program, or a command list ending in it. It
+    never fails the run: what is not prepared here, the game prepares at its start. Returns True when there was
+    nothing to do (no host to run it, or the cache was up to date)."""
     prog = [str(c) for c in host] if isinstance(host, (list, tuple)) else [str(host)] if host else []
     if not prog or not Path(prog[-1]).is_file():
         emit.text("note the shaders are prepared at the game's first start (no host to prepare them)")
         return True
     logs = data / "setup" / "logs"
     logs.mkdir(parents=True, exist_ok=True)
-    cmd = prog + ["--shaders", str(game)]
+    eboot = data / "inputs" / lift.EBOOT
+    cmd = prog + ["--shaders", str(game)] + ([str(eboot)] if eboot.is_file() else [])
     result, rc = [], None
     try:
         with open(logs / "shaders.log", "w", encoding="utf-8", errors="replace") as lf:

@@ -10,17 +10,24 @@
  *
  * The archives are USRDIR/shader/*.shaderbnd: BND3, big-endian. Each entry is
  * a FromSoftware header (its size in the second word) followed by the
- * CgBinaryProgram the game uploads. The work is ps3recomp's
- * rsx_shader_precompile; the wrapper UI shows its progress
- * (des_prework_status) and can skip it (des_prework_skip).
+ * CgBinaryProgram the game uploads. The game's executable (EBOOT.elf) holds 8
+ * more, the engine's own (docs/30): the pass finds them by their headers.
+ * The work is ps3recomp's rsx_shader_precompile; the wrapper UI shows its
+ * progress (des_prework_status) and can skip it (des_prework_skip).
+ *
+ * The programs of the archives the game draws without a depth test (kFlat)
+ * and the executable's are built a second time in the form a scaled target
+ * (RSX_SCALE above 100) draws them, with the sprite-edge clamp
+ * (RSX_PRECOMPILE_2D). Without it a first start at 200% compiled 16 of them
+ * in play, most in one 280-500 ms frame as the level appeared (docs/93).
  *
  * A stamp in the cache (precompile.stamp) records the archives, the
- * executable and the cache's fp_variants.txt the last full pass saw; when
- * none of them changed, the pass is skipped.
+ * executables (this program and the game's) and the cache's fp_variants.txt
+ * the last full pass saw; when none of them changed, the pass is skipped.
  *
  * Setup runs the same pass once the game is built (des_prework_shaders,
- * `des_host --shaders <game folder>`), so the first start finds the cache
- * full.
+ * `des_host --shaders <game folder> <EBOOT.elf>`), so the first start finds
+ * the cache full.
  *
  * DES_PRECOMPILE=0 skips it at a start; =force runs it whatever the stamp says.
  */
@@ -57,6 +64,15 @@ namespace {
  * this only has to cover a first run. */
 constexpr const char* kUnits = "7=shadow,8=cube,11=cube,12=cube,13=cube,14=cube";
 constexpr const char* kAlts  = "1=d2c,2=d2c";
+
+/* The archives whose programs the game draws without a depth test: the post
+ * filters, the menus and HUD, the debug font. The 14 archive programs a first
+ * start at 200% compiled with the clamp in play came from these (11, 2 and 1;
+ * docs/93). ds_flver's and ds_sfx's draws have a depth test. */
+constexpr const char* kFlat[] = {"ds_filter.shaderbnd", "ds_menu.shaderbnd", "dbgfont.shaderbnd"};
+
+/* The game's executable (main's ELF, des_prework_elf); empty if unknown. */
+std::string s_elf;
 
 std::atomic<int> s_state{0};   /* 0 idle, 1 reading, 2 compiling, 3 done */
 std::atomic<bool> s_skip{false};
@@ -119,7 +135,7 @@ std::vector<std::string> list_archives(const std::string& dir, std::string& stam
         FindClose(h);
     }
     std::sort(names.begin(), names.end());
-    stamp = "des_prework 1\n";
+    stamp = "des_prework 2\n";   /* 2: the 2D forms and the executable's programs */
     /* The build, from its PE header (link time and image size): a copy of
      * the same executable elsewhere, or with a new file time, is the same. */
     {
@@ -159,7 +175,7 @@ std::vector<std::string> list_archives(const std::string& dir, std::string& stam
     for (const auto& e : std::filesystem::directory_iterator(dir, ec))
         if (e.path().extension() == ".shaderbnd") names.emplace_back(e.path().filename().string());
     std::sort(names.begin(), names.end());
-    stamp = "des_prework 1\n";
+    stamp = "des_prework 2\n";   /* 2: the 2D forms and the executable's programs */
     stamp_file(stamp, "exe", "/proc/self/exe");   /* (a new build is another size or time) */
     stamp += std::string("kinds ") + kUnits + " " + kAlts + "\n";
     for (const std::string& n : names) stamp_file(stamp, n.c_str(), dir + "/" + n);
@@ -167,9 +183,17 @@ std::vector<std::string> list_archives(const std::string& dir, std::string& stam
 }
 #endif
 
+bool flat_archive(const std::string& name)
+{
+    for (const char* f : kFlat)
+        if (same_nocase(name.c_str(), f)) return true;
+    return false;
+}
+
 /* Queue every .vpo/.fpo in one archive; returns how many. */
 int queue_archive(const std::string& path, const std::string& name)
 {
+    const unsigned flags = flat_archive(name) ? RSX_PRECOMPILE_2D : 0u;
     std::vector<uint8_t> b;
     if (!read_file(path, b) || b.size() < 0x20 || std::memcmp(b.data(), "BND3", 4) != 0) {
         std::fprintf(stderr, "[des] shaders: %s is not a BND3 archive\n", name.c_str());
@@ -191,8 +215,36 @@ int queue_archive(const std::string& path, const std::string& name)
         if (hdr >= size) continue;
         char label[256];
         std::snprintf(label, sizeof label, "%s#%u", name.c_str(), i);
-        rsx_shader_precompile_add(label, &b[off + hdr], size - hdr);
+        rsx_shader_precompile_add_flags(label, &b[off + hdr], size - hdr, flags);
         n++;
+    }
+    return n;
+}
+
+/* Queue the Cg programs in the game's executable (the engine's post and
+ * display passes, docs/30); returns how many. They sit in its data as
+ * the SDK's CgBinaryProgram: profile sce_vp_rsx 0x1B5B or sce_fp_rsx 0x1B5C
+ * at a 4-byte boundary, format revision 6, then sizes and offsets that stay
+ * inside the program, and microcode in 16-byte instructions. On the US disc
+ * that is 8 programs and nothing else. */
+int queue_elf(const std::string& path)
+{
+    std::vector<uint8_t> b;
+    if (path.empty() || !read_file(path, b)) return 0;
+    int n = 0;
+    for (size_t o = 0; o + 32 <= b.size(); o += 4) {
+        const uint32_t profile = be32(&b[o]);
+        if ((profile != 0x1B5Bu && profile != 0x1B5Cu) || be32(&b[o + 4]) != 6) continue;
+        const uint32_t total = be32(&b[o + 8]), params = be32(&b[o + 16]), prog = be32(&b[o + 20]);
+        const uint32_t usz = be32(&b[o + 24]), uoff = be32(&b[o + 28]);
+        if (total < 32 || total > b.size() - o || params > total || uint64_t(prog) + 24 > total || uoff > total ||
+            !usz || usz > total - uoff || usz % 16)
+            continue;
+        char label[64];
+        std::snprintf(label, sizeof label, "EBOOT@%08zx", o);
+        rsx_shader_precompile_add_flags(label, &b[o], total, RSX_PRECOMPILE_2D);
+        n++;
+        o += (total - 4) & ~size_t(3);   /* with the loop's += 4: to the program's end */
     }
     return n;
 }
@@ -230,11 +282,11 @@ namespace {
 /* What a pass ended with (des_prework_shaders prints it). */
 enum class Pass { Off, NoArchives, UpToDate, NotStarted, Skipped, Done, Failed };
 
-/* One pass over the shader archives of the game folder `root`, into the
- * cache: at a start (ps3_title_prework) or in setup (des_prework_shaders).
- * `poll`, if given, runs on this thread every 100 ms while the shaders
- * compile. */
-Pass run_pass(const char* root, bool force, void (*poll)(void), rsx_shader_precompile_stats& s)
+/* One pass over the shader archives of the game folder `root` and the
+ * programs in its executable `elf` (may be empty), into the cache: at a start
+ * (ps3_title_prework) or in setup (des_prework_shaders). `poll`, if given,
+ * runs on this thread every 100 ms while the shaders compile. */
+Pass run_pass(const char* root, const std::string& elf, bool force, void (*poll)(void), rsx_shader_precompile_stats& s)
 {
     const char* cache = rsx_d3d12_shader_cache_path();
     if (!cache || !cache[0] || !root || !root[0]) return Pass::Off;   /* the cache is off */
@@ -244,6 +296,8 @@ Pass run_pass(const char* root, bool force, void (*poll)(void), rsx_shader_preco
 
     std::string stamp;
     const std::vector<std::string> names = list_archives(dir, stamp);
+    if (elf.empty()) stamp += "eboot none\n";
+    else stamp_file(stamp, "eboot", elf);
     stamp_file(stamp, "fp_variants", std::string(cache) + kSep + "fp_variants.txt");
     const std::string stamp_path = std::string(cache) + kSep + "precompile.stamp";
     std::vector<uint8_t> old;
@@ -262,6 +316,7 @@ Pass run_pass(const char* root, bool force, void (*poll)(void), rsx_shader_preco
         if (s_skip.load()) break;
         programs += queue_archive(dir + kSep + n, n);
     }
+    if (!s_skip.load()) programs += queue_elf(elf);
     /* One processor is left for the window and its progress bar. */
     const unsigned cpus = std::thread::hardware_concurrency();
     const int threads = cpus > 2 ? int(cpus) - 1 : 1;
@@ -310,17 +365,25 @@ void print_progress(void)
 
 }  // namespace
 
+/* The game's executable for the pass at a start: main's ELF, as
+ * ps3_title_launch hands it to the boot. */
+extern "C" void des_prework_elf(const char* path)
+{
+    s_elf = path ? path : "";
+}
+
 extern "C" void ps3_title_prework(void)
 {
     const char* knob = std::getenv("DES_PRECOMPILE");
     if (knob && std::strcmp(knob, "0") == 0) return;
     rsx_shader_precompile_stats s{};
-    run_pass(ppu_vfs_root, knob && same_nocase(knob, "force"), nullptr, s);
+    run_pass(ppu_vfs_root, s_elf, knob && same_nocase(knob, "force"), nullptr, s);
 }
 
 /* Setup's shaders phase (docs/52 section 5): tools/setup's pipeline.py runs
- * `des_host --shaders <game folder>` once the game is built, and this is all
- * that process does (ps3_title_launch): the same pass as at a start, with no
+ * `des_host --shaders <game folder> <EBOOT.elf>` once the game is built (the
+ * executable the game starts with, ready.txt's eboot), and this is all that
+ * process does (ps3_title_launch): the same pass as at a start, with no
  * window, telling the engine how far it is on standard output, one line each:
  *   shaders <done> <total>     while the shaders compile, once the total is
  *                              known
@@ -331,13 +394,14 @@ extern "C" void ps3_title_prework(void)
  * The cache and its stamp are the game's own, so its first start finds the
  * cache up to date. Returns the exit status: 1 when the pass did not finish
  * (the game then compiles what is left at its start, or as it draws). */
-extern "C" int des_prework_shaders(const char* game)
+extern "C" int des_prework_shaders(const char* game, const char* eboot)
 {
     rsx_shader_precompile_stats s{};
 #ifdef _WIN32
-    const Pass p = run_pass(game, false, print_progress, s);
+    const Pass p = run_pass(game, eboot ? eboot : "", false, print_progress, s);
 #else
     (void)game;
+    (void)eboot;
     (void)print_progress;
     const Pass p = Pass::Off;   /* the precompile is D3DCompile's: the shaders compile as the game draws them */
 #endif

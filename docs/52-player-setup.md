@@ -247,7 +247,8 @@ Check before starting, again before the compile, and again before the link (sect
 | What | Today | What covers it in setup | State |
 |---|---|---|---|
 | RSX programs to DXBC (FXC) | the prework at the first start after an update: 3,535 shaders in 28 s on 15 threads (docs/32) | the same pass, run from setup | exists |
-| The EBOOT's 8 Cg programs | compiled at first use | docs/49 step 2 | to build |
+| The EBOOT's 8 Cg programs | compiled at first use: 2 in the menus, 2 as the level appears (docs/93) | the same pass, which finds them in the executable by their headers (10-23) | exists |
+| The 2D forms of the filter, menu and font programs (the sprite-edge clamp above 100% scale, docs/37) | compiled at first use: 16 at a first start at 200%, most in one frame of 280-500 ms as the level appears (docs/93) | the same pass (`RSX_PRECOMPILE_2D`, 10-23) | exists |
 | Fetch-form vertex programs | precompiled since 13f5fb3 (docs/49) | the same pass | exists |
 | D3D12 pipelines (PSOs) | built at first draw; kept in `pso_library.bin` (PR #34) and rebuilt from the manifest after a driver change | `pso_predict.py` plus the predicted build (docs/49 steps 1 to 3): 5,062 pipelines; 98.1% of the live manifest and 100% of 6 samples (measured in docs/49); about 88 MB (inferred in docs/49) | to build |
 | What prediction misses | compiled at first use, on the render thread | docs/49 fallback B: compile a frame's misses in parallel before that frame | to build |
@@ -261,7 +262,7 @@ Check before starting, again before the compile, and again before the link (sect
 
 Time: 28 s for the shaders (docs/32), plus 35 to 101 CPU-seconds of driver compiles (docs/49), so about a minute on this PC (inferred).
 
-Step 1 is built (10-23, docs/88 section 13): the engine's `shaders` phase runs `des_host --shaders`, 3,603 shaders in about 20 s on 15 threads. It runs at the engine's priority, below normal, like the rest of setup. Steps 2 and 3 are not built.
+Step 1 is built (10-23, docs/88 section 13): the engine's `shaders` phase runs `des_host --shaders <game folder> <EBOOT.elf>`, 3,603 shaders in about 20 s on 15 threads (more since the 2D forms and the executable's programs, docs/93). It runs at the engine's priority, below normal, like the rest of setup. Steps 2 and 3 are not built.
 
 The step does not need the game DLL. The prework, the precompiler and the PSO code are host code. They read the game folder's files and `EBOOT.ELF` (inferred from docs/49 2.2). So under Route B it could even overlap the compile. It stays last, as asked, and because the compile already uses every core.
 

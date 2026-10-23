@@ -393,9 +393,9 @@ only). Not run yet: `run` with the real compiler download, which waits for the a
 After the compile, setup prepares the game's shaders, as the game does at its first start (`des_prework.cpp`, docs/52 section 5). The first start then finds them ready and begins at once.
 
 - **How it runs.**
-  - `shaders` is the engine's last phase. It runs the host as `des_host --shaders <game folder>`; the host gives the engine its own path with `--host`.
-  - `ps3_title_launch` sees `--shaders` before anything else and runs the game's own pass with no window. The pass reads each `.vpo` and `.fpo` in `USRDIR/shader/*.shaderbnd`, turns it into HLSL, and compiles that with D3DCompile on all processors but one. It needs no device. Then the process exits.
-  - The cache and its stamp are the game's: `shader_cache` beside the exe, or `PS3_SHADER_CACHE`. The stamp holds the exe's link time and size, the archives and the texture kinds. The game starts the same exe on the same folder (the host reads the folder from `ready.txt`), so its first start finds the cache up to date.
+  - `shaders` is the engine's last phase. It runs the host as `des_host --shaders <game folder> <EBOOT.elf>` (the executable `ready.txt` names); the host gives the engine its own path with `--host`.
+  - `ps3_title_launch` sees `--shaders` before anything else and runs the game's own pass with no window. The pass reads each `.vpo` and `.fpo` in `USRDIR/shader/*.shaderbnd` and the 8 Cg programs in the executable, turns them into HLSL, and compiles that with D3DCompile on all processors but one. The filter, menu and font programs and the executable's are built in their 2D form too, which draws above 100% scale use (docs/93). It needs no device. Then the process exits.
+  - The cache and its stamp are the game's: `shader_cache` beside the exe, or `PS3_SHADER_CACHE`. The stamp holds the exe's link time and size, the game's executable, the archives and the texture kinds. At a start the pass reads the executable the game boots (main's ELF). The game starts the same exe on the same folder (the host reads the folder from `ready.txt`), so its first start finds the cache up to date.
   - It is a process of its own because the precompile runs once a process.
   - The host prints `shaders <done> <total>` as it goes and `shaders <result> <compiled> <already prepared> <failed> <seconds>` at the end. The engine turns these into the phase's progress and one line, and keeps the host's output in `setup/logs/shaders.log`.
   - The count starts once every program is turned into HLSL, when the total is final. Before that it moves: 15, then 3,763, before 3,603, all in the first second.
@@ -409,7 +409,7 @@ After the compile, setup prepares the game's shaders, as the game does at its fi
 - **The time estimate** before setup is unchanged: the pass takes about 20 s here, inside the estimate's rounding.
 - **Tested** (10-23).
   - 5 unit tests (`ShadersTest`), with a stand-in host:
-    - the host runs after the compile with `--shaders` and the game folder, and `ready.txt` is already there when it starts;
+    - the host runs after the compile with `--shaders`, the game folder and the executable, and `ready.txt` is already there when it starts;
     - "up to date" reads as a skip;
     - a failed pass is a note, and the run ends ok;
     - a run with no host;

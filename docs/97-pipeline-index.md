@@ -159,10 +159,20 @@ C's cache. Counts from the library's log line.
 - The first committed index held the 327 rows of runs A to E.
 - Later runs in the Nexus (scale 100 and 200), Boletarian Palace 1-1 and the Tutorial (scale 200) added 109
   rows. These are the Nexus' pipelines, and the clamp form's first 22 rows.
-- The index now holds 436 rows: 37 vertex and 162 fragment programs in 193 pairs.
+- With those, the index held 436 rows.
 - The driver's own cache was warm in runs B and C, because they used the same exe as run A. So 134 ms is the
   cost with a warm driver cache. On a new player's PC, each pipeline takes the driver's 7-20 ms. On 4 threads,
   167 take about 0.3-0.8 s, and the game is still in its menus then.
+
+**The first play test** (2026-10-23): a first start with the 436-row index, played by hand from the Tutorial
+through the Nexus to Boletarian Palace 1-1, at RSX_SCALE=200 and 144 fps with VRR. No stutter was noticed.
+
+- The start built 435 of the index's 436 pipelines in 357 ms.
+- In play, 384 draws loaded their pipeline from the library, and 156 compiled one. By area: the Tutorial 95
+  (over two loads of it), the Nexus 39, the Palace 21, the menus 1.
+- No new row used the clamp form. The run met the index's 22 clamp rows, and no others.
+- Its 155 new rows went into the index, which holds 591 rows now: 41 vertex and 195 fragment programs in 238
+  pairs.
 
 ## Limits
 

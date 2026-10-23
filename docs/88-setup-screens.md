@@ -322,16 +322,16 @@ only). Not run yet: `run` with the real compiler download, which waits for the a
   The user's save was the same after each run.
 - **Not exercised yet:** the folder dialog (a test cannot press it), the places scan on a PC with copies in the usual places, the battery rows, the pad and mouse by hand, and the Linux build: libdbus's `dbus_*` calls are declared by hand in folder_picker.cpp, from dbus-message.h and dbus-bus.h as remembered, and no compiler has checked them.
 - One log line to look at: `[ui] a window's close transition did not run; hidden without it` came after the run ended (inferred: a window closed while the setup window was open; harmless in the shots).
-- **The launch hook** (measured 10-22). The build was the port's launch commit with ps3recomp #104. The test used an empty working folder, a stand-in `ready.txt` (Ready) and a settings.ini with Enhanced, `RSX_SCALE = 150` and `DES_FPS = 60`:
-  - `DES_UI_OPEN=setup`, no key pressed: the start screen, "Ready to play", in 26 log lines, with no game boot (no module load, no guest thread).
-  - The same with Enter on Play: the log says "play: the game starts in a new process", and the setup process exits 0. The new process boots the game and applies the stored settings ("render targets at 150%", "FlipMode 60FPS(NO SKIP)"), then stops on `EXIT_AFTER_MS`.
-  - A player's start: no arguments, and no `DES_UI_OPEN`, `PS3_GAME_MODULE` or `PS3_VFS_ROOT`, with a `ready.txt` naming the real module and game folder. The log says "launch: the game setup built", the module loads from the path in `ready.txt`, and the VFS root is its game folder. It boots with the stored settings.
-  - Not run: Linux.
 - **A whole setup on a real dump** (measured 10-22). des_host from master (b14200d, built as host.yml builds it), `DES_UI_OPEN=setup-run` on the US 1.00 dump, with the decrypted files from earlier unlocks and a developer's compiler (`DES_SETUP_CC`/`DES_SETUP_LD`, LLVM 22.1.8, section 5):
   - check, fetch (skipped: a developer's compiler), stage, lift and compile all passed, in 27 minutes. The compile ran one job at a time: the job count comes from free memory at the start (`compile.default_jobs`), and this PC had about 5 GB of 31 GB free.
   - "The game is built" with the time, then a 289 MB `des_game.dll` and `ready.txt`.
   - A player's start from that `ready.txt` (no arguments, an empty environment for the port's knobs, a working folder holding a copy of the pinned save) loaded the module (94,017 functions) and set the VFS root, then **hung on the loading screen**. Its log has no `[libsre] LLE load` line: libsre was never loaded. The same start with the run defaults of `tools/des/deslib.sh` (`LIBSRE_LLE`, `LIBSRE_LLE_ONLY`, `SPURS_NO_ROUND_NOTIFY`, `VP_VB_VERTS`) reached the Tutorial. The host now sets those itself, unless the environment has them (`run_defaults`, des_options.cpp; docs/45 1.3).
   - With that change, the same player's start with none of them in the environment loads libsre (`[libsre] LLE load: ok=1`, the `[LLE-ONLY]` lines) and reaches the Tutorial.
+- **The launch hook** (measured 10-22). The build was the port's launch commit with ps3recomp #104. The test used an empty working folder, a stand-in `ready.txt` (Ready) and a settings.ini with Enhanced, `RSX_SCALE = 150` and `DES_FPS = 60`:
+  - `DES_UI_OPEN=setup`, no key pressed: the start screen, "Ready to play", in 26 log lines, with no game boot (no module load, no guest thread).
+  - The same with Enter on Play: the log says "play: the game starts in a new process", and the setup process exits 0. The new process boots the game and applies the stored settings ("render targets at 150%", "FlipMode 60FPS(NO SKIP)"), then stops on `EXIT_AFTER_MS`.
+  - A player's start: no arguments, and no `DES_UI_OPEN`, `PS3_GAME_MODULE` or `PS3_VFS_ROOT`, with a `ready.txt` naming the real module and game folder. The log says "launch: the game setup built", the module loads from the path in `ready.txt`, and the VFS root is its game folder. It boots with the stored settings.
+  - Not run: Linux.
 
 ## 12. Open questions
 

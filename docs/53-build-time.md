@@ -720,3 +720,40 @@ when it gains. [inferred unless marked]
 | Flags that leave the code alone | libsre writes 3 MB of warnings; the PPU chunks a few kB each. To measure. |
 | A faster lift | The lifts are 64 s of 845 (8%). The PPU lift's one-thread analysis is about 18 s (section 10). |
 | The screens' process | 1.64 GB held through the compile. About 1 GB of it is the RSX vertex and constant buffers (768 MB and 264 MB, from its log), which the screens never use. |
+
+### 16.6 After the changes (10-23)
+
+Each change has its own PR with its before and after. Together, measured as
+in section 16.1: real setups from a fresh data folder, through the screens,
+8.3 to 9.0 GB free at the start. [measured]
+
+| Run | Engine | Host | Compile | Jobs at once, average | Whole setup |
+|---|---|---|---|---|---|
+| A2 | #148 | makes the RSX buffers | 976 s | 1.52 | 1,046 s |
+| B | #148, #149 | makes the RSX buffers | 891 s | 1.66 | 986 s, with a 20 s shader pass |
+| C | #148, 53 chunks | makes the RSX buffers | 819 s | 1.83 | 886 s |
+| F | #148 with the size rule, #149, 53 chunks (#158) | makes the RSX buffers | 450 s | 3.36 | 524 s |
+| G | as F | makes none (#159, with ps3recomp #108) | 371 s | 4.12 | 443 s |
+
+- F and G ran no shader pass: F's exe had its shaders from run B, and G's
+  host predates #149's flag. A first setup adds about 20 s. [measured]
+- F and G still lifted one step after another: their engine predates the
+  lift side by side (#157), which takes the lift alone from 63.9 s to
+  39.8 s. With it, a setup like G's would take about 420 s. [inferred]
+- The 53 chunks cost no frame rate (R3, section 14). The other changes do
+  not touch the game's code.
+- Against 10-22's single job at master's rule (1,602 s), G is about 3.6
+  times faster on the same PC. [measured]
+- **On smaller PCs.** List scheduling under #148's rule, with each object's
+  measured time and peak (run D's objects for 14 chunks, run C's for 53),
+  at a given memory over the 2 GB kept free: [simulated]
+
+  | Usable memory | 14 chunks, #148 | 53 chunks, the size rule |
+  |---|---|---|
+  | 3 GB | 1,438 s | 732 s |
+  | 5.5 GB | 764 s | 395 s |
+  | 10 GB | 520 s | 215 s |
+
+  It is never slower at any size. 1.2 GB more usable (#159) gains 8 to 49%
+  more at 53 chunks; at 14 chunks it helps only where it lets one more
+  chunk in (4.3 to 5.5 GB: -47%). [simulated]

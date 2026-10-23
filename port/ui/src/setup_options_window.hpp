@@ -40,6 +40,7 @@ private:
     setup::Settings mKept;     // "A few choices" as its Back left them, for mKeptFor
     bool mHaveKept = false;
     setup::Preset mKeptFor = setup::Preset::Enhanced;
+    setup::Settings mRpcs3;    // the settings brought across from RPCS3, Custom's starting values (docs/90 1.8)
     Buttons mCards, mActions;
 };
 
@@ -51,6 +52,8 @@ public:
         int displayHeight = 0;
         std::function<void(const setup::Settings&)> onBack;  // Back: the choices as they are now
         std::function<void()> onFinish;                      // Finish: the options are written
+        bool fromRpcs3 = false;  // Custom, from the settings brought across from RPCS3
+        setup::Settings extra;   // and those of them with no choice here, written with the choices
     };
 
     explicit SetupChoicesWindow(Props props);

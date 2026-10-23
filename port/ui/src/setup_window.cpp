@@ -9,12 +9,16 @@
 #include "settings.hpp"
 #include "settings_window.hpp"
 #include "setup_options_window.hpp"
+#include "setup_screens.hpp"
 #include "ui.hpp"
 #include "version.hpp"
 
 #include <algorithm>
 #include <cstdio>
+#include <fstream>
+#include <functional>
 #include <iterator>
+#include <map>
 #include <system_error>
 #include <utility>
 
@@ -38,6 +42,7 @@ constexpr ErrorKind kErrors[] = {
     {"memory", Fix::TryAgain, "Close other programs, then try again. Setup carries on where it stopped."},
     {"step", Fix::Report, "Try again. If it fails again, please report it."},
     {"rpcs3", Fix::TryAgain, "Try again. If it keeps failing, you can unlock the files yourself."},
+    {"import", Fix::TryAgain, "The game is built, and nothing of yours was changed. Try again, or go on without it."},
     {"internal", Fix::Report, "Try again. If it fails again, please report it."},
 };
 
@@ -63,6 +68,7 @@ constexpr TaskText kTasks[] = {
     {"spu", "Translate the SPU programs", "The code for the PS3's helper processors"},
     {"compile", "Compile", "Builds des_game.dll from the translated code"},
     {"shaders", "Prepare the shaders", "So that the game starts smoothly"},
+    {"import", "Bring across from RPCS3", "Your save and trophies"},
 };
 
 const TaskText* task_text(const std::string& id) {
@@ -107,6 +113,29 @@ std::filesystem::path from_utf8(const std::string& s) {
 std::string lower_first(std::string s) {
     if (!s.empty() && s[0] >= 'A' && s[0] <= 'Z') s[0] = char(s[0] - 'A' + 'a');
     return s;
+}
+
+// What the import brought across (the engine's <data>/setup/imported.txt, key=value lines: rpcs3_import.py's
+// write_imported), as Ready to play's rows say it (docs/90 section 1.9).
+void imported_rows(const std::function<void(const char*, const std::string&)>& row) {
+    std::map<std::string, std::string> v;
+    std::ifstream f(setup::data_dir() / "setup" / "imported.txt", std::ios::binary);
+    for (std::string line; std::getline(f, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (const size_t eq = line.find('='); eq != std::string::npos && line[0] != '#')
+            v[line.substr(0, eq)] = line.substr(eq + 1);
+    }
+    if (v["save"] == "1") {
+        const std::string& n = v["save_characters"];
+        std::string line = n.empty() || n == "-" ? std::string("Brought across.")
+                                                 : n + (n == "1" ? " character" : " characters") + " brought across.";
+        line += " RPCS3 keeps its own copy.";
+        if (!v["save_backup"].empty()) line += " Your old save is in save-backups.";
+        row("Your RPCS3 save", line);
+    }
+    if (v["trophies"] == "1" && !v["trophies_earned"].empty())
+        row("Trophies", v["trophies_earned"] + (v["trophies_total"].empty() ? "" : " of " + v["trophies_total"]) +
+                            " unlocked.");
 }
 
 std::string took(unsigned long long ms) {
@@ -354,7 +383,10 @@ void SetupWindow::ask_stop() {
 
 void SetupWindow::draw_failed() {
     const ErrorKind& kind = error_kind(mStatus.errorCode);
-    set_heading(kind.fix == Fix::CheckAgain ? "Some game files need fixing" : "The build stopped", kind.todo);
+    set_heading(kind.fix == Fix::CheckAgain         ? "Some game files need fixing"
+                : mStatus.errorCode == "import" ? "The import from RPCS3 stopped"
+                                                : "The build stopped",
+                kind.todo);
     mButtons.clear();  // (their listeners go before their elements)
     clear_children(mBody);
     mDetails = nullptr;
@@ -388,6 +420,18 @@ void SetupWindow::draw_failed() {
     } else {
         actions.push_back({again, [this] { start(); }, Look::Primary});
     }
+    if (mStatus.errorCode == "import") {  // (the build is done: the run again without the import, `run --no-import`)
+        actions.push_back({"Go on without it",
+                           [this] {
+                               mProps.request.noImport = true;
+                               mProps.request.imports.clear();
+                               start();
+                           },
+                           Look::Plain});
+    } else if (mStatus.errorCode == "rpcs3") {
+        actions.push_back(
+            {"Show me how", [this] { push(std::make_unique<SetupHelpWindow>(SetupHelpWindow::Props{})); }, Look::Plain});
+    }
     if (!log_file().empty()) actions.push_back({"Show the full log", [this] { open_log(); }, Look::Quiet});
     actions.push_back({"Close", [this] { close(false); }, Look::Quiet});
     set_actions(std::move(actions));
@@ -416,14 +460,25 @@ void SetupWindow::draw_done() {
     clear_children(mBody);
     mDetails = nullptr;
     const std::string builtLine = "des_game.dll for version " + std::string(kVersion) + ". " + mTook;
+    // (only after the run that brought them across: the file stays for later runs, which import nothing)
+    const bool importRan = std::any_of(mStatus.steps.begin(), mStatus.steps.end(), [](const setup::Status::Step& s) {
+        return s.name == "import" && s.state == setup::Status::State::Done;
+    });
+    const auto imported = [importRan](Rml::Element* box) {
+        if (importRan)
+            imported_rows([box](const char* key, const std::string& line) { found(box, "setup-ok", key, line); });
+    };
     if (ready) {
         set_heading("Ready to play", "The game is built for this PC and your options are set.");
         auto* box = panel(mBody);
         found(box, "setup-ok", "Built", builtLine);
         found(box, "setup-ok", "Options", setup_options_summary());
+        imported(box);
     } else if (built) {
         set_heading("The game is built", "Done. Next, pick how you want to play.");
-        found(panel(mBody), "setup-ok", "Built", builtLine);
+        auto* box = panel(mBody);
+        found(box, "setup-ok", "Built", builtLine);
+        imported(box);
     } else {
         set_heading("Setup finished", "This version has no build step yet, so the game is not built.");
     }

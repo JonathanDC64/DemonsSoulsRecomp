@@ -10,8 +10,10 @@
 #include "app.hpp"
 #include "host.hpp"
 #include "portable.hpp"
+#include "settings.hpp"
 #include "settings_window.hpp"
 #include "setup_options_window.hpp"
+#include "setup_rpcs3_window.hpp"
 #include "setup_window.hpp"
 #include "ui.hpp"
 #include "version.hpp"
@@ -30,6 +32,10 @@ namespace {
 std::string utf8(const std::filesystem::path& p) {
     const std::u8string s = p.u8string();
     return std::string(s.begin(), s.end());
+}
+
+std::filesystem::path from_utf8(const std::string& s) {
+    return std::filesystem::path(std::u8string(s.begin(), s.end()));
 }
 
 std::string grouped(long long v) {
@@ -153,6 +159,10 @@ bool scroll_page(Rml::Element* page, int pages) {
 
 }  // namespace
 
+std::string build_time_line() {
+    return build_time();
+}
+
 // ---- 1. The start screen ----
 
 SetupStartWindow::SetupStartWindow(Props props) : SetupPage("setup-start"), mProps(std::move(props)) {
@@ -193,8 +203,8 @@ void SetupStartWindow::refresh() {
                                             " of free space while it works.");
         auto* box = panel(mBody);
         found(box, "setup-info", "You need your copy of the game",
-              "The US disc, BLUS30443 version 1.00, copied to a folder, with 27 of its files and one file of the "
-              "PS3 system software decrypted once. Setup shows you how.");
+              "The US disc, BLUS30443 version 1.00, copied to a folder. If you already play it in RPCS3, that is "
+              "enough. If not, setup shows you how.");
         found(box, "setup-info", "Setup downloads its build tools once",
               "The compiler and the tools it needs, each checked before it is used. Later builds use the same copy.");
         found(box, "setup-info", "You can stop and come back",
@@ -323,7 +333,8 @@ void SetupStartWindow::back() {
 
 // ---- 2. Where is your game? ----
 
-SetupSourceWindow::SetupSourceWindow(Props props) : SetupPage("setup-source"), mProps(std::move(props)) {
+SetupSourceWindow::SetupSourceWindow(Props props)
+    : SetupPage("setup-source"), mProps(std::move(props)), mFound(std::make_shared<Mailbox<setup::Rpcs3>>()) {
     using S = RailStep::State;
     set_rail({{"Your game", "", S::Now}, {"Build", build_time(), S::Todo}, options_step(), {"Play", "", S::Todo}});
     set_heading("Where is your game?", "Pick how setup gets your game's files. Every way ends in the same build.");
@@ -335,20 +346,30 @@ SetupSourceWindow::SetupSourceWindow(Props props) : SetupPage("setup-source"), m
         std::function<void()> open;
     };
     const Card kCards[] = {
+        {"Import from RPCS3", "Looking...",
+         "Setup finds your game in RPCS3's library, has your RPCS3 unlock the game files, and can bring your save, "
+         "trophies and settings across.",
+         [this] { open_rpcs3(); }},
         {"I have decrypted files", "No RPCS3 needed",
          "A folder copy of the disc (it has a PS3_GAME folder), with the game's 27 decrypted files next to the "
          "originals: EBOOT.elf and the .sdat.unedat files. And libsre.prx next to PS3_GAME.",
          [this] { open_folder(); }},
         {"Show me how", "I have neither yet",
-         "How to copy your disc to a folder and decrypt the 28 files, with free tools.", [this] { open_help(); }},
+         "How to get RPCS3 ready, or copy your disc to a folder and decrypt the 28 files yourself, with free tools.",
+         [this] { open_help(); }},
     };
     for (const Card& c : kCards) {
         auto button = std::make_unique<Button>(cards, "");
         Rml::Element* root = button->root();
         root->SetClass("setup-choice", true);
         text(root, "setup-choice-title", c.title);
-        text(root, "setup-tag", c.tag)->SetClass("muted", true);
+        auto* tag = text(root, "setup-tag", c.tag);
+        tag->SetClass("muted", true);
         text(root, "setup-choice-text", c.text);
+        if (mCards.empty()) {  // (the RPCS3 card: its tag and second line say what the search found)
+            mRpcs3Tag = tag;
+            mRpcs3Line = text(root, "setup-choice-text", "");
+        }
         button->on_pressed([this, fn = c.open] {
             play_sound(kSoundClick);
             mPending = fn;
@@ -357,10 +378,82 @@ SetupSourceWindow::SetupSourceWindow(Props props) : SetupPage("setup-source"), m
     }
     set_buttons(mActions, footer_row(), {{"Back", [this] { back(); }, Look::Quiet}});
     set_hints({{"cross", nullptr, "Select"}, {"circle", nullptr, "Back"}});
+    // The player's RPCS3, off this thread (it looks in folders: a sleeping disk wakes up for it), starting from the
+    // one setup used last (settings.ini's rpcs3_dir, read here on the UI's thread).
+    std::thread([found = mFound, remembered = from_utf8(settings::get("rpcs3_dir"))] {
+        found->put(setup::find_rpcs3(remembered));
+    }).detach();
+    draw_rpcs3_card();
 }
 
 std::vector<std::vector<Button*>> SetupSourceWindow::nav_lines() const {
     return {line(mCards), line(mActions)};
+}
+
+void SetupSourceWindow::tick() {
+    if (!mFound->take(mRpcs3)) return;
+    mLooked = true;
+    using L = setup::Rpcs3::Library;
+    std::fprintf(stderr, "[setup] RPCS3: %s%s\n", mRpcs3.found() ? utf8(mRpcs3.folder).c_str() : "not found",
+                 !mRpcs3.found()                ? ""
+                 : mRpcs3.library == L::Folder ? ", the game in its library"
+                 : mRpcs3.library == L::Iso    ? ", the game as an ISO file"
+                                                : ", the game not in its library");
+    draw_rpcs3_card();
+    if (std::exchange(mOpenWhenFound, false)) open_rpcs3();
+}
+
+// The RPCS3 card's tag and second line, by what the search found (docs/90 section 1.2).
+void SetupSourceWindow::draw_rpcs3_card() {
+    if (!mRpcs3Tag) return;
+    using L = setup::Rpcs3::Library;
+    const bool found = mLooked && mRpcs3.found();
+    std::string tag = "Looking...", line;
+    if (found) {
+        tag = "Found on this PC";
+        line = utf8(mRpcs3.folder) + (mRpcs3.library == L::Folder ? ". Demon's Souls is in its library."
+                                      : mRpcs3.library == L::Iso
+                                          ? ". Demon's Souls is in its library as an ISO file, which setup cannot use yet."
+                                          : ". Demon's Souls is not in its library yet.");
+    } else if (mLooked) {
+        tag = "Not found";
+        line = "Setup shows you how to get RPCS3 ready, or where to point it if it is somewhere else.";
+    }
+    set_text_content(mRpcs3Tag, tag);
+    mRpcs3Tag->SetClass("ok", found);
+    mRpcs3Tag->SetClass("muted", !found);
+    set_text_content(mRpcs3Line, line);
+    set_display(mRpcs3Line, line.empty() ? Rml::Style::Display::None : Rml::Style::Display::Block);
+}
+
+// "Your game in RPCS3", or "RPCS3 was not found" when the search found none. Pressed before the search answered, it
+// opens when it does.
+void SetupSourceWindow::open_rpcs3() {
+    if (!mLooked) {
+        mOpenWhenFound = true;
+        return;
+    }
+    if (!mRpcs3.found()) {
+        push(std::make_unique<SetupRpcs3MissingWindow>(SetupRpcs3MissingWindow::Props{
+            .onFound =
+                [this](const setup::Rpcs3& r) {
+                    mRpcs3 = r;
+                    draw_rpcs3_card();
+                    open_rpcs3();
+                },
+        }));
+        return;
+    }
+    // Its Start building closes this one too (covered, without coming back) on its way to the progress screen.
+    push(std::make_unique<SetupRpcs3Window>(SetupRpcs3Window::Props{
+        .rpcs3 = mRpcs3,
+        .request = mProps.request,
+        .onStart =
+            [this](setup::Request request) {
+                force_hide(true);
+                if (mProps.onStart) mProps.onStart(std::move(request));
+            },
+    }));
 }
 
 void SetupSourceWindow::back() {
@@ -381,7 +474,8 @@ void SetupSourceWindow::open_folder() {
 }
 
 void SetupSourceWindow::open_help() {
-    push(std::make_unique<SetupHelpWindow>(SetupHelpWindow::Props{.onFolder = [this] { open_folder(); }}));
+    push(std::make_unique<SetupHelpWindow>(
+        SetupHelpWindow::Props{.onFolder = [this] { open_folder(); }, .onRpcs3 = [this] { open_rpcs3(); }}));
 }
 
 // ---- 3. The game folder ----
@@ -701,23 +795,30 @@ SetupHelpWindow::SetupHelpWindow(Props props) : SetupPage("setup-help"), mProps(
     using S = RailStep::State;
     set_rail({{"Your game", "", S::Now}, {"Build", build_time(), S::Todo}, options_step(), {"Play", "", S::Todo}});
     set_heading("Getting your game's files",
-                "Setup needs your own copy of the game: the US disc, BLUS30443 version 1.00, copied to a folder, "
-                "with 27 of its files decrypted once, and one file of the PS3 system software. Setup never decrypts "
-                "anything itself.");
+                "Setup needs your own copy of the game: the US disc, BLUS30443 version 1.00. Pick whichever way suits "
+                "what you have. Setup never decrypts anything itself.");
     const auto guide = [](Rml::Element* body, std::initializer_list<const char*> steps) {
         auto* list = append(body, "setup-guide");
         int n = 0;
         for (const char* step : steps) text(list, "setup-guide-item", std::to_string(++n) + ". " + step);
     };
     auto* stack = append(content(), "setup-stack");
+    guide(callout(stack, "info", "With RPCS3 (easiest)",
+                  "RPCS3 is the free PS3 emulator. Setup has it unlock the game files, and can bring your save, "
+                  "trophies and settings across."),
+          {"Download RPCS3 from rpcs3.net and unzip it anywhere.",
+           "Install the PS3 system software in RPCS3: File, then Install Firmware. RPCS3's quickstart guide links to "
+           "Sony's download.",
+           "Add your game in RPCS3 (File, then Add Games), from your disc copy.",
+           "Come back here and pick Import from RPCS3: setup finds RPCS3 and the game by itself."});
     guide(callout(stack, "info", "Copy your disc",
                   "If your game is still on the disc, copy it to a folder first. Either way gives the folder with "
                   "PS3_GAME in it."),
           {"PS3 Disc Dumper (free) copies the disc with a compatible Blu-ray drive in your PC.",
            "Or, on a PS3 with custom firmware, a file manager such as multiMAN or IRISMAN copies the disc to a USB "
            "drive."});
-    guide(callout(stack, "info", "Decrypt the 27 files",
-                  "RPCS3, the free PS3 emulator, does this. You do not need to add the game to RPCS3 for it."),
+    guide(callout(stack, "info", "Or decrypt the 27 files yourself",
+                  "In RPCS3 too, then pick I have decrypted files. You do not need to add the game to RPCS3 for it."),
           {"In RPCS3, choose Utilities, then Decrypt PS3 Binaries.",
            "Select PS3_GAME/USRDIR/EBOOT.BIN, then the .sdat files in chr, chr/c0000, menu, script and script/talk.",
            "RPCS3 writes each decrypted file next to its original."});
@@ -729,14 +830,17 @@ SetupHelpWindow::SetupHelpWindow(Props props) : SetupPage("setup-help"), mProps(
            "Copy the libsre.prx that RPCS3 writes into the game's folder, next to PS3_GAME. Then come back and choose "
            "the folder."});
     std::vector<Action> actions;
+    const auto then = [this](std::function<void()> open) {  // (this page closes first)
+        return [this, open = std::move(open)] {
+            auto run = open;
+            pop();
+            run();
+        };
+    };
+    if (mProps.onRpcs3) actions.push_back({"Import from RPCS3", then(mProps.onRpcs3), Look::Primary});
     if (mProps.onFolder)
-        actions.push_back({"I have decrypted files",
-                           [this] {
-                               auto open = mProps.onFolder;
-                               pop();
-                               open();
-                           },
-                           Look::Primary});
+        actions.push_back(
+            {"I have decrypted files", then(mProps.onFolder), mProps.onRpcs3 ? Look::Plain : Look::Primary});
     actions.push_back({"Back", [this] { back(); }, Look::Quiet});
     set_buttons(mActions, footer_row(), std::move(actions));
     set_hints({{"cross", nullptr, "Select"}, {"circle", nullptr, "Back"}, {nullptr, "L1 R1", "Scroll"}});
@@ -794,7 +898,9 @@ void SetupBeforeWindow::draw() {
     clear_children(mRows);
     auto* box = panel(mRows);
     found(box, "setup-ok", "Demon's Souls, US disc, version 1.00",
-          "From " + utf8(mProps.request.game) + ". The game files check out.");
+          mProps.fromLine.empty() ? "From " + utf8(mProps.request.game) + ". The game files check out."
+                                  : mProps.fromLine);
+    if (!mProps.importLine.empty()) found(box, "setup-ok", "From RPCS3", mProps.importLine);
     const bool tight = space.known && space.free < setup::kNeedBytes;
     std::string room = "Setup needs about " + gigabytes(setup::kNeedBytes) + " free on " + where + " while it builds. ";
     if (!space.known) room += "How much is free could not be read.";
@@ -805,7 +911,7 @@ void SetupBeforeWindow::draw() {
         set_buttons(mSpaceButton, append(roomRow, "setup-row-end"), {{"Check again", [this] { draw(); }, Look::Quiet}});
     found(box, "setup-ok", "This PC",
           "About " + time_text(time) + " here, " + std::to_string(time.jobs) +
-              " files at a time. The PC is kept awake while setup works.");
+              (time.jobs == 1 ? " file" : " files") + " at a time. The PC is kept awake while setup works.");
     if (power.onBattery)
         found(box, "setup-warn", "On battery", "Plug it in first: setup keeps this PC busy for a long time.");
     else if (power.battery)

@@ -882,6 +882,49 @@ button.setup-place:selected {
     color: var(--color-accent);
 }
 
+/* What to bring across from RPCS3: a box, what it is and its line; the whole row is the button
+   (setup_rpcs3_window.cpp). */
+button.setup-check {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: var(--space-md);
+    padding: var(--space-md) var(--space-sm);
+    border-bottom: 1dp var(--setup-line);
+    border-radius: var(--radius-small);
+    font-size: var(--font-size-base);
+    text-align: left;
+    color: var(--color-text);
+    background-color: rgba(0, 0, 0, 0%);
+    box-shadow: rgba(0, 0, 0, 0%) 0 0 0 0dp;
+    opacity: 1;
+}
+
+button.setup-check:last-child {
+    border-bottom-width: 0;
+}
+
+button.setup-check:not(:disabled):hover,
+button.setup-check:not(:disabled):focus-visible {
+    background-color: rgba(var(--color-interactive-rgb), 6%);
+    box-shadow: rgb(var(--color-border-rgb)) 0 0 0 1dp;
+}
+
+button.setup-check:disabled {
+    opacity: 0.6;
+}
+
+button.setup-check > icon {
+    flex: 0 0 auto;
+    width: 18dp;
+    height: 18dp;
+    margin-top: 3dp;
+    font-size: 18dp;
+}
+
+icon.setup-box { decorator: text("&#xe835;" center center); color: var(--setup-muted); }           /* check_box_outline_blank */
+icon.setup-box.on { decorator: text("&#xe834;" center center); color: rgb(var(--color-interactive-rgb)); }  /* check_box */
+
 /* How to: numbered steps under a callout's line */
 setup-guide {
     display: block;

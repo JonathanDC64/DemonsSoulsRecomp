@@ -2,7 +2,8 @@
 // (setup_page.hpp), in the setup design's order:
 //  1. the start screen: "Set up Demon's Souls" on a first start, else what setup found (Resume, Update, Repair, the
 //     game folder that moved, or Play), by setup::launch_state;
-//  2. "Where is your game?": the ways to the game's files, one card each;
+//  2. "Where is your game?": the ways to the game's files, one card each: the player's RPCS3 (setup_rpcs3_window.hpp),
+//     the decrypted files, or how to get either;
 //  3. the game folder: the system's folder dialog, the dumps found in the usual places, and the engine's check
 //     (`run --check-only`) as rows, the decrypted files to fix first;
 //  4. "Getting your game's files": how to copy the disc and decrypt the files, with free tools;
@@ -15,6 +16,7 @@
 #include "setup_engine.hpp"
 #include "setup_page.hpp"
 #include "setup_pc.hpp"
+#include "setup_rpcs3.hpp"
 
 #include <functional>
 #include <memory>
@@ -48,6 +50,9 @@ private:
     T mValue{};
     bool mFull = false;
 };
+
+// The rail's line under Build before a run: "About 10 to 20 minutes".
+std::string build_time_line();
 
 // 1. The start screen: where setup stands, and the one thing to do about it (docs/88 section 3): Start, Resume setup
 // (or Start over), Update now, Repair, Choose the game folder, or Play; then Settings and Quit.
@@ -93,13 +98,22 @@ public:
 
 protected:
     std::vector<std::vector<Button*>> nav_lines() const override;
+    void tick() override;
     void back() override;
 
 private:
+    void open_rpcs3();
     void open_folder();
     void open_help();
+    void draw_rpcs3_card();
 
     Props mProps;
+    std::shared_ptr<Mailbox<setup::Rpcs3>> mFound;  // the RPCS3 the host found (setup_rpcs3.hpp), off this thread
+    setup::Rpcs3 mRpcs3;
+    bool mLooked = false;          // the search has answered
+    bool mOpenWhenFound = false;   // the card was pressed before it answered
+    Rml::Element* mRpcs3Tag = nullptr;
+    Rml::Element* mRpcs3Line = nullptr;
     Buttons mCards, mActions;
 };
 
@@ -165,7 +179,8 @@ private:
 class SetupHelpWindow : public SetupPage {
 public:
     struct Props {
-        std::function<void()> onFolder;  // "I have decrypted files": the game folder page; none: Back only
+        std::function<void()> onFolder;  // "I have decrypted files": the game folder page; none: no such button
+        std::function<void()> onRpcs3;   // "Import from RPCS3": the RPCS3 page; none: no such button
     };
 
     explicit SetupHelpWindow(Props props);
@@ -187,6 +202,8 @@ public:
     struct Props {
         setup::Request request;
         std::function<void(setup::Request)> onStart;
+        std::string fromLine;    // the game row's line; empty: "From <game folder>. The game files check out."
+        std::string importLine;  // what comes across from RPCS3 (setup_rpcs3_window.hpp); empty: no such row
     };
 
     explicit SetupBeforeWindow(Props props);

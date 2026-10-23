@@ -5,14 +5,20 @@
 #include "osk_window.hpp"
 #include "platform.hpp"
 #include "settings.hpp"
+#include "setup_engine.hpp"
 #include "setup_pc.hpp"
 #include "ui.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <system_error>
 #include <utility>
 
 namespace ui {
@@ -27,6 +33,55 @@ int fps_number(const std::string& v) {
     if (v.empty()) return 30;
     if (v == "unlocked") return 100000;
     return std::atoi(v.c_str());
+}
+
+// The settings brought across from RPCS3: the engine's <data>/setup/rpcs3_settings.txt, key=value lines (docs/90
+// 3.5); none when there is no such file. Only the keys the import writes.
+std::filesystem::path rpcs3_settings_file() {
+    return setup::data_dir() / "setup" / "rpcs3_settings.txt";
+}
+
+setup::Settings rpcs3_settings() {
+    static const char* const kKeys[] = {"DES_FPS", "RSX_SCALE", "DES_MOTION_BLUR", "DES_SKIP_INTRO", "RSX_ANISO"};
+    setup::Settings out;
+    std::ifstream f(rpcs3_settings_file(), std::ios::binary);
+    for (std::string line; std::getline(f, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos || line[0] == '#') continue;
+        for (const char* k : kKeys)
+            if (line.compare(0, eq, k) == 0 && std::strlen(k) == eq) out.emplace_back(k, line.substr(eq + 1));
+    }
+    return out;
+}
+
+std::string value_of(const setup::Settings& values, const char* key) {
+    for (const auto& [k, v] : values)
+        if (!std::strcmp(k, key)) return v;
+    return {};
+}
+
+// Custom's lines when it starts from RPCS3's settings: "60 fps, 150% resolution", "Motion blur off, intro skipped,
+// 16x anisotropic filtering", "From RPCS3".
+std::vector<std::string> rpcs3_lines(const setup::Settings& values) {
+    const auto join = [](const std::vector<std::string>& parts) {
+        std::string out;
+        for (size_t i = 0; i < parts.size(); ++i) out += (i ? ", " : "") + parts[i];
+        if (!out.empty()) out[0] = char(std::toupper((unsigned char)out[0]));
+        return out;
+    };
+    std::vector<std::string> first, second, out;
+    if (const std::string fps = value_of(values, "DES_FPS"); !fps.empty())
+        first.push_back(fps == "unlocked" ? "unlocked frame rate" : fps + " fps");
+    if (const std::string scale = value_of(values, "RSX_SCALE"); !scale.empty()) first.push_back(scale + "% resolution");
+    if (value_of(values, "DES_MOTION_BLUR") == "0") second.push_back("motion blur off");
+    if (value_of(values, "DES_SKIP_INTRO") == "1") second.push_back("intro skipped");
+    if (const std::string aniso = value_of(values, "RSX_ANISO"); !aniso.empty() && aniso != "0")
+        second.push_back(aniso + "x anisotropic filtering");
+    if (!first.empty()) out.push_back(join(first));
+    if (!second.empty()) out.push_back(join(second));
+    out.push_back("From RPCS3");
+    return out;
 }
 
 std::string trim(const std::string& s) {
@@ -45,10 +100,12 @@ std::string setup_options_summary() {
 
 // ---- 1. How do you want to play? ----
 
-SetupPresetWindow::SetupPresetWindow() : SetupPage("setup-preset"), mHeight(setup::display().height) {
+SetupPresetWindow::SetupPresetWindow()
+    : SetupPage("setup-preset"), mHeight(setup::display().height), mRpcs3(rpcs3_settings()) {
     using S = RailStep::State;
     setup::Preset picked;
     if (setup::preset_from_key(settings::get("setup_preset"), picked)) mPick = picked;
+    else if (!mRpcs3.empty()) mPick = setup::Preset::Custom;  // (the player ticked RPCS3's settings: docs/90 question 3)
     set_rail({{"Your game", "", S::Done}, {"Build", "Done", S::Done}, {"Options", "", S::Now}, {"Play", "", S::Todo}});
     set_heading("How do you want to play?",
                 "A starting point. Every option can be changed later in Settings (F1 in the game).");
@@ -71,8 +128,10 @@ SetupPresetWindow::SetupPresetWindow() : SetupPage("setup-preset"), mHeight(setu
           mHeight > 0 ? "Sharper picture, set for your display: " + setup::scale_label(matched)
                       : std::string("The picture at 720p (the display's size is not known)"),
           "Sharp distant textures and sharp scaling", "Fullscreen"}},
-        {setup::Preset::Custom, "Custom", nullptr, "Starts from the settings you have now.",
-         {"Pick the frame rate, resolution and more on the next page"}},
+        mRpcs3.empty() ? Card{setup::Preset::Custom, "Custom", nullptr, "Starts from the settings you have now.",
+                              {"Pick the frame rate, resolution and more on the next page"}}
+                       : Card{setup::Preset::Custom, "Custom", nullptr, "Starts from your RPCS3 settings.",
+                              rpcs3_lines(mRpcs3)},
     };
     auto* cards = append(content(), "setup-choices");
     cards->SetClass("pick", true);
@@ -162,7 +221,9 @@ void SetupPresetWindow::open_choices() {
     if (mHaveKept && mKeptFor == mPick) {
         values = mKept;
     } else {
-        const setup::Settings preset = setup::preset_settings(mPick, mHeight);
+        // (Custom from RPCS3's settings: those over the settings in use; Original and Enhanced ignore them)
+        const setup::Settings preset =
+            mPick == setup::Preset::Custom ? mRpcs3 : setup::preset_settings(mPick, mHeight);
         for (const char* key : kChoiceKeys) {
             std::string v = settings::get(key);
             for (const auto& [k, pv] : preset)
@@ -170,6 +231,11 @@ void SetupPresetWindow::open_choices() {
             values.emplace_back(key, std::move(v));
         }
     }
+    setup::Settings extra;  // (the imported values with no choice on the next page: motion blur, the intro skip)
+    if (mPick == setup::Preset::Custom)
+        for (const auto& [k, v] : mRpcs3)
+            if (std::none_of(std::begin(kChoiceKeys), std::end(kChoiceKeys), [k = k](const char* c) { return !std::strcmp(c, k); }))
+                extra.emplace_back(k, v);
     push(std::make_unique<SetupChoicesWindow>(SetupChoicesWindow::Props{
         .preset = mPick,
         .values = std::move(values),
@@ -181,6 +247,8 @@ void SetupPresetWindow::open_choices() {
                 mKeptFor = pick;
             },
         .onFinish = [this] { force_hide(true); },  // (covered by A few choices: it closes without coming back)
+        .fromRpcs3 = mPick == setup::Preset::Custom && !mRpcs3.empty(),
+        .extra = std::move(extra),
     }));
 }
 
@@ -192,6 +260,7 @@ SetupChoicesWindow::SetupChoicesWindow(Props props)
     set_rail({{"Your game", "", S::Done}, {"Build", "Done", S::Done}, {"Options", "", S::Now}, {"Play", "", S::Todo}});
     const char* from = mProps.preset == setup::Preset::Original   ? "Set from Original."
                        : mProps.preset == setup::Preset::Enhanced ? "Set from Enhanced."
+                       : mProps.fromRpcs3                         ? "Set from your RPCS3 settings."
                                                                   : "Set from your settings.";
     set_heading("A few choices", std::string(from) + " Change any of them, or keep them as they are.");
 
@@ -402,7 +471,10 @@ void SetupChoicesWindow::back() {
 void SetupChoicesWindow::finish() {
     for (const auto& [key, v] : setup::preset_settings(mProps.preset, mProps.displayHeight)) settings::store(key, v);
     for (const auto& [key, v] : mProps.values) settings::store(key, v);
+    for (const auto& [key, v] : mProps.extra) settings::store(key, v);
     settings::store("setup_preset", setup::preset_key(mProps.preset));
+    std::error_code ec;  // (RPCS3's settings have had their turn: setup's own file, docs/90 3.5)
+    std::filesystem::remove(rpcs3_settings_file(), ec);
     std::fprintf(stderr, "[setup] options: %s\n", setup_options_summary().c_str());
     if (mProps.onFinish) mProps.onFinish();
     pop();

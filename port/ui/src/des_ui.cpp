@@ -954,6 +954,30 @@ void setup_only_env() {
     if (!env_on("PS3_TITLE")) ps3_setenv("PS3_TITLE", "Demon's Souls");
 }
 
+// A player's start keeps the saves where a double-click puts them. They are the PS3 file system's gamedata/dev_hdd0
+// under the working folder (cellFs.c, cellSaveData.c), so a shortcut's "Start in", or a start from a terminal in
+// another folder, would read and write saves there. So the game works in the exe's folder (docs/90 section 4, item
+// 3). Saves in the folder it was started in are named in the log, never moved. DES_KEEP_CWD=1 (a test run with its
+// own copy of a save in its own folder) leaves the working folder as it is.
+void work_in_exe_folder() {
+    if (env_on("DES_KEEP_CWD")) return;
+    const std::filesystem::path exe = ui::report::program_dir();
+    std::error_code ec;
+    const std::filesystem::path cwd = std::filesystem::current_path(ec);
+    if (exe.empty() || ec || std::filesystem::equivalent(cwd, exe, ec)) return;
+    std::filesystem::directory_iterator user(cwd / "gamedata" / "dev_hdd0" / "home", ec), end;
+    for (; !ec && user != end; user.increment(ec)) {   // (the forms that throw would end the start)
+        std::error_code ec2;
+        const auto saves = user->path() / "savedata";
+        if (std::filesystem::is_directory(saves, ec2) && !std::filesystem::is_empty(saves, ec2))
+            std::fprintf(stderr, "[setup] launch: %s has saves; this start uses the ones beside the game, in %s\n",
+                         saves.string().c_str(), (exe / "gamedata").string().c_str());
+    }
+    std::filesystem::current_path(exe, ec);
+    if (ec) std::fprintf(stderr, "[setup] launch: cannot work in %s, so the saves are in %s\n", exe.string().c_str(),
+                         (cwd / "gamedata").string().c_str());
+}
+
 }  // namespace
 
 extern "C" int des_ui_launch(int* argc, char*** argv) {
@@ -967,6 +991,7 @@ extern "C" int des_ui_launch(int* argc, char*** argv) {
         std::fprintf(stderr, "[setup] launch: the game is not set up yet, setup opens\n");
         return -2;
     }
+    work_in_exe_folder();
     // The game setup built (docs/88 section 7): its module, the game's folder and its EBOOT.elf as main's ELF.
     if (!std::getenv("PS3_GAME_MODULE")) ps3_setenv("PS3_GAME_MODULE", launch.module.string().c_str());
     ps3_setenv("PS3_VFS_ROOT", launch.game.string().c_str());

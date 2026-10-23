@@ -493,6 +493,12 @@ These must land before the route ships. Items 1 and 2 also matter for the folder
    - A player's start could have any working folder: a shortcut's "Start in" is the player's (inferred).
    - The launch hook (docs/88 section 3) should set the working folder, or a save-root knob, from the install. The host passes the same folder to the engine as `--gamedata`.
    - docs/45 4.4's move of the saves into the data folder is not needed for this route. The welcome's "Your settings and saves stay in %LOCALAPPDATA%\DemonsSoulsRecomp" is not true until it happens.
+   - **Done (10-23), the exe's folder:** a player's start (the launch hook's Ready branch) works in the exe's folder, so the saves are `<exe folder>/gamedata/dev_hdd0`, where a double-click has always put them (and where the Linux AppImage's launcher says Windows keeps them).
+     - A shortcut's "Start in" or a terminal in another folder no longer moves them.
+     - Saves in the folder the game was started in are named in the log, never moved or deleted.
+     - `DES_KEEP_CWD=1` leaves the working folder as it is, for test runs that keep their own copy of a save in their own folder.
+     - A start with an ELF on the command line (`tools/des`, the AppImage) never reaches the Ready branch, so it is as before.
+     - The other choice was the data folder (docs/45 4.4). That is still open for the owner; it would move every player's saves.
 4. **The launch hook itself** (docs/88 section 10, item 1). `game=` in `ready.txt` names RPCS3's library folder, and becomes `PS3_VFS_ROOT`.
 
 ## 5. What is verified and what is inferred

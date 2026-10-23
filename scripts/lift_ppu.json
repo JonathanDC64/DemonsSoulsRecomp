@@ -10,5 +10,6 @@
   "0x724E40=des_menu_tick"
  ],
  "insn_hooks": "port/insn_hooks.txt",
- "shadow_stack": true
+ "shadow_stack": true,
+ "chunk_lines": 150000
 }

@@ -70,7 +70,7 @@ This is the technical part. The full notes are in [`docs/`](docs/).
    python ps3recomp/tools/ppu_lifter.py work/game/EBOOT.ELF \
      --functions work/loader/EBOOT.functions.json --hle-stubs work/loader/EBOOT.imports.json \
      --override-funcs "0x167AC88=ds_malloc,0x167AC58=ds_free,0x273D38=des_move_post,0x724E40=des_menu_tick" \
-     --insn-hooks @port/insn_hooks.txt --shadow-stack --output work/recomp -j 16
+     --insn-hooks @port/insn_hooks.txt --shadow-stack --chunk-lines 150000 --output work/recomp -j 16
    python ps3recomp/tools/gen_hle_nids.py --all --out work/recomp/hle_nid_table.cpp
    python scripts/apply_boot_patches.py work/recomp
    ```

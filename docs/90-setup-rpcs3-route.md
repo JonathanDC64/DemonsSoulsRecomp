@@ -475,10 +475,19 @@ These must land before the route ships. Items 1 and 2 also matter for the folder
    - The fix (inferred shape): open the `.sdat.unedat` copy from `<data>/inputs/` at the same relative path, and never write a cache. The folder comes from the launch hook, from a new `inputs=` line in `ready.txt`, as an environment variable, for example `PS3_SDATA_DIR`.
    - A developer build that still decrypts writes its cache in a folder of the port's own. Release builds drop the runtime's SDATA decryption altogether, as docs/51 decision 5 proposes.
    - This is a ps3recomp PR first, then the port's pin.
+   - **Done (10-23)**, in that shape:
+     - ps3recomp's `PS3_EDAT_PLAIN=<folder>` opens `<folder>/<path below PS3_VFS_ROOT>.unedat` in place of the NPD file, as long as its size is the plaintext size the NPD header gives. Nothing is decrypted or written then.
+     - `PS3_EDAT_CACHE=<folder>` puts the runtime's own decryption, for a file with no such copy, in that folder as `<name>.<hash of the source's path>.dec`.
+     - The launch hook sets them to `<data>/inputs` (where setup stages the player's 26 `.unedat` files) and `<data>/edat`, unless they are set.
+     - With neither knob, the runtime does as before. Dropping the decryption from release builds is still to do.
 2. **No other write into the dump.**
    - `ppu_fs.cpp` maps `/dev_hdd0/` and `/dev_hdd1/` under the VFS root (ppu_fs.cpp:126-153, read). `cellFs.c` maps `/dev_hdd0/` to `gamedata/dev_hdd0/` (cellFs.c:72, read).
    - Whether the game's own writes go through ppu_fs's mapping is not checked (inferred risk). That includes its `/dev_hdd1` cache.
    - Test T11 compares the dump before and after a session. Any write found there must be moved before shipping.
+   - **Found (10-23): the game's `/dev_hdd1` cache was in the dump.** This PC's dump has a `cache/` folder of 955 files (336 MB), written from 10-14 to 10-20 by the runs that used it as the VFS root.
+     - The launch hook now sets `PS3_HDD1_ROOT=<data>/hdd1`, unless it is set, and makes the folder. ppu_fs and sys_fs already read that knob; the Linux AppImage already sets it.
+     - The game fills its cache again there on its first start; a PS3 game copes with an empty `/dev_hdd1`.
+     - The old `cache/` folder stays where it is: nothing deletes a player's files. Setup could tell the player it can go (not done).
 3. **The save folder must be one that setup and the game agree on.**
    - The game reads `./gamedata/dev_hdd0/home/00000001/savedata/`, relative to its working folder (cellSaveData.c:53, read), and the trophies relative to it too.
    - A player's start could have any working folder: a shortcut's "Start in" is the player's (inferred).
@@ -623,6 +632,11 @@ $r='<RPCS3 folder>'; $g='<game folder>'; $w="$env:LOCALAPPDATA\DemonsSoulsRecomp
 - Boot to the Nexus with `PS3_VFS_ROOT` on RPCS3's library folder, using the usual muted form: `tools/des/play.sh DES_SKIP_INTRO=1 PS3_SAIL_MOVIES=0 DES_AUTO_CONTINUE=1`.
 - Compare a listing of the dump before and after: no new or changed file.
 - The game's `[edat]` lines show no decryption.
+- **Passed on the folder route (10-23).** This was a player's start through the launch hook, not `tools/des`. The host was built from `feat/game-folder-read-only`, with ps3recomp's `feat/edat-player-copies`, and used the DLL and staged inputs of a real setup:
+  - The dump's listing was the same before and after 200 s of play in the Tutorial: 13,765 files and folders, each with its path, size and modified time.
+  - No `[edat]` line, so nothing was decrypted, and `<data>/edat` was never made. The game opened five `.sdat` files (the title and common menus, c0000, enemycommon and the Tutorial's m08 script), and each opened as plaintext (`magic DCX`). With `PS3_EDAT_CACHE` set, the runtime never reuses the old `.dec` beside a source, so the plaintext came from setup's staged `.unedat` copies.
+  - The game's HDD cache went to `<data>/hdd1`: 203 files, 64 MB.
+  - The RPCS3 route's form of this test (its library folder as the VFS root) is still to run.
 
 **T12. An imported save loads** (I13, I18, I19, I23; docs/44 R3).
 - Import an RPCS3 save from a scratch copy of an RPCS3 user.

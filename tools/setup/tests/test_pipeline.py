@@ -177,6 +177,100 @@ class RunTest(unittest.TestCase):
         self.assertEqual(pipeline.status(self.s.data)["state"], "interrupted")
 
 
+# A stand-in for `des_host --shaders <game folder>` (port/des_prework.cpp's des_prework_shaders): it writes its
+# arguments beside itself, then prints the lines that mode.txt there asks for and exits with its status.
+FAKE_HOST = r'''
+import os, sys
+from pathlib import Path
+here = Path(__file__).resolve().parent
+(here / "args.txt").write_text("\n".join(sys.argv[1:]), encoding="utf-8")
+ready = os.environ.get("FAKE_READY", "")
+(here / "ready_seen.txt").write_text(str(bool(ready) and Path(ready).exists()), encoding="utf-8")
+mode = (here / "mode.txt").read_text(encoding="utf-8").strip()
+print("[des] shaders: a line for the log", file=sys.stderr, flush=True)
+if mode == "done":
+    print("shaders 10 100", flush=True)
+    print("shaders 100 100", flush=True)
+    print("shaders done 90 10 0 1.5", flush=True)
+elif mode == "up-to-date":
+    print("shaders up-to-date 0 0 0 0.0", flush=True)
+elif mode == "failed":
+    print("shaders 50 100", flush=True)
+    print("shaders failed 40 0 10 2.0", flush=True)
+    sys.exit(1)
+elif mode == "crash":
+    sys.exit(3)
+'''
+
+
+class ShadersTest(unittest.TestCase):
+    """The shaders phase (docs/52 section 5, docs/88 section 13): the host's `--shaders` pass after the compile."""
+
+    def setUp(self):
+        self.s = Setup()
+        self._free = pipeline.free_bytes
+        pipeline.free_bytes = lambda p: 1 << 50
+        self.host = Path(self.s.game.tmp.name) / "host"
+        self.host.mkdir()
+        (self.host / "des_host.py").write_text(FAKE_HOST, encoding="utf-8")
+
+    def tearDown(self):
+        pipeline.free_bytes = self._free
+        self.s.close()
+
+    def run_with(self, mode, host="fake"):
+        (self.host / "mode.txt").write_text(mode, encoding="utf-8")
+        cmd = [sys.executable, str(self.host / "des_host.py")] if host == "fake" else host
+        os.environ["FAKE_READY"] = str(self.s.data / "setup" / pipeline.READY)
+        try:
+            return self.s.run(phases=PHASES + ["compile", "shaders"], compile_fn=fake_compile, host=cmd)
+        finally:
+            os.environ.pop("FAKE_READY", None)
+
+    def test_runs_the_host_after_the_compile(self):
+        rc, lines = self.run_with("done")
+        self.assertEqual(rc, 0, lines)
+        self.assertEqual((self.host / "args.txt").read_text(encoding="utf-8").split("\n"),
+                         ["--shaders", str(self.s.game.root)])
+        for want in ("@plan check fetch stage lift compile shaders", "@step shaders start", "@progress shaders 10/100",
+                     "@progress shaders 100/100", "@step shaders done", "@done ok"):
+            self.assertIn(want, lines)
+        # (the fake compile runs no journal step: the phase reads as skipped)
+        self.assertLess(lines.index("@step compile skip"), lines.index("@step shaders start"))
+        self.assertTrue(any("90 compiled, 10 already prepared" in x for x in lines), lines)
+        self.assertIsNotNone(pipeline.read_ready(self.s.data))
+        # ready.txt is written before the pass: one that is stopped leaves a game that plays.
+        self.assertEqual((self.host / "ready_seen.txt").read_text(encoding="utf-8"), "True")
+        log = (self.s.data / "setup" / "logs" / "shaders.log").read_text(encoding="utf-8")
+        self.assertIn("--shaders", log)
+        self.assertIn("[des] shaders: a line for the log", log)
+
+    def test_cache_up_to_date_is_a_skip(self):
+        rc, lines = self.run_with("up-to-date")
+        self.assertEqual(rc, 0, lines)
+        self.assertIn("@step shaders skip", lines)
+
+    def test_a_failed_pass_does_not_fail_the_run(self):
+        for mode in ("failed", "crash"):
+            rc, lines = self.run_with(mode)
+            self.assertEqual(rc, 0, lines)
+            self.assertIn("@step shaders done", lines)
+            self.assertIn("@done ok", lines)
+            self.assertFalse(any(x.startswith("@error") for x in lines), lines)
+            self.assertTrue(any("the game prepares the rest at its start" in x for x in lines), lines)
+            self.assertIsNotNone(pipeline.read_ready(self.s.data))
+
+    def test_no_host(self):
+        for host in (None, [str(self.host / "missing.exe")]):
+            rc, lines = self.s.run(phases=PHASES + ["compile", "shaders"], compile_fn=fake_compile, host=host)
+            self.assertEqual(rc, 0, lines)
+            self.assertIn("@step shaders skip", lines)
+            self.assertIsNotNone(pipeline.read_ready(self.s.data))
+
+    def test_in_the_whole_build(self):
+        self.assertEqual(pipeline.default_phases()[-2:], ["compile", "shaders"])
+
+
 class LocalCompilerTest(unittest.TestCase):
     """A developer's compiler (--cc and --ld, or DES_SETUP_CC and DES_SETUP_LD) replaces the LLVM download."""
     LLVM = {"tools": [{"name": "llvm-win64", "version": "0", "url": "https://example.invalid/llvm.zip",
@@ -267,6 +361,23 @@ class HostAgreesTest(unittest.TestCase):
         self.assertIn(f"kProtocol = {protocol.VERSION};", (UI / "setup_protocol.hpp").read_text(encoding="utf-8"))
         codes = set(re.findall(r'\{"(\w+)",\s*Fix::', (UI / "setup_window.cpp").read_text(encoding="utf-8")))
         self.assertEqual(codes, set(protocol.ERRORS))
+
+    def test_every_phase_has_a_task_line(self):
+        """The progress page names each phase of the plan (the lift as its two steps, ppu and spu)."""
+        ids = set(re.findall(r'\{"(\w+)",\s*"[^"]+",\s*"', (UI / "setup_window.cpp").read_text(encoding="utf-8")))
+        for phase in pipeline.default_phases(rpcs3_route=True):
+            for step in (["ppu", "spu"] if phase == "lift" else [phase]):
+                self.assertIn(step, ids)
+
+    def test_shaders_lines(self):
+        """The host's `--shaders` lines (port/des_prework.cpp) are the ones the shaders phase reads."""
+        cpp = (REAL / "port" / "des_prework.cpp").read_text(encoding="utf-8")
+        self.assertIn('std::printf("shaders %u %u\\n"', cpp)
+        self.assertIn('std::printf("shaders %s %u %u %u %.1f\\n"', cpp)
+        words = re.search(r"kResult\[\]\s*=\s*\{([^}]*)\}", cpp).group(1)
+        self.assertEqual(set(re.findall(r'"([\w-]+)"', words)), {"none", "up-to-date", "failed", "skipped", "done"})
+        self.assertIn('"--shaders"', (REAL / "port" / "des_options.cpp").read_text(encoding="utf-8"))
+        self.assertIn('"--host"', (UI / "setup_engine.cpp").read_text(encoding="utf-8"))
 
     def test_python_pin(self):
         hpp = (UI / "setup_engine.hpp").read_text(encoding="utf-8")

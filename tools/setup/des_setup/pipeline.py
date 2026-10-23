@@ -7,6 +7,8 @@ made of journal steps, with the screens' line protocol on standard output.
   stage     the decrypted files copied into the data folder
   lift      the game's code converted to C (lift.py)
   compile   the lift built into the game module (compile.py, docs/81 section 7), when this tree has it
+  shaders   the game's shader cache filled by the host with no window (`<host> --shaders <game folder>`,
+            docs/52 section 5), as the game's start fills it, so the first start finds it full
 
 A phase whose steps are all done with the same inputs is skipped, so a run
 stopped anywhere (Cancel, a crash, a power cut) carries on where it stopped.
@@ -22,6 +24,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import traceback
 from pathlib import Path
 
@@ -33,9 +36,9 @@ REQUEST = "request.json"
 UNLOCK = "unlock"                  # setup/unlock: the unlock's copies, RPCS3's folder, then its outputs until the stage
 GB = 1 << 30
 # Each phase's share of a whole run, from its CPU time (docs/52 4.3: the compile is most of it).
-WEIGHTS = {"check": 2, "unlock": 1, "fetch": 4, "stage": 1, "lift": 13, "compile": 80}
+WEIGHTS = {"check": 2, "unlock": 1, "fetch": 4, "stage": 1, "lift": 13, "compile": 80, "shaders": 2}
 # Where a step's own count falls in its phase; the phase's small steps fill the rest.
-PARTS = {"ppu": (0.05, 0.75), "spu": (0.75, 0.97), "compile": (0.0, 0.97)}
+PARTS = {"ppu": (0.05, 0.75), "spu": (0.75, 0.97), "compile": (0.0, 0.97), "shaders": (0.0, 1.0)}
 # The free space a phase needs from scratch (docs/52 10.2), less what its folders already hold.
 NEED = {"fetch": GB // 2, "lift": GB, "compile": 2 * GB}
 OUTPUTS = {"fetch": ("downloads", "tools"), "lift": ("work",), "compile": ("build", "game")}
@@ -50,7 +53,7 @@ FAILED = {"unlock": "Copying the game files for RPCS3 failed.", "stage": "Copyin
 def default_phases(rpcs3_route=False) -> list:
     """The whole build. On the RPCS3 route the unlock comes before the fetch, so
     an RPCS3 problem shows before the large download (docs/90 3.2)."""
-    return ["check"] + (["unlock"] if rpcs3_route else []) + ["fetch", "stage", "lift", "compile"]
+    return ["check"] + (["unlock"] if rpcs3_route else []) + ["fetch", "stage", "lift", "compile", "shaders"]
 
 
 # ---- the copy step (also `python -m des_setup stage`) ----
@@ -379,6 +382,50 @@ def _compile(data, jr, jobs, progress, cc=None, ld=None):
     return compile_step.Compile(data, jr, cc, ld, jobs=jobs, progress=progress).run_all()
 
 
+def _shaders(host, game, data, emit, total) -> bool:
+    """The shaders phase (docs/52 section 5): the host fills the game's shader cache with no window, the pass the
+    game's start runs (port/des_prework.cpp), so the first start finds the cache full; its own stamp makes a second
+    run quick. host: the program, or a command list ending in it. It never fails the run: what is not prepared here,
+    the game prepares at its start. Returns True when there was nothing to do (no host to run it, or the cache was up
+    to date)."""
+    prog = [str(c) for c in host] if isinstance(host, (list, tuple)) else [str(host)] if host else []
+    if not prog or not Path(prog[-1]).is_file():
+        emit.text("note the shaders are prepared at the game's first start (no host to prepare them)")
+        return True
+    logs = data / "setup" / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    cmd = prog + ["--shaders", str(game)]
+    result, rc = [], None
+    try:
+        with open(logs / "shaders.log", "w", encoding="utf-8", errors="replace") as lf:
+            lf.write("+ " + subprocess.list2cmdline(cmd) + "\n")
+            lf.flush()
+            with subprocess.Popen(cmd, cwd=str(Path(prog[-1]).parent), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)) as p:
+                for line in p.stdout:
+                    lf.write(line)
+                    w = line.split()
+                    if len(w) == 3 and w[0] == "shaders" and w[1].isdigit() and w[2].isdigit():
+                        total.step("shaders", int(w[1]), max(1, int(w[2])))
+                    elif len(w) >= 2 and w[0] == "shaders" and not w[1].isdigit():
+                        result = w[1:]
+                rc = p.wait()
+    except OSError as e:
+        emit.text(f"note the shaders are prepared at the game's first start ({e})")
+        return False
+    what = result[0] if result else "failed"
+    nums = (result + ["0"] * 5)[1:5]
+    if rc == 0 and what == "done":
+        emit.text(f"ok   shaders: {nums[0]} compiled, {nums[1]} already prepared, in {nums[3]} s")
+    elif rc == 0 and what in ("up-to-date", "none"):
+        emit.text("ok   shaders: " + ("already prepared" if what == "up-to-date" else "nothing to prepare"))
+        return True
+    else:
+        emit.text(f"note the shaders were not all prepared ({what}, exit {rc}): the game prepares the rest at its start")
+    return False
+
+
 def _classify(phase, e: journal.StepFailed):
     if NOSPACE.search(e.message):
         return "disk", e.step, "The disk is full."
@@ -391,7 +438,7 @@ def _classify(phase, e: journal.StepFailed):
 
 def run(data, request=None, app="", jobs=0, check_only=False, emit=None, src=None, table=None,
         manifest=None, phases=None, compile_fn=None, quiet=True, cc=None, ld=None, unlock_only=False,
-        rpcs3_path=None, unlock_kw=None) -> int:
+        rpcs3_path=None, unlock_kw=None, host=None) -> int:
     """Every phase in order (or only the check), with the protocol on `emit`.
     request: make_request's dict, or None for the one the last run saved. app: the
     host's version, recorded in ready.txt (a new version is set up again). cc, ld:
@@ -399,6 +446,8 @@ def run(data, request=None, app="", jobs=0, check_only=False, emit=None, src=Non
     rpcs3_path: the RPCS3 route's RPCS3 (its folder or program), over the
     request's. unlock_only: the check and the unlock (the unlock page's run).
     unlock_kw: rpcs3.Unlock's launch, stall and poll (the tests' stand-in).
+    host: the host program, which the shaders phase runs (without it, the game
+    prepares its shaders at its first start).
     Returns the exit status: 0 done, 1 something to fix or a failure."""
     data = Path(data)
     if compile_fn is None:
@@ -415,14 +464,14 @@ def run(data, request=None, app="", jobs=0, check_only=False, emit=None, src=Non
         emit.open_log(data / "setup" / "logs" / "run.log")
         emit.setup()
         return _run(data, request, app, jobs, check_only, emit, src, table, manifest, phases,
-                    compile_fn, quiet, cc, ld, unlock_only, rpcs3_path, unlock_kw)
+                    compile_fn, quiet, cc, ld, unlock_only, rpcs3_path, unlock_kw, host)
     finally:
         emit.close()
         held.close()
 
 
 def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phases, compile_fn, quiet, cc, ld,
-         unlock_only, rpcs3_path, unlock_kw) -> int:
+         unlock_only, rpcs3_path, unlock_kw, host) -> int:
     if quiet:
         quiet_and_awake(emit)
     req = request or load_request(data)
@@ -488,17 +537,21 @@ def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phase
                     sums.get(lift.EBOOT), sums.get("libsre.prx"))
             elif phase == "compile":
                 module = compile_fn(data, jr, jobs, total.step)
+            elif phase == "shaders":
+                skipped = _shaders(host, rep.root, data, emit, total)
             if phase in ("stage", "lift", "compile") and _ends(jr) == before:
                 skipped = True
             total.part(1.0)
             emit.step(phase, "skip" if skipped else "done")
-        if module and Path(module).is_file():
-            write_ready(data, {"format": 1, "app": app, "game": str(rep.root),
-                               "eboot": str(data / "inputs" / lift.EBOOT), "module": str(module),
-                               "module_size": Path(module).stat().st_size,
-                               "module_sha256": gamefiles.sha256_file(module)})
-            emit.text(f"ok   the game is ready: {module}")
-        elif not check_only:
+            # Ready once the game is built, before the shaders: a pass that is stopped leaves a game that plays (it
+            # prepares the rest at its start).
+            if phase == "compile" and module and Path(module).is_file():
+                write_ready(data, {"format": 1, "app": app, "game": str(rep.root),
+                                   "eboot": str(data / "inputs" / lift.EBOOT), "module": str(module),
+                                   "module_size": Path(module).stat().st_size,
+                                   "module_sha256": gamefiles.sha256_file(module)})
+                emit.text(f"ok   the game is ready: {module}")
+        if not (module and Path(module).is_file()) and not check_only:
             emit.text("ok   every phase is done; the compile was not in this run, so the game is not built yet")
         emit.overall(1.0)
         emit.done("ok")

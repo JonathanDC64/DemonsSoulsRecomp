@@ -18,7 +18,11 @@
  * executable and the cache's fp_variants.txt the last full pass saw; when
  * none of them changed, the pass is skipped.
  *
- * DES_PRECOMPILE=0 skips it; =force runs it whatever the stamp says.
+ * Setup runs the same pass once the game is built (des_prework_shaders,
+ * `des_host --shaders <game folder>`), so the first start finds the cache
+ * full.
+ *
+ * DES_PRECOMPILE=0 skips it at a start; =force runs it whatever the stamp says.
  */
 #include "ps3emu/ps3_knob.h"
 #include "rsx_shader_precompile.h"
@@ -33,6 +37,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -220,15 +225,22 @@ extern "C" void des_prework_skip(void)
     rsx_shader_precompile_cancel();
 }
 
-extern "C" void ps3_title_prework(void)
+namespace {
+
+/* What a pass ended with (des_prework_shaders prints it). */
+enum class Pass { Off, NoArchives, UpToDate, NotStarted, Skipped, Done, Failed };
+
+/* One pass over the shader archives of the game folder `root`, into the
+ * cache: at a start (ps3_title_prework) or in setup (des_prework_shaders).
+ * `poll`, if given, runs on this thread every 100 ms while the shaders
+ * compile. */
+Pass run_pass(const char* root, bool force, void (*poll)(void), rsx_shader_precompile_stats& s)
 {
-    const char* knob = std::getenv("DES_PRECOMPILE");
-    if (knob && std::strcmp(knob, "0") == 0) return;
-    const bool force = knob && same_nocase(knob, "force");
     const char* cache = rsx_d3d12_shader_cache_path();
-    if (!cache || !cache[0] || !ppu_vfs_root) return;   /* the cache is off */
-    const std::string dir = std::string(ppu_vfs_root) + kSep + "PS3_GAME" + kSep + "USRDIR" + kSep + "shader";
+    if (!cache || !cache[0] || !root || !root[0]) return Pass::Off;   /* the cache is off */
+    const std::string dir = std::string(root) + kSep + "PS3_GAME" + kSep + "USRDIR" + kSep + "shader";
     s_state.store(1);
+    struct Over { ~Over() { s_state.store(3); } } over;
 
     std::string stamp;
     const std::vector<std::string> names = list_archives(dir, stamp);
@@ -237,16 +249,14 @@ extern "C" void ps3_title_prework(void)
     std::vector<uint8_t> old;
     if (names.empty()) {
         std::fprintf(stderr, "[des] shaders: no archives in %s; shaders compile as the game draws them\n", dir.c_str());
-        s_state.store(3);
-        return;
+        return Pass::NoArchives;
     }
     if (!force && read_file(stamp_path, old) && std::string(old.begin(), old.end()) == stamp) {
         std::fprintf(stderr, "[des] shaders: cache up to date\n");
-        s_state.store(3);
-        return;
+        return Pass::UpToDate;
     }
 
-    if (!rsx_shader_precompile_kinds(kUnits, kAlts)) { s_state.store(3); return; }
+    if (!rsx_shader_precompile_kinds(kUnits, kAlts)) return Pass::NotStarted;
     int programs = 0;
     for (const std::string& n : names) {
         if (s_skip.load()) break;
@@ -257,12 +267,16 @@ extern "C" void ps3_title_prework(void)
     const int threads = cpus > 2 ? int(cpus) - 1 : 1;
     if (s_skip.load() || rsx_shader_precompile_start(threads) != 0) {
         std::fprintf(stderr, "[des] shaders: precompile %s\n", s_skip.load() ? "skipped" : "did not start");
-        s_state.store(3);
-        return;
+        return s_skip.load() ? Pass::Skipped : Pass::NotStarted;
     }
     s_state.store(2);
+    if (poll) {
+        for (rsx_shader_precompile_get(&s); s.running; rsx_shader_precompile_get(&s)) {
+            poll();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
     rsx_shader_precompile_wait();
-    rsx_shader_precompile_stats s;
     rsx_shader_precompile_get(&s);
     std::fprintf(stderr,
                  "[des] shaders: %d programs, %u shaders -> %u compiled, %u already cached, %u failed%s; %.1f s on %d threads\n",
@@ -277,5 +291,58 @@ extern "C" void ps3_title_prework(void)
             std::fclose(f);
         }
     }
-    s_state.store(3);
+    return s.cancelled ? Pass::Skipped : s.failed ? Pass::Failed : Pass::Done;
+}
+
+/* des_prework_shaders' progress line, when it changed: only once every
+ * program is decompiled, when the count of shaders is final (it moves for
+ * the first second, 15 to 3,763 before 3,603 on the US disc). */
+void print_progress(void)
+{
+    static unsigned last_done = ~0u;
+    rsx_shader_precompile_stats s;
+    rsx_shader_precompile_get(&s);
+    if (s.programs_done < s.programs || s.shaders_done == last_done) return;
+    last_done = s.shaders_done;
+    std::printf("shaders %u %u\n", s.shaders_done, s.shaders);
+    std::fflush(stdout);
+}
+
+}  // namespace
+
+extern "C" void ps3_title_prework(void)
+{
+    const char* knob = std::getenv("DES_PRECOMPILE");
+    if (knob && std::strcmp(knob, "0") == 0) return;
+    rsx_shader_precompile_stats s{};
+    run_pass(ppu_vfs_root, knob && same_nocase(knob, "force"), nullptr, s);
+}
+
+/* Setup's shaders phase (docs/52 section 5): tools/setup's pipeline.py runs
+ * `des_host --shaders <game folder>` once the game is built, and this is all
+ * that process does (ps3_title_launch): the same pass as at a start, with no
+ * window, telling the engine how far it is on standard output, one line each:
+ *   shaders <done> <total>     while the shaders compile, once the total is
+ *                              known
+ *   shaders <result> <built> <cached> <failed> <seconds>
+ *                              at the end: done, up-to-date, none (no
+ *                              archives, no cache, or no precompile on this
+ *                              platform), skipped or failed
+ * The cache and its stamp are the game's own, so its first start finds the
+ * cache up to date. Returns the exit status: 1 when the pass did not finish
+ * (the game then compiles what is left at its start, or as it draws). */
+extern "C" int des_prework_shaders(const char* game)
+{
+    rsx_shader_precompile_stats s{};
+#ifdef _WIN32
+    const Pass p = run_pass(game, false, print_progress, s);
+#else
+    (void)game;
+    (void)print_progress;
+    const Pass p = Pass::Off;   /* the precompile is D3DCompile's: the shaders compile as the game draws them */
+#endif
+    static const char* const kResult[] = {"none", "none", "up-to-date", "failed", "skipped", "done", "failed"};
+    std::printf("shaders %s %u %u %u %.1f\n", kResult[int(p)], s.built, s.cached, s.failed, s.seconds);
+    std::fflush(stdout);
+    return p == Pass::Done || p == Pass::UpToDate || p == Pass::Off || p == Pass::NoArchives ? 0 : 1;
 }

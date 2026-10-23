@@ -2179,10 +2179,15 @@ static void run_defaults()
         if (!getenv(d.name)) ps3_setenv(d.name, d.value);
 }
 
-/* First thing in main (ps3recomp's launch hook, docs/88 section 3): the run
- * defaults, then setup's screens alone, or the game (des_ui_launch). */
+extern "C" int des_prework_shaders(const char* game);   /* des_prework.cpp */
+
+/* First thing in main (ps3recomp's launch hook, docs/88 section 3): setup's
+ * shaders phase (`--shaders <game folder>`: the shader cache filled with no
+ * window, then the exit), or the run defaults, then setup's screens alone, or
+ * the game (des_ui_launch). */
 extern "C" int ps3_title_launch(int* argc, char*** argv)
 {
+    if (*argc == 3 && std::strcmp((*argv)[1], "--shaders") == 0) return des_prework_shaders((*argv)[2]);
     run_defaults();
     return des_ui_launch(argc, argv);
 }

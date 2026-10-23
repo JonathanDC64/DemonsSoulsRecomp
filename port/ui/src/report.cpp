@@ -106,11 +106,11 @@ unsigned long long env_u64(const char* name) {
 }
 
 #ifdef _WIN32
-std::filesystem::path exe_dir() {
+std::filesystem::path exe_path() {
     wchar_t buf[MAX_PATH * 2];
     const DWORD n = GetModuleFileNameW(nullptr, buf, DWORD(std::size(buf)));
     if (n == 0 || n >= std::size(buf)) return {};
-    return std::filesystem::path(std::wstring(buf, n)).parent_path();
+    return std::filesystem::path(std::wstring(buf, n));
 }
 
 // %APPDATA%\DemonsSoulsRecomp\DemonsSouls (what SDL_GetPrefPath("DemonsSoulsRecomp", "DemonsSouls") gives).
@@ -183,10 +183,10 @@ std::string pc_name() {
 }
 
 #else
-std::filesystem::path exe_dir() {
+std::filesystem::path exe_path() {
     std::error_code ec;
     const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
-    return ec ? std::filesystem::path{} : exe.parent_path();
+    return ec ? std::filesystem::path{} : exe;
 }
 
 // $XDG_DATA_HOME/DemonsSoulsRecomp/DemonsSouls, else ~/.local/share/... (what SDL_GetPrefPath gives there).
@@ -687,9 +687,12 @@ void make_issue_report(std::vector<uint8_t> rgba, int width, int height, std::st
     g_report_busy.store(false);
 }
 
+std::filesystem::path exe_dir() { return exe_path().parent_path(); }
+
 }  // namespace
 
 std::filesystem::path program_dir() { return exe_dir(); }
+std::filesystem::path program_path() { return exe_path(); }
 
 #ifdef _WIN32
 std::wstring widen(const std::string& s) {

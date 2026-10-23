@@ -28,7 +28,7 @@ DXGI's statistics show it. `FRAME_LOG=<file>` (ps3recomp) logs each present with
 |---|---|---|
 | On (default) | `1` | Presents at the next refresh, as before. |
 | Even frames | `even` | Every frame stays on screen the same number of refreshes (section 3). |
-| G-Sync / FreeSync | `vrr` | Presents at once and caps the rate just under the refresh, for a display that follows the game (section 4). |
+| G-Sync / FreeSync | `vrr` | Caps the rate just under the refresh, for a display that follows the game (section 4). |
 | Off | `0` | Presents at once, with tearing where the system allows it, as before. |
 
 - **Live.** The port reads `DES_VSYNC` at each flip request (`pacing_apply` in `des_options.cpp`). It sets the backend's `RSX_VSYNC` and the vblank clock from it.
@@ -45,6 +45,7 @@ DXGI's statistics show it. `FRAME_LOG=<file>` (ps3recomp) logs each present with
   3. **The window's display mode**, in whole Hz, with no vblank time.
 
   The statistics and DWM are used only while they agree with the display mode within 1.5%. Under VRR the "refreshes" are the frames themselves, and that check keeps them out. `rsx_d3d12_display_refresh_mhz()` gives the same rate in millihertz.
+- **The mode, and what the display did.** `rsx_d3d12_display_mode_mhz()` is the display mode alone (whole Hz). `rsx_d3d12_display_shown_mhz()` is the statistics' own rate, with no check: the mode's rate on a fixed refresh, whatever the frames do, and the frames' rate on a display that follows them. Section 4 uses both.
 - **A vblank clock on the display's vblanks.** `ps3_vblank_lock_display(n)` (`boot_main.cpp`) makes the clock thread tick every n refreshes. Each tick goes on the nearest vblank of the display's grid, `vblank + k * period`. So the game's frames keep their place in the refresh, and there is no drift. While only the period is known, the clock keeps that period with its own phase. While neither is known, it falls back to the rate `ps3_vblank_set_mhz` set. 0 hands the clock back to its timer.
 - **`RSX_VSYNC=2..4`.** `Present` gets that sync interval, so each frame is held that many refreshes at least.
 
@@ -82,9 +83,9 @@ At 30, each frame needs 5 refreshes, but DXGI's sync interval stops at 4. So a f
 
 ## 4. G-Sync / FreeSync
 
-- **Presents at once,** with `DXGI_PRESENT_ALLOW_TEARING`, as Off does. Microsoft's guidance for VRR in a flip-model swap chain is sync interval 0 with tearing allowed.
-- **The rate is capped a little under the refresh**, at refresh × (1 − refresh / 3600): 138 fps at 144 Hz, 59 at 60 Hz. Above the display's range, VRR stops and the display tears or waits again.
-  - The cap moves only by more than 1 fps, so it does not flip as the rate reading wobbles.
+- **Presents at the refresh,** as On does. On a display that follows the frames, the refresh is when the frame comes, so a frame shows at once. A frame that comes sooner than one refresh after the last waits for the last to finish drawing, instead of tearing through it. This is NVIDIA's setting for G-Sync: V-sync on, with a frame rate cap under the refresh.
+- **The rate is capped a little under the display mode's refresh**, at refresh × (1 − refresh / 3600): 138 fps at 144 Hz, 59 at 60 Hz. Above the display's range, VRR stops and the display tears or waits again.
+  - The cap comes from the mode (`rsx_d3d12_display_mode_mhz`), not from the statistics: under VRR those are the frames' times.
   - Below the cap, DES_FPS is kept.
   - The 30 fps mode and the cutscenes are not capped. A VRR display doubles their frames below its range (LFC).
 - **The display and the driver have to have it on.** The game cannot turn on VRR itself. On NVIDIA:
@@ -94,7 +95,30 @@ At 30, each frame needs 5 refreshes, but DXGI's sync interval stops at 4. So a f
   - the game window in front (borderless fullscreen is the surest).
 
   NVIDIA's "G-SYNC Compatible Indicator" (Display menu) shows when it is working.
-- **Measured here:** only the cap. The test runs never take the window's focus (`PS3_NO_USER_INPUT`), so VRR did not engage. At `DES_FPS=144` the game ran at 138.0 fps, and the fixed 144 Hz display held 94% of the frames 1 refresh. With VRR working, each frame should be shown as it comes (inferred).
+- **The log says whether it works.** Every 2 s under `vrr`, the port compares how often the display refreshed (`rsx_d3d12_display_shown_mhz`) with its mode. Under 98% of the mode means the display follows the frames, because the cap keeps them 4% or more under. When that changes, and two readings agree, it logs "the display follows the frames (138.0 Hz): G-Sync / FreeSync is on", or "the display stays at 143.91 Hz: G-Sync / FreeSync is not on for this window".
+- **`RSX_VSYNC=0` given at start** still presents at once with tearing, as the first version did.
+
+### 4.1 The first version tore (measured)
+
+The first version presented at once, with tearing allowed. The player tried it in fullscreen on G-Sync and saw stutter at 144 fps, where Even frames at 72 was smooth. Their log and a test here showed two causes:
+
+- **Frames came sooner than a refresh.** At the 138 fps cap, frames are 7.25 ms apart on average, only 0.3 ms longer than a 144 Hz refresh (6.95 ms). The game's flips have a spread (sd) of 0.41 ms. In a 25 s walk, 19.6% of the frames came less than 6.95 ms after the one before. With tearing allowed, a VRR display tears those frames.
+- **The cap moved.** The cap came from `rsx_d3d12_display_refresh_mhz`. Under VRR the statistics' rate is the frames' rate, and once in a while a reading came within 1.5% of the mode (141.97 Hz). The cap then went to 136 fps for a moment and back, 6 times in the player's run.
+
+Two things are not the cause:
+
+- **The vblank grid.** It does not hold a slow frame to the next tick. With the clock at 400 Hz (2.5 ms) and the game at about 277 fps, only 2.3% of the frame gaps were within 0.6 ms of a whole number of ticks. A frame below the cap goes as soon as it is made.
+- **The clock's timer.** On its own it wakes 0.23 ms late on average, with an sd of 0.17 ms. A spin over the last 0.6 ms brings that to 0.013 ms, but the flips' sd would only go from 0.41 to about 0.37 ms, for 7% of a core. The rest of the spread comes from the guest threads between the vblank and the flip.
+
+### 4.2 Measured with the fix
+
+Same walk, at `DES_FPS=144`. The test window never has the focus (`PS3_NO_USER_INPUT`), so VRR does not engage here:
+
+- The cap stayed at 138 fps for the whole run, and the game ran at 138.0 fps.
+- Frames presented at the refresh. The log said "the display stays at 143.91 Hz: G-Sync / FreeSync is not on for this window", which is right for this window.
+- On the fixed 144 Hz display, 96% of the frames were held 1 refresh and the rest 2, as V-sync On does at 138 fps.
+
+On a display with VRR working, each frame should show as it comes, with no tearing (inferred).
 
 ## 5. Not done
 

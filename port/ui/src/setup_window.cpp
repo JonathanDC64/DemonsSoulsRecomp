@@ -89,7 +89,7 @@ std::string grouped(long long v) {
 // The current step's count: "41,200 / 94,017", "120 / 1,376 MB".
 std::string count_text(const setup::Status& s) {
     if (s.progressM <= 0) return {};
-    if (s.progress == "check" || s.progress == "download")
+    if (s.progress == "check" || s.progress == "download" || s.progress == "compile")
         return grouped(s.progressN >> 20) + " / " + grouped(std::max(1LL, s.progressM >> 20)) + " MB";
     return grouped(s.progressN) + " / " + grouped(s.progressM);
 }
@@ -316,8 +316,9 @@ void SetupWindow::refresh(unsigned long long now) {
 
     if (mPhase == Phase::Running) {
         put(mNote, mShownNote,
-            mStatus.awake ? "Your PC stays awake until setup is done. You can stop and carry on later."
-                          : "You can stop and carry on later.");
+            mStatus.memoryShort ? "Closing other programs makes this faster."
+            : mStatus.awake     ? "Your PC stays awake until setup is done. You can stop and carry on later."
+                                : "You can stop and carry on later.");
     }
 
     if (mDetailsShown) {

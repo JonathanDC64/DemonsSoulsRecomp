@@ -12,10 +12,17 @@ lift, {gen} build/gen.
 
 An object's fingerprint covers its command, the compiler, its source's sum and
 the sums of the headers it read the last time (clang's dependency file), so a
-changed header rebuilds only the objects that read it. The largest sources
-start first. The job count follows the free memory (docs/52 4.4: 3 GB a job,
-2 GB kept free), and a job that runs out of memory is tried once more with one
-job fewer.
+changed header rebuilds only the objects that read it.
+
+The jobs follow the memory as the compile goes (docs/81 section 8): up to one
+a processor, and a job starts only while the memory free now, less 2 GB for the
+rest of the PC and less what the running jobs are still expected to take, holds
+its expected peak. The biggest start first; a smaller one that fits starts
+beside them. A job's expected peak is the one measured the last time (the
+journal keeps it), else its kind's figure (NEED), or the largest measured so
+far in this run among its kind when that is more. A job that runs out of memory
+is tried once more with nothing beside it. -j N runs N at a time whatever the
+memory.
 
 Everything written is game-derived and stays in the data folder.
 """
@@ -27,7 +34,7 @@ import os
 import re
 import subprocess
 import threading
-from concurrent.futures import ThreadPoolExecutor
+import time
 from pathlib import Path
 
 from . import fetch, journal
@@ -35,6 +42,14 @@ from . import fetch, journal
 SRC = Path(__file__).resolve().parents[3]          # the source tree: tools/setup/des_setup/compile.py
 DESC = Path(__file__).resolve().parent / "game_build.json"
 GB = 1 << 30
+KEEP = 2 * GB                                      # left free for the rest of the PC (docs/52 4.4)
+# A job's peak memory before it has been measured, by its kind: a lifted PPU chunk up to 2.4 GB of commit, an SPU
+# program 0.3 GB, libsre 1.7 GB (docs/53 section 2: clang-cl 22.1.8, /O2, no /Zi), each with some room; the port's
+# small files and the workload table well under.
+NEED = {"ppu": 26 * GB // 10, "spu": GB // 2, "libsre": 2 * GB}
+NEED_OTHER = GB // 2
+ROOM = 1.1                                         # a measured peak, with 10% room
+SHORT_AFTER = 5.0                                  # seconds held back by memory before it counts as short
 OOM = re.compile(r"out of memory|not enough memory|bad_alloc|std::bad_alloc", re.I)
 OOM_CODES = {0xC0000017, 0xC000012D}               # STATUS_NO_MEMORY, STATUS_COMMITMENT_LIMIT
 LLVM_ENTRY = "llvm-win64"                          # toolchain.json's compiler (docs/86)
@@ -80,7 +95,8 @@ def parse_depfile(text: str) -> list:
 
 
 def free_memory() -> int:
-    """Available physical memory in bytes, or 0 when unknown."""
+    """The memory free now, in bytes: the physical memory available, or on Windows the commit the system can still
+    give when that is less (a small page file); 0 when unknown."""
     try:
         if os.name == "nt":
             class MS(ctypes.Structure):
@@ -91,7 +107,7 @@ def free_memory() -> int:
             ms = MS()
             ms.len = ctypes.sizeof(MS)
             if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms)):
-                return int(ms.avail)
+                return int(min(ms.avail, ms.apage))
         else:
             with open("/proc/meminfo") as f:
                 for line in f:
@@ -102,13 +118,38 @@ def free_memory() -> int:
     return 0
 
 
-def default_jobs(cpus=None, free=None) -> int:
-    """docs/52 4.4: min(logical CPUs, (free RAM - 2 GB) / 3 GB), at least 1."""
-    cpus = cpus or os.cpu_count() or 4
-    free = free_memory() if free is None else free
-    if not free:
-        return max(1, cpus // 2)
-    return max(1, min(cpus, (free - 2 * GB) // (3 * GB)))
+if os.name == "nt":
+    class _Counters(ctypes.Structure):   # PROCESS_MEMORY_COUNTERS
+        _fields_ = [("cb", ctypes.c_ulong), ("faults", ctypes.c_ulong), ("peak_ws", ctypes.c_size_t),
+                    ("ws", ctypes.c_size_t), ("quota_peak_paged", ctypes.c_size_t), ("quota_paged", ctypes.c_size_t),
+                    ("quota_peak_nonpaged", ctypes.c_size_t), ("quota_nonpaged", ctypes.c_size_t),
+                    ("commit", ctypes.c_size_t), ("peak_commit", ctypes.c_size_t)]
+
+
+def proc_memory(p) -> tuple:
+    """(now, peak) memory in bytes of a child process (subprocess.Popen), running or ended but not yet reaped of its
+    handle: its commit on Windows, what the system has to back (it keeps the peak after the process ends); its
+    resident set elsewhere, only while it runs. (0, 0) when it cannot be told."""
+    try:
+        if os.name == "nt":
+            c = _Counters()
+            c.cb = ctypes.sizeof(c)
+            k = ctypes.windll.kernel32
+            k.K32GetProcessMemoryInfo.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Counters), ctypes.c_ulong]
+            if k.K32GetProcessMemoryInfo(ctypes.c_void_p(int(p._handle)), ctypes.byref(c), c.cb):
+                return int(c.commit), int(c.peak_commit)
+        else:
+            now = peak = 0
+            with open(f"/proc/{p.pid}/status") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        now = int(line.split()[1]) * 1024
+                    elif line.startswith("VmHWM:"):
+                        peak = int(line.split()[1]) * 1024
+            return now, peak
+    except (OSError, AttributeError, ValueError, TypeError):
+        pass
+    return 0, 0
 
 
 def title_funcs(src: Path) -> str:
@@ -171,15 +212,18 @@ def toolchain(data: Path, cc=None, ld=None):
 
 
 class Obj:
-    def __init__(self, name, src: Path, args: list):
+    def __init__(self, name, src: Path, args: list, kind=None):
         self.name, self.src, self.args = name, src, args
+        self.kind = kind or name                   # the description's entry: ppu, spu, libsre, ...
         self.step = f"cc:{name}"
 
 
 class Compile:
     def __init__(self, data: Path, jr: journal.Journal, cc, ld, src: Path = SRC, desc: Path = DESC, jobs: int = 0,
-                 progress=None):
-        """cc and ld: the compiler and the linker, each a path or a command list."""
+                 progress=None, memory=None, free=None):
+        """cc and ld: the compiler and the linker, each a path or a command list. jobs: that many at a time,
+        whatever the memory (0: by the memory). memory(short): told when memory starts and stops holding the
+        compile back. free(): the memory free now (free_memory; the tests' stand-in)."""
         self.data, self.jr, self.src = Path(data), jr, Path(src)
         self.cc = [str(cc)] if isinstance(cc, (str, Path)) else [str(c) for c in cc]
         self.ld = [str(ld)] if isinstance(ld, (str, Path)) else [str(c) for c in ld]
@@ -189,8 +233,12 @@ class Compile:
         self.objdir = self.data / "build" / "obj"
         self.out = self.data / "game"
         self.logs = self.data / "setup" / "logs"
-        self.jobs = jobs or default_jobs()
+        self.jobs = jobs                           # 0: by the memory
+        self.cpus = max(1, os.cpu_count() or 4)
         self.progress = progress or (lambda step, done, total: None)
+        self.memory = memory or (lambda short: None)
+        self.free = free or free_memory
+        self._seen = {}                            # kind -> the largest peak measured in this run
         self._sums, self._sums_lock = {}, threading.Lock()
 
     # ---- the description ----
@@ -211,7 +259,7 @@ class Compile:
                 for f in found:
                     p = Path(f)
                     n = p.stem if o["name"] == "ppu" else p.parent.name
-                    objs.append(Obj(n, p, args))
+                    objs.append(Obj(n, p, args, o["name"]))
             else:
                 p = Path(self.expand(o["src"]))
                 if not p.is_file() and not p.is_relative_to(self.gen):
@@ -284,6 +332,15 @@ class Compile:
         return journal.fingerprint("cc", o.name, self.cc, o.args, cc_id, self._sum(o.src),
                                    [(d, self._sum(d)) for d in deps])
 
+    def _need(self, o) -> int:
+        """The memory a job is expected to take at its peak (the module's docstring)."""
+        own = self.jr.state(o.step).get("results", {}).get("peak")
+        if own:
+            return int(own * ROOM)
+        # Not measured yet: its kind's figure, or more when one of its kind took more in this run. One that took less
+        # says nothing about the others (PPU chunk 012 peaks at 0.9 GB, chunk 009 at 2.2).
+        return max(NEED.get(o.kind, NEED_OTHER), int(self._seen.get(o.kind, 0) * ROOM))
+
     def _compile_all(self, objs, cc_id):
         self.objdir.mkdir(parents=True, exist_ok=True)
         self.logs.mkdir(parents=True, exist_ok=True)
@@ -293,56 +350,120 @@ class Compile:
             fp = self._obj_fp(o, cc_id, prev)
             if not self.jr.is_done(o.step, fp, [self.objdir / f"{o.name}.obj"]):
                 todo.append((o, fp))
-        total, done = len(objs), len(objs) - len(todo)
+        # The progress counts source bytes (docs/52 4.3), not objects: the 14 PPU chunks are most of the time, and the
+        # SPU programs and small files, which finish first, nearly half the objects.
+        size = {o.name: max(1, o.src.stat().st_size if o.src.is_file() else 0) for o in objs}
+        total = sum(size.values())
+        done = total - sum(size[o.name] for o, _ in todo)
         self.progress("compile", done, total)
         if not todo:
             return
-        todo.sort(key=lambda t: -(t[0].src.stat().st_size if t[0].src.is_file() else 0))
-        slots = _Slots(min(self.jobs, len(todo)))
-        stop, lock, failed = threading.Event(), threading.Lock(), []
-        count = [done]
+        # The biggest first: by expected memory, then by source size.
+        todo.sort(key=lambda t: (-self._need(t[0]), -size[t[0].name]))
+        # (Memory that cannot be read: half the processors, as the first count did.)
+        run = _Run(self.jobs or (self.cpus if self.free() else max(1, self.cpus // 2)))
+        failed, count, threads = [], [done], []
 
         def one(o, fp):
-            if stop.is_set():
-                return
             try:
-                self.jr.run(o.step, fp, lambda: self._cc(o, slots, stop),
+                self.jr.run(o.step, fp, lambda: self._cc(o, run),
                             outputs=[self.objdir / f"{o.name}.obj"], log=self._log(o.step),
                             refingerprint=lambda res: self._obj_fp(o, cc_id, res["deps"]))
             except journal.StepFailed as e:
-                stop.set()
-                with lock:
+                with run.cond:
+                    run.stop = True
                     failed.append(e)
-                return
-            with lock:
-                count[0] += 1
-                self.progress("compile", count[0], total)
+            else:
+                with run.cond:
+                    count[0] += size[o.name]
+                    self.progress("compile", count[0], total)
+            finally:
+                with run.cond:
+                    run.running.pop(o.name, None)
+                    run.cond.notify_all()
 
-        with ThreadPoolExecutor(max_workers=min(self.jobs, len(todo))) as ex:
-            for o, fp in todo:
-                ex.submit(one, o, fp)
+        waiting, short, since = list(todo), False, None
+        while True:
+            with run.cond:
+                if run.stop:
+                    waiting.clear()
+                if not waiting and not run.running:
+                    break
+                held = False
+                while waiting and len(run.running) < run.cap and not run.holding():
+                    budget = None if self.jobs or not run.running else self._budget(run)
+                    pick = next((i for i, (o, _) in enumerate(waiting) if budget is None or self._need(o) <= budget),
+                                None)
+                    if pick is None:
+                        held = True                # memory holds the rest back
+                        break
+                    o, fp = waiting.pop(pick)
+                    run.running[o.name] = o
+                    t = threading.Thread(target=one, args=(o, fp), daemon=True)
+                    threads.append(t)
+                    t.start()
+                self._sample(run)
+                # The setup screens' hint: memory has held jobs back for a while, or no longer does. (Under the
+                # lock, as progress is: the protocol's lines are written one at a time.)
+                now = time.monotonic()
+                since = (since or now) if held else None
+                if (since is not None and now - since >= SHORT_AFTER) != short:
+                    short = not short
+                    self.memory(short)
+                run.cond.wait(0.5)
+        for t in threads:
+            t.join()
+        if short:
+            self.memory(False)
         if failed:
             raise next((e for e in failed if not e.message.startswith("stopped")), failed[0])
+
+    def _budget(self, run) -> int:
+        """The memory a new job may take: what is free now, less what is kept for the PC and what the running jobs
+        are still expected to take beyond what they hold now. (Under run.cond.)"""
+        free = self.free()
+        if not free:
+            return 1 << 62                         # not known: only the processors limit the jobs
+        ahead = 0
+        for name, o in run.running.items():
+            p = run.procs.get(name)
+            now = proc_memory(p)[0] if p else 0
+            ahead += max(0, self._need(o) - now)
+        return free - KEEP - ahead
+
+    def _sample(self, run):
+        """Each running compiler's peak so far (on Linux it can be read only while the process runs). (Under
+        run.cond.)"""
+        for name, p in run.procs.items():
+            peak = proc_memory(p)[1]
+            if peak > run.peaks.get(name, 0):
+                run.peaks[name] = peak
 
     def _log(self, step) -> Path:
         return self.logs / (step.replace(":", "_") + ".log")
 
-    def _cc(self, o, slots, stop):
+    def _cc(self, o, run):
         obj = self.objdir / f"{o.name}.obj"
         dep = self.objdir / f"{o.name}.obj.d"
         cmd = self.cc + o.args + [f"/Fo{obj}", "-clang:-MD", f"-clang:-MF{dep}", "-clang:-fno-caret-diagnostics",
                                   "-c", "--", str(o.src)]
         self._log(o.step).write_text("", encoding="utf-8")
         for attempt in (0, 1):
-            with slots:
-                if stop.is_set():
+            if attempt == 1:
+                run.wait_alone(o.name)         # once more, with nothing beside it
+            try:
+                with run.cond:
+                    stopped = run.stop
+                if stopped:
                     raise journal.StepFailed(o.step, "stopped: another object failed", self._log(o.step))
-                rc, out = self._exec(o.step, cmd, self.objdir)
+                rc, out, peak = self._exec(o.step, cmd, self.objdir, run, o.name)
+            finally:
+                if attempt == 1:
+                    run.done_alone()
             if rc == 0:
                 break
             oom = bool(OOM.search(out)) or (rc & 0xFFFFFFFF) in OOM_CODES
             if attempt == 0 and oom:
-                slots.shrink()
                 continue
             tail = " | ".join(out.strip().splitlines()[-5:])
             why = "the compiler ran out of memory" if oom else "the compiler failed"
@@ -352,15 +473,31 @@ class Compile:
         except OSError:
             raise journal.StepFailed(o.step, f"the compiler wrote no dependency file {dep}", self._log(o.step))
         src = os.path.normcase(os.path.abspath(o.src))
-        return {"deps": sorted({os.path.abspath(d) for d in deps if os.path.normcase(os.path.abspath(d)) != src})}
+        res = {"deps": sorted({os.path.abspath(d) for d in deps if os.path.normcase(os.path.abspath(d)) != src})}
+        if peak:
+            res["peak"] = peak
+            with run.cond:
+                self._seen[o.kind] = max(self._seen.get(o.kind, 0), peak)
+        return res
 
-    def _exec(self, step, cmd, cwd):
+    def _exec(self, step, cmd, cwd, run=None, name=None):
+        """Run one tool, its output to the step's log; (exit status, output, peak memory in bytes or 0). With a run,
+        the compile's scheduler can see its memory while it runs."""
         log = self._log(step)
-        p = subprocess.run(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                           text=True, encoding="utf-8", errors="replace")
+        with subprocess.Popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True, encoding="utf-8", errors="replace") as p:
+            if run is not None:
+                with run.cond:
+                    run.procs[name] = p
+            out, _ = p.communicate()
+            peak = proc_memory(p)[1]
+            if run is not None:
+                with run.cond:
+                    run.procs.pop(name, None)
+                    peak = max(peak, run.peaks.pop(name, 0))
         with open(log, "a", encoding="utf-8", errors="replace") as lf:
-            lf.write("+ " + subprocess.list2cmdline(cmd) + "\n" + p.stdout + f"(exit {p.returncode})\n")
-        return p.returncode, p.stdout
+            lf.write("+ " + subprocess.list2cmdline(cmd) + "\n" + out + f"(exit {p.returncode})\n")
+        return p.returncode, out, peak
 
     def _link(self, objs, ld_id) -> Path:
         dll = self.out / self.desc.get("dll", "des_game.dll")
@@ -377,7 +514,7 @@ class Compile:
             self.out.mkdir(parents=True, exist_ok=True)
             self.logs.mkdir(parents=True, exist_ok=True)
             self._log("link").write_text("", encoding="utf-8")
-            rc, out = self._exec("link", self.ld + args, self.out)
+            rc, out, _ = self._exec("link", self.ld + args, self.out)
             if rc != 0:
                 tail = " | ".join(out.strip().splitlines()[-5:])
                 raise journal.StepFailed("link", f"the linker failed (exit {rc}): {tail}", self._log("link"))
@@ -386,22 +523,38 @@ class Compile:
         return dll
 
 
-class _Slots:
-    """A semaphore whose size can only go down (a job that ran out of memory)."""
-    def __init__(self, n):
-        self.n, self.used, self.cond = max(1, n), 0, threading.Condition()
+class _Run:
+    """The compile's shared state, under one condition: the jobs running, their compilers' processes and peaks so
+    far, at most `cap` at a time, and the jobs that run once more with nothing beside them (out of memory)."""
 
-    def __enter__(self):
-        with self.cond:
-            while self.used >= self.n:
-                self.cond.wait()
-            self.used += 1
+    def __init__(self, cap):
+        self.cap = max(1, cap)
+        self.cond = threading.Condition()
+        self.running = {}                          # name -> Obj: started and not ended
+        self.procs = {}                            # name -> Popen, while its compiler runs
+        self.peaks = {}                            # name -> the largest peak sampled while it ran
+        self.alone = None                          # the job running with nothing beside it
+        self.queued = 0                            # jobs waiting to run alone
+        self.stop = False
 
-    def __exit__(self, *exc):
+    def holding(self) -> bool:
+        """No new job starts while one runs alone or waits to."""
+        return self.alone is not None or self.queued > 0
+
+    def wait_alone(self, name):
+        """Take this job off the running ones (it waits, it does not compile), hold the start of new ones, and wait
+        until nothing else runs; then it runs alone, until done_alone."""
         with self.cond:
-            self.used -= 1
+            o = self.running.pop(name)
+            self.queued += 1
             self.cond.notify_all()
+            while self.alone is not None or self.running:
+                self.cond.wait()
+            self.queued -= 1
+            self.alone = name
+            self.running[name] = o
 
-    def shrink(self):
+    def done_alone(self):
         with self.cond:
-            self.n = max(1, self.n - 1)
+            self.alone = None
+            self.cond.notify_all()

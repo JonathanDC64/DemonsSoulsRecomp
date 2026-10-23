@@ -17,10 +17,10 @@ inline constexpr int kProtocol = 2;
 
 // One line of the engine's output.
 struct Line {
-    enum class Kind { Text, Setup, Plan, Step, Progress, Overall, Check, File, Rpcs3, Awake, Log, Error, Done };
+    enum class Kind { Text, Setup, Plan, Step, Progress, Overall, Check, File, Rpcs3, Awake, Memory, Log, Error, Done };
     Kind kind = Kind::Text;
     std::string key;                // Step, Progress, File: the step. Check, Rpcs3: the state. Error: the code.
-                                    // Done: the result.
+                                    // Memory: short or ok. Done: the result.
     std::string key2;               // Step: start, done or skip. Check: the file. Error: the step.
     long long n = 0, m = 0;         // Progress, Overall: n/m. Setup: n is the version.
     std::vector<std::string> list;  // Plan: the phases
@@ -48,6 +48,7 @@ struct Status {
     std::string rpcs3Path;    // and its folder
     int overall = 0;          // the whole run, per mille
     bool awake = false;       // the engine keeps the PC from sleeping
+    bool memoryShort = false; // the compile runs fewer jobs than it could, for want of memory (@memory)
     std::vector<Line> checks;  // the checked files
     std::string errorCode, errorStep, errorText, logPath;
     std::string result;            // ok, fix or failed (the last line's), stopped (Cancel); empty while it runs

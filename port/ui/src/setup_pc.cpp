@@ -62,10 +62,12 @@ std::vector<std::filesystem::path> search_roots() {
     return out;
 }
 
-unsigned long long memory_bytes() {
+// The memory free now: the physical memory available, or the commit the system can still give when that is less (as
+// compile.py's free_memory reads it).
+unsigned long long free_memory_bytes() {
     MEMORYSTATUSEX m{};
     m.dwLength = sizeof m;
-    return GlobalMemoryStatusEx(&m) ? m.ullTotalPhys : 0;
+    return GlobalMemoryStatusEx(&m) ? std::min(m.ullAvailPhys, m.ullAvailPageFile) : 0;
 }
 
 // BatteryFlag 128: no battery, 255: not known. ACLineStatus 0: not plugged in (1: plugged in, 255: not known).
@@ -138,8 +140,16 @@ std::vector<std::filesystem::path> search_roots() {
     return out;
 }
 
-unsigned long long memory_bytes() {
-    const long pages = sysconf(_SC_PHYS_PAGES), size = sysconf(_SC_PAGE_SIZE);
+// The memory free now: /proc/meminfo's MemAvailable (as compile.py's free_memory reads it), else the free pages.
+unsigned long long free_memory_bytes() {
+    std::ifstream f("/proc/meminfo");
+    std::string key;
+    unsigned long long kb = 0;
+    while (f >> key >> kb) {
+        if (key == "MemAvailable:") return kb * 1024;
+        f.ignore(256, '\n');
+    }
+    const long pages = sysconf(_SC_AVPHYS_PAGES), size = sysconf(_SC_PAGE_SIZE);
     return pages > 0 && size > 0 ? (unsigned long long)pages * (unsigned long long)size : 0;
 }
 
@@ -298,25 +308,27 @@ Space data_space() {
 // The build's numbers, measured on one PC (docs/53: 8 cores, 16 threads, 31 GB). The game part's compile is about
 // 2,250 s of CPU: the 14 PPU chunks without /Zi, 2,128 s (docs/53 section 2), and the SPU programs and libsre, about
 // 2 minutes (docs/45 3.1). Its longest job, chunk 008, takes 261 s, which no number of jobs shortens. The check, the
-// copy and the lift add about 75 s (docs/53 section 1). The jobs are counted as compile.py's default_jobs counts them
-// (docs/52 4.4: 3 GB a job, 2 GB kept free), here from the PC's memory, not its free memory. No other PC has been
-// measured. The range's low end is that PC's speed per core; its high end takes cores 2 times slower on a desktop
-// and 4 times on a laptop (inferred, from docs/45 3.1's guesses: a 6-core desktop at 4 jobs about 20 minutes, a
-// 4-core laptop 35 to 50, against 10.7 measured on that PC). The compiler's download is not in it.
+// copy and the lift add about 75 s (docs/53 section 1). The jobs are the PPU chunks the compile can run at once in
+// the memory free now (compile.py, docs/81 section 8: 2 GB kept free, 2.6 GB a chunk before one is measured), and
+// half the threads when the memory cannot be read, as there. No other PC has been measured. The range's low end is
+// that PC's speed per core; its high end takes cores 2 times slower on a desktop and 4 times on a laptop (inferred,
+// from docs/45 3.1's guesses: a 6-core desktop at 4 jobs about 20 minutes, a 4-core laptop 35 to 50, against 10.7
+// measured on that PC). The compiler's download is not in it.
 constexpr double kCompileCpuSeconds = 2250.0;
 constexpr double kLongestJobSeconds = 261.0;
 constexpr double kOtherSeconds = 75.0;
-constexpr unsigned long long kJobBytes = 3ull << 30;
-constexpr unsigned long long kKeptBytes = 2ull << 30;
+constexpr unsigned long long kJobBytes = 26ull * (1ull << 30) / 10;  // compile.py's NEED["ppu"]
+constexpr unsigned long long kKeptBytes = 2ull << 30;                // and its KEEP
 constexpr double kSlowerDesktop = 2.0, kSlowerLaptop = 4.0;
 
 Estimate setup_time() {
     Estimate out;
     const unsigned threads = std::max(1u, std::thread::hardware_concurrency());
-    const unsigned long long ram = memory_bytes();
+    const unsigned long long free = free_memory_bytes();
     unsigned long long jobs = threads;
-    if (ram > kKeptBytes) jobs = std::min(jobs, std::max(1ull, (ram - kKeptBytes) / kJobBytes));
-    else if (ram != 0) jobs = 1;
+    if (free > kKeptBytes) jobs = std::min(jobs, std::max(1ull, (free - kKeptBytes) / kJobBytes));
+    else if (free != 0) jobs = 1;
+    else jobs = std::max(1u, threads / 2);
     out.jobs = unsigned(jobs);
     const double seconds = kOtherSeconds + std::max(kCompileCpuSeconds / double(jobs), kLongestJobSeconds);
     const double slower = platform_power().battery ? kSlowerLaptop : kSlowerDesktop;

@@ -17,7 +17,8 @@ constexpr KindName kKinds[] = {
     {"setup", Line::Kind::Setup},       {"plan", Line::Kind::Plan},   {"step", Line::Kind::Step},
     {"progress", Line::Kind::Progress}, {"overall", Line::Kind::Overall}, {"check", Line::Kind::Check},
     {"file", Line::Kind::File},         {"rpcs3", Line::Kind::Rpcs3}, {"awake", Line::Kind::Awake},
-    {"log", Line::Kind::Log},           {"error", Line::Kind::Error}, {"done", Line::Kind::Done},
+    {"memory", Line::Kind::Memory},     {"log", Line::Kind::Log},     {"error", Line::Kind::Error},
+    {"done", Line::Kind::Done},
 };
 
 constexpr size_t kTailLines = 200;
@@ -101,6 +102,10 @@ Line parse_line(std::string_view text) {
         l.key = take_word(rest);
         if (l.key.empty()) return plain;
         break;
+    case Line::Kind::Memory:
+        l.key = take_word(rest);
+        if (l.key != "short" && l.key != "ok") return plain;
+        break;
     case Line::Kind::Awake:
     case Line::Kind::Text:
         break;
@@ -159,6 +164,9 @@ void Status::apply(const Line& l) {
         break;
     case Line::Kind::Awake:
         awake = true;
+        break;
+    case Line::Kind::Memory:
+        memoryShort = l.key == "short";
         break;
     case Line::Kind::Log:
         logPath = l.text;

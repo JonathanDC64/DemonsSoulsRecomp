@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from des_setup import fetch, journal, pipeline, protocol  # noqa: E402
+from des_setup import compile as compile_step, fetch, journal, pipeline, protocol  # noqa: E402
 from test_lift import REAL, FakeTree  # noqa: E402
 from test_setup import GameTree  # noqa: E402
 
@@ -239,6 +239,15 @@ class EmitterTest(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.lines(lambda e: e.error("oops", "-", "x"))
 
+    def test_memory_lines(self):
+        """@memory only when it changes, and nothing for ok at the start (docs/81 section 8)."""
+        def fn(e):
+            e.memory(False)
+            e.memory(True)
+            e.memory(True)
+            e.memory(False)
+        self.assertEqual(self.lines(fn), ["@memory short", "@memory ok"])
+
     def test_rpcs3_lines(self):
         """Version 2's lines (docs/90 3.8): @file only when the file changes, @rpcs3 with a path that has spaces."""
         def fn(e):
@@ -306,6 +315,15 @@ class HostAgreesTest(unittest.TestCase):
                 folder.mkdir()
                 (folder / const("kStampName")).write_bytes((e["sha256"] + end).encode("ascii"))
                 self.assertTrue(fetch.unpacked(e, tmp), repr(end))
+
+    def test_estimate_counts_jobs_as_the_compile(self):
+        """The start screen's time estimate counts the chunks the compile can run at once (docs/81 section 8)."""
+        cpp = (UI / "setup_pc.cpp").read_text(encoding="utf-8")
+        job = re.search(r"kJobBytes = (\d+)ull \* \(1ull << 30\) / 10;", cpp)
+        kept = re.search(r"kKeptBytes = (\d+)ull << 30;", cpp)
+        self.assertTrue(job and kept)
+        self.assertEqual(int(job.group(1)) * compile_step.GB // 10, compile_step.NEED["ppu"])
+        self.assertEqual(int(kept.group(1)) * compile_step.GB, compile_step.KEEP)
 
 
 if __name__ == "__main__":

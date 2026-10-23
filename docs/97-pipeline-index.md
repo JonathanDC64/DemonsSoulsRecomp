@@ -111,9 +111,9 @@ A seen file of another game version is left out, and so is a malformed row.
 
 ## Measured
 
-The scripted Tutorial route (t38.sh: from the pinned regression save, walk a fixed path). Runs A to C are a
-player's first start: an empty cache, setup's shader pass, then the game. Run D is the next start, on C's
-cache. Counts from the library's log line.
+The scripted Tutorial route (t38.sh: from the pinned regression save, walk a fixed path). Runs A to C and F
+are a player's first start: an empty cache, setup's shader pass, then the game. Run D is the next start, on
+C's cache. Counts from the library's log line.
 
 | Run | Index | Pipelines compiled in play | Loaded from the library |
 |---|---|---|---|
@@ -121,6 +121,9 @@ cache. Counts from the library's log line.
 | B | A's 161 rows | 6 (new pipelines, now in the index) | 180 |
 | C | A's and B's 167 rows | 1 | 182 |
 | D | skipped (built in full in C) | 3 | 185 |
+| F | the committed 327 rows | 0 | all 161 it asked for |
+
+- Run F built all 327 rows in 458 ms. Every pipeline its walk asked for was in the index.
 
 - Runs B and C found every row's programs and built all of them: 161 in 134 ms, 167 in 136 ms. Every row was
   asked for, and loaded.

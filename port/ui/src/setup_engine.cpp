@@ -52,13 +52,9 @@ std::filesystem::path local_data_base() {
 }
 
 // The embeddable Python, once it is unpacked where des_setup's fetch.ensure puts it, with the stamp that names the
-// archive's SHA-256 (fetch.unpacked checks the same stamp); empty before that.
+// archive's SHA-256 (setup_python.hpp; fetch.unpacked checks the same stamp); empty before that.
 std::filesystem::path platform_python() {
-    const auto dir = data_dir() / "tools" / (std::string(kPythonName) + "-" + kPythonVersion);
-    std::ifstream stamp(dir / ".des-setup-sha256");
-    std::string sum;
-    if (!(stamp >> sum) || sum != kPythonSha256) return {};
-    return dir / "python.exe";
+    return python_unpacked() ? python_folder() / "python.exe" : std::filesystem::path{};
 }
 
 #else
@@ -168,40 +164,72 @@ std::filesystem::path engine_script() {
 
 bool Engine::start(const Request& request, bool check_only) {
     mWhy.clear();
-    const auto py = python();
-    const auto script = engine_script();
-    if (py.empty()) {
-        mWhy = "Python for setup is not downloaded yet.";
-        return false;
-    }
-    if (script.empty() || data_dir().empty()) {
+    if (engine_script().empty() || data_dir().empty()) {
         mWhy = "The setup files are missing from the game's folder. Extract the download again.";
         return false;
     }
-    // -X utf8: the tools' prints and files are UTF-8 whatever the code page; -u: each line as it is printed (docs/52
-    // 13.3).
-    std::vector<std::string> args = {"-X", "utf8", "-u", utf8(script), "run"};
-    if (!request.game.empty()) {
-        args.push_back(utf8(request.game));
-        for (const auto& d : request.decrypted) {
-            args.push_back("--decrypted");
-            args.push_back(utf8(d));
-        }
-        if (!request.firmware.empty()) {
-            args.push_back("--firmware");
-            args.push_back(utf8(request.firmware));
-        }
-    }
-    args.insert(args.end(), {"--data", utf8(data_dir()), "--app", kVersion});
-    if (check_only) args.push_back("--check-only");
+    mRequest = request;
+    mCheckOnly = check_only;
+    mStopAsked = false;
     unsigned run = 0;
     {
         std::lock_guard<std::mutex> lock(mLock);
         run = ++mRun;
         mLines.clear();
         mEnded = mStopped = false;
+        mFetchEnded = mFetchOk = mFetchStopped = false;
         mExit = 0;
     }
+    mFetching = python().empty();
+    if (!mFetching) return start_engine(run);
+
+    // No Python yet (Windows, before the first run): the host's download of it first; poll() starts the engine after.
+    // (each callback is for its own run, as below)
+    mFromEngine = false;
+    mProcess.stop();
+    mFetch.start(
+        [this, run](std::string line) {
+            std::lock_guard<std::mutex> lock(mLock);
+            if (run == mRun) mLines.push_back(std::move(line));
+        },
+        [this, run](bool ok, bool stopped) {
+            std::lock_guard<std::mutex> lock(mLock);
+            if (run != mRun) return;
+            mFetchEnded = true;
+            mFetchOk = ok;
+            mFetchStopped = stopped;
+        });
+    std::fprintf(stderr, "[setup] started: the first Python's download, then the engine %s\n",
+                 check_only ? "(check only)" : "");
+    return true;
+}
+
+// The engine itself, under the Python there is now.
+bool Engine::start_engine(unsigned run) {
+    const auto py = python();
+    const auto script = engine_script();
+    if (py.empty() || script.empty()) {
+        mWhy = py.empty() ? "Python for setup is not downloaded yet."
+                          : "The setup files are missing from the game's folder. Extract the download again.";
+        return false;
+    }
+    // -X utf8: the tools' prints and files are UTF-8 whatever the code page; -u: each line as it is printed (docs/52
+    // 13.3).
+    std::vector<std::string> args = {"-X", "utf8", "-u", utf8(script), "run"};
+    if (!mRequest.game.empty()) {
+        args.push_back(utf8(mRequest.game));
+        for (const auto& d : mRequest.decrypted) {
+            args.push_back("--decrypted");
+            args.push_back(utf8(d));
+        }
+        if (!mRequest.firmware.empty()) {
+            args.push_back("--firmware");
+            args.push_back(utf8(mRequest.firmware));
+        }
+    }
+    args.insert(args.end(), {"--data", utf8(data_dir()), "--app", kVersion});
+    if (mCheckOnly) args.push_back("--check-only");
+    mFromEngine = true;
     // (each callback is for its own run: the last run's thread may still be ending while this one starts)
     const bool started = mProcess.start(
         py, args,
@@ -218,24 +246,55 @@ bool Engine::start(const Request& request, bool check_only) {
         });
     if (!started) mWhy = "The setup program could not start (" + mProcess.why() + ").";
     std::fprintf(stderr, "[setup] %s: %s %s\n", started ? "started" : "could not start", utf8(py).c_str(),
-                 check_only ? "(check only)" : "");
+                 mCheckOnly ? "(check only)" : "");
     return started;
+}
+
+void Engine::stop() {
+    mStopAsked = true;
+    mFetch.stop();
+    mProcess.stop();
 }
 
 void Engine::poll(Status& status) {
     std::vector<std::string> lines;
-    bool ended = false, stopped = false;
+    bool ended = false, stopped = false, fetched = false, fetchOk = false, fetchStopped = false;
     int exit = 0;
+    unsigned run = 0;
     {
         std::lock_guard<std::mutex> lock(mLock);
         lines.swap(mLines);
         ended = std::exchange(mEnded, false);
         stopped = mStopped;
         exit = mExit;
+        fetched = std::exchange(mFetchEnded, false);
+        fetchOk = mFetchOk;
+        fetchStopped = mFetchStopped;
+        run = mRun;
     }
-    for (const std::string& line : lines) status.apply(parse_line(line));
+    // (one batch is all the download's or all the engine's: the engine starts below, after the download's last line)
+    const bool after = mFetching && mFromEngine;
+    for (const std::string& text : lines) {
+        Line l = parse_line(text);
+        if (after && l.kind == Line::Kind::Overall) {  // the engine's bar fills what the download's share left
+            l.n = kPythonShare * l.m + (1000 - kPythonShare) * l.n;
+            l.m *= 1000;
+        }
+        status.apply(l);
+        if (after && l.kind == Line::Kind::Plan)  // the download stays the run's first step, done
+            status.steps.insert(status.steps.begin(), Status::Step{kPythonStep, Status::State::Done});
+    }
     if (status.protocol != 0 && status.protocol != kProtocol && mProcess.running()) mProcess.stop();
     if (ended) status.ended(exit, stopped);
+    if (!fetched) return;
+    if (!fetchOk || mStopAsked) {
+        status.ended(1, fetchStopped || mStopAsked);  // (a failure has said its @error and @done already)
+    } else if (!start_engine(run)) {
+        status.result = "failed";
+        status.errorCode = "internal";
+        status.errorStep = "-";
+        status.errorText = mWhy;
+    }
 }
 
 }  // namespace ui::setup

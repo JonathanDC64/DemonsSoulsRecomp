@@ -53,6 +53,7 @@ struct TaskText {
     const char* sub;
 };
 constexpr TaskText kTasks[] = {
+    {setup::kPythonStep, "Download Python", "What setup runs on, only the first time"},  // (setup_python.hpp)
     {"check", "Check the game files", "Every file is read once"},
     {"fetch", "Download the build tools", "Only the first time"},
     {"stage", "Copy the game files", "Into setup's own folder"},
@@ -68,9 +69,9 @@ const TaskText* task_text(const std::string& id) {
     return nullptr;
 }
 
-// The count's step for each line ("download" is the fetch phase's).
+// The count's step for each line ("download" is the fetch phase's, and the first Python's).
 const char* count_step(const std::string& id) {
-    return id == "fetch" ? "download" : id.c_str();
+    return (id == "fetch" || id == setup::kPythonStep) ? "download" : id.c_str();
 }
 
 std::string grouped(long long v) {

@@ -8,6 +8,7 @@ import io
 import os
 import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -254,15 +255,40 @@ class HostAgreesTest(unittest.TestCase):
         hpp = (UI / "setup_engine.hpp").read_text(encoding="utf-8")
         e = next(t for t in fetch.load_manifest()["tools"] if t["name"] == "python-embed")
 
+        def const(name, text=hpp):
+            m = re.search(name + r'\s*=\s*"?([^";]+)"?;', text)
+            self.assertIsNotNone(m, name)
+            return m.group(1).rstrip("ull")
+
+        self.assertEqual(const("kPythonName"), e["name"])
+        self.assertEqual(const("kPythonVersion"), e["version"])
+        self.assertEqual(const("kPythonUrl"), e["url"])
+        self.assertEqual(int(const("kPythonSize")), e["size"])
+        self.assertEqual(const("kPythonSha256"), e["sha256"])
+
+    def test_first_python_lands_where_fetch_looks(self):
+        """The host's own first download (setup_python.hpp): fetch.py's archive name and folders, the stamp that
+        fetch.unpacked accepts, and the fetch phase's free-space figure."""
+        hpp = (UI / "setup_python.hpp").read_text(encoding="utf-8")
+        e = next(t for t in fetch.load_manifest()["tools"] if t["name"] == "python-embed")
+
         def const(name):
             m = re.search(name + r'\s*=\s*"?([^";]+)"?;', hpp)
             self.assertIsNotNone(m, name)
             return m.group(1).rstrip("ull")
 
-        self.assertEqual(const("kPythonVersion"), e["version"])
-        self.assertEqual(const("kPythonUrl"), e["url"])
-        self.assertEqual(int(const("kPythonSize")), e["size"])
-        self.assertEqual(const("kPythonSha256"), e["sha256"])
+        downloads, tools = const("kDownloadsFolder"), const("kToolsFolder")
+        self.assertEqual((downloads, tools), pipeline.OUTPUTS["fetch"])
+        # The host names the archive <name>-<version>.zip (setup_python.cpp relative_archive).
+        self.assertEqual(fetch.archive_path(e, Path(downloads)), Path(downloads) / f"{e['name']}-{e['version']}.zip")
+        self.assertEqual(int(const("kFetchBytes")), pipeline.NEED["fetch"])
+        # The host writes the SHA-256 and "\n" in text mode: "\r\n" on Windows, "\n" elsewhere.
+        for end in ("\r\n", "\n"):
+            with tempfile.TemporaryDirectory() as tmp:
+                folder = Path(tmp) / f"{e['name']}-{e['version']}"
+                folder.mkdir()
+                (folder / const("kStampName")).write_bytes((e["sha256"] + end).encode("ascii"))
+                self.assertTrue(fetch.unpacked(e, tmp), repr(end))
 
 
 if __name__ == "__main__":

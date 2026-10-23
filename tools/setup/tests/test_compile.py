@@ -59,9 +59,15 @@ open(dep, "w").write(obj.replace(" ", "\\ ") + ": " + " \\\n  ".join(x.replace("
 FAKELD = r'''import os, sys
 a = sys.argv[1:]
 here = os.path.dirname(os.path.abspath(__file__))
-open(os.path.join(here, "ld_calls.txt"), "a").write("link\n")
 out = next(x[5:] for x in a if x.lower().startswith("/out:"))
-objs = [x for x in a if x.endswith(".obj")]
+if a[0] == "/lib":   # an import library from a .def file; one with FAIL in it fails
+    open(os.path.join(here, "ld_calls.txt"), "a").write("lib\n")
+    text = open(next(x[5:] for x in a if x.lower().startswith("/def:"))).read()
+    if "FAIL" in text:
+        print("error: made to fail"); sys.exit(1)
+    open(out, "w").write(text); sys.exit(0)
+open(os.path.join(here, "ld_calls.txt"), "a").write("link\n")
+objs = [x for x in a if x.endswith(".obj") or x.endswith(".lib")]
 open(out, "w").write("\n".join(os.path.basename(o) + " " + open(o).read() for o in objs))
 '''
 
@@ -212,6 +218,18 @@ class TestDescription(unittest.TestCase):
         self.assertEqual(k("{work}/libsre/lifted/ppu_recomp.c"), ("libsre", None))
         self.assertEqual(k("{src}/port/des_game_module.cpp"), ("des_game_module", None))
 
+    def test_lib_command(self):
+        """The import library's command as ninja writes it for DesGameFreestanding.cmake's custom command."""
+        t = self.g.lib_tokens
+        line = (r'C:\WINDOWS\system32\cmd.exe /C "cd /D C:\b\build && "C:\Program Files\LLVM\bin\lld-link.exe" '
+                r'/lib /nologo /machine:x64 /def:C:/b/ps3r/runtime/ppu/game_libc_kernel32.def '
+                r'/out:C:/b/build/split_gen/game_libc_kernel32.lib"')
+        self.assertEqual(t(line), ["/lib", "/nologo", "/machine:x64", "/def:C:/b/ps3r/runtime/ppu/game_libc_kernel32.def",
+                                   "/out:C:/b/build/split_gen/game_libc_kernel32.lib"])
+        self.assertEqual(t(line[:-1] + ' && cd ."')[-1], "/out:C:/b/build/split_gen/game_libc_kernel32.lib")
+        self.assertIsNone(t(r'C:\PROGRA~1\LLVM\bin\lld-link.exe /nologo a.obj /out:des_game.dll /dll'))
+        self.assertIsNone(t(r'C:\PROGRA~1\LLVM\bin\clang-cl.exe /nologo /lib -c -- x.c'))
+
 
 class TestCompile(unittest.TestCase):
     def setUp(self):
@@ -327,6 +345,42 @@ class TestCompile(unittest.TestCase):
             self.t.make().run_all()
         self.assertIn("missing 1 header", e.exception.message)
 
+    LIBS = dict(DESC, libs=[{"name": "k32", "args": ["/lib", "/nologo", "/def:{src}/inc/k32.def", "/out:{gen}/k32.lib"]}],
+                link=DESC["link"] + ["{gen}/k32.lib"])
+
+    def test_import_library_before_the_link(self):
+        Tree.put(self.t.src / "inc/k32.def", "LIBRARY kernel32.dll\nEXPORTS\n  GetCurrentThreadId\n")
+        dll = self.t.make(desc=self.LIBS).run_all()
+        self.assertEqual(self.t.calls("ld"), ["lib", "link"])
+        self.assertEqual(len(self.t.calls("cc")), 6)
+        self.assertIn("GetCurrentThreadId", (self.t.data / "build/gen/k32.lib").read_text())
+        self.assertIn("k32.lib", dll.read_text())
+        self.t.make(desc=self.LIBS).run_all()
+        self.assertEqual(self.t.calls("ld"), [])
+        # A changed .def makes the library and the DLL again, and compiles nothing.
+        Tree.put(self.t.src / "inc/k32.def", "LIBRARY kernel32.dll\nEXPORTS\n  GetCurrentThreadId\n  Sleep\n")
+        self.t.make(desc=self.LIBS).run_all()
+        self.assertEqual(self.t.calls("ld"), ["lib", "link"])
+        self.assertEqual(self.t.calls("cc"), [])
+        steps = json.loads(self.t.jpath.read_text())["steps"]
+        self.assertEqual(steps["lib:k32"]["state"], "done")
+
+    def test_import_library_def_missing(self):
+        with self.assertRaises(journal.StepFailed) as e:
+            self.t.make(desc=self.LIBS).run_all()
+        self.assertEqual(e.exception.step, "lib:k32")
+        self.assertIn("the install is missing", e.exception.message)
+        self.assertEqual(self.t.calls("ld"), [])
+
+    def test_import_library_fails(self):
+        Tree.put(self.t.src / "inc/k32.def", "FAIL\n")
+        with self.assertRaises(journal.StepFailed) as e:
+            self.t.make(desc=self.LIBS).run_all()
+        self.assertEqual(e.exception.step, "lib:k32")
+        self.assertIn("failed to make k32.lib", e.exception.message)
+        self.assertIn("made to fail", e.exception.message)
+        self.assertEqual(self.t.calls("ld"), ["lib"])
+
     def test_no_lift(self):
         import shutil
         shutil.rmtree(self.t.data / "work/recomp")
@@ -341,12 +395,27 @@ class TestCompile(unittest.TestCase):
         the objects CMake's split build has."""
         d = json.loads(cc.DESC.read_text(encoding="utf-8"))
         names = [o["name"] for o in d["objects"]]
-        for n in ("ppu", "spu", "libsre", "libsre_glue", "spu_workloads", "game_module", "des_game_module"):
+        for n in ("ppu", "spu", "libsre", "libsre_glue", "spu_workloads", "game_module", "des_game_module",
+                  "game_libc"):
             self.assertIn(n, names)
         for o in d["objects"]:
             for a in o["args"] + [o.get("src", ""), o.get("glob", "")]:
                 self.assertNotRegex(a, r"[A-Za-z]:[\\/]|\\\\", a)
+            # docs/84: no Visual C++ or SDK headers, no default libraries, no C runtime's stack cookies.
+            for a in ("/X", "/Zl", "/GS-", "-DPS3_GAME_FREESTANDING"):
+                self.assertIn(a, o["args"], o["name"])
         self.assertIn("{objects}", d["link"])
+        for a in ("/NODEFAULTLIB", "/NOENTRY", "/MANIFEST:NO"):
+            self.assertIn(a, d["link"])
+        self.assertFalse([a for a in d["link"] if re.fullmatch(r"(?i)[a-z0-9_]+\.lib", a)], "an SDK library by name")
+        self.assertTrue(d["libs"])
+        for lib in d["libs"]:
+            out = next(a[5:] for a in lib["args"] if a.lower().startswith("/out:"))
+            self.assertTrue(out.startswith("{gen}/"), out)
+            self.assertIn(out, d["link"])
+            self.assertEqual(lib["args"][0], "/lib")
+            for a in lib["args"]:
+                self.assertNotRegex(a, r"[A-Za-z]:[\\/]|\\\\", a)
         self.assertTrue(all(h.startswith("{src}/") for h in d["headers"]))
 
 

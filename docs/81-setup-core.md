@@ -135,6 +135,7 @@ Entries today:
 |---|---|---|
 | `gen` | `des_game_title_funcs.h` from `scripts/lift_ppu.json` and `port/insn_hooks.txt`, and the SPU workload table without its static constructor, made as `port/CMakeLists.txt` makes them for `DES_SPLIT` | `build/gen` |
 | `cc:<name>` | one per object (33): the 14 PPU chunks, the 12 SPU images and 2 jobs, the lifted libsre and its glue, the workload table, `game_module.c` and `des_game_module.cpp` | `build/obj/<name>.obj` |
+| `lib:<name>` | each import library the link reads, made by the linker from a `.def` file (since 10-23: kernel32's, docs/84 section 9) | `build/gen/<name>.lib` |
 | `link` | the linker | `game/des_game.dll` |
 
 - **CMake's commands, kept as data.**
@@ -142,7 +143,7 @@ Entries today:
   - It checks three things: every command expands back to CMake's exactly, no machine path is left, and all sources of one kind share one command.
   - The compiler is `clang.exe --driver-mode=cl` from the `llvm-win64` download (docs/86), which has no `clang-cl.exe`; `--cc` and `--ld` name other ones.
   - `--check` compares the build with the file. `--check --commands-only` needs only a configured build, so CI can run it with placeholder lift files.
-- **What the install needs.** The description lists the source-tree headers the compile reads, from ninja's recorded dependencies. Today that is 9 headers, in `ps3recomp/include/ps3emu` and `ps3recomp/runtime/{prx,spu}`. The install also needs `game_module.c`, `des_game_module.cpp`, `lift_ppu.json` and `insn_hooks.txt`. If a header is missing, setup stops and lists it.
+- **What the install needs.** The description lists the source-tree headers the compile reads, from ninja's recorded dependencies. Since 10-23 that is 16 headers, in `ps3recomp/include/ps3emu` (with its `game_libc` shims) and `ps3recomp/runtime/{prx,spu}` (docs/84 section 9). The install also needs `game_module.c`, `game_libc.c`, `game_libc_kernel32.def`, `des_game_module.cpp`, `lift_ppu.json` and `insn_hooks.txt`. If a header is missing, setup stops and lists it.
 - **The lift's relative includes work as they are.**
   - The SPU code includes `../../runtime/spu/...`, and the libsre glue includes `../../ps3recomp/runtime/prx/...`. From setup's `work/`, neither is found beside the source, so clang tries each include folder in turn.
   - The SPU include resolves under `{src}/ps3recomp/runtime/ppu`, and the glue's under `{src}/port/compat`. Both folders are already on the commands.
@@ -168,9 +169,9 @@ Entries today:
   - The link took 2 s, with the other 13 chunks taken from the CMake build. The DLL's `.text`, `.rdata`, `.data`, `.pdata`, `.tls` and `.reloc` are identical to CMake's `des_game.dll`. CMake's has one more section, `.rsrc`: the 364-byte default manifest that `cmake -E vs_link_dll` embeds. Windows does not use it for a DLL.
   - `clang.exe --driver-mode=cl` gives the same objects as `clang-cl.exe` (measured on an SPU image, the glue and `des_game_module.cpp`).
   - Not run: all 14 chunks compiled by setup. That is about 35 minutes with 1 job, and the PC was short of memory.
-- **Today's description is milestone 1's.**
-  - Its commands use the Visual C++ headers and the Windows SDK, and the link takes the C runtime and Windows' import libraries. So it builds only on a PC with Visual Studio's build tools.
-  - Milestone 2 (docs/57 6.2, docs/52 7.8) changes the commands. The description is then written again from that build, and `compile.py` stays as it is.
+- **The description was milestone 1's until 10-23.**
+  - Its commands used the Visual C++ headers and the Windows SDK, and the link took the C runtime and Windows' import libraries. So it built only on a PC with Visual Studio's build tools.
+  - Since 10-23 it is milestone 2's (docs/84 section 9), written from a `DES_SPLIT_FREESTANDING=ON` build. `compile.py` gained one step, the import library the link reads (`lib:<name>`, from the description's `libs`).
 - **Open.**
   - **Where the host finds the DLL.** Today the host loads the file named by `PS3_GAME_MODULE`, or else `des_game.dll` beside the exe (`game_host.c`). Setup writes the DLL to the data folder's `game/`. The screens step decides whether the launcher sets `PS3_GAME_MODULE` or the host looks in the data folder.
   - **The glue's absolute libsre image path** (section 5). This goes with milestone 2, which moves the glue's file reads into the host anyway.

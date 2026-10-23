@@ -256,7 +256,26 @@ Not done yet:
 - the disassembly of chunk 013 and job 0177B480 against milestone 1's (the guards and cookies gone, the fences unchanged);
 - `regress.sh` and `shotdiff.py` against milestone 1 (identical shots expected);
 - `LIBSRE_LLE=1` and a live `setenv` from the console, for the thunks' `getenv`;
-- setup: `game_build.json` from this build, and `compile.py` with the import-library step and only the `llvm-win64` download.
+- (done 10-23, section 9) setup: `game_build.json` from this build, and `compile.py` with the import-library step and only the `llvm-win64` download.
+
+## 9. Setup builds it (10-23)
+
+Setup's compile (`tools/setup/des_setup/compile.py`, docs/81 section 7) now builds this DLL, so a player's PC needs no Visual Studio, Windows SDK or C runtime for it: only the pinned `llvm-win64` download (docs/86).
+
+- **The description.** `game_build.json` is written again by `scripts/game_build_desc.py`, from a CMake build with `DES_SPLIT=ON DES_SPLIT_FREESTANDING=ON` of a lift that setup made (14 chunks). Every object's command gains `-DPS3_GAME_FREESTANDING`, the shim folder first on the include path, `/X /Zl /GS-`, `/GR-` for C++, and the forced include. One more object: `game_libc.c`. The link loses the ten Windows libraries and gains `/NODEFAULTLIB /NOENTRY /MANIFEST:NO` and `{gen}/game_libc_kernel32.lib`.
+- **The import library** is a journal step of its own, `lib:game_libc_kernel32`, before the link: `lld-link /lib /nologo /machine:x64 /def:{src}/ps3recomp/runtime/ppu/game_libc_kernel32.def /out:{gen}/game_libc_kernel32.lib`, CMake's custom command. The generator reads it from `ninja -t commands des_game` into the description's `libs` list, so the description still holds only CMake's commands. The step is done again when its command, the linker or the `.def` file changes, and the link's fingerprint covers it. A missing `.def` stops with its name.
+- **The headers** the install must have: 16. The six shims, `game_freestanding.h` and `ppu_lift.h` are new. `endian.h` is no longer read. `ppu_lift.h` is read because a new lift's `ppu_recomp.h` includes it (4.5). The 10-22 build used an older lift, which keeps that text inline, so a description written from it lacked the header. That is why this one comes from a lift setup made.
+- **The generator** now refuses a build that is not freestanding. It maps a link input named relative to the build directory (the import library, `split_gen\...`) to `{gen}`.
+- **The `_MSC_VER` question** (open question 1) is not settled by this. On this PC clang still finds Visual Studio's version; on a PC without it, clang uses its own default, and the objects may differ in some bytes (section 7). The sources the DLL compiles test only whether `_MSC_VER` is defined, never its value (measured: no comparison in the shims, the runtime headers, the glue or the lift).
+
+Tested (measured):
+- **The description** matches its CMake build (`game_build_desc.py --check`). 104 setup unit tests, 4 of them new (the library made before the link; a changed `.def`; a missing `.def`; a failed `/lib`; the generator's parsing of ninja's command).
+- **A real setup** from a fresh data folder, through the screens, with the scheduler and the shaders phase merged in. The compiler was the pinned `llvm-win64-22.1.8-1` zip, put in the data folder's `downloads/` beforehand (fetch reused it), and no local compiler was given. The plan read `check fetch stage lift compile shaders`. The run took 845 s and the compile 771 s: 34 objects, `lib:game_libc_kernel32` in 0.1 s, the link in 0.5 s.
+- **Setup's DLL is CMake's.** 33 of the 34 objects are byte for byte the objects of the CMake build above, apart from the COFF time stamp. The libsre glue differs only through the absolute path of the libsre image that the lift writes into it: the two builds' data folders, in two strings, their hashed symbol names and two section checksums (docs/81 section 5, "the glue's absolute libsre image path"). The DLL: 259,510,272 bytes, as CMake's; imports kernel32's `GetCurrentThreadId` only; exports `des_game_init` only; entry point 0; a TLS directory.
+- **The headers:** the 16 files under the source tree that the objects read, from the journal's dependency lists, are exactly the description's 16.
+- **The player's start** after that setup: `[game-host] loaded ...\game\des_game.dll: 94017 functions`, "shaders: cache up to date", the pinned save played for 200 s; the Tutorial rendered with its HUD (10 frames dumped, the last one looked at).
+- Compared with the hosted build (milestone 1's commands, same lift): each chunk took the same time (1,415 s in all, against 1,398 s), and peaked about 0.1 GB lower (chunk 008: 2.59 GB, against 2.68).
+- Not tested: a PC without Visual Studio (a VM, setup plan item L).
 
 ## Open questions (decisions)
 

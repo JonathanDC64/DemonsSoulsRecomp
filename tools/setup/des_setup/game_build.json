@@ -1,7 +1,7 @@
 {
- "about": "des_game.dll's build, as CMake does it with DES_SPLIT=ON. Written by scripts/game_build_desc.py; read by tools/setup/des_setup/compile.py.",
+ "about": "des_game.dll's build, as CMake does it with DES_SPLIT=ON DES_SPLIT_FREESTANDING=ON. Written by scripts/game_build_desc.py; read by tools/setup/des_setup/compile.py.",
  "version": 1,
- "abi": 1,
+ "abi": 2,
  "objects": [
   {
    "name": "ppu",
@@ -10,7 +10,9 @@
     "/nologo",
     "-TP",
     "-DDS_NO_SHADOW_STACK",
+    "-DPS3_GAME_FREESTANDING",
     "-D_CRT_SECURE_NO_WARNINGS",
+    "-I{src}/ps3recomp/include/ps3emu/game_libc",
     "-I{src}/port/compat",
     "-I{work}/recomp",
     "-I{src}/ps3recomp/include",
@@ -31,7 +33,12 @@
     "/wd4244",
     "/wd4267",
     "/wd4146",
-    "/wd4334"
+    "/wd4334",
+    "/X",
+    "/Zl",
+    "/GS-",
+    "/GR-",
+    "/FI{src}/ps3recomp/include/ps3emu/game_freestanding.h"
    ]
   },
   {
@@ -40,7 +47,9 @@
    "args": [
     "/nologo",
     "-DDS_NO_SHADOW_STACK",
+    "-DPS3_GAME_FREESTANDING",
     "-D_CRT_SECURE_NO_WARNINGS",
+    "-I{src}/ps3recomp/include/ps3emu/game_libc",
     "-I{src}/port/compat",
     "-I{work}/recomp",
     "-I{src}/ps3recomp/include",
@@ -61,6 +70,10 @@
     "/wd4267",
     "/wd4146",
     "/wd4334",
+    "/X",
+    "/Zl",
+    "/GS-",
+    "/FI{src}/ps3recomp/include/ps3emu/game_freestanding.h",
     "/O2",
     "/clang:-msse4.1"
    ]
@@ -72,7 +85,9 @@
     "/nologo",
     "-TP",
     "-DDS_NO_SHADOW_STACK",
+    "-DPS3_GAME_FREESTANDING",
     "-D_CRT_SECURE_NO_WARNINGS",
+    "-I{src}/ps3recomp/include/ps3emu/game_libc",
     "-I{src}/port/compat",
     "-I{work}/recomp",
     "-I{src}/ps3recomp/include",
@@ -93,7 +108,12 @@
     "/wd4244",
     "/wd4267",
     "/wd4146",
-    "/wd4334"
+    "/wd4334",
+    "/X",
+    "/Zl",
+    "/GS-",
+    "/GR-",
+    "/FI{src}/ps3recomp/include/ps3emu/game_freestanding.h"
    ]
   },
   {
@@ -102,7 +122,9 @@
    "args": [
     "/nologo",
     "-DDS_NO_SHADOW_STACK",
+    "-DPS3_GAME_FREESTANDING",
     "-D_CRT_SECURE_NO_WARNINGS",
+    "-I{src}/ps3recomp/include/ps3emu/game_libc",
     "-I{src}/port/compat",
     "-I{work}/recomp",
     "-I{src}/ps3recomp/include",
@@ -122,7 +144,11 @@
     "/wd4244",
     "/wd4267",
     "/wd4146",
-    "/wd4334"
+    "/wd4334",
+    "/X",
+    "/Zl",
+    "/GS-",
+    "/FI{src}/ps3recomp/include/ps3emu/game_freestanding.h"
    ]
   },
   {
@@ -132,7 +158,9 @@
     "/nologo",
     "-TP",
     "-DDS_NO_SHADOW_STACK",
+    "-DPS3_GAME_FREESTANDING",
     "-D_CRT_SECURE_NO_WARNINGS",
+    "-I{src}/ps3recomp/include/ps3emu/game_libc",
     "-I{src}/port/compat",
     "-I{work}/recomp",
     "-I{src}/ps3recomp/include",
@@ -153,7 +181,12 @@
     "/wd4244",
     "/wd4267",
     "/wd4146",
-    "/wd4334"
+    "/wd4334",
+    "/X",
+    "/Zl",
+    "/GS-",
+    "/GR-",
+    "/FI{src}/ps3recomp/include/ps3emu/game_freestanding.h"
    ]
   },
   {
@@ -162,8 +195,10 @@
    "args": [
     "/nologo",
     "-DDS_NO_SHADOW_STACK",
+    "-DPS3_GAME_FREESTANDING",
     "-D_CRT_SECURE_NO_WARNINGS",
     "-DPS3_GAME_MODULE",
+    "-I{src}/ps3recomp/include/ps3emu/game_libc",
     "-I{src}/port/compat",
     "-I{work}/recomp",
     "-I{src}/ps3recomp/include",
@@ -183,7 +218,11 @@
     "/wd4244",
     "/wd4267",
     "/wd4146",
-    "/wd4334"
+    "/wd4334",
+    "/X",
+    "/Zl",
+    "/GS-",
+    "/FI{src}/ps3recomp/include/ps3emu/game_freestanding.h"
    ]
   },
   {
@@ -193,10 +232,12 @@
     "/nologo",
     "-TP",
     "-DDS_NO_SHADOW_STACK",
+    "-DPS3_GAME_FREESTANDING",
     "-D_CRT_SECURE_NO_WARNINGS",
     "-DDES_GAME_HAS_LIBSRE",
     "-DPS3_GAME_MODULE",
     "-I{gen}",
+    "-I{src}/ps3recomp/include/ps3emu/game_libc",
     "-I{src}/port/compat",
     "-I{work}/recomp",
     "-I{src}/ps3recomp/include",
@@ -217,7 +258,59 @@
     "/wd4244",
     "/wd4267",
     "/wd4146",
-    "/wd4334"
+    "/wd4334",
+    "/X",
+    "/Zl",
+    "/GS-",
+    "/GR-",
+    "/FI{src}/ps3recomp/include/ps3emu/game_freestanding.h"
+   ]
+  },
+  {
+   "name": "game_libc",
+   "src": "{src}/ps3recomp/runtime/ppu/game_libc.c",
+   "args": [
+    "/nologo",
+    "-DDS_NO_SHADOW_STACK",
+    "-DPS3_GAME_FREESTANDING",
+    "-D_CRT_SECURE_NO_WARNINGS",
+    "-I{src}/ps3recomp/include/ps3emu/game_libc",
+    "-I{src}/port/compat",
+    "-I{work}/recomp",
+    "-I{src}/ps3recomp/include",
+    "-I{src}/ps3recomp/runtime/ppu",
+    "-I{src}/ps3recomp/libs/video",
+    "/DWIN32",
+    "/D_WINDOWS",
+    "/std:c17",
+    "-MD",
+    "/bigobj",
+    "/O2",
+    "/clang:-fwrapv",
+    "/clang:-msse4.1",
+    "/EHsc",
+    "/Zc:__cplusplus",
+    "/wd4100",
+    "/wd4244",
+    "/wd4267",
+    "/wd4146",
+    "/wd4334",
+    "/X",
+    "/Zl",
+    "/GS-",
+    "/FI{src}/ps3recomp/include/ps3emu/game_freestanding.h"
+   ]
+  }
+ ],
+ "libs": [
+  {
+   "name": "game_libc_kernel32",
+   "args": [
+    "/lib",
+    "/nologo",
+    "/machine:x64",
+    "/def:{src}/ps3recomp/runtime/ppu/game_libc_kernel32.def",
+    "/out:{gen}/game_libc_kernel32.lib"
    ]
   }
  ],
@@ -231,21 +324,22 @@
   "/version:0.0",
   "/machine:x64",
   "/MAP:des_game.map",
-  "kernel32.lib",
-  "user32.lib",
-  "gdi32.lib",
-  "winspool.lib",
-  "shell32.lib",
-  "ole32.lib",
-  "oleaut32.lib",
-  "uuid.lib",
-  "comdlg32.lib",
-  "advapi32.lib"
+  "/NODEFAULTLIB",
+  "/NOENTRY",
+  "/MANIFEST:NO",
+  "{gen}/game_libc_kernel32.lib"
  ],
  "dll": "des_game.dll",
  "headers": [
-  "{src}/ps3recomp/include/ps3emu/endian.h",
+  "{src}/ps3recomp/include/ps3emu/game_freestanding.h",
+  "{src}/ps3recomp/include/ps3emu/game_libc/malloc.h",
+  "{src}/ps3recomp/include/ps3emu/game_libc/math.h",
+  "{src}/ps3recomp/include/ps3emu/game_libc/setjmp.h",
+  "{src}/ps3recomp/include/ps3emu/game_libc/stdio.h",
+  "{src}/ps3recomp/include/ps3emu/game_libc/stdlib.h",
+  "{src}/ps3recomp/include/ps3emu/game_libc/string.h",
   "{src}/ps3recomp/include/ps3emu/game_module.h",
+  "{src}/ps3recomp/include/ps3emu/ppu_lift.h",
   "{src}/ps3recomp/include/ps3emu/ps3_knob.h",
   "{src}/ps3recomp/include/ps3emu/ps3types.h",
   "{src}/ps3recomp/runtime/prx/prx_loader.h",

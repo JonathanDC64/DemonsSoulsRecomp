@@ -34,7 +34,7 @@ Setup supports one game: **BLUS30443, version 1.00**, checked by hash. It accept
    - the 26 `.sdat.unedat` files.
 
    Setup looks for each one beside its original, where RPCS3's Decrypt PS3 Binaries writes it, and then by name in any folder the player picks. Names match whatever the case (`EBOOT.ELF` or `EBOOT.elf`).
-5. **The firmware file**, when given: the decrypted `libsre.prx`, by SHA-256.
+5. **The firmware file**, always (since 10-23; the build lifts it): the decrypted `libsre.prx`, by SHA-256. The one `--firmware` names, else one by its name beside `PS3_GAME` or in a folder of decrypted files. When it is missing, the sentence says where it comes from (the PS3 system software's `dev_flash/sys/external/libsre.sprx`, decrypted with RPCS3) and where it goes (the game's folder).
 
 A file that is still encrypted gets its own message: it starts with `SCE\0` (a SELF) or `NPD\0` (SDATA). Every problem is one line in plain words that says what to do.
 
@@ -105,7 +105,7 @@ Entries today:
 | `nids` | `gen_hle_nids.py --all` | `work/recomp/hle_nid_table.cpp` |
 | `spu-cut` | `build_spu.py --eboot`: the 12 SPU images and the 2 SPURS job blobs, each checked by `scripts/spu_table.json` | `work/spu_images`, `work/spu_jobs` |
 | `spu:<name>` | `build_spu.py --only <name>`, one step per image or job | `work/spu/<name>` |
-| `libsre` | `build_libsre.py`, only when the firmware file was given | `work/libsre`, `work/gen/libsre_glue.c` |
+| `libsre` | `build_libsre.py`, with the firmware file (the check always asks for it since 10-23) | `work/libsre`, `work/gen/libsre_glue.c` |
 
 - **Fingerprints.** A step's fingerprint covers its input sums, one sum over every script that does the lifting (ps3recomp's `tools/`, this tree's `scripts/` and `port/insn_hooks.txt`) and its flags. So a new release redoes the lift, and a lift stopped anywhere resumes at the step it was in. The lifter's worker count is not part of it.
 - **UTF-8.** The tools run as `python -X utf8`, because the lifter opens its outputs without an encoding (docs/52).

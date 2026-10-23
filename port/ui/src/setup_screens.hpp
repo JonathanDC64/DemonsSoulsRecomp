@@ -165,6 +165,8 @@ private:
     bool mShownOk = false;    // it showed a check that passed
 
     Rml::Element* mFolderText = nullptr;
+    Rml::Element* mDecField = nullptr;  // the decrypted files' folder, chosen before the disc copy
+    Rml::Element* mDecText = nullptr;
     Rml::Element* mChooseRow = nullptr;
     Rml::Element* mPlacesNote = nullptr;
     Rml::Element* mPlacesList = nullptr;

@@ -18,7 +18,7 @@ body.setup-page {
     font-weight: normal;
     font-style: normal;
     font-size: var(--font-size-md);
-    line-height: 1.45;
+    line-height: 1.4;
     color: var(--color-text);
     background-color: #050506;
 }
@@ -67,11 +67,11 @@ setup-shell[open] {
 setup-rail {
     display: flex;
     flex-direction: column;
-    flex: 0 0 250dp;
-    width: 250dp;
+    flex: 0 0 220dp;
+    width: 220dp;
     box-sizing: border-box;
-    padding: var(--space-2xl) var(--space-xl);
-    gap: var(--space-2xl);
+    padding: var(--space-xl) var(--space-lg);
+    gap: var(--space-xl);
     border-right: 1dp var(--setup-line);
     background-color: rgba(0, 0, 0, 35%);
 }
@@ -109,7 +109,7 @@ setup-rail-step {
     flex-direction: row;
     align-items: center;
     gap: var(--space-sm);
-    padding: 7dp var(--space-sm);
+    padding: 5dp var(--space-sm);
     border-left: 2dp rgba(0, 0, 0, 0%);
     font-size: var(--font-size-base);
     color: var(--setup-faint);
@@ -187,15 +187,19 @@ setup-main {
     flex: 1 1 0;
     min-width: 0;
     box-sizing: border-box;
-    padding: var(--space-2xl) var(--space-2xl) var(--space-lg) var(--space-2xl);
+    padding: var(--space-xl) var(--space-xl) var(--space-md) var(--space-xl);
 }
 
 /* The parts are as tall as they are, and shrink (and scroll) only when the page is short of room. The buttons
-   under them never scroll: on a short page they follow the parts, on a long one they sit above the pad's buttons. */
+   under them never scroll: on a short page they follow the parts, on a long one they sit above the pad's buttons.
+   A button's frame is a box shadow, drawn just outside it, and the scrolling clips at the padding's edge: the 6 dp
+   of padding on the left (taken back by the margin, so nothing moves) keep a button at the left edge whole. */
 setup-content {
     display: block;
     flex: 0 1 auto;
     min-height: 0;
+    margin-left: -6dp;
+    padding-left: 6dp;
     padding-right: var(--space-lg);
     overflow: hidden auto;
 }
@@ -207,7 +211,7 @@ setup-footer {
     align-items: center;
     gap: var(--space-md);
     max-width: 960dp;
-    margin-top: var(--space-xl);
+    margin-top: var(--space-md);
     padding-right: var(--space-lg);
 }
 
@@ -242,9 +246,9 @@ setup-body {
 
 setup-title {
     display: block;
-    margin-bottom: var(--space-sm);
+    margin-bottom: var(--space-xs);
     font-family: var(--font-family-display);
-    font-size: 30dp;
+    font-size: 26dp;
     letter-spacing: 1.5dp;
     line-height: 1.15;
     color: var(--color-accent);
@@ -252,17 +256,17 @@ setup-title {
 
 setup-lede {
     display: block;
-    max-width: 640dp;
-    margin-bottom: var(--space-xl);
-    font-size: var(--font-size-lg);
+    max-width: 760dp;
+    margin-bottom: var(--space-lg);
+    font-size: var(--font-size-md);
     color: var(--setup-muted);
 }
 
 setup-heading {
     display: block;
-    margin: var(--space-xl) 0 var(--space-md);
+    margin: var(--space-lg) 0 var(--space-sm);
     font-family: var(--font-family-display);
-    font-size: var(--font-size-base);
+    font-size: var(--font-size-sm);
     letter-spacing: 2.5dp;
     text-transform: uppercase;
     color: var(--setup-muted);
@@ -287,7 +291,7 @@ setup-note.after {
 setup-panel {
     display: block;
     max-width: 960dp;
-    padding: var(--space-lg) var(--space-xl);
+    padding: var(--space-sm) var(--space-lg);
     border: 1dp var(--setup-line-soft);
     border-radius: var(--radius-panel);
     background-color: rgba(var(--color-surface-rgb), 92%);
@@ -313,7 +317,7 @@ setup-found {
     flex-direction: row;
     align-items: flex-start;
     gap: var(--space-md);
-    padding: var(--space-md) 0;
+    padding: var(--space-sm) 0;
     border-bottom: 1dp var(--setup-line);
 }
 
@@ -370,7 +374,7 @@ setup-callout {
     align-items: flex-start;
     gap: var(--space-md);
     max-width: 960dp;
-    padding: var(--space-md) var(--space-lg);
+    padding: var(--space-sm) var(--space-md);
     border: 1dp;
     border-radius: var(--radius-small);
 }
@@ -510,7 +514,7 @@ setup-task {
     flex-direction: row;
     align-items: center;
     gap: var(--space-md);
-    padding: 6dp 0;
+    padding: 5dp 0;
     border-bottom: 1dp rgba(var(--color-border-rgb), 12%);
     color: var(--setup-faint);
 }
@@ -544,6 +548,10 @@ setup-task-num {
 }
 
 setup-task-text {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: baseline;
+    gap: 0 var(--space-md);
     flex: 1 1 0;
     min-width: 0;
 }
@@ -566,7 +574,7 @@ setup-actions {
     flex-flow: row wrap;
     align-items: center;
     gap: var(--space-md);
-    margin-top: var(--space-xl);
+    margin-top: var(--space-md);
 }
 
 setup-actions.first {
@@ -579,7 +587,7 @@ setup-actions setup-note {
 
 button.setup-btn {
     display: block;
-    padding: 10dp 22dp;
+    padding: 7dp 18dp;
     border-radius: var(--radius-small);
     font-family: var(--font-family-display);
     font-size: var(--font-size-base);
@@ -625,7 +633,7 @@ button.setup-btn.danger:not(:disabled):focus-visible {
 }
 
 button.setup-btn.quiet {
-    padding: 10dp var(--space-sm);
+    padding: 7dp var(--space-sm);
     color: var(--setup-muted);
     background-color: rgba(0, 0, 0, 0%);
     box-shadow: none;
@@ -649,7 +657,7 @@ setup-hints {
     flex: 0 0 auto;
     align-items: center;
     gap: var(--space-xs) var(--space-lg);
-    padding-top: var(--space-md);
+    padding-top: var(--space-sm);
     font-size: var(--font-size-xs);
     color: var(--setup-faint);
 }
@@ -724,13 +732,13 @@ setup-question-text {
 
 @media (max-width: 900dp) {
     setup-rail {
-        flex: 0 0 200dp;
-        width: 200dp;
-        padding: var(--space-xl) var(--space-lg);
+        flex: 0 0 190dp;
+        width: 190dp;
+        padding: var(--space-lg) var(--space-md);
     }
 
     setup-main {
-        padding: var(--space-xl) var(--space-lg) var(--space-md) var(--space-xl);
+        padding: var(--space-lg) var(--space-md) var(--space-sm) var(--space-lg);
     }
 
     setup-title {
@@ -742,16 +750,16 @@ setup-question-text {
 setup-stack {
     display: flex;
     flex-direction: column;
-    gap: var(--space-md);
+    gap: var(--space-sm);
     max-width: 960dp;
 }
 
 setup-actions.near {
-    margin-top: 10dp;
+    margin-top: var(--space-sm);
 }
 
 setup-callout-body setup-actions {
-    margin-top: 10dp;
+    margin-top: var(--space-sm);
 }
 
 setup-row.start {
@@ -769,6 +777,7 @@ setup-row-end {
 }
 
 icon.setup-folder { decorator: text("&#xe2c7;" center center); color: var(--color-info); }  /* folder */
+icon.setup-unlocked { decorator: text("&#xe898;" center center); color: var(--color-success); }  /* lock_open */
 
 /* The folder chosen */
 setup-field.folder {
@@ -778,6 +787,10 @@ setup-field.folder {
     gap: var(--space-sm);
     max-width: 960dp;
     margin-top: 0;
+}
+
+setup-field.folder.second {
+    margin-top: var(--space-xs);
 }
 
 setup-field.folder icon {
@@ -813,7 +826,7 @@ button.setup-choice {
     align-items: flex-start;
     gap: var(--space-sm);
     flex: 1 1 230dp;
-    padding: var(--space-lg) var(--space-lg) var(--space-lg) var(--space-xl);
+    padding: var(--space-md) var(--space-md) var(--space-md) var(--space-lg);
     border-left: 2dp rgba(0, 0, 0, 0%);
     border-radius: var(--radius-small);
     font-size: var(--font-size-base);
@@ -845,8 +858,9 @@ setup-choice-title {
 }
 
 setup-choice-text {
-    font-size: var(--font-size-base);
+    font-size: var(--font-size-sm);
     color: var(--setup-muted);
+    word-break: break-word;  /* (a long folder breaks where it must, not out of the card) */
 }
 
 /* The dumps found in the usual places: a row each */
@@ -855,11 +869,16 @@ setup-places {
     flex-direction: column;
     gap: var(--space-xs);
     max-width: 960dp;
+    margin-bottom: var(--space-sm);
 }
 
+/* (A folder: in the body's font as it is written, not in the buttons' capitals.) */
 button.setup-place {
     display: block;
     padding: var(--space-sm) var(--space-md);
+    font-family: var(--font-family-body);
+    letter-spacing: 0;
+    text-transform: none;
     border-left: 2dp rgba(0, 0, 0, 0%);
     border-radius: var(--radius-small);
     font-size: var(--font-size-sm);
@@ -889,7 +908,7 @@ button.setup-check {
     flex-direction: row;
     align-items: flex-start;
     gap: var(--space-md);
-    padding: var(--space-md) var(--space-sm);
+    padding: var(--space-sm) var(--space-sm);
     border-bottom: 1dp var(--setup-line);
     border-radius: var(--radius-small);
     font-size: var(--font-size-base);
@@ -928,16 +947,16 @@ icon.setup-box.on { decorator: text("&#xe834;" center center); color: rgb(var(--
 /* How to: numbered steps under a callout's line */
 setup-guide {
     display: block;
-    margin-top: var(--space-md);
-    padding: var(--space-sm) var(--space-lg);
+    margin-top: var(--space-sm);
+    padding: var(--space-2xs) var(--space-md);
     border-left: 2dp var(--setup-line-soft);
 }
 
 setup-guide-item {
     display: block;
-    margin-bottom: 6dp;
-    font-size: var(--font-size-base);
-    color: var(--setup-muted);
+    margin-bottom: var(--space-xs);
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
 }
 
 /* ---- The options pages (setup_options_window.cpp) ---- */
@@ -1017,7 +1036,7 @@ setup-cmp-cell {
     display: block;
     flex: 1 1 0;
     min-width: 0;
-    padding: 5dp 10dp;
+    padding: 3dp 10dp;
     color: var(--color-text);
 }
 
@@ -1042,7 +1061,7 @@ setup-opts {
     display: flex;
     flex-flow: row wrap;
     align-items: flex-start;
-    gap: var(--space-lg);
+    gap: var(--space-md);
     max-width: 960dp;
 }
 
@@ -1146,6 +1165,6 @@ setup-name-text {
 }
 
 button.setup-btn.small {
-    padding: 7dp 14dp;
+    padding: 5dp 12dp;
     font-size: var(--font-size-sm);
 }

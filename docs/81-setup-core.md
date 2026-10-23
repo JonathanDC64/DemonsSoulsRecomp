@@ -190,6 +190,10 @@ The compile no longer fixes its job count at the start (section 7). Each job sta
   - the peak measured the last time that object compiled, with 10% room (the journal keeps it in the object's step, `results.peak`);
   - else its kind's figure, from docs/53 section 2 with some room: a PPU chunk 2.6 GB, libsre 2 GB, an SPU program 0.5 GB, the rest 0.5 GB;
   - raised to the largest peak measured so far in this run among its kind, with 10% room, when that is more. A smaller one does not lower it: on the first real run, chunk 012 peaked at 0.86 GB in 5 s, and when the others were expected to take as little, a third 2.2 GB chunk started and the free memory fell to 1.9 GB.
+  - A PPU chunk's is at most what its source's size gives (10-23): 0.15 GB plus 0.14 GB a MB of source. Over the 81 chunks of three setups the most was 0.15 GB plus 0.128 GB a MB (docs/53 section 16.3); the rest is 10% room.
+    - A 600,000-line chunk (32 to 39 MB) reaches the kind's 2.6 GB, so these run as before.
+    - A 150,000-line chunk (7 to 11 MB) is expected at 1.1 to 1.7 GB, so about twice as many run at once.
+    - A chunk of this run that took more for its size raises the rate for the rest, with 10% room.
 - **Measuring a peak.**
   - Windows: the compiler's peak commit (`PeakPagefileUsage`, from `K32GetProcessMemoryInfo`), read once it has ended, while its handle is still open.
   - Linux: `VmHWM` from `/proc/<pid>/status`, sampled every half second while it runs, since it is gone once the process ends.
@@ -199,11 +203,12 @@ The compile no longer fixes its job count at the start (section 7). Each job sta
 - **The progress** counts source bytes, as docs/52 4.3 has it, not objects; the screen shows it in MB.
 - **The time estimate** on the start screen (`setup_pc.cpp`) counts the PPU chunks that fit in the memory free now, with the compile's figures (2 GB kept, 2.6 GB a chunk). It counted the PC's whole memory before, and promised 9 jobs on a PC that ran 1.
 - **Tested.**
-  - 10 unit tests (`TestMemory` in `test_compile.py`), with a stand-in for the free memory and a fake compiler that takes the time it is told:
+  - 12 unit tests (`TestMemory` in `test_compile.py`), with a stand-in for the free memory and a fake compiler that takes the time it is told:
     - short memory runs one job at a time; small jobs start beside a big one; plenty of memory runs several side by side;
     - memory that cannot be read runs half the processors; `-j` ignores the memory;
     - the hint comes once and goes at the end;
     - the measured peak is kept and used next time (Windows); a kind's figure is raised but not lowered by what others of its kind took;
+    - a PPU chunk's figure follows its size, and two 8 MB chunks run side by side where the kind's figure ran one at a time;
     - an out-of-memory job runs again alone;
     - the progress counts source bytes.
   - One more checks that the start screen's estimate uses the compile's figures, and one the `@memory` line.

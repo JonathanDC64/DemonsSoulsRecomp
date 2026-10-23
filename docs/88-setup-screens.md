@@ -283,7 +283,7 @@ The steps, as built (setup_python.cpp, `PythonFetch`; built and run 10-22: secti
   - Not `ChildProcess`: its job object would end the game when setup's process ends.
   - Measured in section 11.
 - **Play** after setup starts the host again, as a new process with the same command line, and ends this one. The new one finds Ready and boots. That avoids starting RmlUi and a second D3D12 device again inside one process (inferred: a fresh process is the case every start already tests). It costs a second or so (inferred).
-- **The libsre glue's absolute image path** (docs/81 section 5) stays as it is; it goes with milestone 2.
+- **The libsre glue's image path** (docs/81 section 5) is given from the folder of the module the hook names in `PS3_GAME_MODULE` (10-23), so the DLL holds no folder of the PC.
 
 ## 8. Linux
 

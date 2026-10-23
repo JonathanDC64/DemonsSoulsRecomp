@@ -19,6 +19,7 @@ struct PickedFolder {
 // Opens the dialog and returns at once. `done` runs once the dialog has closed, on a thread of its own (not the UI's,
 // which draws on meanwhile). start: the folder it opens in, if there is one. title: UTF-8. owner: the window it
 // belongs to (host::window()); used on Windows, where the dialog stays in front of it; null for none.
+// DES_UI_PICK=<folder>[;<folder>...] answers the dialogs in turn with those folders, showing none (a test).
 void pick_folder(const std::filesystem::path& start, const std::string& title, void* owner,
                  std::function<void(PickedFolder)> done);
 

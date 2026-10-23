@@ -31,8 +31,11 @@
 #endif
 
 #include <cstdio>
+#include <cstdlib>
+#include <mutex>
 #include <system_error>
 #include <thread>
+#include <vector>
 
 namespace ui {
 namespace {
@@ -403,14 +406,45 @@ PickedFolder os_pick(const std::filesystem::path& start, const std::string& titl
 
 #endif
 
-}  // namespace
-
 // ---- The same everywhere ----
+
+// DES_UI_PICK=<folder>[;<folder>...] (a test of the setup screens, with DES_UI_KEYS and DES_UI_SHOT): each dialog
+// answers with the next folder of the list at once, and none is shown; past the list's end, as if it were closed
+// without a choice. False without the variable.
+bool scripted_pick(PickedFolder& out) {
+    static std::mutex lock;
+    static std::vector<std::filesystem::path> folders;
+    static size_t next = 0;
+    static int scripted = -1;
+    std::lock_guard<std::mutex> hold(lock);
+    if (scripted < 0) {
+        const char* v = std::getenv("DES_UI_PICK");
+        scripted = v && *v ? 1 : 0;
+        for (std::string all = scripted ? v : ""; !all.empty();) {
+            const size_t semi = all.find(';');
+            if (semi) folders.emplace_back(all.substr(0, semi));
+            all = semi == std::string::npos ? std::string() : all.substr(semi + 1);
+        }
+    }
+    if (!scripted) return false;
+    out.folder = next < folders.size() ? folders[next++] : std::filesystem::path{};
+    return true;
+}
+
+}  // namespace
 
 void pick_folder(const std::filesystem::path& start, const std::string& title, void* owner,
                  std::function<void(PickedFolder)> done) {
     std::thread([start, title, owner, done = std::move(done)] {
-        PickedFolder out = os_pick(start, title, owner);
+        PickedFolder out;
+        if (scripted_pick(out)) {
+            const std::u8string name = out.folder.u8string();
+            std::fprintf(stderr, "[setup] the folder dialog (DES_UI_PICK): %s\n",
+                         out.folder.empty() ? "closed" : std::string(name.begin(), name.end()).c_str());
+            if (done) done(std::move(out));
+            return;
+        }
+        out = os_pick(start, title, owner);
         if (out.failed) std::fprintf(stderr, "[setup] the folder dialog: %s\n", out.why.c_str());
         if (done) done(std::move(out));
     }).detach();

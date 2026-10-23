@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from des_setup import compile as compile_step, fetch, journal, pipeline, protocol  # noqa: E402
+from des_setup import compile as compile_step, fetch, journal, lift, pipeline, protocol  # noqa: E402
 from test_lift import REAL, FakeTree  # noqa: E402
 from test_setup import GameTree  # noqa: E402
 
@@ -230,8 +230,9 @@ class ShadersTest(unittest.TestCase):
     def test_runs_the_host_after_the_compile(self):
         rc, lines = self.run_with("done")
         self.assertEqual(rc, 0, lines)
+        # The game folder, and the executable the game starts with: it holds the engine's own programs (docs/93).
         self.assertEqual((self.host / "args.txt").read_text(encoding="utf-8").split("\n"),
-                         ["--shaders", str(self.s.game.root)])
+                         ["--shaders", str(self.s.game.root), str(self.s.data / "inputs" / lift.EBOOT)])
         for want in ("@plan check fetch stage lift compile shaders", "@step shaders start", "@progress shaders 10/100",
                      "@progress shaders 100/100", "@step shaders done", "@done ok"):
             self.assertIn(want, lines)

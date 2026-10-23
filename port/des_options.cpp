@@ -2277,17 +2277,34 @@ static void run_defaults()
         if (!getenv(d.name)) ps3_setenv(d.name, d.value);
 }
 
-extern "C" int des_prework_shaders(const char* game);   /* des_prework.cpp */
+extern "C" int des_prework_shaders(const char* game, const char* eboot);   /* des_prework.cpp */
+extern "C" void des_prework_elf(const char* path);
+
+/* main's ELF, as boot_main reads its arguments: the first that is not a
+ * --username or --psnr flag (or its value). */
+static const char* main_elf(int argc, char** argv)
+{
+    for (int i = 1; i < argc; i++) {
+        const char* a = argv[i];
+        if (std::strncmp(a, "--username", 10) && std::strncmp(a, "--psnr", 6)) return a;
+        if (!std::strchr(a, '=')) i++;
+    }
+    return nullptr;
+}
 
 /* First thing in main (ps3recomp's launch hook, docs/88 section 3): setup's
- * shaders phase (`--shaders <game folder>`: the shader cache filled with no
- * window, then the exit), or the run defaults, then setup's screens alone, or
- * the game (des_ui_launch). */
+ * shaders phase (`--shaders <game folder> [<EBOOT.elf>]`: the shader cache
+ * filled with no window, then the exit), or the run defaults, then setup's
+ * screens alone, or the game (des_ui_launch), whose ELF the shader pass at
+ * the start reads too (des_prework_elf). */
 extern "C" int ps3_title_launch(int* argc, char*** argv)
 {
-    if (*argc == 3 && std::strcmp((*argv)[1], "--shaders") == 0) return des_prework_shaders((*argv)[2]);
+    if ((*argc == 3 || *argc == 4) && std::strcmp((*argv)[1], "--shaders") == 0)
+        return des_prework_shaders((*argv)[2], *argc == 4 ? (*argv)[3] : nullptr);
     run_defaults();
-    return des_ui_launch(argc, argv);
+    const int launch = des_ui_launch(argc, argv);
+    if (launch == -1) des_prework_elf(main_elf(*argc, *argv));   /* (-1: PS3_LAUNCH_BOOT) */
+    return launch;
 }
 
 /* Setup's screens alone, in place of ps3_title_options_init: no game, so none

@@ -276,8 +276,12 @@ struct Scan {
 
 }  // namespace
 
-std::vector<Place> likely_places() {
+std::vector<Place> likely_places(const std::filesystem::path& library) {
     Scan scan;
+    if (!library.empty()) {
+        scan.check(library);
+        if (!scan.found.empty()) scan.found.back().library = true;
+    }
     for (const auto& root : search_roots()) {
         if (root.empty()) continue;
         scan.check(root);

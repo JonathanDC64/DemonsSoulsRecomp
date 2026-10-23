@@ -22,13 +22,15 @@ struct Place {
     std::filesystem::path folder;
     std::string title;    // PARAM.SFO's TITLE_ID ("BLUS30443")
     std::string version;  // its APP_VER ("01.00")
+    bool library = false;  // the folder RPCS3's game list gives for the game (likely_places' `library`)
 };
 // Disc dumps in the usual places, the supported title first, up to 4. The places: the user's Downloads, Documents and
 // Desktop, and the drives (Windows: the fixed and removable drives' roots; Linux: the home folder and the mounted
 // drives). In each: the place itself, its folders, and the folders of the ones with a usual name for a folder of
 // games (PS3, Games, RPCS3 and the like), two such levels at most. Nothing deeper. A sleeping disk wakes up for it, so
-// it runs off the UI's thread.
-std::vector<Place> likely_places();
+// it runs off the UI's thread. `library`: the folder of Demon's Souls in RPCS3's game list (setup_rpcs3.hpp), looked at
+// first; a dump there is marked.
+std::vector<Place> likely_places(const std::filesystem::path& library = {});
 
 // What a folder chosen as the game folder holds, at a glance, before the engine's check: a disc dump (PS3_GAME with
 // its PARAM.SFO), the decrypted files without the dump (EBOOT.elf, a .sdat.unedat or libsre.prx at its top, or in its

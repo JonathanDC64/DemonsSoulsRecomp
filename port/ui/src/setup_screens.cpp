@@ -13,6 +13,7 @@
 #include "settings.hpp"
 #include "settings_window.hpp"
 #include "setup_options_window.hpp"
+#include "setup_rpcs3.hpp"
 #include "setup_rpcs3_window.hpp"
 #include "setup_window.hpp"
 #include "ui.hpp"
@@ -351,11 +352,11 @@ SetupSourceWindow::SetupSourceWindow(Props props)
          "trophies and settings across.",
          [this] { open_rpcs3(); }},
         {"I have decrypted files", "No RPCS3 needed",
-         "A folder copy of the disc (it has a PS3_GAME folder), with the game's 27 decrypted files next to the "
-         "originals: EBOOT.elf and the .sdat.unedat files. And libsre.prx next to PS3_GAME.",
+         "Your disc copy (the folder with PS3_GAME in it) and the 28 files you decrypted: EBOOT.elf, the "
+         ".sdat.unedat files and libsre.prx, next to the originals or in a folder of their own.",
          [this] { open_folder(); }},
         {"Show me how", "I have neither yet",
-         "How to get RPCS3 ready, or copy your disc to a folder and decrypt the 28 files yourself, with free tools.",
+         "Step by step: copy your disc to a folder, get RPCS3 ready, then import. Free tools only.",
          [this] { open_help(); }},
     };
     for (const Card& c : kCards) {
@@ -497,6 +498,11 @@ SetupFilesWindow::SetupFilesWindow(Props props)
     field->SetClass("folder", true);
     icon(field, "setup-folder");
     mFolderText = append(field, "setup-field-text");
+    mDecField = append(content(), "setup-field");  // (draw_folder shows it while it is the only folder chosen)
+    mDecField->SetClass("folder", true);
+    mDecField->SetClass("second", true);
+    icon(mDecField, "setup-unlocked");
+    mDecText = append(mDecField, "setup-field-text");
     mChooseRow = append(content(), "setup-actions");
     mChooseRow->SetClass("near", true);
     mPlacesNote = text(content(), "setup-heading", "");
@@ -516,8 +522,13 @@ SetupFilesWindow::SetupFilesWindow(Props props)
                 {{mProps.rebuild ? "Continue" : "Use this folder", [this] { start(); }, Look::Primary},
                  {"Back", [this] { back(); }, Look::Quiet}});
 
-    // The usual places, off this thread (a sleeping disk wakes up for it).
-    std::thread([found = mFound] { found->put(setup::likely_places()); }).detach();
+    // The usual places, and first the game's folder in RPCS3's game list, off this thread (a sleeping disk wakes up for
+    // it), from the RPCS3 setup used last (settings.ini's rpcs3_dir, read here on the UI's thread).
+    std::thread([found = mFound, remembered = from_utf8(settings::get("rpcs3_dir"))] {
+        const setup::Rpcs3 rpcs3 = setup::find_rpcs3(remembered);
+        const bool listed = rpcs3.library == setup::Rpcs3::Library::Folder;
+        found->put(setup::likely_places(listed ? rpcs3.game : std::filesystem::path{}));
+    }).detach();
     draw_folder();
     draw_places();
     if (!mRequest.game.empty()) check();
@@ -594,6 +605,8 @@ void SetupFilesWindow::picked(const PickedFolder& folder) {
     }
     draw_folder();
     check();
+    // The disc copy is next: a copy found on this PC, or Choose your disc copy.
+    if (mRequest.game.empty() && visible() && !asking()) focus();
 }
 
 // `run --check-only` on the folders: an @check line for each file, and the verdict.
@@ -633,14 +646,22 @@ void SetupFilesWindow::start() {
     mProps.onStart(mRequest);
 }
 
+// The folder chosen. With only the decrypted files chosen so far, the field says the disc copy is still to choose and a
+// second one shows the decrypted files' folder.
 void SetupFilesWindow::draw_folder() {
-    std::string shown = "No folder chosen";
+    const bool decryptedOnly = mRequest.game.empty() && !mRequest.decrypted.empty();
+    std::string shown = decryptedOnly ? "Disc copy: not chosen yet" : "No folder chosen";
     if (!mRequest.game.empty()) shown = utf8(mRequest.game);
     else if (!mProps.moved.empty()) shown = "Not found: " + utf8(mProps.moved);
     set_text_content(mFolderText, shown);
     mFolderText->SetClass("none", mRequest.game.empty());
+    set_display(mDecField, decryptedOnly ? Rml::Style::Display::Flex : Rml::Style::Display::None);
+    if (decryptedOnly) set_text_content(mDecText, "Decrypted files: " + utf8(mRequest.decrypted[0]));
     show_places_note();
-    if (!mChooseButton.empty()) mChooseButton[0]->set_text(mRequest.game.empty() ? "Choose folder" : "Change folder");
+    if (!mChooseButton.empty())
+        mChooseButton[0]->set_text(!mRequest.game.empty() ? "Change folder"
+                                   : decryptedOnly        ? "Choose your disc copy"
+                                                          : "Choose folder");
 }
 
 // The heading over the dumps found. "Nothing found in the usual places" goes once a folder is chosen.
@@ -658,6 +679,7 @@ void SetupFilesWindow::draw_places() {
     for (const setup::Place& p : mPlaces) {
         std::string label = p.title + (p.version.empty() ? "" : " version " + p.version) + " in " + utf8(p.folder);
         if (p.title != setup::kTitleId) label += " (not supported)";
+        else if (p.library) label += ", from RPCS3's library";
         actions.push_back({label, [this, folder = p.folder] {
                                mRequest.game = folder;
                                draw_folder();
@@ -679,7 +701,8 @@ void SetupFilesWindow::draw_check() {
     const std::string key = std::to_string(int(running)) + "|" + mStatus.result + "|" +
                             std::to_string(mStatus.progressN) + "|" + std::to_string(mStatus.checks.size()) + "|" +
                             mStatus.errorText + "|" + mPickProblem + "|" + utf8(mRequest.game) + "|" +
-                            (mRequest.decrypted.empty() ? std::string() : utf8(mRequest.decrypted[0]));
+                            (mRequest.decrypted.empty() ? std::string() : utf8(mRequest.decrypted[0])) + "|" +
+                            std::to_string(mPlaces.size());
     if (key == mShownCheck) return;
     mShownCheck = key;
 
@@ -689,9 +712,12 @@ void SetupFilesWindow::draw_check() {
     if (!mPickProblem.empty()) {
         callout(mCheck, "err", mPickProblem, "");
     } else if (mRequest.game.empty() && !mRequest.decrypted.empty()) {  // (the decrypted files were chosen first)
-        callout(mCheck, "info", "These are the decrypted files",
-                "Setup takes them from " + utf8(mRequest.decrypted[0]) +
-                    ". Now choose the folder of your disc copy: the one with PS3_GAME in it.");
+        const bool found = std::any_of(mPlaces.begin(), mPlaces.end(),
+                                       [](const setup::Place& p) { return p.title == setup::kTitleId; });
+        callout(mCheck, "info", "Now your disc copy",
+                std::string("The decrypted files are only part of the game. The rest (its maps, models and sounds) is "
+                            "in your disc copy: the folder with PS3_GAME in it. ") +
+                    (found ? "Pick the one found on this PC, or choose it." : "Choose it with Choose your disc copy."));
     } else if (mRequest.game.empty()) {
         // (nothing chosen yet: the field says so)
     } else if (running) {
@@ -813,40 +839,43 @@ SetupHelpWindow::SetupHelpWindow(Props props) : SetupPage("setup-help"), mProps(
     using S = RailStep::State;
     set_rail({{"Your game", "", S::Now}, {"Build", build_time(), S::Todo}, options_step(), {"Play", "", S::Todo}});
     set_heading("Getting your game's files",
-                "Setup needs your own copy of the game: the US disc, BLUS30443 version 1.00. Pick whichever way suits "
-                "what you have. Setup never decrypts anything itself.");
+                "Setup builds the game from your own copy of Demon's Souls: the US disc, BLUS30443 version 1.00. It "
+                "takes three steps, once.");
     const auto guide = [](Rml::Element* body, std::initializer_list<const char*> steps) {
         auto* list = append(body, "setup-guide");
         int n = 0;
         for (const char* step : steps) text(list, "setup-guide-item", std::to_string(++n) + ". " + step);
     };
     auto* stack = append(content(), "setup-stack");
-    guide(callout(stack, "info", "With RPCS3 (easiest)",
-                  "RPCS3 is the free PS3 emulator. Setup has it unlock the game files, and can bring your save, "
-                  "trophies and settings across."),
-          {"Download RPCS3 from rpcs3.net and unzip it anywhere.",
-           "Install the PS3 system software in RPCS3: File, then Install Firmware. RPCS3's quickstart guide links to "
-           "Sony's download.",
-           "Add your game in RPCS3 (File, then Add Games), from your disc copy.",
-           "Come back here and pick Import from RPCS3: setup finds RPCS3 and the game by itself."});
-    guide(callout(stack, "info", "Copy your disc",
-                  "If your game is still on the disc, copy it to a folder first. Either way gives the folder with "
-                  "PS3_GAME in it."),
-          {"PS3 Disc Dumper (free) copies the disc with a compatible Blu-ray drive in your PC.",
-           "Or, on a PS3 with custom firmware, a file manager such as multiMAN or IRISMAN copies the disc to a USB "
-           "drive."});
-    guide(callout(stack, "info", "Or decrypt the 27 files yourself",
-                  "In RPCS3 too, then pick I have decrypted files. You do not need to add the game to RPCS3 for it."),
-          {"In RPCS3, choose Utilities, then Decrypt PS3 Binaries.",
-           "Select PS3_GAME/USRDIR/EBOOT.BIN, then the .sdat files in chr, chr/c0000, menu, script and script/talk.",
-           "RPCS3 writes each decrypted file next to its original."});
-    guide(callout(stack, "info", "Decrypt one file of the PS3 system software",
-                  "The game also needs libsre.prx, a library of the PS3's own system software."),
-          {"In RPCS3, install the PS3 system software if you have not: File, then Install Firmware.",
-           "Choose Utilities, then Decrypt PS3 Binaries, and select dev_flash/sys/external/libsre.sprx in RPCS3's "
-           "folder.",
-           "Copy the libsre.prx that RPCS3 writes into the game's folder, next to PS3_GAME. Then come back and choose "
-           "the folder."});
+    guide(callout(stack, "info", "Step 1: copy your disc to a folder",
+                  "Skip this if you already have the game as a folder with PS3_GAME in it. If you play it in RPCS3, "
+                  "you do."),
+          {"With a Blu-ray drive in your PC that reads PS3 discs: PS3 Disc Dumper (free) copies the disc to a folder.",
+           "Or with a PS3 that has custom firmware: multiMAN or IRISMAN copies the disc to a USB drive. Then copy that "
+           "folder to your PC.",
+           "Either way you get a folder with PS3_GAME and PS3_DISC.SFB in it. That is your disc copy."});
+    guide(callout(stack, "info", "Step 2: get RPCS3 ready",
+                  "RPCS3 is the free PS3 emulator. Setup has it unlock the game's encrypted files; setup never "
+                  "decrypts anything itself."),
+          {"Download RPCS3 from rpcs3.net and unzip it into a folder of its own, for example C:\\RPCS3.",
+           "Download the PS3 system software, the file PS3UPDAT.PUP, from Sony's PlayStation site. RPCS3's Quickstart "
+           "page links to it.",
+           "Start RPCS3. Choose File, then Install Firmware, and pick PS3UPDAT.PUP. Wait until it is done.",
+           "Choose File, then Add Games, and pick your disc copy. Demon's Souls shows in RPCS3's list. You do not "
+           "need to play it there."});
+    callout(stack, "info", "Step 3: come back here",
+            "Press Import from RPCS3. Setup finds RPCS3 and the game, and RPCS3 unlocks the game's files for it. Your "
+            "RPCS3 save, trophies and settings can come across too.");
+    guide(callout(stack, "info", "Or decrypt the files yourself",
+                  "In place of step 3: decrypt the 28 files with RPCS3, then press I have decrypted files."),
+          {"In RPCS3, choose Utilities, then Decrypt PS3 Binaries, and pick EBOOT.BIN in your disc copy's "
+           "PS3_GAME\\USRDIR folder. RPCS3 writes EBOOT.elf next to it.",
+           "Do the same for the .sdat files in USRDIR's chr, chr\\c0000, menu, script and script\\talk folders: 26 "
+           "files. You can pick all the .sdat files of a folder at once.",
+           "Do the same for libsre.sprx in RPCS3's own dev_flash\\sys\\external folder, then copy the libsre.prx "
+           "it writes into your disc copy, next to PS3_GAME.",
+           "Press I have decrypted files. Choose your disc copy, and the decrypted files if they are not next to the "
+           "originals."});
     std::vector<Action> actions;
     const auto then = [this](std::function<void()> open) {  // (this page closes first)
         return [this, open = std::move(open)] {

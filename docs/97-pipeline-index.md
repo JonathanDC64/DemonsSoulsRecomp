@@ -88,6 +88,7 @@ files.
 [des] shaders: pipeline index: 161 of 161 pipelines have both programs in the game's files
 [D3D12] pipeline index: 161 built, 0 there already, 0 not built, of 161, in 134 ms
 [D3D12] pipeline library saved: 2851 KB, 167 pipelines; draws so far: 180 loaded, 6 compiled
+[D3D12] pipeline prebuild: 2 of 158 built, 156 there already, in 51 ms
 ```
 
 - "have both programs": rows whose programs the pass found. Fewer means another game version, or programs the
@@ -95,6 +96,23 @@ files.
 - "not built": a shader missing from the cache, or the driver refused the pipeline.
 - "compiled" on the library line counts the draws that waited for the driver. That is the number the index
   should bring down.
+- "there already" on the prebuild line (the manifest's startup build): records the library held although
+  `pso_library.n` did not count them. They are loaded, not built. See the next section.
+
+## The pipeline library
+
+The index build stores hundreds of pipelines in the library at once. Two rules keep the library sound
+(ps3recomp #115, its second commit):
+
+- A save waits until the manifest has written the record of every pipeline stored so far. `pso_library.n`
+  counts those records, and the next start builds the records after that count.
+- No store uses a name the library holds. Every store looks the name up first, and the startup build loads a
+  record the library has instead of building it.
+
+Before these rules, the first save after the index build began while the manifest was still writing (181 of
+327 records counted). The next start built the other 146 again and stored them under names the library had.
+After that, the library's next save read past a buffer in D3D12Core and the game crashed: every start on that
+cache, 5 of 5 (2026-10-23).
 
 ## Keeping the index
 
@@ -108,6 +126,10 @@ The maintainer adds the pipelines found in each test:
 4. Commit the index on its own, then start a pull request.
 
 A seen file of another game version is left out, and so is a malformed row.
+
+Record at a render scale above 100 as well (`RSX_SCALE=200`). There, draws without a depth test on a scaled
+target use the clamp form, and its rows differ from the same draws' rows at 100. Most of them are the HUD,
+menus and full-screen passes.
 
 ## Measured
 
@@ -134,7 +156,10 @@ C's cache. Counts from the library's log line.
 - In run D, the pass skipped the index (pso_index.built held its hash).
 - Run E started from a later save, in map m02 (the Tutorial is m08), on D's cache. It compiled 156 pipelines
   there, none of which the index had yet, and recorded them.
-- The committed index holds the 327 rows of runs A to E: 37 vertex and 137 fragment programs in 164 pairs.
+- The first committed index held the 327 rows of runs A to E.
+- Later runs in the Nexus (scale 100 and 200), Boletarian Palace 1-1 and the Tutorial (scale 200) added 109
+  rows. These are the Nexus' pipelines, and the clamp form's first 22 rows.
+- The index now holds 436 rows: 37 vertex and 162 fragment programs in 193 pairs.
 - The driver's own cache was warm in runs B and C, because they used the same exe as run A. So 134 ms is the
   cost with a warm driver cache. On a new player's PC, each pipeline takes the driver's 7-20 ms. On 4 threads,
   167 take about 0.3-0.8 s, and the game is still in its menus then.

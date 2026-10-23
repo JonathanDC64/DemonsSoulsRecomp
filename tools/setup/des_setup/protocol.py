@@ -14,6 +14,14 @@ the screens show the last ones under Details.
   @file <step> <path>               the file the step works on now (the unlock: its path under USRDIR)
   @rpcs3 <state> <path>             the RPCS3 in use (docs/90): own (it runs with setup's folder),
                                     shared (a portable install: starting it changes its log) or missing
+  @user <id> <users> <name>         RPCS3's active user: its 8-digit ID, how many users RPCS3 has, its name
+  @library <kind> <path>            Demon's Souls in RPCS3's library: folder, iso, store, or none (path -)
+  @found <what> <state> <value>...  what RPCS3 has that can come across (FOUND: the states and values of each):
+                                    save <state> <characters> <saved>, current-save <state> <saved> (the port's own
+                                    save, which an import replaces), trophies <state> <earned>/<total>,
+                                    settings <state> <n> (n @setting lines follow); - where not known, times in
+                                    Unix seconds
+  @setting <key> <value>            one setting that comes across, by its settings.ini name
   @awake                            the PC is kept from sleeping while this runs
   @memory short|ok                  the compile runs fewer jobs at once than the PC has processors, because memory is
                                     short (so closing other programs makes it faster), or no longer does
@@ -23,8 +31,9 @@ the screens show the last ones under Details.
 
 Names (phases, steps, states, codes) have no spaces; <text> and <path> are the
 rest of the line. The host ignores keywords it does not know, so a new kind of
-line needs no new version; a changed meaning does. Version 2 added the unlock
-phase, @file, @rpcs3 and the rpcs3 code (docs/90 3.8).
+line needs no new version; a changed meaning does. Version 2 added the RPCS3
+route (docs/90 3.8): the unlock and import phases, @file, @rpcs3, @user,
+@library, @found, @setting, and the rpcs3 and import codes.
 
 Every line also goes to the run's log (setup/logs/run.log), so a run from a
 terminal leaves the same record as one from the screens.
@@ -32,14 +41,19 @@ terminal leaves the same record as one from the screens.
 import sys
 
 VERSION = 2
-KINDS = ("setup", "plan", "step", "progress", "overall", "check", "file", "rpcs3", "awake", "memory", "log", "error",
-         "done")
+KINDS = ("setup", "plan", "step", "progress", "overall", "check", "file", "rpcs3", "user", "library", "found",
+         "setting", "awake", "memory", "log", "error", "done")
 # game: the game folder or its files; busy: another setup is running; disk: not enough free space;
 # download: a download stopped or did not match; memory: out of memory; step: a build step failed;
-# rpcs3: the player's RPCS3 could not unlock the files; internal: an error of the engine's own.
-ERRORS = ("game", "busy", "disk", "download", "memory", "step", "rpcs3", "internal")
+# rpcs3: the player's RPCS3 could not unlock the files; import: bringing the save, trophies or settings across from
+# RPCS3 failed (the game is built); internal: an error of the engine's own.
+ERRORS = ("game", "busy", "disk", "download", "memory", "step", "rpcs3", "import", "internal")
 STEP_STATES = ("start", "done", "skip")
 RPCS3_STATES = ("own", "shared", "missing")
+LIBRARY_KINDS = ("folder", "iso", "store", "none")
+# @found: each item's states, and how many values follow the state.
+FOUND = {"save": (("ok", "none", "other-user", "busy"), 2), "current-save": (("ok", "none"), 1),
+         "trophies": (("ok", "none"), 1), "settings": (("ok", "none"), 1)}
 RESULTS = ("ok", "fix", "failed")
 
 
@@ -131,6 +145,22 @@ class Emitter:
     def rpcs3(self, state, path):
         assert state in RPCS3_STATES, state
         self._line("rpcs3", state, one_line(path or "-"))
+
+    def user(self, uid, users, name):
+        self._line("user", word(uid), int(users), one_line(name) or "-")
+
+    def library(self, kind, path):
+        assert kind in LIBRARY_KINDS, kind
+        self._line("library", kind, one_line(path) if path and kind != "none" else "-")
+
+    def found(self, what, state, *values):
+        """One @found line: values are printed as they are, None as '-'."""
+        states, n = FOUND[what]
+        assert state in states and len(values) == n, (what, state, values)
+        self._line("found", what, state, *["-" if v is None or v == "" else word(v) for v in values])
+
+    def setting(self, key, value):
+        self._line("setting", word(key), one_line(value) or '""')
 
     def awake(self):
         self._line("awake")

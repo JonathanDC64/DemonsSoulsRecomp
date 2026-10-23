@@ -350,7 +350,8 @@
    "size": 239344,
    "sha256": "115f9df9596dd0b358e5a8c4eaaf77ee44c1f3ec16f9056b3abc517b739140c9",
    "magic": "7f454c46",
-   "from": "dev_flash/sys/external/libsre.sprx, decrypted"
+   "from": "dev_flash/sys/external/libsre.sprx, decrypted",
+   "version": "0x00486000"
   }
  ]
 }

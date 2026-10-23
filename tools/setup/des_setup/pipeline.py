@@ -1,12 +1,16 @@
 """Setup in one go, for the setup screens (docs/88): the phases in order, each
 made of journal steps, with the screens' line protocol on standard output.
 
-  check     the game folder and the decrypted files (gamefiles.py)
-  unlock    on the RPCS3 route only: the missing decrypted files, made by the player's RPCS3 (rpcs3.py, docs/90)
+  check     the game folder and the decrypted files (gamefiles.py); on the RPCS3 route also what the player's
+            RPCS3 has (rpcs3_library.py): its user, the game in its library, the save, trophies and settings
+  unlock    on the RPCS3 route only: the missing decrypted files (and libsre.prx), made by the player's RPCS3
+            (rpcs3.py, docs/90)
   fetch     the pinned tools the build needs (fetch.py); Python is the host's to fetch
   stage     the decrypted files copied into the data folder
   lift      the game's code converted to C (lift.py)
   compile   the lift built into the game module (compile.py, docs/81 section 7), when this tree has it
+  import    on the RPCS3 route, while request.json has a pending import: the save, trophies and settings the
+            player ticked, brought across once (rpcs3_import.py, docs/90 3.5)
   shaders   the game's shader cache filled by the host with no window (`<host> --shaders <game folder>`,
             docs/52 section 5), as the game's start fills it, so the first start finds it full
 
@@ -14,7 +18,9 @@ A phase whose steps are all done with the same inputs is skipped, so a run
 stopped anywhere (Cancel, a crash, a power cut) carries on where it stopped.
 At the end, with the game module built, setup/ready.txt tells the host where
 the game is (docs/88 section 3). While a run is under way there is no
-ready.txt, so the host never starts a half-built game.
+ready.txt, so the host never starts a half-built game. With an import
+pending, ready.txt comes once the import is done, so the start screen never
+says Ready while something the player asked for is still to come across.
 
 Only one run at a time: setup/run.lock is held while it runs, and the system
 drops it when the process ends, however it ends.
@@ -25,18 +31,19 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import traceback
 from pathlib import Path
 
 from . import compile as compile_step
-from . import fetch, gamefiles, journal, lift, protocol, rpcs3
+from . import fetch, firmware, gamefiles, journal, lift, protocol, rpcs3, rpcs3_import, rpcs3_library
 
 READY = "ready.txt"
 REQUEST = "request.json"
 UNLOCK = "unlock"                  # setup/unlock: the unlock's copies, RPCS3's folder, then its outputs until the stage
 GB = 1 << 30
 # Each phase's share of a whole run, from its CPU time (docs/52 4.3: the compile is most of it).
-WEIGHTS = {"check": 2, "unlock": 1, "fetch": 4, "stage": 1, "lift": 13, "compile": 80, "shaders": 2}
+WEIGHTS = {"check": 2, "unlock": 1, "fetch": 4, "stage": 1, "lift": 13, "compile": 80, "import": 1, "shaders": 2}
 # Where a step's own count falls in its phase; the phase's small steps fill the rest.
 PARTS = {"ppu": (0.05, 0.75), "spu": (0.75, 0.97), "compile": (0.0, 0.97), "shaders": (0.0, 1.0)}
 # The free space a phase needs from scratch (docs/52 10.2), less what its folders already hold.
@@ -50,10 +57,12 @@ FAILED = {"unlock": "Copying the game files for RPCS3 failed.", "stage": "Copyin
           "lift": "Converting the game's code failed.", "compile": "Building the game failed."}
 
 
-def default_phases(rpcs3_route=False) -> list:
+def default_phases(rpcs3_route=False, imports=False) -> list:
     """The whole build. On the RPCS3 route the unlock comes before the fetch, so
-    an RPCS3 problem shows before the large download (docs/90 3.2)."""
-    return ["check"] + (["unlock"] if rpcs3_route else []) + ["fetch", "stage", "lift", "compile", "shaders"]
+    an RPCS3 problem shows before the large download, and a pending import
+    comes after the compile (docs/90 3.2)."""
+    return (["check"] + (["unlock"] if rpcs3_route else []) + ["fetch", "stage", "lift", "compile"]
+            + (["import"] if rpcs3_route and imports else []) + ["shaders"])
 
 
 # ---- the copy step (also `python -m des_setup stage`) ----
@@ -70,7 +79,10 @@ def stage(rep, data: Path, jr: journal.Journal) -> Path:
         for i, o in zip(items, outs):
             o.parent.mkdir(parents=True, exist_ok=True)
             tmp = o.with_name(o.name + ".tmp")
-            shutil.copyfile(i.found, tmp)
+            if i.fix:  # (the firmware's file from another system software version: the table's, firmware.py)
+                tmp.write_bytes(firmware.as_version(Path(i.found).read_bytes(), int(i.fix, 16)))
+            else:
+                shutil.copyfile(i.found, tmp)
             if gamefiles.sha256_file(tmp) != i.sha256:
                 tmp.unlink()
                 raise journal.StepFailed("stage", f"{i.name} changed while it was copied")
@@ -82,15 +94,21 @@ def stage(rep, data: Path, jr: journal.Journal) -> Path:
 
 
 def _rel(item) -> str:
-    return item.name if item.kind == "decrypted" else f"firmware/{item.name}"
+    return item.name if item.kind == "decrypted" else _firmware_rel(item.name)
+
+
+def _firmware_rel(name) -> str:
+    return f"firmware/{name}"
 
 
 # ---- what a run keeps in setup/ ----
 
 def make_request(game, decrypted=(), firmware=None, rpcs3_path=None) -> dict:
     """What the player chose, with absolute paths (a later run may start elsewhere).
-    rpcs3_path: the RPCS3 that unlocks the missing decrypted files (the RPCS3 route)."""
-    return {"game": os.path.abspath(game), "decrypted": [os.path.abspath(d) for d in decrypted],
+    rpcs3_path: the RPCS3 that unlocks the missing decrypted files (the RPCS3 route).
+    game None: the game in that RPCS3's library (run's from_library).
+    A run with an import adds "import": {"items", "gamedata", "asked"} (_request)."""
+    return {"game": os.path.abspath(game) if game else None, "decrypted": [os.path.abspath(d) for d in decrypted],
             "firmware": os.path.abspath(firmware) if firmware else None,
             "rpcs3": os.path.abspath(rpcs3_path) if rpcs3_path else None}
 
@@ -275,23 +293,34 @@ def _check(req, emit, total, table, data=None, unlocks=False):
 def _game_check(req, t, data, unlocks, progress=None, unlocked=False):
     """gamefiles.check on the request's folders. On the RPCS3 route the files an
     earlier run kept in inputs/ count too (docs/90 3.3), as does PPU Debug's
-    dump of the EBOOT; after an unlock (`unlocked`), its outputs."""
-    dirs, also = list(req.get("decrypted") or []), None
+    dump of the EBOOT; after an unlock (`unlocked`), its outputs. There the
+    unlock also makes libsre.prx when RPCS3 has the PS3 system software."""
+    dirs, also, fw = list(req.get("decrypted") or []), {}, None
     if unlocks:
         dirs.append(str(data / "inputs"))
         if unlocked:
             dirs.append(str(data / "setup" / UNLOCK / "in"))
+        for e in t.get("firmware", []):
+            also[e["name"]] = [data / "inputs" / _firmware_rel(e["name"])]
         exe = rpcs3.find(req.get("rpcs3"))
+        fw = True                       # (RPCS3 gone: the run says so, not that it lacks the system software)
         if exe:
-            also = {lift.EBOOT: rpcs3.ppu_debug_eboots(exe, t["title_id"])}
+            also[lift.EBOOT] = rpcs3.ppu_debug_eboots(exe, t["title_id"])
+            fw = rpcs3_library.firmware(rpcs3_library.folders(exe)) is not None
     return gamefiles.check(req["game"], dirs, req.get("firmware"), table=t, progress=progress, unlocks=unlocks,
-                           also=also)
+                           also=also or None, firmware_unlock=fw)
 
 
 def blocking(rep, unlocks=False) -> list:
     """The check's problems that stop a run. On the RPCS3 route a decrypted file
-    that is missing or wrong is the unlock's to make, not the player's to fix."""
-    return [i for i in rep.problems() if not (unlocks and i.kind == "decrypted")]
+    that is missing or wrong is the unlock's to make, not the player's to fix,
+    as is libsre.prx when RPCS3 has the PS3 system software."""
+    return [i for i in rep.problems() if not (unlocks and (i.kind == "decrypted" or i.unlock))]
+
+
+def _made_by_unlock(rep) -> list:
+    """The files the unlock makes that are still not right."""
+    return [i for i in rep.problems() if i.kind == "decrypted" or i.unlock]
 
 
 def _rpcs3_state(req, data):
@@ -306,9 +335,11 @@ def _unlock(rep, req, data, jr, emit, total, table, kw):
     """The unlock phase (rpcs3.py, docs/90 3.4): the decrypted files the check did
     not find, made by the player's RPCS3 from copies of the originals. Returns
     the check again, which now finds them, and whether there was nothing to do.
-    The journal skips the step while its originals and outputs are unchanged."""
+    The journal skips the step while its originals and outputs are unchanged.
+    libsre.prx comes the same way, from a copy of RPCS3's libsre.sprx."""
     need = [i for i in rep.items if i.kind == "decrypted" and not i.good]
-    if not need:
+    fw = [i for i in rep.items if i.kind == "firmware" and not i.good and i.unlock]
+    if not need and not fw:
         return rep, True
     t = table or gamefiles.load_table()
     exe, state = _rpcs3_state(req, data)
@@ -320,26 +351,34 @@ def _unlock(rep, req, data, jr, emit, total, table, kw):
     origs = {e["path"]: e for e in t["originals"]}
     decs = {e["path"]: e for e in t["decrypted"]}
     jobs = [rpcs3.Job(Path(found[decs[i.name]["of"]]), origs[decs[i.name]["of"]], decs[i.name]) for i in need]
+    jobs += [_firmware_job(exe, t, i) for i in fw]
     u = rpcs3.Unlock(exe, data / "setup" / UNLOCK, jobs, emit, data / "setup" / "logs" / "unlock.log",
                      shared=state == "shared", progress=total.part, **(kw or {}))
     fp = journal.fingerprint("unlock", sorted((j.orig["path"], j.orig.get("sha256")) for j in jobs))
     try:
         ran, _ = jr.run("unlock", fp, u.run, outputs=u.outputs(), log=u.log)
         rep = _game_check(req, t, data, True, unlocked=True)
-        if not ran and [i for i in rep.problems() if i.kind == "decrypted"]:
+        if not ran and _made_by_unlock(rep):
             jr.forget("unlock")                      # a kept output went bad since: unlock again
             ran, _ = jr.run("unlock", fp, u.run, outputs=u.outputs(), log=u.log)
             rep = _game_check(req, t, data, True, unlocked=True)
     finally:
         if u.ignored:
             rpcs3.remember_shared(data, exe)
-    left = [i for i in rep.problems() if i.kind == "decrypted"]
+    left = _made_by_unlock(rep)
     if left:
-        raise rpcs3.UnlockFailed("unlock", f"{rpcs3.usrdir(left[0].name)} came out different from the known good "
-                                           f"version.", u.log)
+        raise rpcs3.UnlockFailed("unlock", rpcs3.different(rpcs3.usrdir(left[0].name), left[0].kind), u.log)
     emit.text(f"ok   {len(jobs)} file(s) unlocked by RPCS3 and checked" if ran else
               f"ok   the {len(jobs)} file(s) RPCS3 unlocked last time are unchanged")
     return rep, not ran
+
+
+def _firmware_job(exe, t, item):
+    """The unlock of libsre.prx from the player's <dev_flash>/sys/external/libsre.sprx."""
+    sprx = rpcs3_library.firmware(rpcs3_library.folders(exe))
+    if sprx is None:
+        raise rpcs3.UnlockFailed("unlock", gamefiles.NO_FIRMWARE)
+    return rpcs3.firmware_job(sprx, next(e for e in t["firmware"] if e["name"] == item.name))
 
 
 def _drop_unlock(data):
@@ -439,7 +478,8 @@ def _classify(phase, e: journal.StepFailed):
 
 def run(data, request=None, app="", jobs=0, check_only=False, emit=None, src=None, table=None,
         manifest=None, phases=None, compile_fn=None, quiet=True, cc=None, ld=None, unlock_only=False,
-        rpcs3_path=None, unlock_kw=None, host=None) -> int:
+        rpcs3_path=None, unlock_kw=None, host=None, imports=None, no_import=False, gamedata=None,
+        from_library=False) -> int:
     """Every phase in order (or only the check), with the protocol on `emit`.
     request: make_request's dict, or None for the one the last run saved. app: the
     host's version, recorded in ready.txt (a new version is set up again). cc, ld:
@@ -449,6 +489,11 @@ def run(data, request=None, app="", jobs=0, check_only=False, emit=None, src=Non
     unlock_kw: rpcs3.Unlock's launch, stall and poll (the tests' stand-in).
     host: the host program, which the shaders phase runs (without it, the game
     prepares its shaders at its first start).
+    The RPCS3 route's import (docs/90 3.2): imports, the items to bring across
+    at the end (save, trophies, settings), kept in request.json until done;
+    no_import drops a pending one; gamedata: the game's gamedata folder (the
+    port's own save, which the check reports and the import replaces).
+    from_library: the game is the one in RPCS3's library, not request's.
     Returns the exit status: 0 done, 1 something to fix or a failure."""
     data = Path(data)
     emit = emit or protocol.Emitter()
@@ -464,35 +509,64 @@ def run(data, request=None, app="", jobs=0, check_only=False, emit=None, src=Non
     try:
         emit.open_log(data / "setup" / "logs" / "run.log")
         emit.setup()
-        return _run(data, request, app, jobs, check_only, emit, src, table, manifest, phases,
-                    compile_fn, quiet, cc, ld, unlock_only, rpcs3_path, unlock_kw, host)
+        req = _request(data, request, rpcs3_path, imports, no_import, gamedata, from_library)
+        return _run(data, req, app, jobs, check_only, emit, src, table, manifest, phases, compile_fn, quiet, cc, ld,
+                    unlock_only, unlock_kw, host, gamedata, from_library)
     finally:
         emit.close()
         held.close()
 
 
-def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phases, compile_fn, quiet, cc, ld,
-         unlock_only, rpcs3_path, unlock_kw, host) -> int:
+def _request(data, request, rpcs3_path, imports, no_import, gamedata, from_library):
+    """This run's request: the given one, or the last run's, with this run's RPCS3 and import choices. With the game
+    from RPCS3's library, the last run's request is the base (a pending import stays) and the game is read later.
+    --no-import drops a pending import at once, whatever this run does next. A new import gets its own ID ("asked"),
+    which the import's journal steps carry; an import asked again with the same items keeps the pending one's, so
+    Try again carries on where it stopped."""
+    saved = load_request(data)
+    if from_library:
+        req = dict(saved or {})
+        req.update(request or {})
+        req["game"] = None
+    else:
+        req = dict(request or saved or {})
+    if rpcs3_path:
+        req["rpcs3"] = os.path.abspath(rpcs3_path)
+    pending = (saved or {}).get("import") or {}
+    if no_import:
+        req.pop("import", None)
+        if saved and "import" in saved:
+            saved.pop("import")
+            save_request(data, saved)
+    elif imports:
+        want = [i for i in rpcs3_import.ITEMS if i in imports]
+        folder = os.path.abspath(gamedata) if gamedata else pending.get("gamedata")
+        same = pending.get("asked") and pending.get("items") == want and pending.get("gamedata") == folder
+        req["import"] = {"items": want, "gamedata": folder, "asked": pending["asked"] if same else time.time_ns()}
+    return req
+
+
+def _run(data, req, app, jobs, check_only, emit, src, table, manifest, phases, compile_fn, quiet, cc, ld,
+         unlock_only, unlock_kw, host, gamedata, from_library) -> int:
     if quiet:
         quiet_and_awake(emit)
-    req = request or load_request(data)
-    if not req or not req.get("game"):
+    if not req.get("game") and not (from_library and req.get("rpcs3")):
         emit.error("game", "check", "Choose the game folder first.")
         emit.done("fix")
         return 1
-    if rpcs3_path:
-        req = dict(req, rpcs3=os.path.abspath(rpcs3_path))
     route = bool(req.get("rpcs3"))
+    importing = route and bool(rpcs3_import.items(req))
     plan = (["check"] if check_only else ["check", "unlock"] if unlock_only
-            else list(phases or default_phases(route)))
+            else list(phases or default_phases(route, importing)))
     assert plan[0] == "check", plan
-    unlocks = route and (check_only or "unlock" in plan)   # the unlock makes what the check misses
+    unlocks = route and (check_only or from_library or "unlock" in plan)   # the unlock makes what the check misses
+    ready_after_import = importing and "import" in plan
     emit.plan(plan)
     if not check_only and (data / "setup" / READY).exists():
         (data / "setup" / READY).unlink()            # not ready while a run is under way
     jr = journal.Journal(data / "setup" / "journal.json")
     total = Overall(plan, emit)
-    rep, module, phase = None, None, plan[0]
+    rep, module, ready, phase = None, None, None, plan[0]
     try:
         for phase in plan:
             short = None if phase == "check" else _short_of_space(data, phase)
@@ -509,6 +583,10 @@ def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phase
                 if unlocks:
                     exe, state = _rpcs3_state(req, data)
                     emit.rpcs3(state, rpcs3.where(exe or req["rpcs3"]))
+                    stop = _rpcs3_found(req, exe, emit, table or gamefiles.load_table(), from_library,
+                                        gamedata or (req.get("import") or {}).get("gamedata"))
+                    if stop is not None:
+                        return stop
                 rep = _check(req, emit, total, table, data, unlocks)
                 probs = blocking(rep, unlocks)
                 if probs or rep.root is None:
@@ -538,19 +616,26 @@ def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phase
                     sums.get(lift.EBOOT), sums.get("libsre.prx"))
             elif phase == "compile":
                 module = compile_fn(data, jr, jobs, total.step)
+            elif phase == "import":
+                skipped = True
+                if importing:
+                    skipped = rpcs3_import.run(req, data, jr, table or gamefiles.load_table(), progress=total.part)
+                    req.pop("import", None)                   # done: a later run brings nothing across again
+                    save_request(data, req)
             elif phase == "shaders":
                 skipped = _shaders(host, rep.root, data, emit, total)
             if phase in ("stage", "lift", "compile") and _ends(jr) == before:
                 skipped = True
             total.part(1.0)
             emit.step(phase, "skip" if skipped else "done")
-            # Ready once the game is built, before the shaders: a pass that is stopped leaves a game that plays (it
-            # prepares the rest at its start).
+            # Ready once the game is built (and anything to bring across is across), before the shaders: a pass that
+            # is stopped leaves a game that plays (it prepares the rest at its start).
             if phase == "compile" and module and Path(module).is_file():
-                write_ready(data, {"format": 1, "app": app, "game": str(rep.root),
-                                   "eboot": str(data / "inputs" / lift.EBOOT), "module": str(module),
-                                   "module_size": Path(module).stat().st_size,
-                                   "module_sha256": gamefiles.sha256_file(module)})
+                ready = {"format": 1, "app": app, "game": str(rep.root), "eboot": str(data / "inputs" / lift.EBOOT),
+                         "module": str(module), "module_size": Path(module).stat().st_size,
+                         "module_sha256": gamefiles.sha256_file(module)}
+            if ready and phase == ("import" if ready_after_import else "compile"):
+                write_ready(data, ready)
                 emit.text(f"ok   the game is ready: {module}")
         if not (module and Path(module).is_file()) and not check_only:
             emit.text("ok   every phase is done; the compile was not in this run, so the game is not built yet")
@@ -569,11 +654,17 @@ def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phase
         emit.text(f"FIX  {e}")
         if e.log:
             emit.log_path(e.log)
-        emit.error(*_classify(phase, e))
+        if phase == "import":                            # (an ImportFailed, or the journal's word for a bug)
+            emit.error("import", e.step, e.message if isinstance(e, rpcs3_import.ImportFailed)
+                       else rpcs3_import.sentence(e.step))
+        else:
+            emit.error(*_classify(phase, e))
     except OSError as e:
         emit.text(traceback.format_exc())
         if e.errno == errno.ENOSPC:
             emit.error("disk", phase, "The disk is full.")
+        elif phase == "import":
+            emit.error("import", "-", rpcs3_import.sentence("import-save"))
         else:
             emit.error("internal", phase, "Setup stopped on an unexpected error.")
     except Exception:                                    # the engine's own
@@ -581,6 +672,55 @@ def _run(data, request, app, jobs, check_only, emit, src, table, manifest, phase
         emit.error("internal", phase, "Setup stopped on an unexpected error.")
     emit.done("failed")
     return 1
+
+
+# ---- the RPCS3 route's lines before the check ----
+
+def _rpcs3_found(req, exe, emit, t, from_library, gamedata):
+    """@user and @library, then what can come across: @found and @setting (docs/90 3.8). With the game from RPCS3's
+    library (from_library), its entry becomes the request's game. Returns the exit status when the run stops here
+    (the library has no folder setup can use), else None."""
+    if exe is None:
+        if not from_library:
+            return None
+        emit.error("rpcs3", "check", f"RPCS3 is not in {rpcs3.where(req['rpcs3'])} any more.")
+        emit.done("fix")
+        return 1
+    found = rpcs3_library.read(exe, t, gamedata)
+    emit.user(found.user, len(found.users), found.user_name)
+    emit.library(found.library.kind, found.library.path)
+    if from_library:
+        if found.library.kind != "folder":
+            return _not_in_library(found.library, emit, t)
+        req["game"] = str(found.library.path)
+    emit_found(emit, found)
+    return None
+
+
+def _not_in_library(lib, emit, t) -> int:
+    """The library has an ISO file, the store version or nothing: what to tell the player, and @done fix."""
+    if lib.kind == "iso":
+        emit.error("game", "check", "Setup cannot use ISO files yet.")
+    elif lib.kind == "store":
+        item = gamefiles.Item("game", "TITLE_ID", "wrong", gamefiles.other_title(t, rpcs3_library.STORE_ID),
+                              str(lib.path))
+        emit.check(item)
+        emit.error("game", "check", item.message)
+    else:
+        emit.error("game", "check", "Demon's Souls is not in RPCS3's library yet.")
+    emit.done("fix")
+    return 1
+
+
+def emit_found(emit, found):
+    """@found save, current-save, trophies and settings, then one @setting for each setting."""
+    s, c, tr = found.save, found.current, found.trophies
+    emit.found("save", s.state, s.characters, s.saved)
+    emit.found("current-save", c.state, c.saved)
+    emit.found("trophies", tr.state, f"{tr.earned}/{tr.total}")
+    emit.found("settings", "ok" if found.settings else "none", len(found.settings))
+    for k, v in found.settings.items():
+        emit.setting(k, v)
 
 
 # ---- status ----

@@ -29,6 +29,18 @@
  * `des_host --shaders <game folder> <EBOOT.elf>`), so the first start finds
  * the cache full.
  *
+ * The pass also takes the pipeline index of the game's version
+ * (port/data/pso_index/<TITLE_ID>-<APP_VER>.tsv, docs/97): the pipelines
+ * players' games have asked for, each as fingerprints of its two programs
+ * and its draw state. ps3recomp finds each row's programs among the queued
+ * ones, puts their shaders in the cache, and builds the pipelines in the
+ * background once the game runs, so a draw loads its pipeline instead of
+ * waiting on the graphics driver. When the cache is up to date but the
+ * index's pipelines are not all built yet (pso_index.built), the pass does
+ * only that. The game records the pipelines it asks for in the cache
+ * (pso_index_seen.tsv), and tools/des/pso_index.py merges those into the
+ * index. DES_PSO_INDEX=<file> takes another index, =0 none.
+ *
  * DES_PRECOMPILE=0 skips it at a start; =force runs it whatever the stamp says.
  */
 #include "ps3emu/ps3_knob.h"
@@ -36,9 +48,6 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#else
-#include <filesystem>
-#include <system_error>
 #endif
 
 #include <algorithm>
@@ -48,12 +57,20 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
 extern "C" const char* ppu_vfs_root;
 extern "C" const char* rsx_d3d12_shader_cache_path(void);
+extern "C" void rsx_d3d12_pso_index_game(const char* game);
+extern "C" void cellGame_init_from_paramsfo(const char* sfo_path);
+extern "C" const char* cellGame_get_title_id(void);
+extern "C" const char* cellGame_get_app_ver(void);
 
 namespace {
 
@@ -104,6 +121,70 @@ bool read_file(const std::string& path, std::vector<uint8_t>& out)
     const bool ok = n > 0 && std::fread(out.data(), 1, out.size(), f) == out.size();
     std::fclose(f);
     return ok;
+}
+
+/* The game and its version as PARAM.SFO has them, TITLE_ID-APP_VER ("BLUS30443-01.00"): what the
+ * pipeline index is kept by. */
+std::string game_tag()
+{
+    const char* id = cellGame_get_title_id();
+    const char* ver = cellGame_get_app_ver();
+    return std::string(id ? id : "") + "-" + (ver ? ver : "");
+}
+
+/* This program's folder; empty if it cannot be told. */
+#ifdef _WIN32
+std::filesystem::path exe_dir()
+{
+    wchar_t buf[4096];
+    const DWORD n = GetModuleFileNameW(nullptr, buf, DWORD(std::size(buf)));
+    return n && n < std::size(buf) ? std::filesystem::path(buf).parent_path() : std::filesystem::path();
+}
+#else
+std::filesystem::path exe_dir()
+{
+    std::error_code ec;
+    const std::filesystem::path p = std::filesystem::read_symlink("/proc/self/exe", ec);
+    return ec ? std::filesystem::path() : p.parent_path();
+}
+#endif
+
+bool read_text(const std::filesystem::path& path, std::string& out)
+{
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return true;
+}
+
+/* The pipeline index for the game's version: DES_PSO_INDEX's file when it is set (0: none), else
+ * port/data/pso_index/<game_tag>.tsv in this program's folder or up to three above it (a release has
+ * port/ beside the exe, a build tree further up). Empty if there is none; `name` says which it was. */
+std::string read_index(std::string& name)
+{
+    std::string text;
+    const char* knob = std::getenv("DES_PSO_INDEX");
+    if (knob && std::strcmp(knob, "0") == 0) return text;
+    if (knob && *knob) {
+        name = knob;
+        if (!read_text(std::filesystem::path(knob), text))
+            std::fprintf(stderr, "[des] shaders: no pipeline index at %s\n", knob);
+        return text;
+    }
+    name = game_tag() + ".tsv";
+    std::error_code ec;
+    std::filesystem::path dir = exe_dir();
+    for (int up = 0; up <= 3 && !dir.empty(); ++up) {
+        const std::filesystem::path f = dir / "port" / "data" / "pso_index" / name;
+        if (std::filesystem::is_regular_file(f, ec)) {
+            read_text(f, text);
+            return text;
+        }
+        if (dir == dir.parent_path()) break;
+        dir = dir.parent_path();
+    }
+    std::fprintf(stderr, "[des] shaders: no pipeline index for %s\n", game_tag().c_str());
+    return text;
 }
 
 #ifdef _WIN32
@@ -305,10 +386,20 @@ Pass run_pass(const char* root, const std::string& elf, bool force, void (*poll)
         std::fprintf(stderr, "[des] shaders: no archives in %s; shaders compile as the game draws them\n", dir.c_str());
         return Pass::NoArchives;
     }
-    if (!force && read_file(stamp_path, old) && std::string(old.begin(), old.end()) == stamp) {
+    /* The pipeline index, unless its pipelines are all built (pso_index.built says so). Over an up-to-date
+     * cache the pass then does only the index's work. */
+    std::string index_name;
+    std::string index = read_index(index_name);
+    if (!index.empty() && rsx_shader_precompile_index_built(index.data(), index.size())) index.clear();
+    const bool up_to_date = !force && read_file(stamp_path, old) && std::string(old.begin(), old.end()) == stamp;
+    const int rows = index.empty() ? 0 : rsx_shader_precompile_index(index.data(), index.size(), up_to_date);
+    if (up_to_date && rows <= 0) {
         std::fprintf(stderr, "[des] shaders: cache up to date\n");
         return Pass::UpToDate;
     }
+    if (rows > 0)
+        std::fprintf(stderr, "[des] shaders: pipeline index %s, %d pipelines%s\n", index_name.c_str(), rows,
+                     up_to_date ? " (the cache is up to date: building these only)" : "");
 
     if (!rsx_shader_precompile_kinds(kUnits, kAlts)) return Pass::NotStarted;
     int programs = 0;
@@ -337,16 +428,19 @@ Pass run_pass(const char* root, const std::string& elf, bool force, void (*poll)
                  "[des] shaders: %d programs, %u shaders -> %u compiled, %u already cached, %u failed%s; %.1f s on %d threads\n",
                  programs, s.shaders, s.built, s.cached, s.failed, s.cancelled ? " (skipped: the rest compile in play)" : "",
                  s.seconds, s.threads);
+    if (rows > 0)
+        std::fprintf(stderr, "[des] shaders: pipeline index: %u of %d pipelines have both programs in the game's files\n",
+                     s.index_found, rows);
     /* A full pass is remembered. The game adds to fp_variants.txt as it
      * draws, which changes the stamp, so the next start builds the new
      * variants. */
-    if (!s.cancelled && !s.failed) {
+    if (!up_to_date && !s.cancelled && !s.failed) {
         if (FILE* f = std::fopen(stamp_path.c_str(), "wb")) {
             std::fwrite(stamp.data(), 1, stamp.size(), f);
             std::fclose(f);
         }
     }
-    return s.cancelled ? Pass::Skipped : s.failed ? Pass::Failed : Pass::Done;
+    return s.cancelled ? Pass::Skipped : up_to_date ? Pass::UpToDate : s.failed ? Pass::Failed : Pass::Done;
 }
 
 /* des_prework_shaders' progress line, when it changed: only once every
@@ -374,6 +468,7 @@ extern "C" void des_prework_elf(const char* path)
 
 extern "C" void ps3_title_prework(void)
 {
+    rsx_d3d12_pso_index_game(game_tag().c_str());   /* (boot_main has read PARAM.SFO) */
     const char* knob = std::getenv("DES_PRECOMPILE");
     if (knob && std::strcmp(knob, "0") == 0) return;
     rsx_shader_precompile_stats s{};
@@ -398,6 +493,8 @@ extern "C" int des_prework_shaders(const char* game, const char* eboot)
 {
     rsx_shader_precompile_stats s{};
 #ifdef _WIN32
+    /* The game's version, for its pipeline index: no boot reads PARAM.SFO in this process. */
+    cellGame_init_from_paramsfo((std::string(game ? game : "") + kSep + "PS3_GAME" + kSep + "PARAM.SFO").c_str());
     const Pass p = run_pass(game, eboot ? eboot : "", false, print_progress, s);
 #else
     (void)game;

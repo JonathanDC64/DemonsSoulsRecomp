@@ -116,7 +116,10 @@ Entries today:
   - `scripts/lift_ppu.json` holds the PPU lifter's flags. A test checks the README's command against it.
 - **Tested** on made-up trees (9 tests), then on the copy (section 2). Against a developer's `work/` from 10-19: the loader output, the 12 SPU images, the 2 job blobs and libsre's tables and image are byte for byte the same, and so are 30 of the 31 files of the SPU lifts the developer builds use. Every other difference comes from tonight's ps3recomp being newer than that lift (the condition-register fields, ASCII comments, 80 more NIDs), plus one generated header whose dash is UTF-8 under `-X utf8` and cp1252 without it.
 - **Against the README's commands with the same ps3recomp** (step 3 as written: no `-X utf8`, the lifter at `-j 16` against setup's `-j 8`, on the same `EBOOT.ELF`): the whole PPU lift (16 files, 436 MB), the loader output, the 12 SPU images, the 2 job blobs, all 6 libsre files and 30 of the 31 SPU lift files are byte for byte the same. The two that differ: the SPU registration's header comment, whose dash `-X utf8` writes as UTF-8 and a Windows console default as cp1252; and the libsre glue's image path (the next point). So the worker count does not change the lift, and setup makes what a developer makes.
-- **The libsre glue names the data folder.** `--runtime-image` is an absolute path into it, built into the game, so moving the data folder after setup breaks the game's libsre load. Either the runtime looks for the image beside the exe or in the data folder it is told at start, or setup reruns the glue step after a move. To decide with the compile step.
+- **The libsre glue named the data folder** (fixed 10-23). `--runtime-image` was an absolute path into it, built into the game.
+  - Now setup passes `@module/../work/libsre/libsre_image.bin`. The glue joins the rest to the folder of the game module, `PS3_GAME_MODULE`, which the launch hook sets to `<data>/game/des_game.dll`. `PS3_LIBSRE_IMAGE` still overrides it, and a path without `@module/` is used as it is, as before.
+  - So the DLL holds no folder of the PC, and two PCs that build the same game get the same glue. (ready.txt still names the data folder, so moving it still needs setup again.)
+  - Tested on a real data folder, as an update would find it. Setup again with the change redid only the libsre lift, its glue and the link: 11 s. The DLL then held `../work/libsre/libsre_image.bin` and no folder name. The player's start loaded libsre (`[libsre] LLE load: ok=1`) and played.
 - **The lifted SPU code includes `../../runtime/spu/...`.** Outside `ps3recomp/work_spu` it still resolves, through the `ps3recomp/runtime/ppu` include folder the commands already have (section 7, measured).
 
 ## 6. Next, in order
@@ -174,7 +177,7 @@ Entries today:
   - Since 10-23 it is milestone 2's (docs/84 section 9), written from a `DES_SPLIT_FREESTANDING=ON` build. `compile.py` gained one step, the import library the link reads (`lib:<name>`, from the description's `libs`).
 - **Open.**
   - **Where the host finds the DLL.** Today the host loads the file named by `PS3_GAME_MODULE`, or else `des_game.dll` beside the exe (`game_host.c`). Setup writes the DLL to the data folder's `game/`. The screens step decides whether the launcher sets `PS3_GAME_MODULE` or the host looks in the data folder.
-  - **The glue's absolute libsre image path** (section 5). This goes with milestone 2, which moves the glue's file reads into the host anyway.
+  - **The glue's absolute libsre image path** (section 5). Done 10-23: the path is given from the module's folder (section 5).
   - **A CI job** that runs `game_build_desc.py --check --commands-only` on a configured split build, so the description cannot drift from CMake. It goes with the CI host build.
 
 ## 8. Jobs by memory (`compile.py`, 10-23)

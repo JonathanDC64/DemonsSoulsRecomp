@@ -131,7 +131,8 @@ module_sha256=<sum>
 - **Setup alone** (`des_ui_setup_only_init`):
   - settings.ini, the overlay and the start screen (or setup-run's progress page);
   - no menu bar, start screen, trophies or frame watch, and the close button asks nothing;
-  - it sets `RSX_VSYNC=1` (vsync paces each pass), `PS3_PSO_LIBRARY=0` (the last build's pipeline library stays shut) and a `PS3_TITLE` (no PARAM.SFO is read).
+  - it sets `RSX_VSYNC=1` (vsync paces each pass), `PS3_PSO_LIBRARY=0` (the last build's pipeline library stays shut) and a `PS3_TITLE` (no PARAM.SFO is read);
+  - and `RSX_VP_BUFFERS=0` (10-23), unless it is set: the RSX backend then makes none of its four vertex-program buffers, 1.2 GB of upload memory that only a game's draws use. That memory goes to the compile beside the screens (docs/53 section 16). Measured on the start screen: the process holds 397 MB instead of 1,638 MB. It needs a runtime with the knob (ps3recomp `RSX_VP_BUFFERS`); an older one ignores it. Play's new process starts with the environment this one started with, so the game never sees it.
 - **Play** on setup alone starts the game in a new process (section 7) and closes this one. Over a running game (a runtime without the hook), Play only closes the screens, as before.
 - **Known limits:**
   - The menu sounds are silent on setup alone: they come from the game's sound engine (read).

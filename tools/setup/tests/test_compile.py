@@ -514,9 +514,15 @@ class TestMemory(unittest.TestCase):
         o = next(o for o in c.plan() if o.name == "ppu_recomp_001")
         self.pad("work/recomp/ppu_recomp_001.cpp", 8_000_000)          # a chunk of 150,000 lines
         self.assertEqual(c._need(o), int(cc.PPU_BASE + cc.PPU_PER_MB * 8))
-        c._per_mb["ppu"] = cc.GB // 5                      # a chunk of this run took more for its size
+        c._rates["ppu"] = [cc.GB // 5]                     # a chunk of this run took more for its size
         self.assertAlmostEqual(c._need(o), cc.PPU_BASE + cc.GB // 5 * cc.ROOM * 8, delta=2)
-        c._per_mb.clear()
+        # One chunk in eight that takes far more: the others are not counted at its rate.
+        c._rates["ppu"] = [cc.GB * 6 // 100] * 7 + [cc.GB * 12 // 100]
+        self.assertEqual(c._need(o), int(cc.PPU_BASE + cc.PPU_PER_MB * 8))
+        # Most of them take more: they are.
+        c._rates["ppu"] = [cc.GB * 6 // 100] * 2 + [cc.GB * 12 // 100] * 6
+        self.assertAlmostEqual(c._need(o), cc.PPU_BASE + cc.GB * 12 // 100 * cc.ROOM * 8, delta=2)
+        c._rates.clear()
         c._seen["ppu"] = 2 * cc.GB                         # a large one measured: says nothing about this one
         self.assertEqual(c._need(o), int(cc.PPU_BASE + cc.PPU_PER_MB * 8))
         self.pad("work/recomp/ppu_recomp_001.cpp", 34_000_000)         # a chunk of 600,000 lines: the kind's figure

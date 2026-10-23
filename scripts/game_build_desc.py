@@ -2,14 +2,19 @@
 """Write the game DLL's build description for setup (tools/setup/des_setup/game_build.json).
 
 Setup compiles des_game.dll on the player's PC with the commands CMake uses for
-it (DES_SPLIT=ON, docs/57). This script reads them from a split build directory
-(ninja's compile database and the link command), turns the paths into
-placeholders, and checks that the placeholders expand back to CMake's commands:
+it (DES_SPLIT=ON DES_SPLIT_FREESTANDING=ON, docs/57 and docs/84: no Visual C++
+headers, Windows SDK or C runtime). This script reads them from such a build
+directory (ninja's compile database, the link command and the import libraries'
+commands), turns the paths into placeholders, and checks that the placeholders
+expand back to CMake's commands:
 
   {cc} {ld}   the compiler and the linker (any launcher before the compiler is dropped)
   {src}       the source tree; the install folder mirrors it for these files
   {work}      the lift: setup's data folder work/ (recomp, spu/<image>, libsre, gen)
   {gen}       the files the build makes from the lift and the tables (CMake's split_gen)
+
+The libs list is the linker's /lib commands that make the import libraries the
+link reads (kernel32's, from ps3recomp's .def file), so the link needs no SDK.
 
 The headers list is every file under {src} that an object of des_game read
 (ninja's recorded dependencies), so the build must have compiled des_game once.
@@ -142,6 +147,17 @@ def template(cmd, roots):
     return args, src, toks
 
 
+def lib_tokens(cmd):
+    """The arguments of an import library's command (lld-link /lib), as ninja runs it:
+    cmd /C "cd /D <build> && "<lld-link>" /lib ... /out:<lib>". None for any other command."""
+    m = re.search(r'lld-link(?:\.exe)?"?\s+(/lib\s.*)$', cmd, re.I)
+    if not m:
+        return None
+    rest = m.group(1)
+    rest = rest[:rest.find(" && ")] if " && " in rest else rest.rstrip('"')
+    return split_cmdline(rest)
+
+
 def run(ninja, build, *args):
     return subprocess.run([ninja, "-C", build] + list(args), capture_output=True, text=True, check=True).stdout
 
@@ -150,6 +166,9 @@ def describe(build, ninja, headers_too=True):
     v = cache_vars(build)
     if v.get("DES_SPLIT", "").upper() not in ("ON", "TRUE", "1"):
         raise SystemExit(f"{build} is not a DES_SPLIT=ON build")
+    if v.get("DES_SPLIT_FREESTANDING", "").upper() not in ("ON", "TRUE", "1"):
+        raise SystemExit(f"{build} is not a DES_SPLIT_FREESTANDING=ON build: setup builds the DLL with no "
+                         "Visual C++ headers or Windows SDK (docs/84)")
     roots = roots_for(build, v)
     db = json.loads(run(ninja, build, "-t", "compdb"))
     db = [e for e in db if re.search(r"[\\/]des_game\.dir[\\/]", e["output"])]
@@ -177,7 +196,8 @@ def describe(build, ninja, headers_too=True):
             if ABS.search(a):
                 problems.append(f"{src}: a path no placeholder covers: {a}")
 
-    link = run(ninja, build, "-t", "commands", "des_game").splitlines()[-1]
+    cmds = run(ninja, build, "-t", "commands", "des_game").splitlines()
+    link = cmds[-1]
     # Ninja runs it as cmd /C "cd . && cmake -E vs_link_dll ... -- <linker> <args> && cd .": the linker's part.
     i = link.find(" -- ", link.find("vs_link_dll"))
     if i >= 0:
@@ -195,11 +215,28 @@ def describe(build, ninja, headers_too=True):
                 largs.append("{objects}")
                 have_objs = True
             continue
+        # A file named relative to the build directory (the import library: split_gen\...).
+        if not t.startswith(("/", "-")) and not os.path.isabs(t):
+            t = os.path.join(build, t)
         largs.append(roots.to_ph(t))
     for a in largs:
         if ABS.search(a):
             problems.append(f"link: a path no placeholder covers: {a}")
     out = next((a[5:] for a in largs if a.lower().startswith("/out:")), None)
+
+    libs = []
+    for c in cmds[:-1]:
+        toks = lib_tokens(c)
+        if toks is None:
+            continue
+        args = [roots.to_ph(t) for t in toks]
+        lib = next((a[5:] for a in args if a.lower().startswith("/out:")), None)
+        if not lib or lib not in largs:
+            problems.append(f"lib: {lib or c[:200]}: the link does not read it")
+        for a in args:
+            if ABS.search(a):
+                problems.append(f"lib: a path no placeholder covers: {a}")
+        libs.append({"name": os.path.splitext((lib or "lib").rsplit("/", 1)[-1])[0], "args": args})
 
     headers = set()
     for e in (db if headers_too else []):
@@ -218,11 +255,12 @@ def describe(build, ninja, headers_too=True):
         raise SystemExit("game_build_desc:\n  " + "\n  ".join(problems))
     srcs = {o.get("src") for o in objects}
     return {
-        "about": "des_game.dll's build, as CMake does it with DES_SPLIT=ON. Written by scripts/game_build_desc.py; "
-                 "read by tools/setup/des_setup/compile.py.",
+        "about": "des_game.dll's build, as CMake does it with DES_SPLIT=ON DES_SPLIT_FREESTANDING=ON. Written by "
+                 "scripts/game_build_desc.py; read by tools/setup/des_setup/compile.py.",
         "version": 1,
         "abi": abi,
         "objects": objects,
+        "libs": libs,
         "link": largs,
         "dll": out,
         "headers": sorted(h for h in headers if h not in srcs),

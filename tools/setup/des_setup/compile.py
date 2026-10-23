@@ -3,10 +3,12 @@
   gen          des_game_title_funcs.h (from scripts/lift_ppu.json and port/insn_hooks.txt) and
                the SPU workload table without its static constructor  -> build/gen
   cc:<name>    one per object, in parallel                            -> build/obj/<name>.obj
+  lib:<name>   the import libraries the link reads (lld-link /lib)    -> build/gen/<name>.lib
   link         the linker                                             -> game/des_game.dll
 
-The commands are CMake's own for des_game (DES_SPLIT=ON), read from
-game_build.json, which scripts/game_build_desc.py writes from a split build. The
+The commands are CMake's own for des_game (DES_SPLIT=ON DES_SPLIT_FREESTANDING=ON:
+no Visual C++ headers, Windows SDK or C runtime, docs/84), read from
+game_build.json, which scripts/game_build_desc.py writes from such a build. The
 placeholders in it: {src} the source tree (the install mirrors it), {work} the
 lift, {gen} build/gen.
 
@@ -258,6 +260,7 @@ class Compile:
         objs = self.plan()
         cc_id, ld_id = self._tool_id(self.cc), self._tool_id(self.ld)
         self._compile_all(objs, cc_id)
+        self._libs(ld_id)
         return self._link(objs, ld_id)
 
     def _gen(self):
@@ -370,7 +373,7 @@ class Compile:
                 args += [str(self.objdir / f"{o.name}.obj") for o in objs]
             else:
                 args.append(self.expand(a))
-        fps = [(o.name, self.jr.state(o.step).get("inputs")) for o in objs]
+        fps = [(o.name, self.jr.state(o.step).get("inputs")) for o in objs] + self._lib_fps()
         fp = journal.fingerprint("link", self.ld, args, ld_id, fps)
 
         def run():
@@ -384,6 +387,36 @@ class Compile:
             return {"dll": str(dll), "size": dll.stat().st_size}
         self.jr.run("link", fp, run, outputs=[dll], log=self._log("link"))
         return dll
+
+    def _libs(self, ld_id):
+        """The import libraries the link reads, each made by the linker from a .def file (lld-link /lib), so the
+        link needs no Windows SDK (docs/84 3.2): a journal step each, redone when its command or .def changes."""
+        for lib in self.desc.get("libs", []):
+            step = f"lib:{lib['name']}"
+            args = [self.expand(a) for a in lib["args"]]
+            out = next((Path(a[5:]) for a in args if a.lower().startswith("/out:")), None)
+            defs = [Path(a[5:]) for a in args if a.lower().startswith("/def:")]
+            if out is None:
+                raise journal.StepFailed(step, "the description names no /out: for it")
+            miss = [d.as_posix() for d in defs if not d.is_file()]
+            if miss:
+                raise journal.StepFailed(step, f"the install is missing {', '.join(miss)}")
+            fp = journal.fingerprint("lib", self.ld, args, ld_id, [self._sum(d) for d in defs])
+
+            def run(step=step, args=args, out=out):
+                out.parent.mkdir(parents=True, exist_ok=True)
+                self.logs.mkdir(parents=True, exist_ok=True)
+                self._log(step).write_text("", encoding="utf-8")
+                rc, text = self._exec(step, self.ld + args, out.parent)[:2]
+                if rc != 0:
+                    tail = " | ".join(text.strip().splitlines()[-5:])
+                    raise journal.StepFailed(step, f"the linker failed to make {out.name} (exit {rc}): {tail}",
+                                             self._log(step))
+                return {}
+            self.jr.run(step, fp, run, outputs=[out], log=self._log(step))
+
+    def _lib_fps(self) -> list:
+        return [(lib["name"], self.jr.state(f"lib:{lib['name']}").get("inputs")) for lib in self.desc.get("libs", [])]
 
 
 class _Slots:

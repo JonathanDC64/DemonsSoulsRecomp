@@ -319,9 +319,12 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             {"30 fps (original)", "Same as Frame rate"},
             "Cutscenes judder above 30 fps, so by default they play at 30. Same as Frame rate keeps your frame "
             "rate and smooths their camera.<br/><br/>(DES_CUTFPS)");
-        bool_row(leftPane, rightPane, "V-sync", "DES_VSYNC",
-            "Waits for the display's refresh. Off can tear, but lets you see more fps than the refresh rate."
-            "<br/><br/>(DES_VSYNC)");
+        choice_row(leftPane, rightPane, "V-sync", "DES_VSYNC", {"1", "even", "vrr", "0"},
+            {"On", "Even frames", "G-Sync / FreeSync", "Off"},
+            "On waits for the display's refresh. Even frames keeps every frame on screen equally long, for smooth "
+            "motion, and moves the frame rate to one your display fits (60 becomes 72 at 144 Hz). G-Sync / FreeSync "
+            "needs a display with it, turned on in your graphics driver too. Off can tear, but shows more fps than "
+            "the refresh rate.<br/><br/>(DES_VSYNC)");
         bool_row(leftPane, rightPane, "Motion blur", "DES_MOTION_BLUR",
             "The game's blur when the camera moves.<br/><br/>(DES_MOTION_BLUR)");
     });

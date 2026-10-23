@@ -85,12 +85,33 @@
  *   So do the character creation screen's previews, which turn a fixed
  *   angle a frame with the right stick (des_viewer_rate).
  *
- * DES_VSYNC=0 | 1 — whether presents wait for the display's refresh (default
- *   1). 0 presents each frame as soon as it is drawn, with tearing, where the
- *   system supports it (the D3D12 backend asks DXGI; without it, it presents
- *   with vsync and says so once in the log). Sets RSX_VSYNC unless that is
- *   set already. Above the display's refresh (DES_FPS over 60 on a 60 or
- *   144 Hz display) only DES_VSYNC=0 shows every frame.
+ * DES_VSYNC=1 | 0 | even | vrr — how frames meet the display (default 1).
+ *   Read at each flip request, so the settings window changes it live; it
+ *   sets RSX_VSYNC (each frame held that many refreshes; 0 = at once, with
+ *   tearing) unless RSX_VSYNC was set at start, and the vblank clock.
+ *   1 presents at the display's refresh. 0 presents each frame as soon as it
+ *   is drawn, with tearing, where the system supports it (the D3D12 backend
+ *   asks DXGI; without it, it presents with vsync and says so once in the
+ *   log). Above the display's refresh (DES_FPS over 60 on a 60 Hz display)
+ *   only 0 shows every frame.
+ *   even: every frame stays on screen the same number of refreshes. A frame
+ *   rate that does not divide the refresh cannot do that: 60 fps on a 144 Hz
+ *   display shows frames for 2, 3, 2, 2, 3 refreshes, a judder however
+ *   evenly the game makes them (docs/94). So with DES_FPS set, the rate goes
+ *   to the nearest the display divides (the refresh over n: 60 becomes 72 on
+ *   a 144 Hz display, 30 becomes 28.8), the vblank clock ticks on the
+ *   display's own vblanks every n refreshes (ps3_vblank_lock_display), each
+ *   frame is held n refreshes (RSX_VSYNC=n), and the game's step is n
+ *   refreshes long. The game's own 30 fps mode and the cutscenes keep the
+ *   PS3's 59.94 Hz vblank, so they are even only where the display runs at
+ *   a multiple of it (60, 120, 240 Hz): there the clock goes to the
+ *   display's vblanks too (59.94 to 60 Hz, 0.1% faster); elsewhere they
+ *   present as with 1.
+ *   vrr: for a G-Sync or FreeSync display, which shows each frame as it
+ *   comes. Presents at once (as 0), and the rate is capped a little under
+ *   the refresh (the refresh x (1 - refresh / 3600): 138 fps at 144 Hz), so
+ *   the frames stay inside the display's range. The display and its driver
+ *   have to have it on.
  *
  * DES_AUTO_CONTINUE=1 — press through the boot menus into the last save.
  *   From the first pad poll it taps CROSS, CROSS, START in a 600 ms cycle:
@@ -108,6 +129,7 @@
 #include "des_game_calls.h"     /* the lifted functions below (the game DLL's with DES_SPLIT) */
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include "ui/include/des_ui.h"  /* the wrapper UI: settings.ini and the overlay (docs/32) */
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -124,6 +146,8 @@ extern "C" void (*g_gcm_flip_request_hook)(void);
 extern "C" unsigned (*g_pad_title_hook)(void);
 extern "C" void (*g_fs_open_hook)(const char* guest_path);
 extern "C" void ps3_vblank_set_mhz(int mhz);   /* boot_main.cpp; 0 = VBLANK_MHZ */
+extern "C" void ps3_vblank_lock_display(int n);   /* boot_main.cpp; a tick every n refreshes, 0 = the timer */
+extern "C" int rsx_d3d12_display_refresh_mhz(void);   /* the window's display, 0 = not known */
 extern "C" void des_aspect_init(void);         /* des_aspect.cpp: DES_ASPECT, DES_HUD */
 extern "C" void des_aspect_poll(void);         /* des_aspect.cpp: their live changes */
 extern "C" volatile unsigned g_pad0_reads, g_pad0_empty_reads, g_pad0_buttons, g_pad0_lstick;   /* cellPad.c */
@@ -261,6 +285,102 @@ bool cutfps_on()
     return on != 0;
 }
 
+/* DES_VSYNC (the header): how frames meet the display. Read live. */
+enum class Sync { Off, On, Even, Vrr };
+
+Sync sync_parse(const char* v)
+{
+    if (!v || !*v) return Sync::On;
+    if (strcmp(v, "even") == 0) return Sync::Even;
+    if (strcmp(v, "vrr") == 0) return Sync::Vrr;
+    return atoi(v) ? Sync::On : Sync::Off;
+}
+
+Sync sync_wanted()
+{
+    static int s = int(Sync::On);
+    PS3_KNOB(s, int(sync_parse(getenv("DES_VSYNC"))));
+    return Sync(s);
+}
+
+bool s_vsync_pinned = false;   /* RSX_VSYNC set at start: it wins over DES_VSYNC */
+
+/* What the frame clock and the presents do in the mode the game is in. */
+struct Pacing {
+    int mode60 = -1;      /* the flip mode's 60 byte; -1 = the game's own */
+    int vblank_mhz = 0;   /* ps3_vblank_set_mhz; 0 = VBLANK_MHZ */
+    int lock = 0;         /* ps3_vblank_lock_display */
+    int interval = 1;     /* RSX_VSYNC */
+    float step = 0.0f;    /* even frames: the frame step, n refreshes in seconds (0 = real time only) */
+};
+
+/* fps: s_fps (0 or less: the game's own mode); cut: as in fps_on_flip_request.
+ * The refreshes a frame is held under even frames stay the same while the
+ * frame rate is within 0.6 of them, so a display at 150 Hz with 60 fps (2.5)
+ * does not switch at every reading of its rate. */
+Pacing pacing_for(int fps, int cut, Sync sync)
+{
+    Pacing p;
+    /* 30 mode on the PS3's vblank: the game's own mode, a cutscene, and 30 fps
+     * but under even frames, which runs it like any other rate. */
+    const bool ps3_30 = fps <= 0 || cut == 1 || (fps == 30 && sync != Sync::Even);
+    p.mode60 = fps <= 0 ? -1 : ps3_30 ? 0 : 1;
+    p.vblank_mhz = fps <= 0 ? 0 : cut == 1 ? kPs3VblankMhz : fps_vblank_mhz(fps);
+    p.interval = sync == Sync::Off || sync == Sync::Vrr ? 0 : 1;
+    const int r = rsx_d3d12_display_refresh_mhz();
+    if (r <= 0) return p;
+    if (sync == Sync::Vrr && !ps3_30) {
+        static int cap = 0;   /* (moves only by more than 1, as the rate's reading wobbles) */
+        const int c = int(r / 1000.0 * (1.0 - r / 3600000.0));
+        if (std::abs(c - cap) > 1) cap = c;
+        if (fps > cap) p.vblank_mhz = fps_vblank_mhz(cap);
+    } else if (sync == Sync::Even && !s_vblank_pinned) {
+        if (ps3_30) {
+            const int m = (r + kPs3VblankMhz / 2) / kPs3VblankMhz;
+            if (m >= 1 && std::abs(r - m * kPs3VblankMhz) * 1000LL <= m * kPs3VblankMhz * 6LL) {   /* 0.6% */
+                p.lock = m;
+                p.interval = std::min(2 * m, 4);
+                p.vblank_mhz = r / m;
+            }
+        } else {
+            static int held = 0;
+            const double x = double(r) / (double(fps) * 1000.0);
+            if (!held || std::fabs(x - held) >= 0.6) held = std::max(1, int(x + 0.5));
+            p.lock = held;
+            p.interval = std::min(held, 4);
+            p.vblank_mhz = r / held;
+            p.step = float(held * 1000.0 / r);
+        }
+    }
+    return p;
+}
+
+Pacing s_paced;   /* as applied (the backend's and the clock's defaults to start) */
+
+void pacing_apply(const Pacing& p, uint32_t obj, Sync sync)
+{
+    if (p.mode60 >= 0 && p.mode60 != s_paced.mode60) vm_write8(obj + kFlipMode60, uint8_t(p.mode60));
+    const bool say = p.lock != s_paced.lock || p.interval != s_paced.interval ||
+                     std::abs(p.vblank_mhz - s_paced.vblank_mhz) * 200LL > std::max(p.vblank_mhz, 1);
+    if (p.lock != s_paced.lock) ps3_vblank_lock_display(p.lock);
+    if (p.vblank_mhz != s_paced.vblank_mhz) ps3_vblank_set_mhz(p.vblank_mhz);
+    if (p.interval != s_paced.interval && !s_vsync_pinned)
+        ps3_setenv("RSX_VSYNC", std::to_string(p.interval).c_str());
+    if (say) {
+        const char* name = sync == Sync::Off ? "0" : sync == Sync::Even ? "even" : sync == Sync::Vrr ? "vrr" : "1";
+        const int r = rsx_d3d12_display_refresh_mhz();
+        if (p.lock)
+            fprintf(stderr, "[des] DES_VSYNC=%s: the vblank on every %d of %.2f Hz, a frame held %d refreshes\n",
+                    name, p.lock, r / 1000.0, p.interval);
+        else
+            fprintf(stderr, "[des] DES_VSYNC=%s: the vblank at %.2f Hz, presents %s%s\n", name,
+                    (p.vblank_mhz ? p.vblank_mhz : kPs3VblankMhz) / 1000.0,
+                    p.interval ? "at the refresh" : "at once",
+                    sync == Sync::Even ? " (this rate does not fit the display: as V-sync)" : "");
+    }
+    s_paced = p;
+}
+
 void fps_on_flip_request()
 {
     using clock = std::chrono::steady_clock;
@@ -268,8 +388,12 @@ void fps_on_flip_request()
     static uint32_t orig_dt;
     static int in_cutscene = 0;   /* 0 none, 1 at 30 (the lock), 2 unlocked (DES_CUTFPS) */
     static clock::time_point last;
+    const Sync sync = sync_wanted();
     const uint32_t obj = vm_read32(kFlipModeObj);
-    if (!obj) return;
+    if (!obj) {
+        pacing_apply(pacing_for(0, 0, sync), obj, sync);
+        return;
+    }
     /* A change of DES_FPS takes effect at the next flip request: the mode
      * bytes, the step and the vblank are set as at the start, and the game's
      * own mode puts back what it found. */
@@ -281,9 +405,7 @@ void fps_on_flip_request()
             orig_dt = vm_read32(kFrameDt);
         }
         if (want) {
-            vm_write8(obj + kFlipMode60, want > 30 ? 1 : 0);
             vm_write8(obj + kFlipNoSkip, 1);
-            ps3_vblank_set_mhz(fps_vblank_mhz(want));
             fprintf(stderr, "[des] DES_FPS=%s: FlipMode %s on 0x%08X, real frame time%s\n",
                     fps_name(want).c_str(), want > 30 ? "60FPS(NO SKIP)" : "30FPS(NO SKIP)", obj,
                     fps_vblank_mhz(want) ? ", vblank at the cap" : "");
@@ -291,35 +413,45 @@ void fps_on_flip_request()
             vm_write8(obj + kFlipMode60, orig60);
             vm_write8(obj + kFlipNoSkip, orig_noskip);
             vm_write32(kFrameDt, orig_dt);
-            ps3_vblank_set_mhz(0);
+            s_paced.mode60 = -1;
             fprintf(stderr, "[des] DES_FPS off: the game's own 30 fps mode\n");
         }
         s_fps = want;
         in_cutscene = 0;
         last = clock::time_point();
     }
-    if (!s_fps) return;
     /* A cutscene plays as the game ships it: 30 mode on the PS3's vblank, so
      * it flips every other vblank, and a fixed 1/30 step. Its camera takes
      * the nearest of keys 1/30 s apart while everything else follows the
      * frame step, so any faster and a cutscene judders. The vblank goes back
      * to the unlocked rate when the cutscene ends. With DES_CUTFPS=1 a
-     * cutscene stays unlocked and des_cut_cam blends the camera's keys. */
-    const int cut = s_fps > 30 && cutscene_playing() ? (cutfps_on() ? 2 : 1) : 0;
+     * cutscene stays unlocked and des_cut_cam blends the camera's keys. 30 fps
+     * under even frames runs at the display's rate (pacing_for), so its
+     * cutscenes go to 30 too. */
+    const bool unlocked = s_fps > 30 || (s_fps > 0 && sync == Sync::Even);
+    const int cut = unlocked && cutscene_playing() ? (cutfps_on() ? 2 : 1) : 0;
     if (cut != in_cutscene) {
-        if ((cut == 1) != (in_cutscene == 1)) {
-            vm_write8(obj + kFlipMode60, cut == 1 ? 0 : 1);
-            ps3_vblank_set_mhz(cut == 1 ? kPs3VblankMhz : fps_vblank_mhz(s_fps));
-        }
         fprintf(stderr, "[des] DES_FPS: %s\n",
                 cut == 1 ? "cutscene, 30 fps" : cut == 2 ? "cutscene, unlocked (DES_CUTFPS)"
                 : in_cutscene == 1 ? "cutscene over, unlocked again" : "cutscene over");
         in_cutscene = cut;
     }
+    const Pacing p = pacing_for(s_fps, cut, sync);
+    pacing_apply(p, obj, sync);
+    if (!s_fps) return;
+    /* Under even frames a frame is shown n refreshes after the last, or 2n
+     * after a late one: the step is that many whole frames when the time
+     * since the last flip request is within a quarter frame of it, so the
+     * game moves by the time each frame is on screen and not by when the
+     * request came. */
     const clock::time_point now = clock::now();
     float dt = kCutsceneDt;
     if (cut != 1 && last != clock::time_point()) {
         dt = std::chrono::duration<float>(now - last).count();
+        if (p.step > 0.0f) {
+            const float k = std::round(dt / p.step);
+            if (k >= 1.0f && std::fabs(dt - k * p.step) < p.step * 0.25f) dt = k * p.step;
+        }
         if (dt > kMaxFrameDt) dt = kMaxFrameDt;
     }
     uint32_t bits;
@@ -2333,13 +2465,9 @@ extern "C" void ps3_title_options_init(void)
     if (const int fps = fps_wanted())
         fprintf(stderr, "[des] DES_FPS=%s: real frame time, no skip frames%s\n", fps_name(fps).c_str(),
                 fps_vblank_mhz(fps) ? ", vblank at the cap" : "");
-    if (const char* v = getenv("DES_VSYNC")) {
-        if (*v && !getenv("RSX_VSYNC")) {
-            const bool on = atoi(v) != 0;
-            ps3_setenv("RSX_VSYNC", on ? "1" : "0");
-            if (!on) fprintf(stderr, "[des] DES_VSYNC=0: presents do not wait for the display\n");
-        }
-    }
+    /* DES_VSYNC is read at each flip request (pacing_apply); an RSX_VSYNC
+     * given at start wins over it. */
+    s_vsync_pinned = getenv("RSX_VSYNC") != nullptr;
     if (const char* f = getenv("DES_FRAMELOG")) {
         if (*f && (s_framelog = fopen(f, "w")) != nullptr) {
             snprintf(s_framelog_path, sizeof s_framelog_path, "%s", f);

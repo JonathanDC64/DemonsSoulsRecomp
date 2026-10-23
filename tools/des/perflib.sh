@@ -2,9 +2,10 @@
 # perflib.sh -- shared helpers for the perf batch scripts (exeab.sh, knobab.sh,
 # regfps.sh). Source it; it sources deslib.sh. How to run the batches: PERF.md.
 #
-#   perf_refuse_if_game       exit 3 if any des_boot.exe runs (ours or the user's)
-#   perf_no_game [secs]       wait up to secs (default 0) until no des_boot.exe
-#                             runs; false if one still does (the user's game)
+#   perf_refuse_if_game       exit 3 if any des_boot.exe or des_host.exe runs
+#                             (ours or the user's)
+#   perf_no_game [secs]       wait up to secs (default 0) until neither runs;
+#                             false if one still does (the user's game)
 #   perf_quiet [secs]         one CPU check over secs (quiet.ps1); false if busy.
 #                             Sets PERF_BG (total CPU %) for the run log.
 #   perf_wait_quiet [secs]    perf_quiet until it passes, up to PERF_QUIET_WAIT s
@@ -39,16 +40,18 @@
 PERF_USER_SAVE="$DES_ROOT/gamedata/dev_hdd0/home/00000001/savedata"   # levelcap.sh's SAVE
 
 # The whole listing is read before it is tested: `| grep -q` under pipefail
-# reads false when tasklist is still writing as grep exits.
+# reads false when tasklist is still writing as grep exits. A test run's game
+# is always a staged des_boot.exe (des_stage); a player's start of a split
+# build is des_host.exe, and counts as the user's game too.
 perf_game_up() {
   local out
-  out=$(tasklist //FI "IMAGENAME eq des_boot.exe" //NH 2>/dev/null | tr '[:upper:]' '[:lower:]')
-  [[ "$out" == *des_boot* ]]
+  out=$(tasklist //NH 2>/dev/null | tr '[:upper:]' '[:lower:]')
+  [[ "$out" == *des_boot.exe* || "$out" == *des_host.exe* ]]
 }
 
 perf_refuse_if_game() {
   perf_game_up || return 0
-  echo "[perf] a des_boot.exe is running: $(des_games < /dev/null | tr -d '\r' | cut -d'|' -f1,2 | tr '\n' ' ')"
+  echo "[perf] a des_boot.exe or des_host.exe is running: $(des_games < /dev/null | tr -d '\r' | cut -d'|' -f1,2 | tr '\n' ' ')"
   echo "[perf] not starting (a batch never stops a game it did not start)"
   exit 3
 }

@@ -274,6 +274,10 @@ The steps, as built (setup_python.cpp, `PythonFetch`; built and run 10-22: secti
 - **How** (decided here). On a player's start the launch hook (section 3) reads `ready.txt` and, through `ps3_setenv` (boot_main.cpp:202, which sets the process environment and the getenv cache), sets:
   - `PS3_GAME_MODULE=<module>`, unless it is already set (a developer's choice wins);
   - `PS3_VFS_ROOT=<game>`, the dump, since the staged `EBOOT.elf` is not beside the game's files (derive_vfs_root, boot_main.cpp:278-282);
+  - so that the dump is only read (docs/90 section 4, items 1 and 2, 10-23), each unless it is already set:
+    - `PS3_EDAT_PLAIN=<data>/inputs`: the game's `.sdat` files are opened as the decrypted copies setup staged;
+    - `PS3_EDAT_CACHE=<data>/edat`: the runtime's own decryption of a file with no staged copy goes there;
+    - `PS3_HDD1_ROOT=<data>/hdd1`, made if missing: the game's HDD cache, which was a `cache/` folder in the dump;
   - and the ELF argument, the staged `EBOOT.elf`.
   Then `main` goes on, and `ps3_game_load` loads the module as it does today (game_host.c:85-96).
 - **Why not the other two ways.** Teaching `game_host.c` to look in this title's data folder puts the port's folder names into ps3recomp. A separate launcher exe that sets `PS3_GAME_MODULE` is a second program to ship and sign, for what the host's own hook does in a few lines (inferred).

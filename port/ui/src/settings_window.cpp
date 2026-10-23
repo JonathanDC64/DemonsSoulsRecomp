@@ -369,6 +369,8 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             });
         const input::PadSupport pads = input::pad_support();
         info_row(leftPane, rightPane, "Gamepads", pads.value, pads.help);
+        bool_row(leftPane, rightPane, "Vibration", "PAD_RUMBLE",
+            "Lets the game make your gamepad vibrate.<br/><br/>(PAD_RUMBLE)");
         info_row(leftPane, rightPane, "Keyboard and mouse", "WASD, mouse, Space",
             "As in the Souls games on PC:<br/>"
             "<b>W A S D</b> move &nbsp; <b>Left Alt</b> (held) walk &nbsp; <b>Mouse</b> camera (Mouse look, "

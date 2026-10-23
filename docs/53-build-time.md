@@ -311,6 +311,8 @@ times]
 - The exe links. Its code differs from the 14-chunk build only in what
   clang could inline across functions, which is what R3 measures.
   [measured, inferred]
+- R3 (section 14, 10-23) found no difference in frame rate: +0.10% for
+  53 chunks, inside the noise. [measured]
 
 ### 7.3 Memory: the bigger win on small PCs
 
@@ -556,6 +558,25 @@ These run the game. The exes are in the lane folder under `exe_nozi14/` and
   frame rate of each. Expect: within a few percent. Smaller chunks give the
   inliner fewer callees to see, which could cost a little or nothing.
   Needed before the recipe switches to `--chunk-lines 150000`.
+
+  **Result (2026-10-23): no loss.** Measured with the game DLLs of two
+  real setups instead of these exes: run B's (14 chunks) against run C's
+  (53 chunks), both made by setup from the same EBOOT, ps3recomp and
+  clang-cl 22.1.8 with the same flags, and both started by the same host
+  exe. Deep Palace save, plain windows, `RSX_VSYNC=0 DES_VSYNC=0
+  DES_FPS=unlocked` with a 960 MHz vblank, 8 rounds in ABBA order, on a
+  quiet PC (background CPU 1.5-7.4%). [measured]
+
+  | | 14 chunks | 53 chunks |
+  |---|---|---|
+  | Median of the 8 boots | 167.4 fps | 167.4 fps |
+  | Lowest boot | 158.2 fps | 163.6 fps |
+  | Median of the round deltas | | +0.10% |
+  | Rounds faster | 2 of 8 | 6 of 8 |
+
+  - The paired t test gives p = 0.38: no difference either way.
+  - The 14-chunk side's lowest boot comes from one window at 150.8 fps
+    (round 2). Without that round the median delta is +0.19%.
 
 ## 15. Decisions for you
 

@@ -106,13 +106,15 @@ tools/des/desrun.sh "${REGRESS_MAX:-600}" "$OUT" DES_SKIP_INTRO=1 DES_AUTO_CONTI
   PAD_FILE="$(cygpath -m "$PAD")" PS3_DEBUG="$(cygpath -m "$CON")" PS3_OSK_TEXT=Aldia HLE_FIRST=1 \
   DES_FRAMELOG="$(cygpath -m "$RUN/frames.txt")" \
   CELLMARK_DUMP_MINDRAWS=1 CELLMARK_DUMP_DIR="$(cygpath -m "$RUN/shots")" > "$RUN/summary.txt" 2>&1 &
-t0=$SECONDS
+DR=$!; t0=$SECONDS
 say() { echo "[regress] t=$((SECONDS - t0))s $*"; }
 
 # DES_AUTO_CONTINUE presses through the menus in-process until the level's
-# script archive opens.
+# script archive opens. desrun.sh lives as long as the game: a split build
+# writes its pid only once the game DLL is loaded, which can take longer than
+# any fixed grace.
 until grep -aq luabnd "$OUT"; do
-  des_running || [ $((SECONDS - t0)) -lt 20 ] || { say "run ended before the level"; exit 2; }
+  kill -0 "$DR" 2>/dev/null || des_running || { say "run ended before the level"; exit 2; }
   [ $((SECONDS - t0)) -lt 400 ] || { say "no level load"; exit 2; }
   sleep 0.5
 done

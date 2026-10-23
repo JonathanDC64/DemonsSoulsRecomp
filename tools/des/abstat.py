@@ -2,8 +2,10 @@
 """abstat.py <batch dir>: summarize an exeab.sh batch (tools/des/PERF.md).
 
 Reads <dir>/runs.txt (side, boot, round, validity, background cpu) and, per boot, lc_<boot>/:
-prof_*_summary.txt and prof_*_frames.txt (the profile windows) and frames.log (FRAME_LOG, one line
-per present over the whole boot). Two frame rates per window:
+plain_*.txt (plain windows, kabplain.py: EXEAB_PLAIN=1, the default) or prof_*_summary.txt and
+prof_*_frames.txt (profile windows, EXEAB_PLAIN=0), and frames.log (FRAME_LOG, one line per present
+over the whole boot). A plain window has nothing armed: its frame rate is the presents between two
+console `stat` flip counts over their frames.log time. Profile windows give two frame rates each:
   prof  the profile session's own average (what docs/28 reports). A session perturbs what it
         measures: it times every texture, SRV and pipeline lookup on the FIFO thread with
         QueryPerformanceCounter and times every guest syscall (the `waits` table).
@@ -15,7 +17,8 @@ median B vs A, rounds where B was faster, paired t on the round deltas, Welch t 
 The boot (mean of its windows) is the unit for the tests: windows in one boot are not independent.
 A window under 0.6 x its side's median (a cutscene's 30 fps lock, a stall) is dropped and listed.
 Noise bars, the boot-to-boot spread of one build across a batch: PERF_BAR_PROF (default 2.8 %,
-profile fps) and PERF_BAR_GAP (default 4.5 %, gap fps); re-measure them with an A/A batch (the same
+profile fps), PERF_BAR_GAP (default 4.5 %, gap fps) and PERF_BAR_PLAIN (default 4.5 %, plain fps,
+taken from the gap's: both are unperturbed windows); re-measure them with an A/A batch (the same
 exe on both sides) after a big change. A gain counts when |median delta| >= the bar, the paired
 p < 0.05, and B is on the same side in all but at most one round (at least 3 rounds).
 """
@@ -105,6 +108,7 @@ def desc(xs):
 RX1 = re.compile(r"([\d.]+) s, (\d+) presents: ([\d.]+) fps average, 1% low ([\d.]+) fps")
 RX2 = re.compile(r"present interval ms: median ([\d.]+)\s+p90 ([\d.]+)\s+p99 ([\d.]+)")
 RX3 = re.compile(r"render_frame \(frame start -> Present\) ms: median ([\d.]+)")
+RXP = re.compile(r"([\d.]+) s, (\d+) presents: ([\d.]+) fps average")
 
 
 def read_rows(path, draws_col=6, dt_col=1, t_col=0):
@@ -140,6 +144,13 @@ def read_window(summary):
         if w["rows"]:
             w["draws"] = st.median([r[2] for r in w["rows"]])
     return w if "fps" in w else None
+
+
+def read_plain(path):
+    """a plain window's frame rate (kabplain.py's plain_NNN.txt), or None"""
+    with open(path, errors="replace") as f:
+        m = RXP.search(f.readline())
+    return float(m.group(3)) if m else None
 
 
 def locate(log, rows, k=60):
@@ -256,20 +267,33 @@ def main(d):
         print()
     for r in runs:
         rd = os.path.join(d, "lc_" + r["name"])
-        wins = []
+        wins, plain = [], []
         if os.path.isdir(rd):
             for fn in sorted(os.listdir(rd)):
                 if re.match(r"prof_\d+_summary\.txt$", fn):
                     w = read_window(os.path.join(rd, fn))
                     if w:
                         wins.append(w)
+                elif re.match(r"plain_\d+\.txt$", fn):
+                    x = read_plain(os.path.join(rd, fn))
+                    if x is not None:
+                        plain.append(x)
         r["wins"] = wins
         r["prof"] = [w["fps"] for w in wins]
+        r["plain"] = plain
         r["gap"] = boot_gaps(rd, wins) if os.path.isdir(rd) else []
     print("boots:")
     for r in runs:
+        if r["plain"] and not r["prof"]:
+            print(f"  {r['side']} {r['name']:<22} round {r['round']}  {r['valid']:<8} bg {r['bg']:>4}%  "
+                  f"plain {' '.join(f'{x:.1f}' for x in r['plain'])}")
+            continue
         print(f"  {r['side']} {r['name']:<22} round {r['round']}  {r['valid']:<8} bg {r['bg']:>4}%  "
               f"prof {' '.join(f'{x:.1f}' for x in r['prof']):<12}  gap {' '.join(f'{x:.1f}' for x in r['gap'])}")
+    if any(r["plain"] for r in runs) and not any(r["prof"] for r in runs):
+        print()
+        verdict(runs, "plain", "plain-window", float(os.environ.get("PERF_BAR_PLAIN", "4.5")))
+        return
     for s in "AB":
         ws = [w for r in runs if r["side"] == s and r["valid"] == "ok" for w in r["wins"]]
         extra = []

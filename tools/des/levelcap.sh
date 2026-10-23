@@ -63,10 +63,12 @@ if [ -n "$LC_SAVE" ]; then
 fi
 tools/des/desrun.sh "${LC_MAX:-600}" "$OUT" DES_SKIP_INTRO=1 \
   PAD_FILE="$(cygpath -m "$PAD")" PS3_DEBUG="$(cygpath -m "$CON")" PS3_OSK_TEXT=Aldia HLE_FIRST=1 CELLMARK_DUMP=${LC_DUMP:-100000} CELLMARK_DUMP_EVERY=${LC_EVERY:-30} CELLMARK_DUMP_CHANGED=1 CELLMARK_DUMP_MINDRAWS=1 CELLMARK_DUMP_DIR="$(cygpath -m "$SHOTS")" "$@" > "$RUN/summary.txt" 2>&1 &
-t0=$SECONDS; say() { echo "[lc] t=$((SECONDS - t0))s $*"; }
+DR=$!; t0=$SECONDS; say() { echo "[lc] t=$((SECONDS - t0))s $*"; }
 k=0
 until grep -aq luabnd "$OUT"; do
-  des_running || [ $((SECONDS - t0)) -lt 20 ] || { say "run ended before the level"; exit 2; }
+  # desrun.sh lives as long as the game: a split build writes its pid only once
+  # the game DLL is loaded, which can take longer than any fixed grace.
+  kill -0 "$DR" 2>/dev/null || des_running || { say "run ended before the level"; exit 2; }
   [ $((SECONDS - t0)) -lt 400 ] || { say "no level load"; exit 2; }
   if [ -z "${LC_NOPRESS:-}" ] && grep -aq 'nid=0x8B72CDA1 cellPadGetData' "$OUT" && [ ! -s "$PAD" ]; then
     k=$((k + 1)); if [ $((k % 3)) = 0 ]; then echo 0x0008 > "$PAD"; else echo 0x4000 > "$PAD"; fi

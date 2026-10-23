@@ -40,7 +40,7 @@ The flow (docs/52 1.2), with what this patch has:
 | 5 | Failed | A page: "The build stopped" or "Some game files need fixing", a red callout with the engine's sentence (and the files to fix after the game check), the engine's last lines | Report the problem and Try again (step and internal errors), else Try again or Check again; Show the full log; Close | **yes** |
 | 6 | Stopped | "The build is stopped" | Resume, Close | **yes** |
 | 7 | Done | "Ready to play" | Play | **yes**; Play hands over to the boot (section 7) |
-| 8 | Shaders | The same progress screen, one more task (`shaders`, docs/52 5) | as 4 | the label only |
+| 8 | Shaders | The same progress screen, one more task (`shaders`, docs/52 5) | as 4 | the shaders phase (section 13) |
 
 Every screen is a page of the setup shell (docs/89 section 2): the whole window, the rail of steps on the left. The pad: Left and Right move along a line of buttons, Up and Down between the lines, Cross presses one, Circle goes back. On the start screen Circle asks before it quits; on the progress screen it asks to stop. L1 and R1 (Page Up and Page Down) scroll the game folder and help pages. When a question or a page above the start screen closes, the focus goes back to the button that opened it. The pad's buttons and what they do show small at the bottom. Start and F1 do nothing here.
 
@@ -318,7 +318,7 @@ only). Not run yet: `run` with the real compiler download, which waits for the a
 3. **The first Python download** (section 5): the host's SHA-256, then curl and tar through `ChildProcess`. **Built** (10-22, `feat/setup-first-python`): built with clang-cl and run with a real download (section 11).
 4. **The start screen** (section 3's states), **"Where is your game?"**, **the game folder** and **the help page**: the folder picker (a function for each platform: the shell's folder dialog on Windows, the desktop portal on Linux), the scan of likely places, the check's rows from `run --check-only`. **Built and seen** with the stand-in engine (section 11). Next: the folder dialog and a real dump; the RPCS3 card (docs/89 section 6).
 5. **Ready to build**: the free space and time estimate, and "Plug it in first" on battery (docs/52 1.2 point 3). **Built and seen.** The time is a model from one PC's numbers; a whole setup on a second PC would check it.
-6. **The shaders phase** (docs/52 section 5): one more phase in `run`'s plan; the screen already has its label.
+6. **The shaders phase** (docs/52 section 5): one more phase in `run`'s plan; the screen already has its label. **Built** (10-23, section 13).
 7. **Keeping Linux awake.**
 8. **A test of the C++ protocol reader** that runs in CI (`parse_line`, `Status`, `Eta` are pure). port/ui has no C++ test target yet.
 
@@ -369,3 +369,40 @@ only). Not run yet: `run` with the real compiler download, which waits for the a
 2. **The first Python through Windows' `curl.exe` and `tar.exe`** (section 5), with the host checking the SHA-256. Recommendation: yes. The other way is a few hundred lines of HTTP and zip code in the host. Built that way (section 5) and run with a real download (section 11).
 3. **Play restarts the host** after setup (section 7). Built that way. Recommendation: yes, for a clean boot. The other way keeps one process and starts RmlUi and D3D12 a second time in it.
 4. **Reports from setup include the failed step's log tail** (section 6), with names and addresses but no game code once the compile runs with `-fno-caret-diagnostics`. Recommendation: yes; the player sees the zip before attaching it.
+
+## 13. The shaders phase (10-23)
+
+After the compile, setup prepares the game's shaders, as the game does at its first start (`des_prework.cpp`, docs/52 section 5). The first start then finds them ready and begins at once.
+
+- **How it runs.**
+  - `shaders` is the engine's last phase. It runs the host as `des_host --shaders <game folder>`; the host gives the engine its own path with `--host`.
+  - `ps3_title_launch` sees `--shaders` before anything else and runs the game's own pass with no window. The pass reads each `.vpo` and `.fpo` in `USRDIR/shader/*.shaderbnd`, turns it into HLSL, and compiles that with D3DCompile on all processors but one. It needs no device. Then the process exits.
+  - The cache and its stamp are the game's: `shader_cache` beside the exe, or `PS3_SHADER_CACHE`. The stamp holds the exe's link time and size, the archives and the texture kinds. The game starts the same exe on the same folder (the host reads the folder from `ready.txt`), so its first start finds the cache up to date.
+  - It is a process of its own because the precompile runs once a process.
+  - The host prints `shaders <done> <total>` as it goes and `shaders <result> <compiled> <already prepared> <failed> <seconds>` at the end. The engine turns these into the phase's progress and one line, and keeps the host's output in `setup/logs/shaders.log`.
+  - The count starts once every program is turned into HLSL, when the total is final. Before that it moves: 15, then 3,763, before 3,603, all in the first second.
+  - The hook that starts `des.log` skips `--shaders`, so the process writes no log of its own.
+- **It never fails the setup.**
+  - A pass that fails, crashes or does not start gives one note: "the shaders were not all prepared ...: the game prepares the rest at its start".
+  - The engine run from a terminal without `--host` skips the phase.
+  - `ready.txt` is written once the compile is done, before this phase. A pass that is stopped leaves a game that plays.
+- **Linux.** The precompile is D3DCompile's, so on Linux the host answers "nothing to prepare" and the shaders compile as the game draws them.
+- **Not in it.** The pipelines (PSOs) and the driver's own cache are still built as the game draws (docs/49).
+- **The time estimate** before setup is unchanged: the pass takes about 20 s here, inside the estimate's rounding.
+- **Tested** (10-23).
+  - 5 unit tests (`ShadersTest`), with a stand-in host:
+    - the host runs after the compile with `--shaders` and the game folder, and `ready.txt` is already there when it starts;
+    - "up to date" reads as a skip;
+    - a failed pass is a note, and the run ends ok;
+    - a run with no host;
+    - and the whole plan.
+  - Two more (`HostAgreesTest`) check the host's side: its line formats and result words, and `--shaders` and `--host`.
+  - `des_host --shaders` on the US disc, with the host built as CI builds it:
+    - 1,421 programs and 3,603 shaders, all compiled in 20.0 to 21.3 s on 15 threads;
+    - with the same cache and another build of the exe, all 3,603 already prepared in 0.5 s;
+    - run again, "up to date" at once;
+    - no `des.log` written.
+  - A real setup from a fresh data folder, through the screens, with this branch and the memory-aware compile (`feat/setup-compile-memory`) merged locally:
+    - the plan read `check fetch stage lift compile shaders`;
+    - `ready.txt` was written after the compile, then the phase took 20.3 s (3,603 compiled), and the whole run 986 s;
+    - the player's start after it loaded the built DLL and printed "shaders: cache up to date", then played (the pinned save, 200 s).

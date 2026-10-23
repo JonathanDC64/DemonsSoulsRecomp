@@ -259,6 +259,8 @@ Check before starting, again before the compile, and again before the link (sect
 
 Time: 28 s for the shaders (docs/32), plus 35 to 101 CPU-seconds of driver compiles (docs/49), so about a minute on this PC (inferred).
 
+Step 1 is built (10-23, docs/88 section 13): the engine's `shaders` phase runs `des_host --shaders`, 3,603 shaders in about 20 s on 15 threads. It runs at the engine's priority, below normal, like the rest of setup. Steps 2 and 3 are not built.
+
 The step does not need the game DLL. The prework, the precompiler and the PSO code are host code. They read the game folder's files and `EBOOT.ELF` (inferred from docs/49 2.2). So under Route B it could even overlap the compile. It stays last, as asked, and because the compile already uses every core.
 
 ### 5.3 Later changes

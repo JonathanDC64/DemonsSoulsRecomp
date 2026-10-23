@@ -198,10 +198,11 @@ The compile no longer fixes its job count at the start (section 7). Each job sta
   - the peak measured the last time that object compiled, with 10% room (the journal keeps it in the object's step, `results.peak`);
   - else its kind's figure, from docs/53 section 2 with some room: a PPU chunk 2.6 GB, libsre 2 GB, an SPU program 0.5 GB, the rest 0.5 GB;
   - raised to the largest peak measured so far in this run among its kind, with 10% room, when that is more. A smaller one does not lower it: on the first real run, chunk 012 peaked at 0.86 GB in 5 s, and when the others were expected to take as little, a third 2.2 GB chunk started and the free memory fell to 1.9 GB.
-  - A PPU chunk's is at most what its source's size gives (10-23): 0.15 GB plus 0.14 GB a MB of source. Over the 81 chunks of three setups the most was 0.15 GB plus 0.128 GB a MB (docs/53 section 16.3); the rest is 10% room.
+  - A PPU chunk's is at most what its source's size gives (10-23): 0.15 GB plus 0.075 GB a MB of source. The 53 chunks of a player's setup took 0.15 GB plus 0.012 to 0.118 GB a MB, most of them 0.055 to 0.068; 0.075 is that with 10% room. Once chunks of the run are measured, the rate three in four of them stayed under counts, with room, when it is higher; not the highest, so one chunk that takes far more does not hold the others back.
     - A 600,000-line chunk (32 to 39 MB) reaches the kind's 2.6 GB, so these run as before.
-    - A 150,000-line chunk (7 to 11 MB) is expected at 1.1 to 1.7 GB, so about twice as many run at once.
-    - A chunk of this run that took more for its size raises the rate for the rest, with 10% room.
+    - A 150,000-line chunk (7 to 11 MB) is expected at 0.7 to 1 GB, so about three times as many run at once as at the kind's figure.
+    - When three in four of this run's chunks took more for their size, their rate counts for the rest, with 10% room.
+  - Until this change the rate was 0.14 (the highest over the 81 chunks of three setups, 14 larger ones from before #158 among them, docs/53 section 16.3, with 10% room), and the run's highest rate counted. That player's setup, with 6.6 GB free, compiled 3 at a time for 540 s while each chunk took 0.6 to 0.7 GB, a quarter of its 16 threads. Replayed from its journal (each chunk's measured peak and time, its commit growing evenly to the peak), the new rule runs 5.5 at a time on average and takes about 300 s, and never leaves less than 2.25 GB free (inferred, from the model).
 - **Measuring a peak.**
   - Windows: the compiler's peak commit (`PeakPagefileUsage`, from `K32GetProcessMemoryInfo`), read once it has ended, while its handle is still open.
   - Linux: `VmHWM` from `/proc/<pid>/status`, sampled every half second while it runs, since it is gone once the process ends.
@@ -209,7 +210,7 @@ The compile no longer fixes its job count at the start (section 7). Each job sta
 - **Free memory** is the physical memory available, or on Windows the commit the system can still give when that is less (a small page file). When it cannot be read, half the processors run, as the first rule did.
 - **The hint.** When memory has held jobs back for 5 s, the engine prints `@memory short`, and the note under the bar reads "Closing other programs makes this faster." `@memory ok` puts the usual note back. The protocol stays version 2, because an older host reads an `@` line it does not know as a plain line (`setup_protocol.hpp`).
 - **The progress** counts source bytes, as docs/52 4.3 has it, not objects; the screen shows it in MB.
-- **The time estimate** on the start screen (`setup_pc.cpp`) counts the PPU chunks that fit in the memory free now, with the compile's figures (2 GB kept, 2.6 GB a chunk). It counted the PC's whole memory before, and promised 9 jobs on a PC that ran 1.
+- **The time estimate** on the start screen (`setup_pc.cpp`) counts the PPU chunks that fit in the memory free now, with the compile's figures (2 GB kept, 0.8 GB a chunk: the size rule for the 53 chunks). It counted the PC's whole memory before, and promised 9 jobs on a PC that ran 1.
 - **Tested.**
   - 12 unit tests (`TestMemory` in `test_compile.py`), with a stand-in for the free memory and a fake compiler that takes the time it is told:
     - short memory runs one job at a time; small jobs start beside a big one; plenty of memory runs several side by side;

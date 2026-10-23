@@ -288,6 +288,38 @@ std::vector<Place> likely_places() {
     return scan.found;
 }
 
+namespace {
+
+// One of the decrypted files' names (case ignored): EBOOT.elf, libsre.prx, or a script file's .sdat.unedat.
+bool decrypted_name(const std::string& name) {
+    constexpr const char* kTail = ".sdat.unedat";
+    const size_t n = std::strlen(kTail);
+    return same_text(name, "EBOOT.elf") || same_text(name, "libsre.prx") ||
+           (name.size() > n && same_text(name.substr(name.size() - n), kTail));
+}
+
+bool holds_decrypted(const std::filesystem::path& dir) {
+    std::error_code ec;
+    size_t entries = 0;
+    for (std::filesystem::directory_iterator it(dir, std::filesystem::directory_options::skip_permission_denied, ec),
+         end;
+         !ec && it != end && entries < kMaxEntries; it.increment(ec), ++entries) {
+        std::error_code fileEc;
+        if (it->is_regular_file(fileEc) && decrypted_name(utf8(it->path().filename()))) return true;
+    }
+    return false;
+}
+
+}  // namespace
+
+FolderKind folder_kind(const std::filesystem::path& folder) {
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(folder / "PS3_GAME" / "PARAM.SFO", ec)) return FolderKind::Dump;
+    for (const auto& dir : {folder, folder / "USRDIR", folder / "PS3_GAME" / "USRDIR"})
+        if (holds_decrypted(dir)) return FolderKind::Decrypted;
+    return FolderKind::Other;
+}
+
 Space data_space() {
     Space out;
     const std::filesystem::path& dir = data_dir();

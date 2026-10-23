@@ -28,9 +28,10 @@ public:
     ChildProcess& operator=(const ChildProcess&) = delete;
 
     // Starts `program` (a path, or a name looked up in PATH) with `args` (UTF-8): standard input empty, no window of
-    // its own. False if it could not start: why() says why.
+    // its own, in `folder` when one is given (Windows only so far: the first Python's tools, setup_python.hpp; nothing
+    // elsewhere passes one). False if it could not start: why() says why.
     bool start(const std::filesystem::path& program, const std::vector<std::string>& args, LineFn on_line,
-               ExitFn on_exit);
+               ExitFn on_exit, const std::filesystem::path& folder = {});
     // Ends it and every process it started, at once (any thread). The reading thread then sees the pipe close.
     void stop();
     bool running() const { return mRunning.load(); }

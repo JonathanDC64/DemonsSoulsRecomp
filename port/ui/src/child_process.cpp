@@ -81,7 +81,7 @@ void close_handle(HANDLE& h) {
 }
 
 bool os_start(ChildProcess::Os& os, const std::filesystem::path& program, const std::vector<std::string>& args,
-              std::string& why) {
+              const std::filesystem::path& folder, std::string& why) {
     SECURITY_ATTRIBUTES inheritable{sizeof inheritable, nullptr, TRUE};
     HANDLE readEnd = nullptr, writeEnd = nullptr;
     if (!CreatePipe(&readEnd, &writeEnd, &inheritable, 0)) {
@@ -123,7 +123,7 @@ bool os_start(ChildProcess::Os& os, const std::filesystem::path& program, const 
     // PATH, as the command line's first word)
     ok = ok && CreateProcessW(program.has_parent_path() ? program.c_str() : nullptr, command.data(), nullptr, nullptr,
                               TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, nullptr,
-                              nullptr, &startup.StartupInfo, &pi);
+                              folder.empty() ? nullptr : folder.c_str(), &startup.StartupInfo, &pi);
     const DWORD error = ok ? 0 : GetLastError();
     if (listMade) DeleteProcThreadAttributeList(list);
     close_handle(writeEnd);  // (the child's copy is its own: the pipe ends when the child and its children close it)
@@ -186,7 +186,11 @@ struct ChildProcess::Os {
 namespace {
 
 bool os_start(ChildProcess::Os& os, const std::filesystem::path& program, const std::vector<std::string>& args,
-              std::string& why) {
+              const std::filesystem::path& folder, std::string& why) {
+    if (!folder.empty()) {  // (posix_spawn has no standard way to start in another folder, and nothing here needs one)
+        why = "no working folder here";
+        return false;
+    }
     int fds[2];
     if (pipe(fds) != 0) {
         why = std::string("no pipe: ") + std::strerror(errno);
@@ -277,7 +281,7 @@ ChildProcess::~ChildProcess() {
 }
 
 bool ChildProcess::start(const std::filesystem::path& program, const std::vector<std::string>& args, LineFn on_line,
-                         ExitFn on_exit) {
+                         ExitFn on_exit, const std::filesystem::path& folder) {
     if (mThread.joinable()) {  // (the last run's thread)
         stop();
         mThread.join();
@@ -285,7 +289,7 @@ bool ChildProcess::start(const std::filesystem::path& program, const std::vector
     mWhy.clear();
     mStopped = false;
     mOs = std::make_unique<Os>();
-    if (!os_start(*mOs, program, args, mWhy)) {
+    if (!os_start(*mOs, program, args, folder, mWhy)) {
         mOs.reset();
         return false;
     }

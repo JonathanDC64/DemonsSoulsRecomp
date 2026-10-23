@@ -5,6 +5,7 @@
 
 #include "child_process.hpp"
 #include "setup_protocol.hpp"
+#include "setup_python.hpp"
 
 #include <filesystem>
 #include <mutex>
@@ -15,7 +16,7 @@ namespace ui::setup {
 
 // The embeddable Python the engine runs on, on Windows, as tools/setup/des_setup/toolchain.json pins it
 // (tools/setup/tests/test_pipeline.py checks that the two agree). The host fetches it before the first run, since
-// there is no Python to run the engine's own download with (docs/88 section 5).
+// there is no Python to run the engine's own download with (setup_python.hpp, docs/88 section 5).
 inline constexpr const char* kPythonName = "python-embed";
 inline constexpr const char* kPythonVersion = "3.13.9";
 inline constexpr const char* kPythonUrl = "https://www.python.org/ftp/python/3.13.9/python-3.13.9-embed-amd64.zip";
@@ -55,14 +56,16 @@ struct Launch {
 Launch launch_state();
 
 // The engine's Python: DES_SETUP_PYTHON (a developer's), else on Windows the downloaded one (empty until the host has
-// fetched it), elsewhere python3 from PATH.
+// fetched it: Engine::start fetches it first then), elsewhere python3 from PATH.
 std::filesystem::path python();
 // tools/setup/run_setup.py: DES_SETUP_SCRIPT (a developer's, such as a source tree's, for a real build from a build
 // folder elsewhere), else beside the exe in a release (the install mirrors the source tree), or up to three folders up
 // in a developer's build. Empty if it is not there.
 std::filesystem::path engine_script();
 
-// One run of the engine: `run_setup.py run ...` under setup's Python, its lines read into a Status.
+// One run of the engine: `run_setup.py run ...` under setup's Python, its lines read into a Status. With no Python yet
+// (Windows, before the first run), the host's download of it (setup_python.hpp) comes first, as the run's first step:
+// its lines go into the same Status, and the engine starts from poll() once it is in place.
 class Engine {
 public:
     Engine() = default;
@@ -71,21 +74,31 @@ public:
 
     // Starts a run (or a check of the game files only). False if it could not start: why() says why, for the player.
     bool start(const Request& request, bool check_only = false);
-    // Cancel: ends the engine and everything it started. The journal keeps what was done, so the next run resumes.
-    void stop() { mProcess.stop(); }
-    bool running() const { return mProcess.running(); }
+    // Cancel: ends the download or the engine, and everything it started. The journal keeps what was done, and the
+    // download's .part file what it got, so the next run carries on.
+    void stop();
+    bool running() const { return mProcess.running() || mFetch.running(); }
     const std::string& why() const { return mWhy; }
     // What the engine said since the last call, applied to `status`, then its end once it has ended (the UI thread,
-    // once a frame).
+    // once a frame). After the first Python's download, this starts the engine.
     void poll(Status& status);
 
 private:
+    bool start_engine(unsigned run);
+
     std::string mWhy;
-    std::mutex mLock;  // the lines and the end, from the reading thread
+    Request mRequest;          // this run's, for the engine's start after the download
+    bool mCheckOnly = false;
+    bool mFetching = false;    // this run began with the first Python's download
+    bool mFromEngine = false;  // the lines come from the engine now, not from the download
+    bool mStopAsked = false;   // stop() came during this run
+    std::mutex mLock;  // the lines and the ends, from the reading threads
     std::vector<std::string> mLines;
     bool mEnded = false, mStopped = false;
+    bool mFetchEnded = false, mFetchOk = false, mFetchStopped = false;
     int mExit = 0;
-    unsigned mRun = 0;  // which run the reading thread's callbacks are for
+    unsigned mRun = 0;  // which run the reading threads' callbacks are for
+    PythonFetch mFetch;     // (destroyed before what its threads write to)
     ChildProcess mProcess;  // (last: destroyed first, so its thread has ended before what it writes to goes)
 };
 

@@ -591,6 +591,10 @@ void SetupFilesWindow::draw_check() {
         if (mStatus.progress == "check" && mStatus.progressM > 0)
             line = "Checking the game files: " + grouped(mStatus.progressN >> 20) + " of " +
                    grouped(std::max(1LL, mStatus.progressM >> 20)) + " MB";
+        else if (mStatus.current() && mStatus.current()->name == setup::kPythonStep)  // (the first check's download)
+            line = mStatus.progressM <= 0 ? std::string("Downloading Python first...")
+                                          : "Downloading Python first: " + grouped(mStatus.progressN >> 20) + " of " +
+                                                grouped(std::max(1LL, mStatus.progressM >> 20)) + " MB";
         auto* row = append(panel(mCheck), "setup-row");
         row->SetClass("start", true);
         append(row, "setup-spin");
@@ -618,9 +622,11 @@ void SetupFilesWindow::draw_check() {
         } else if (!game.empty()) {  // (a folder that is not the game's, or another copy: the line says why)
             found(box, "setup-err", "This is not a copy setup can use",
                   (*std::find_if(game.begin(), game.end(), bad))->text);
-        } else {
-            found(box, "setup-err", "The check did not finish",
-                  mStatus.errorText.empty() ? std::string("Check again.") : mStatus.errorText);
+        } else {  // (the engine's sentence; after the first Python's download or the disk, what to do as well)
+            std::string why = mStatus.errorText.empty() ? std::string("Check again.") : mStatus.errorText;
+            if (mStatus.errorCode == "download") why += " Check the internet connection, then check again.";
+            else if (mStatus.errorCode == "disk") why += " Free some space, then check again.";
+            found(box, "setup-err", "The check did not finish", why);
         }
         if (isGame && !files.empty()) {
             const auto missing = std::count_if(files.begin(), files.end(), bad);

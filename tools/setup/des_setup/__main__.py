@@ -283,7 +283,8 @@ def main(argv=None) -> int:
     sp.set_defaults(fn=cmd_run)
     sp = sub.add_parser("compile", help="compile and link the lift into des_game.dll (resumes where it stopped)")
     data_arg(sp)
-    sp.add_argument("-j", "--jobs", type=int, default=0, help="compiler jobs (default: by free memory, 3 GB a job)")
+    sp.add_argument("-j", "--jobs", type=int, default=0,
+                    help="compiler jobs at a time, whatever the memory (default: as many as the memory holds)")
     toolchain_args(sp)
     sp.set_defaults(fn=cmd_compile)
     sp = sub.add_parser("status", help="show the journal")

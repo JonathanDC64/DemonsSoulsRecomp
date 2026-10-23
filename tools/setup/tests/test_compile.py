@@ -21,7 +21,10 @@ REAL = Path(__file__).resolve().parents[3]          # this source tree
 # dependency file and the object as the sum of what it read. A source with FAIL
 # in it fails; one with OOM_ONCE runs out of memory the first time; one with
 # OOM_EXIT ends with Windows' out-of-memory status and prints nothing about it.
-FAKECC = r'''import hashlib, os, re, sys
+# SLEEP=<s> makes it take that long; each call's start and end go to a file
+# of its own in cc_times.
+FAKECC = r'''import hashlib, os, re, sys, time
+t0 = time.time()
 a = sys.argv[1:]
 src = a[a.index("--") + 1]
 obj = next(x[3:] for x in a if x.startswith("/Fo"))
@@ -30,6 +33,11 @@ inc = [x[2:] for x in a if x.startswith("-I")]
 here = os.path.dirname(os.path.abspath(__file__))
 open(os.path.join(here, "cc_calls.txt"), "a").write(os.path.basename(obj) + "\n")
 text = open(src, encoding="utf-8").read()
+m = re.search(r"SLEEP=([0-9.]+)", text)
+if m:
+    time.sleep(float(m.group(1)))
+os.makedirs(os.path.join(here, "cc_times"), exist_ok=True)
+open(os.path.join(here, "cc_times", f"{os.getpid()}.txt"), "w").write(f"{os.path.basename(obj)} {t0} {time.time()}\n")
 if "FAIL" in text:
     print("error: made to fail"); sys.exit(1)
 if "OOM_EXIT" in text:
@@ -110,13 +118,23 @@ class Tree:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text, encoding="utf-8")
 
-    def make(self, jobs=2, desc=None):
+    def make(self, jobs=2, desc=None, **kw):
         if desc is not None:
             self.put(self.tools / "desc.json", json.dumps(desc))
         jr = journal.Journal(self.jpath)
         return cc.Compile(self.data, jr, [sys.executable, str(self.tools / "fakecc.py")],
                           [sys.executable, str(self.tools / "fakeld.py")], src=self.src,
-                          desc=self.tools / "desc.json", jobs=jobs)
+                          desc=self.tools / "desc.json", jobs=jobs, **kw)
+
+    def times(self):
+        """Each compiler call's (object, start, end), from cc_times (a file each: appends from processes running
+        side by side can mix on Windows)."""
+        out = []
+        for p in sorted((self.tools / "cc_times").glob("*.txt")):
+            n, a, b = p.read_text().split()
+            out.append((n, float(a), float(b)))
+            p.unlink()
+        return out
 
     def calls(self, name):
         p = self.tools / f"{name}_calls.txt"
@@ -133,12 +151,6 @@ class TestPieces(unittest.TestCase):
         self.assertEqual(cc.parse_depfile(text),
                          ["C:\\src\\a.c", "C:\\Program Files\\inc\\b.h", "C:/c$d.h", "rel/e.h"])
         self.assertEqual(cc.parse_depfile("x.obj:\n"), [])
-
-    def test_jobs(self):
-        self.assertEqual(cc.default_jobs(16, 31 * cc.GB), 9)      # (31 - 2) / 3
-        self.assertEqual(cc.default_jobs(4, 31 * cc.GB), 4)
-        self.assertEqual(cc.default_jobs(16, 3 * cc.GB), 1)
-        self.assertEqual(cc.default_jobs(16, 0), 8)               # unknown: half the CPUs
 
     def test_workloads(self):
         out = cc.split_workloads(WORKLOADS, Path("C:/inst/ps3recomp"))
@@ -336,6 +348,163 @@ class TestCompile(unittest.TestCase):
                 self.assertNotRegex(a, r"[A-Za-z]:[\\/]|\\\\", a)
         self.assertIn("{objects}", d["link"])
         self.assertTrue(all(h.startswith("{src}/") for h in d["headers"]))
+
+
+def overlap(a, b) -> bool:
+    return a[1] < b[2] and b[1] < a[2]
+
+
+def most_at_once(times) -> int:
+    edges = sorted([(s, 1) for _, s, _ in times] + [(e, -1) for _, _, e in times], key=lambda x: (x[0], x[1]))
+    n = best = 0
+    for _, d in edges:
+        n += d
+        best = max(best, n)
+    return best
+
+
+class TestMemory(unittest.TestCase):
+    """The jobs follow the memory (compile.py's docstring, docs/81 section 8), with a stand-in for the free memory
+    and, but in the test of the measured peak, no process's memory read: each kind's expected peak (NEED) against
+    what is free less the 2 GB kept for the PC."""
+    PPU, SMALL = 0.6, 0.2                                  # how long the fake compiler takes for each
+
+    def setUp(self):
+        self.t = Tree()
+        self.addCleanup(self.t.tmp.cleanup)
+        # The fake chunks are a few bytes, so their size would give them almost no memory: they get the kind's figure,
+        # but in the tests of the size rule, which put the real figures back.
+        self.base = cc.PPU_BASE
+        cc.PPU_BASE = 1 << 50
+        self.addCleanup(setattr, cc, "PPU_BASE", self.base)
+        for rel in ("work/recomp/ppu_recomp_000.cpp", "work/recomp/ppu_recomp_001.cpp"):
+            p = self.t.data / rel
+            Tree.put(p, p.read_text(encoding="utf-8") + f"\n// SLEEP={self.PPU}\n")
+        for rel in ("work/spu/spu_0000_at_01760280/spu_recomp.c", "work/spu/spujob_0177B480/spu_recomp.c"):
+            p = self.t.data / rel
+            Tree.put(p, p.read_text(encoding="utf-8") + f"\n// SLEEP={self.SMALL}\n")
+
+    def run_with(self, free_gb, measure=False, **kw):
+        c = self.t.make(jobs=kw.pop("jobs", 0), free=lambda: int(free_gb * cc.GB), **kw)
+        c.cpus = 8
+        old = cc.proc_memory
+        if not measure:
+            cc.proc_memory = lambda p: (0, 0)
+        try:
+            c.run_all()
+        finally:
+            cc.proc_memory = old
+        return self.t.times()
+
+    def test_short_memory_runs_one_at_a_time(self):
+        times = self.run_with(2.9)                         # 0.9 GB over what is kept: one job at a time
+        self.assertEqual(len(times), 6)
+        self.assertEqual(most_at_once(times), 1, times)
+
+    def test_small_jobs_beside_a_big_one(self):
+        times = self.run_with(2 + 2.6 + 1.1)               # a chunk, and 1.1 GB beside it
+        by = {n: (n, s, e) for n, s, e in times}
+        self.assertFalse(overlap(by["ppu_recomp_000.obj"], by["ppu_recomp_001.obj"]), times)
+        beside = [n for n in by if not n.startswith("ppu_") and
+                  (overlap(by[n], by["ppu_recomp_000.obj"]) or overlap(by[n], by["ppu_recomp_001.obj"]))]
+        self.assertTrue(beside, times)
+
+    def test_plenty_of_memory_runs_side_by_side(self):
+        times = self.run_with(64)
+        self.assertGreaterEqual(most_at_once(times), 3, times)
+
+    def test_progress_counts_source_bytes(self):
+        calls = []
+        self.run_with(64, progress=lambda step, n, m: calls.append((step, n, m)))
+        total = sum(max(1, o.src.stat().st_size) for o in self.t.make(jobs=0).plan())
+        self.assertEqual(calls[0], ("compile", 0, total))
+        self.assertEqual(calls[-1], ("compile", total, total))
+        self.assertEqual(len(calls), 7)                    # the start, then one as each object ends
+
+    def test_need_by_kind(self):
+        c = self.t.make(jobs=0)
+        objs = {o.name: o for o in c.plan()}
+        ppu = objs["ppu_recomp_001"]
+        self.assertEqual(c._need(ppu), cc.NEED["ppu"])
+        c._seen["ppu"] = cc.GB                             # a small chunk measured: the others keep the kind's figure
+        self.assertEqual(c._need(ppu), cc.NEED["ppu"])
+        c._seen["ppu"] = 3 * cc.GB                         # a bigger one: the others are expected to take as much
+        self.assertEqual(c._need(ppu), int(3 * cc.GB * cc.ROOM))
+        self.assertEqual(c._need(objs["spu_0000_at_01760280"]), cc.NEED["spu"])
+        self.assertEqual(c._need(objs["des_game_module"]), cc.NEED_OTHER)
+
+    def pad(self, rel, size):
+        """The chunk's source made `size` bytes long (spaces after a comment mark; the fake compiler reads it)."""
+        p = self.t.data / rel
+        data = p.read_bytes() + b"\n//"
+        p.write_bytes(data + b" " * (size - len(data) - 1) + b"\n")
+
+    def test_need_by_size(self):
+        cc.PPU_BASE = self.base
+        c = self.t.make(jobs=0)
+        o = next(o for o in c.plan() if o.name == "ppu_recomp_001")
+        self.pad("work/recomp/ppu_recomp_001.cpp", 8_000_000)          # a chunk of 150,000 lines
+        self.assertEqual(c._need(o), int(cc.PPU_BASE + cc.PPU_PER_MB * 8))
+        c._per_mb["ppu"] = cc.GB // 5                      # a chunk of this run took more for its size
+        self.assertAlmostEqual(c._need(o), cc.PPU_BASE + cc.GB // 5 * cc.ROOM * 8, delta=2)
+        c._per_mb.clear()
+        c._seen["ppu"] = 2 * cc.GB                         # a large one measured: says nothing about this one
+        self.assertEqual(c._need(o), int(cc.PPU_BASE + cc.PPU_PER_MB * 8))
+        self.pad("work/recomp/ppu_recomp_001.cpp", 34_000_000)         # a chunk of 600,000 lines: the kind's figure
+        c._seen.clear()
+        self.assertEqual(c._need(o), cc.NEED["ppu"])
+
+    def test_small_chunks_side_by_side(self):
+        # Two 8 MB chunks are expected at 1.27 GB each, so both fit in 2.7 GB over what is kept; at the kind's 2.6 GB
+        # each they ran one at a time (test_small_jobs_beside_a_big_one).
+        cc.PPU_BASE = self.base
+        for rel in ("work/recomp/ppu_recomp_000.cpp", "work/recomp/ppu_recomp_001.cpp"):
+            self.pad(rel, 8_000_000)
+        times = self.run_with(2 + 2.7)
+        by = {n: (n, s, e) for n, s, e in times}
+        self.assertTrue(overlap(by["ppu_recomp_000.obj"], by["ppu_recomp_001.obj"]), times)
+
+    def test_memory_not_known(self):
+        times = self.run_with(0)                           # half the 8 processors, whatever the jobs need
+        self.assertEqual(len(times), 6)
+        self.assertGreaterEqual(most_at_once(times), 2, times)
+        self.assertLessEqual(most_at_once(times), 4, times)
+
+    def test_given_jobs_ignore_the_memory(self):
+        times = self.run_with(0.5, jobs=2)
+        self.assertEqual(most_at_once(times), 2, times)
+
+    def test_memory_hint(self):
+        said, old = [], cc.SHORT_AFTER
+        cc.SHORT_AFTER = 0.1
+        try:
+            self.run_with(2.9, memory=said.append)
+        finally:
+            cc.SHORT_AFTER = old
+        self.assertEqual(said, [True, False])
+        said.clear()
+        self.run_with(64, memory=said.append)              # (nothing to build: no word either)
+        self.assertEqual(said, [])
+
+    @unittest.skipUnless(os.name == "nt", "the peak is read from the process's handle on Windows")
+    def test_peak_measured_and_kept(self):
+        self.run_with(64, measure=True)
+        steps = json.loads(self.t.jpath.read_text())["steps"]
+        peak = steps["cc:ppu_recomp_000"]["results"]["peak"]
+        self.assertGreater(peak, 1 << 20)                  # a Python process takes a few MB
+        c = self.t.make(jobs=0)
+        o = next(o for o in c.plan() if o.name == "ppu_recomp_000")
+        self.assertEqual(c._need(o), int(peak * cc.ROOM))
+        self.assertLess(c._need(o), cc.NEED["ppu"])
+
+    def test_out_of_memory_runs_alone(self):
+        p = self.t.data / "work/recomp/ppu_recomp_001.cpp"
+        Tree.put(p, p.read_text(encoding="utf-8") + "\nOOM_ONCE\n")
+        times = self.run_with(64)
+        retry = sorted((x for x in times if x[0] == "ppu_recomp_001.obj"), key=lambda x: x[1])
+        self.assertEqual(len(retry), 2)
+        others = [x for x in times if x[0] != "ppu_recomp_001.obj"]
+        self.assertFalse([x for x in others if overlap(x, retry[-1])], times)
 
 
 if __name__ == "__main__":

@@ -230,6 +230,8 @@ Under every plan, setup also accepts files the player already decrypted.
 
 docs/45's rule: jobs = min(logical CPUs, (free RAM - 2 GB) / 3 GB per job), with 3 GB until docs/53 measures it. If a job fails out of memory (the exit code, or "out of memory" in its output), setup retries that file once with one job fewer (inferred design).
 
+Built differently on 10-23 (docs/81 section 8): the compile follows the memory as it goes, with each object's measured peak, and an object that runs out of memory runs once more alone. The time estimate before setup counts the chunks that fit in the memory free now, with the compile's figures.
+
 ### 4.5 Errors and reports
 
 Every failure gives a one-line cause, the next action, the last 1,500 characters of the tool's output (as FFCCEOT does), the full `setup.log`, and Report. Report goes through the docs/32 report path with redaction, and never attaches game files or the DLL (docs/45 section 7).

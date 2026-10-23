@@ -150,7 +150,7 @@ Entries today:
 - **Fingerprints.**
   - An object's fingerprint covers its command, the compiler, its source's sum and the sums of every header it read last time. The compiler is identified by the archive it was unpacked from, or by its exe's sum. The headers come from clang's dependency file (`-clang:-MD -clang:-MF`). So a changed header rebuilds only the objects that read it.
   - The link's fingerprint covers its command, the linker and the objects' fingerprints.
-- **Jobs.**
+- **Jobs** (as first built; section 8 replaced the count and the retry on 10-23).
   - The largest sources start first.
   - The job count follows docs/52 4.4: the smaller of the CPU count and (available memory - 2 GB) / 3 GB, and at least 1. `-j` overrides it.
   - A job that runs out of memory runs once more with one job fewer. This is detected from the message, or from exit status 0xC0000017 or 0xC000012D.
@@ -175,3 +175,46 @@ Entries today:
   - **Where the host finds the DLL.** Today the host loads the file named by `PS3_GAME_MODULE`, or else `des_game.dll` beside the exe (`game_host.c`). Setup writes the DLL to the data folder's `game/`. The screens step decides whether the launcher sets `PS3_GAME_MODULE` or the host looks in the data folder.
   - **The glue's absolute libsre image path** (section 5). This goes with milestone 2, which moves the glue's file reads into the host anyway.
   - **A CI job** that runs `game_build_desc.py --check --commands-only` on a configured split build, so the description cannot drift from CMake. It goes with the CI host build.
+
+## 8. Jobs by memory (`compile.py`, 10-23)
+
+The compile no longer fixes its job count at the start (section 7). Each job starts only when the memory holds it, so a PC with little memory free compiles fewer at a time, and one with plenty runs more, as the memory changes during the compile.
+
+- **The rule.**
+  - At most one job a logical processor.
+  - A job starts while this is at least its expected peak: the memory free now, less 2 GB for the rest of the PC, less what the running jobs are still expected to take (each one's expected peak less what it holds now).
+  - When nothing runs, the next job starts anyway. A PC short of memory still compiles, one job at a time.
+  - The biggest start first: by expected peak, then by source size. A smaller job that fits starts beside them.
+  - `-j N` runs N at a time, whatever the memory (for developers).
+- **A job's expected peak:**
+  - the peak measured the last time that object compiled, with 10% room (the journal keeps it in the object's step, `results.peak`);
+  - else its kind's figure, from docs/53 section 2 with some room: a PPU chunk 2.6 GB, libsre 2 GB, an SPU program 0.5 GB, the rest 0.5 GB;
+  - raised to the largest peak measured so far in this run among its kind, with 10% room, when that is more. A smaller one does not lower it: on the first real run, chunk 012 peaked at 0.86 GB in 5 s, and when the others were expected to take as little, a third 2.2 GB chunk started and the free memory fell to 1.9 GB.
+  - A PPU chunk's is at most what its source's size gives (10-23): 0.15 GB plus 0.14 GB a MB of source. Over the 81 chunks of three setups the most was 0.15 GB plus 0.128 GB a MB (docs/53 section 16.3); the rest is 10% room.
+    - A 600,000-line chunk (32 to 39 MB) reaches the kind's 2.6 GB, so these run as before.
+    - A 150,000-line chunk (7 to 11 MB) is expected at 1.1 to 1.7 GB, so about twice as many run at once.
+    - A chunk of this run that took more for its size raises the rate for the rest, with 10% room.
+- **Measuring a peak.**
+  - Windows: the compiler's peak commit (`PeakPagefileUsage`, from `K32GetProcessMemoryInfo`), read once it has ended, while its handle is still open.
+  - Linux: `VmHWM` from `/proc/<pid>/status`, sampled every half second while it runs, since it is gone once the process ends.
+- **Out of memory.** A job that runs out of memory runs once more with nothing beside it: no new job starts while it waits, and it starts once the running ones have ended. If it fails again, the compile stops as in section 7.
+- **Free memory** is the physical memory available, or on Windows the commit the system can still give when that is less (a small page file). When it cannot be read, half the processors run, as the first rule did.
+- **The hint.** When memory has held jobs back for 5 s, the engine prints `@memory short`, and the note under the bar reads "Closing other programs makes this faster." `@memory ok` puts the usual note back. The protocol stays version 2, because an older host reads an `@` line it does not know as a plain line (`setup_protocol.hpp`).
+- **The progress** counts source bytes, as docs/52 4.3 has it, not objects; the screen shows it in MB.
+- **The time estimate** on the start screen (`setup_pc.cpp`) counts the PPU chunks that fit in the memory free now, with the compile's figures (2 GB kept, 2.6 GB a chunk). It counted the PC's whole memory before, and promised 9 jobs on a PC that ran 1.
+- **Tested.**
+  - 12 unit tests (`TestMemory` in `test_compile.py`), with a stand-in for the free memory and a fake compiler that takes the time it is told:
+    - short memory runs one job at a time; small jobs start beside a big one; plenty of memory runs several side by side;
+    - memory that cannot be read runs half the processors; `-j` ignores the memory;
+    - the hint comes once and goes at the end;
+    - the measured peak is kept and used next time (Windows); a kind's figure is raised but not lowered by what others of its kind took;
+    - a PPU chunk's figure follows its size, and two 8 MB chunks run side by side where the kind's figure ran one at a time;
+    - an out-of-memory job runs again alone;
+    - the progress counts source bytes.
+  - One more checks that the start screen's estimate uses the compile's figures, and one the `@memory` line.
+  - A real setup from a fresh data folder (10-23, the screens and the engine from this branch, the local clang-cl 22.1.8, 16 threads and 31 GB with the usual programs open):
+    - 8.6 GB was free at the start, and the setup screens' own process took 1.6 GB of it (mostly the RSX backend's draw buffers, which the screens never use), so the compile began with about 7 GB. The first rule would have run one job there: (7 - 2) / 3.
+    - The whole run took 1,046 s and the compile 976 s. The 10-22 run, one job at about 5 GB free, took 1,602 s and 1,533 s. The chunks took the same time each in both runs (008: 158 s, 009: 143 and 149 s), so the gain is the jobs side by side: two chunks at once for most of the compile, the SPU programs and libsre beside them, at most 7 jobs and 1.5 on average.
+    - Peaks: the PPU chunks 2.2 to 2.68 GB (008 the largest), libsre 1.79 GB, the SPU programs 0.09 to 0.26 GB, chunk 012 0.86 GB and 013 0.51 GB. The free memory never fell below 2.8 GB. The hint showed under the bar.
+    - A second fresh run, with the shaders phase merged in locally and the progress by source bytes (8.7 GB free at the start): the compile 891 s, at most 4 jobs and 1.7 on average, the whole run 986 s.
+    - Two faults came out of these runs. A first run, stopped, showed a small chunk lowering the others' expected peak (fixed before the run above, see above). The run above showed the progress counting objects, so the bar read 78% and "About a minute left" with nine minutes to go; it now counts source bytes (the timing does not change).

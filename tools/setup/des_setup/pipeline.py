@@ -373,10 +373,11 @@ def _fetch(data, emit, total, manifest, cc=None, ld=None) -> bool:
     return did
 
 
-def _compile(data, jr, jobs, progress, cc=None, ld=None):
-    """The compile phase (compile.py): the downloaded compiler, unpacked by the fetch phase, or a developer's."""
+def _compile(data, jr, jobs, progress, cc=None, ld=None, memory=None):
+    """The compile phase (compile.py): the downloaded compiler, unpacked by the fetch phase, or a developer's.
+    memory(short): the screens' hint that closing other programs makes it faster (@memory)."""
     cc, ld = compile_step.toolchain(data, cc, ld)
-    return compile_step.Compile(data, jr, cc, ld, jobs=jobs, progress=progress).run_all()
+    return compile_step.Compile(data, jr, cc, ld, jobs=jobs, progress=progress, memory=memory).run_all()
 
 
 def _classify(phase, e: journal.StepFailed):
@@ -401,10 +402,10 @@ def run(data, request=None, app="", jobs=0, check_only=False, emit=None, src=Non
     unlock_kw: rpcs3.Unlock's launch, stall and poll (the tests' stand-in).
     Returns the exit status: 0 done, 1 something to fix or a failure."""
     data = Path(data)
+    emit = emit or protocol.Emitter()
     if compile_fn is None:
         def compile_fn(d, j, n, p):
-            return _compile(d, j, n, p, cc, ld)
-    emit = emit or protocol.Emitter()
+            return _compile(d, j, n, p, cc, ld, emit.memory)
     held = lock(data / "setup" / "run.lock")
     if held is None:
         emit.setup()

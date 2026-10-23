@@ -123,11 +123,12 @@ def main():
         elif phase == "compile":
             stop = 0.4 if MODE == "hold" else None
             fail = 0.55 if MODE == "fail" else None
-            got = count("compile", 0, 33, w, (0.0, 0.97), seconds=w * s, stop_at=stop, fail_at=fail)
+            src = 476 << 20                    # the compile counts source bytes: about 476 MB in the real lift
+            got = count("compile", 0, src, w, (0.0, 0.97), seconds=w * s, stop_at=stop, fail_at=fail)
             if MODE == "fail":
                 say("ppu_recomp_008.cpp:120544:5: error: use of undeclared identifier 'ppc_rotl64'")
                 say("1 error generated.")
-                say(f"[compile] stopped after {got} of 33 files; the finished ones are kept")
+                say(f"[compile] stopped after {33 * got // src} of 33 files; the finished ones are kept")
                 logs = os.path.join(DATA, "setup", "logs")
                 os.makedirs(logs, exist_ok=True)
                 log = os.path.join(logs, "cc_ppu_recomp_008.log").replace("\\", "/")

@@ -15,6 +15,8 @@ the screens show the last ones under Details.
   @rpcs3 <state> <path>             the RPCS3 in use (docs/90): own (it runs with setup's folder),
                                     shared (a portable install: starting it changes its log) or missing
   @awake                            the PC is kept from sleeping while this runs
+  @memory short|ok                  the compile runs fewer jobs at once than the PC has processors, because memory is
+                                    short (so closing other programs makes it faster), or no longer does
   @log <path>                       the log of the step that failed
   @error <code> <step> <text>       what failed, in a sentence for the player (codes: ERRORS)
   @done ok|fix|failed               the last line
@@ -30,7 +32,8 @@ terminal leaves the same record as one from the screens.
 import sys
 
 VERSION = 2
-KINDS = ("setup", "plan", "step", "progress", "overall", "check", "file", "rpcs3", "awake", "log", "error", "done")
+KINDS = ("setup", "plan", "step", "progress", "overall", "check", "file", "rpcs3", "awake", "memory", "log", "error",
+         "done")
 # game: the game folder or its files; busy: another setup is running; disk: not enough free space;
 # download: a download stopped or did not match; memory: out of memory; step: a build step failed;
 # rpcs3: the player's RPCS3 could not unlock the files; internal: an error of the engine's own.
@@ -131,6 +134,14 @@ class Emitter:
 
     def awake(self):
         self._line("awake")
+
+    def memory(self, short):
+        """Printed when it changes (compile.py tells, from its own thread)."""
+        state = "short" if short else "ok"
+        if self._shown.get("memory", "ok") == state:
+            return
+        self._shown["memory"] = state
+        self._line("memory", state)
 
     def log_path(self, path):
         self._line("log", one_line(path))

@@ -488,8 +488,16 @@ void SetupFilesWindow::picked(const PickedFolder& folder) {
         return;
     }
     if (folder.folder.empty()) return;  // (closed without a choice)
-    if (what == Picking::Game) mRequest.game = folder.folder;
-    else mRequest.decrypted = {folder.folder};
+    if (what == Picking::Game && setup::folder_kind(folder.folder) == setup::FolderKind::Decrypted) {
+        // The decrypted files, chosen first in place of the disc copy: kept for the check, and the copy is asked for
+        // next (draw_check says so). The disc copy chosen before, if any, stays.
+        std::fprintf(stderr, "[setup] the folder chosen holds decrypted files, not the disc copy: kept for them\n");
+        mRequest.decrypted = {folder.folder};
+    } else if (what == Picking::Game) {
+        mRequest.game = folder.folder;
+    } else {
+        mRequest.decrypted = {folder.folder};
+    }
     draw_folder();
     check();
 }
@@ -586,6 +594,10 @@ void SetupFilesWindow::draw_check() {
     clear_children(mCheck);
     if (!mPickProblem.empty()) {
         callout(mCheck, "err", mPickProblem, "");
+    } else if (mRequest.game.empty() && !mRequest.decrypted.empty()) {  // (the decrypted files were chosen first)
+        callout(mCheck, "info", "These are the decrypted files",
+                "Setup takes them from " + utf8(mRequest.decrypted[0]) +
+                    ". Now choose the folder of your disc copy: the one with PS3_GAME in it.");
     } else if (mRequest.game.empty()) {
         // (nothing chosen yet: the field says so)
     } else if (running) {
@@ -635,6 +647,15 @@ void SetupFilesWindow::draw_check() {
             const auto missing = std::count_if(files.begin(), files.end(), bad);
             const std::string place =
                 mRequest.decrypted.empty() ? "Next to the originals" : "In " + utf8(mRequest.decrypted[0]);
+            // Another folder for them: under the rows when all are there; when some are missing, a plain button before
+            // the list, so that it is in view without scrolling.
+            const auto decrypted_button = [&](Look look) {
+                auto* where = actions_row(mCheck);
+                where->SetClass("near", true);
+                set_buttons(mDecryptedButton, where,
+                            {{mRequest.decrypted.empty() ? "They are in another folder" : "Choose another folder",
+                              [this] { choose(Picking::Decrypted); }, look}});
+            };
             // All there: one more row in the game's panel. Some missing: what they are, then the list.
             Rml::Element* list = box;
             if (missing) {
@@ -643,6 +664,7 @@ void SetupFilesWindow::draw_check() {
                      "The game's code and 26 of its files are encrypted on the disc. You decrypt them once with a "
                      "PS3 tool; setup checks each one against the right copy.")
                     ->SetClass("note", true);
+                decrypted_button(Look::Plain);
                 list = panel(mCheck);
             }
             found(list, missing ? "setup-warn" : "setup-ok",
@@ -660,11 +682,7 @@ void SetupFilesWindow::draw_check() {
                 }
                 found(list, look_of(c->key).mark, list_name(c->key2), look_of(c->key).words);
             }
-            auto* where = actions_row(mCheck);
-            where->SetClass("near", true);
-            set_buttons(mDecryptedButton, where,
-                        {{mRequest.decrypted.empty() ? "They are in another folder" : "Choose another folder",
-                          [this] { choose(Picking::Decrypted); }, Look::Quiet}});
+            if (!missing) decrypted_button(Look::Quiet);
         }
         // The firmware's file is not the disc's: found, one more row in the game's panel; not, its own part with the
         // engine's sentence, which says where it comes from and where it goes.

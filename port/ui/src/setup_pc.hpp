@@ -30,6 +30,13 @@ struct Place {
 // it runs off the UI's thread.
 std::vector<Place> likely_places();
 
+// What a folder chosen as the game folder holds, at a glance, before the engine's check: a disc dump (PS3_GAME with
+// its PARAM.SFO), the decrypted files without the dump (EBOOT.elf, a .sdat.unedat or libsre.prx at its top, or in its
+// USRDIR or PS3_GAME/USRDIR as RPCS3 writes them beside the originals), or neither. The names are the ones the check
+// looks for (des_setup/gamefiles.py); it checks the files themselves.
+enum class FolderKind { Dump, Decrypted, Other };
+FolderKind folder_kind(const std::filesystem::path& folder);
+
 // The free space for setup's data folder (on its nearest folder that exists), and a name for its disk: "C:", or the
 // folder where there are no drive letters.
 struct Space {

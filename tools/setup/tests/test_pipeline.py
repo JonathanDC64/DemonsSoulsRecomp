@@ -428,12 +428,19 @@ class HostAgreesTest(unittest.TestCase):
                 self.assertTrue(fetch.unpacked(e, tmp), repr(end))
 
     def test_estimate_counts_jobs_as_the_compile(self):
-        """The start screen's time estimate counts the chunks the compile can run at once (docs/81 section 8)."""
+        """The start screen's time estimate counts the chunks the compile can run at once (docs/81 section 8): a chunk
+        at compile.py's size rule for the 53 chunks' sources (6.7 to 10.7 MB, docs/53 16.3), and its KEEP."""
         cpp = (UI / "setup_pc.cpp").read_text(encoding="utf-8")
         job = re.search(r"kJobBytes = (\d+)ull \* \(1ull << 30\) / 10;", cpp)
         kept = re.search(r"kKeptBytes = (\d+)ull << 30;", cpp)
         self.assertTrue(job and kept)
-        self.assertEqual(int(job.group(1)) * compile_step.GB // 10, compile_step.NEED["ppu"])
+
+        def rule(mb):  # compile.py's _need for a PPU chunk it has not built yet
+            return min(compile_step.NEED["ppu"], int(compile_step.PPU_BASE + compile_step.PPU_PER_MB * mb))
+
+        job_bytes = int(job.group(1)) * compile_step.GB // 10
+        self.assertLessEqual(rule(6.7), job_bytes)
+        self.assertLessEqual(job_bytes, rule(10.7))
         self.assertEqual(int(kept.group(1)) * compile_step.GB, compile_step.KEEP)
 
 

@@ -92,6 +92,9 @@ class FakeTree:
         self.tmp.cleanup()
 
 
+PPU_STEPS = ["ppu_loader.py", "ppu_lifter.py", "apply_boot_patches.py", "gen_hle_nids.py"]
+
+
 class LiftTest(unittest.TestCase):
     def setUp(self):
         self.t = FakeTree()
@@ -99,11 +102,17 @@ class LiftTest(unittest.TestCase):
     def tearDown(self):
         self.t.close()
 
+    def assertCalls(self, expected):
+        """The same calls; the PPU steps in their order, and the SPU steps' in theirs (the two sides run side by
+        side, run_all)."""
+        calls = self.t.calls()
+        self.assertEqual(sorted(calls), sorted(expected))
+        for side in (PPU_STEPS, ["build_spu.py", "build_libsre.py"]):
+            self.assertEqual([c for c in calls if c in side], [c for c in expected if c in side])
+
     def test_full_then_nothing_to_do(self):
         self.t.lift().run_all("e" * 64, "f" * 64)
-        self.assertEqual(self.t.calls(), ["ppu_loader.py", "ppu_lifter.py", "apply_boot_patches.py",
-                                          "gen_hle_nids.py", "build_spu.py", "build_spu.py", "build_spu.py",
-                                          "build_libsre.py"])
+        self.assertCalls(PPU_STEPS + ["build_spu.py", "build_spu.py", "build_spu.py", "build_libsre.py"])
         w = self.t.data / "work"
         self.assertEqual((w / "recomp" / "ppu_recomp.h").read_text(), "// lifted\n// patched\n")
         self.assertEqual((w / "recomp_raw" / "ppu_recomp.h").read_text(), "// lifted\n")
@@ -130,8 +139,7 @@ class LiftTest(unittest.TestCase):
         self.t.reset_calls()
         self.t.lift().run_all("d" * 64, "f" * 64)
         # Everything that reads the EBOOT; the NID table and libsre do not.
-        self.assertEqual(self.t.calls(), ["ppu_loader.py", "ppu_lifter.py", "apply_boot_patches.py",
-                                          "gen_hle_nids.py", "build_spu.py"])
+        self.assertCalls(PPU_STEPS + ["build_spu.py"])
 
     def test_changed_tool_redoes_everything(self):
         self.t.lift().run_all("e" * 64, "f" * 64)
@@ -160,7 +168,30 @@ class LiftTest(unittest.TestCase):
         (self.t.src / "fail.txt").unlink()
         self.t.reset_calls()
         self.t.lift().run_all("e" * 64, "f" * 64)
-        self.assertEqual(self.t.calls()[0], "ppu_lifter.py")
+        self.assertEqual([c for c in self.t.calls() if c in PPU_STEPS][0], "ppu_lifter.py")
+
+    def test_spu_progress_after_the_ppu_steps(self):
+        # The screens show one lift row at a time: the SPU side's progress is told once the PPU side is done.
+        self.t.lift().run_all("e" * 64, "f" * 64)
+        steps = [s for s, _, _ in self.t.seen]
+        self.assertEqual(steps, sorted(steps, key=lambda s: s != "ppu"), steps)
+        self.assertEqual(self.t.seen[-1], ("spu", 2, 2))
+
+    def test_failure_beside_the_ppu_steps(self):
+        (self.t.src / "fail.txt").write_text("build_spu.py")
+        with self.assertRaises(journal.StepFailed) as cm:
+            self.t.lift().run_all("e" * 64, "f" * 64)
+        self.assertIn("build_spu.py failed (exit 3)", cm.exception.message)
+        jr = journal.Journal(self.t.data / "setup" / "journal.json")
+        self.assertEqual(jr.state("nids")["state"], "done")         # the PPU side went on to its end
+        self.assertEqual(jr.state("spu-cut")["state"], "failed")
+
+    def test_ppu_failure_stops_the_side(self):
+        (self.t.src / "fail.txt").write_text("ppu_loader.py")
+        with self.assertRaises(journal.StepFailed) as cm:
+            self.t.lift().run_all("e" * 64, "f" * 64)
+        self.assertIn("ppu_loader.py failed", cm.exception.message)  # the PPU side's failure, not a stop
+        self.assertNotIn("spu", [s for s, _, _ in self.t.seen])     # nothing told for a side that stopped
 
     def test_missing_eboot(self):
         (self.t.data / "inputs" / lift.EBOOT).unlink()

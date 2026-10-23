@@ -8,6 +8,7 @@
   spu:<name>   scripts/build_spu.py --only       -> work/spu/<name>, one step per image or job
   libsre       scripts/build_libsre.py           -> work/libsre, work/gen/libsre_glue.c (with the firmware file only)
 
+The SPU steps and libsre run on a thread beside the first four (run_all).
 Everything written is game- or firmware-derived and stays in the data folder.
 Each step's fingerprint covers the sums of its input files, of every script
 of the source tree that does the lifting, and its arguments; so a new release
@@ -25,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from . import journal
@@ -49,6 +51,47 @@ def toolset(src: Path = SRC) -> str:
                    list((src / "scripts").glob("*.json")) + [src / "port" / "insn_hooks.txt"])
     files = [f for f in files if "__pycache__" not in f.parts and f.is_file()]
     return journal.fingerprint([(str(f.relative_to(src)).replace("\\", "/"), _sha_file(f)) for f in files])
+
+
+class _Stopped(Exception):
+    """The PPU side failed: the steps beside it end."""
+
+
+class _Side:
+    """The steps beside the PPU steps (run_all): their progress held until go_live, then told as it comes; stopped
+    between steps when the PPU side fails; their own failure kept for run_all to raise."""
+
+    def __init__(self, progress):
+        self._progress, self._lock = progress, threading.Lock()
+        self._live, self._last, self._stop = False, None, False
+        self.failed = None
+
+    def progress(self, step, done, total):
+        with self._lock:
+            if self._stop:
+                raise _Stopped()
+            if self._live:
+                self._progress(step, done, total)
+            else:
+                self._last = (step, done, total)
+
+    def go_live(self):
+        with self._lock:
+            self._live = True
+            if self._last and not self._stop:
+                self._progress(*self._last)
+
+    def stop(self):
+        with self._lock:
+            self._stop = True
+
+    def run(self, fn):
+        try:
+            fn()
+        except _Stopped:
+            pass
+        except Exception as e:  # (raised again on run_all's thread)
+            self.failed = e
 
 
 class Lift:
@@ -88,11 +131,34 @@ class Lift:
 
     # ---- the steps ----
     def run_all(self, eboot_sha: str, libsre_sha: str = None):
-        """Every step in order. eboot_sha (and libsre_sha) are the staged files'
-        sums from the game check, so the inputs are not hashed again."""
+        """Every step. eboot_sha (and libsre_sha) are the staged files' sums
+        from the game check, so the inputs are not hashed again.
+
+        The SPU steps and libsre read only the EBOOT and the firmware, so they
+        run on a thread of their own beside the PPU steps (loader, ppu,
+        patches, nids), which they used to wait for: the PPU lift's 35 s are
+        half one thread's analysis. Their progress is told once the PPU steps
+        are done, so the screens show one lift row at a time, as before. When
+        both sides fail, the PPU side's failure is the one raised."""
         eboot = self.inputs / EBOOT
         if not eboot.is_file():
             raise journal.StepFailed("lift", f"{eboot} is missing: run the game check first")
+        side = _Side(self.progress)
+        thread = threading.Thread(target=side.run, args=(lambda: self._side_steps(eboot, eboot_sha, libsre_sha,
+                                                                                   side.progress),), daemon=True)
+        thread.start()
+        try:
+            self._ppu_steps(eboot, eboot_sha)
+        except BaseException:
+            side.stop()                            # (it ends after the step it is in)
+            raise
+        finally:
+            side.go_live()
+            thread.join()
+        if side.failed is not None:
+            raise side.failed
+
+    def _ppu_steps(self, eboot, eboot_sha):
         ps3r, w = self.src / "ps3recomp", self.work
         loader = w / "loader"
         self._step("loader", {"eboot": eboot_sha}, [], lambda: self._run(
@@ -130,6 +196,8 @@ class Lift:
         self._step("nids", {}, [], lambda: self._run(
             "nids", [ps3r / "tools" / "gen_hle_nids.py", "--all", "--out", nid]), [nid])
 
+    def _side_steps(self, eboot, eboot_sha, libsre_sha, progress):
+        ps3r, w = self.src / "ps3recomp", self.work
         imgs, jobs = w / "spu_images", w / "spu_jobs"
         build_spu = self.src / "scripts" / "build_spu.py"
         table = json.loads((self.src / "scripts" / "spu_table.json").read_text(encoding="utf-8"))
@@ -140,13 +208,13 @@ class Lift:
             [imgs / f"{n}.elf" for n in table["images"]] + [jobs / f"{n}.bin" for n in table["jobs"]] +
             [w / "spu" / "_gen" / "spu_workloads.cpp"])
         for k, n in enumerate(names):
-            self.progress("spu", k, len(names))
+            progress("spu", k, len(names))
             fp_in = table["images"].get(n) or table["jobs"][n]
             self._step(f"spu:{n}", {"image": fp_in["fnv"]}, [], lambda n=n: self._run(
                 f"spu:{n}", [build_spu, "--elf-dir", imgs, "--job-dir", jobs, "--ps3recomp", ps3r,
                              "--out-dir", w / "spu", "--only", n]),
                 [w / "spu" / n / "spu_recomp.c"])
-        self.progress("spu", len(names), len(names))
+        progress("spu", len(names), len(names))
 
         fw = self.inputs / "firmware" / "libsre.prx"
         if libsre_sha and fw.is_file():

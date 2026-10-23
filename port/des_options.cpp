@@ -945,12 +945,110 @@ static void ik_log(ppu_context* ctx, uint32_t addr)
         fprintf(f, "%.1f %.4f %.4f air\n", ms, s_ik_dt, ctx->fpr[1]);
     fflush(f);   /* a test driver lines its phases up with the last line */
 }
+
+/* The ankle's tilt (docs/92). After its two rays the solver turns each ankle to
+ * the ground's normal under the foot: the normal of whichever surface is higher,
+ * the ankle ray's (r1+0xC0) or the toe ray's (r1+0x80), picked fresh at every
+ * update with nothing carried over (0x00FF5BAC). A ray that grazes a step edge,
+ * a rubble block or a wall returns that face's normal, up to 90 degrees from up,
+ * and the foot turns nearly on its side for an update or three: the twitching
+ * foot on uneven ground. The original game does this at 30 fps too.
+ * DES_FOOTFIX=1 (default 0, the original): a normal steeper than 45 degrees is
+ * not used (the solver keeps the last update's, or straight up), and the rest
+ * eases from the last update's toward the new one, keeping half the difference
+ * per 30 fps update (0.5^(30 dt) at other rates). DES_FOOTTILT=<degrees> and
+ * DES_FOOTSMOOTH=<share kept> set the two parts (0 turns one off). It runs at
+ * 0x00FF54D4, on the solver's path with a hit and its weight above 0, after the
+ * normal is picked into r1+0xA0 and before the ankle is turned (0x00FF59BC);
+ * the solver stores the result at +0xA0 itself (0x00FF56C0), where the next
+ * update finds it. Every character with foot IK gets it. DES_FOOTLOG=<file>
+ * writes the player's normals at each update. */
+static PPU_THREAD_LOCAL bool s_ik_player;
+static FILE* foot_log_file()
+{
+    static int open = 0;
+    static FILE* f = nullptr;
+    if (!open) {
+        open = 1;
+        const char* path = getenv("DES_FOOTLOG");
+        if (path && *path && strcmp(path, "0") != 0 && (f = fopen(path, "w")) != nullptr)
+            fprintf(f, "# ms solver dt weight picked(x y z) used(x y z) toe(x y z) ankle(x y z) player(x y z)\n");
+    }
+    return f;
+}
+struct FootFix { float cos_tilt; float keep; };   /* cos_tilt -2: no limit; keep 0: no easing */
+static FootFix foot_fix()
+{
+    const bool on = ps3_env_int("DES_FOOTFIX", 0) != 0;
+    const char* t = getenv("DES_FOOTTILT");
+    const char* s = getenv("DES_FOOTSMOOTH");
+    float tilt = (t && *t) ? (float)atof(t) : (on ? 45.0f : 0.0f);
+    float keep = (s && *s) ? (float)atof(s) : (on ? 0.5f : 0.0f);
+    if (!(tilt > 0.0f && tilt < 90.0f)) tilt = 0.0f;
+    if (!(keep > 0.0f && keep < 1.0f)) keep = 0.0f;
+    return {tilt > 0.0f ? std::cos(tilt * 3.14159265f / 180.0f) : -2.0f, keep};
+}
+static void foot_normal(ppu_context* ctx)
+{
+    static FootFix fix = {-2.0f, 0.0f};
+    PS3_KNOB(fix, foot_fix());
+    FILE* log = s_ik_player ? foot_log_file() : nullptr;
+    if (fix.cos_tilt < -1.5f && fix.keep <= 0.0f && !log) return;
+    const uint32_t solver = (uint32_t)ctx->gpr[30], sp = (uint32_t)ctx->gpr[1], n_ea = (sp + 0xA0u) & ~0xFu;
+    float h[3], p[3], n[3], hl = 0.0f, pl = 0.0f;
+    for (int i = 0; i < 3; i++) {
+        h[i] = n[i] = vm_readf(n_ea + 4 * i);
+        p[i] = vm_readf(solver + 0xA0 + 4 * i);
+        hl += h[i] * h[i]; pl += p[i] * p[i];
+    }
+    const bool h_ok = hl > 0.25f && hl < 4.0f, p_ok = pl > 0.25f && pl < 4.0f;   /* +Y is up */
+    const bool p_flat = p_ok && p[1] >= fix.cos_tilt * std::sqrt(pl);
+    bool changed = false;
+    if (h_ok && n[1] < fix.cos_tilt * std::sqrt(hl)) {   /* too steep to stand on */
+        for (int i = 0; i < 3; i++) n[i] = p_flat ? p[i] : (i == 1 ? 1.0f : 0.0f);
+        changed = true;
+    }
+    const float steps = s_ik_dt * 30.0f;
+    if (fix.keep > 0.0f && steps > 0.0f && h_ok && p_flat) {
+        const float a = 1.0f - std::pow(fix.keep, steps);   /* the share of the difference taken this update */
+        for (int i = 0; i < 3; i++) n[i] = p[i] + (n[i] - p[i]) * a;
+        changed = true;
+    }
+    if (changed) {
+        const float m = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
+        if (m > 1e-6f) {
+            const float r = 1.0f / std::sqrt(m);
+            for (int i = 0; i < 3; i++) { n[i] *= r; vm_writef(n_ea + 4 * i, n[i]); }
+        } else {
+            for (int i = 0; i < 3; i++) n[i] = h[i];
+        }
+    }
+    if (log) {
+        static const auto t0 = std::chrono::steady_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        float x = 0, y = 0, z = 0, speed = 0;
+        int stamina = 0;
+        player_pos(&x, &y, &z, &stamina, &speed);
+        fprintf(log, "%.1f %08X %.4f %.3f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.2f %.2f %.2f\n",
+                ms, solver, s_ik_dt, vm_readf(solver + 0x90), h[0], h[1], h[2], n[0], n[1], n[2], vm_readf(sp + 0x80),
+                vm_readf(sp + 0x84), vm_readf(sp + 0x88), vm_readf(sp + 0xC0), vm_readf(sp + 0xC4), vm_readf(sp + 0xC8),
+                x, y, z);
+        fflush(log);
+    }
+}
+
 extern "C" void des_ik_rate(ppu_context* ctx, uint32_t addr)
 {
-    if (addr == 0x002F5B14u) {   /* fmr f30, f1: the driver's dt */
+    if (addr == 0x002F5B14u) {   /* fmr f30, f1: the driver's dt; r3 is still the movement object */
         s_ik_dt = (float)ctx->fpr[30];
+        if (foot_log_file()) {
+            uint32_t chr = vm_read32(kChrMan);
+            s_ik_player = guest_ptr_ok(chr) && guest_ptr_ok(chr = vm_read32(chr + 0x1BC)) &&
+                          vm_read32(chr + 0x20) == (uint32_t)ctx->gpr[3];
+        }
         return;
     }
+    if (addr == 0x00FF54D4u) foot_normal(ctx);
     if (addr == 0x002F5DB8u || addr == 0x002F5CCCu) ik_log(ctx, addr);
     static int on = 1;
     PS3_KNOB(on, ps3_env_int("DES_IKFIX", 1) != 0);

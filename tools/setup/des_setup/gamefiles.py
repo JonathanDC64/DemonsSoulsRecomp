@@ -131,7 +131,8 @@ def _magic(path: Path, n=4) -> bytes:
 def check(folder, decrypted_dirs=(), firmware=None, table=None, progress=None, unlocks=False, also=None) -> Report:
     """Check a game folder. decrypted_dirs: more folders to look in for the
     decrypted files, by file name. firmware: the decrypted libsre.prx, or None
-    to leave it out of the check. progress(bytes) is called while hashing.
+    to look for it by name in the game's folder and in decrypted_dirs (and
+    also's places). progress(bytes) is called while hashing.
     unlocks: the RPCS3 route, where the unlock makes a missing decrypted file
     (the sentences say so). also: {table path: [files]}, more files to try for
     one decrypted file (PPU Debug's dump of the EBOOT). A decrypted file is
@@ -198,15 +199,31 @@ def check(folder, decrypted_dirs=(), firmware=None, table=None, progress=None, u
             item = first or _check_file("decrypted", e, None, progress, **texts)
         rep.items.append(item)
 
-    # The firmware file, when asked for.
+    # The firmware's file: the one given, else one by its name in the game's folder (beside PS3_GAME) or in a
+    # folder of decrypted files. The build needs it (the lifted libsre), so it is always checked.
     for e in t.get("firmware", []):
-        if firmware is None:
-            continue
-        p = Path(firmware)
-        rep.items.append(_check_file("firmware", e, p if p.is_file() else None, progress,
-                                     missing=f"{e['name']} was not found at {firmware}.",
-                                     mismatch=f"{e['name']} does not match the copy the port was tested with "
-                                              f"({e['from']})."))
+        mismatch = f"{e['name']} does not match the copy the port was tested with ({e['from']})."
+        if firmware is not None:
+            places = [Path(firmware)]
+            missing = f"{e['name']} was not found at {firmware}."
+        else:
+            places = [d / _find_ci(d, e["name"]) for d in [root] + [Path(x) for x in decrypted_dirs]
+                      if _find_ci(d, e["name"])]
+            places += [Path(p) for p in (also or {}).get(e["name"], ())]
+            missing = (f"{e['name']} is missing. It is one file of the PS3 system software: decrypt "
+                       f"{e['from'].split(',')[0]} with RPCS3 (Utilities, Decrypt PS3 Binaries), then put "
+                       f"{e['name']} in the game's folder, next to PS3_GAME.")
+        first = None
+        for p in places:
+            if not p.is_file():
+                continue
+            item = _check_file("firmware", e, p, progress, missing=missing, mismatch=mismatch)
+            if item.good:
+                break
+            first = first or item
+        else:
+            item = first or _check_file("firmware", e, None, progress, missing=missing, mismatch=mismatch)
+        rep.items.append(item)
     return rep
 
 

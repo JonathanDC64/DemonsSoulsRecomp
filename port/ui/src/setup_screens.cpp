@@ -90,9 +90,10 @@ const char* state_name(setup::State s) {
 }
 
 // Which part of the check a @check line is, by its table name (tools/setup/des_setup/game_table.json): the files the
-// player decrypts end in .elf or .unedat (and the firmware's in .prx); the disc's own files are paths under PS3_GAME;
-// the rest (PS3_GAME, PARAM.SFO, TITLE_ID, APP_VER) are the folder and the title.
-enum class Part { Game, Disc, Decrypted };
+// player decrypts from the disc end in .elf or .unedat, and the firmware's (from the PS3 system software) in .prx;
+// the disc's own files are paths under PS3_GAME; the rest (PS3_GAME, PARAM.SFO, TITLE_ID, APP_VER) are the folder and
+// the title.
+enum class Part { Game, Disc, Decrypted, Firmware };
 
 bool ends_with(const std::string& s, const char* tail) {
     const size_t n = std::strlen(tail);
@@ -103,7 +104,8 @@ bool ends_with(const std::string& s, const char* tail) {
 }
 
 Part part_of(const std::string& name) {
-    if (ends_with(name, ".elf") || ends_with(name, ".unedat") || ends_with(name, ".prx")) return Part::Decrypted;
+    if (ends_with(name, ".prx")) return Part::Firmware;
+    if (ends_with(name, ".elf") || ends_with(name, ".unedat")) return Part::Decrypted;
     return name.find('/') == std::string::npos ? Part::Game : Part::Disc;
 }
 
@@ -191,8 +193,8 @@ void SetupStartWindow::refresh() {
                                             " of free space while it works.");
         auto* box = panel(mBody);
         found(box, "setup-info", "You need your copy of the game",
-              "The US disc, BLUS30443 version 1.00, copied to a folder, with 27 of its files decrypted once. Setup "
-              "shows you how.");
+              "The US disc, BLUS30443 version 1.00, copied to a folder, with 27 of its files and one file of the "
+              "PS3 system software decrypted once. Setup shows you how.");
         found(box, "setup-info", "Setup downloads its build tools once",
               "The compiler and the tools it needs, each checked before it is used. Later builds use the same copy.");
         found(box, "setup-info", "You can stop and come back",
@@ -335,10 +337,10 @@ SetupSourceWindow::SetupSourceWindow(Props props) : SetupPage("setup-source"), m
     const Card kCards[] = {
         {"I have decrypted files", "No RPCS3 needed",
          "A folder copy of the disc (it has a PS3_GAME folder), with the game's 27 decrypted files next to the "
-         "originals: EBOOT.elf and the .sdat.unedat files.",
+         "originals: EBOOT.elf and the .sdat.unedat files. And libsre.prx next to PS3_GAME.",
          [this] { open_folder(); }},
         {"Show me how", "I have neither yet",
-         "How to copy your disc to a folder and decrypt the 27 files, with free tools.", [this] { open_help(); }},
+         "How to copy your disc to a folder and decrypt the 28 files, with free tools.", [this] { open_help(); }},
     };
     for (const Card& c : kCards) {
         auto button = std::make_unique<Button>(cards, "");
@@ -600,12 +602,13 @@ void SetupFilesWindow::draw_check() {
         append(row, "setup-spin");
         text(row, "setup-note", line);
     } else {
-        std::vector<const setup::Line*> game, disc, files;
+        std::vector<const setup::Line*> game, disc, files, firmware;
         for (const setup::Line& c : mStatus.checks) {
             switch (part_of(c.key2)) {
             case Part::Game: game.push_back(&c); break;
             case Part::Disc: disc.push_back(&c); break;
             case Part::Decrypted: files.push_back(&c); break;
+            case Part::Firmware: firmware.push_back(&c); break;
             }
         }
         const auto bad = [](const setup::Line* c) { return !good(c->key); };
@@ -663,6 +666,18 @@ void SetupFilesWindow::draw_check() {
                         {{mRequest.decrypted.empty() ? "They are in another folder" : "Choose another folder",
                           [this] { choose(Picking::Decrypted); }, Look::Quiet}});
         }
+        // The firmware's file is not the disc's: found, one more row in the game's panel; not, its own part with the
+        // engine's sentence, which says where it comes from and where it goes.
+        if (isGame && !firmware.empty()) {
+            const setup::Line* c = firmware.front();
+            if (good(c->key)) {
+                found(box, "setup-ok", "The PS3 system software's libsre.prx", "Found, matches");
+            } else {
+                text(mCheck, "setup-heading", "One file of the PS3 system software");
+                found(panel(mCheck), look_of(c->key).mark, list_name(c->key2) + ": " + look_of(c->key).words,
+                      c->text);
+            }
+        }
     }
 
     const bool ok = !running && mStatus.result == "ok";
@@ -687,7 +702,8 @@ SetupHelpWindow::SetupHelpWindow(Props props) : SetupPage("setup-help"), mProps(
     set_rail({{"Your game", "", S::Now}, {"Build", build_time(), S::Todo}, options_step(), {"Play", "", S::Todo}});
     set_heading("Getting your game's files",
                 "Setup needs your own copy of the game: the US disc, BLUS30443 version 1.00, copied to a folder, "
-                "with 27 of its files decrypted once. Setup never decrypts anything itself.");
+                "with 27 of its files decrypted once, and one file of the PS3 system software. Setup never decrypts "
+                "anything itself.");
     const auto guide = [](Rml::Element* body, std::initializer_list<const char*> steps) {
         auto* list = append(body, "setup-guide");
         int n = 0;
@@ -704,7 +720,14 @@ SetupHelpWindow::SetupHelpWindow(Props props) : SetupPage("setup-help"), mProps(
                   "RPCS3, the free PS3 emulator, does this. You do not need to add the game to RPCS3 for it."),
           {"In RPCS3, choose Utilities, then Decrypt PS3 Binaries.",
            "Select PS3_GAME/USRDIR/EBOOT.BIN, then the .sdat files in chr, chr/c0000, menu, script and script/talk.",
-           "RPCS3 writes each decrypted file next to its original. Then come back and choose the folder."});
+           "RPCS3 writes each decrypted file next to its original."});
+    guide(callout(stack, "info", "Decrypt one file of the PS3 system software",
+                  "The game also needs libsre.prx, a library of the PS3's own system software."),
+          {"In RPCS3, install the PS3 system software if you have not: File, then Install Firmware.",
+           "Choose Utilities, then Decrypt PS3 Binaries, and select dev_flash/sys/external/libsre.sprx in RPCS3's "
+           "folder.",
+           "Copy the libsre.prx that RPCS3 writes into the game's folder, next to PS3_GAME. Then come back and choose "
+           "the folder."});
     std::vector<Action> actions;
     if (mProps.onFolder)
         actions.push_back({"I have decrypted files",

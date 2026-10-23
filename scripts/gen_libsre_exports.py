@@ -30,6 +30,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "work", "libsre")
 OUT = os.path.join(ROOT, "port", "gen", "libsre_glue.c")
+MODULE_PREFIX = "@module/"   # --runtime-image: from the game module's folder (setup's lift.py)
 
 NL = chr(92) + "n"          # a literal backslash-n for the emitted C
 
@@ -64,8 +65,9 @@ def main(argv=None):
     ap.add_argument("--src", default=SRC, help="build_libsre's output (default work/libsre)")
     ap.add_argument("--out", default=OUT, help="the glue file (default port/gen/libsre_glue.c)")
     ap.add_argument("--runtime-image", default="work/libsre/libsre_image.bin", metavar="PATH",
-                    help="where the game loads the image from at run time "
-                         "(default work/libsre/libsre_image.bin, from the working folder)")
+                    help="where the game loads the image from at run time (default work/libsre/libsre_image.bin, "
+                         "from the working folder); @module/<path> is <path> from the folder of the game module "
+                         "(PS3_GAME_MODULE), as setup builds it. PS3_LIBSRE_IMAGE overrides it at run time")
     args = ap.parse_args(argv)
     src, out = args.src, args.out
     rimg = args.runtime_image.replace(chr(92), "/").replace('"', "")
@@ -113,6 +115,7 @@ def main(argv=None):
     a("#include <stdio.h>")
     a("#include <stdlib.h>")
     a("#include <stdint.h>")
+    a("#include <string.h>")
     a('#include "../../ps3recomp/runtime/prx/prx_loader.h"')
     a("")
     a("#define LIBSRE_BASE 0x%08Xu" % base)
@@ -166,6 +169,30 @@ def main(argv=None):
     a("    ppu_register_function((uint64_t)guest_addr, host);")
     a("}")
     a("")
+    a("/* The image's path: PS3_LIBSRE_IMAGE when it is set, else the one this glue was")
+    a(" * generated with. For setup's build that one is given from the folder of the")
+    a(" * game module (PS3_GAME_MODULE), so the module holds no folder of the PC it was")
+    a(" * built on. (Plain loops: a freestanding module has no strrchr or snprintf.) */")
+    a("static const char* libsre_image_path(char* buf, size_t cap)")
+    a("{")
+    a('    const char* given = getenv("PS3_LIBSRE_IMAGE");')
+    a("    if (given && given[0]) return given;")
+    if rimg.startswith(MODULE_PREFIX):
+        a('    static const char rest[] = "%s";' % rimg[len(MODULE_PREFIX):])
+        a('    const char* mod = getenv("PS3_GAME_MODULE");')
+        a("    if (!mod || !mod[0]) return rest;")
+        a("    size_t dir = 0;")
+        a("    for (size_t i = 0; mod[i]; ++i)")
+        a("        if (mod[i] == '/' || mod[i] == 92) dir = i + 1;")
+        a("    if (dir + sizeof rest > cap) return rest;")
+        a("    memcpy(buf, mod, dir);")
+        a("    memcpy(buf + dir, rest, sizeof rest);")
+        a("    return buf;")
+    else:
+        a("    (void)buf; (void)cap;")
+        a('    return "%s";' % rimg)
+    a("}")
+    a("")
     a("/* Strong override of ps3recomp's weak ps3_load_prx_modules() hook: boot_main")
     a(" * calls it after the lifted function table is registered and vm_base is live,")
     a(" * and before any guest code runs -- exactly what a PRX load needs. */")
@@ -174,11 +201,12 @@ def main(argv=None):
     a('    const char* e = getenv("LIBSRE_LLE");')
     a("    if (!e || e[0] == '0') return;")
     a("")
+    a("    char path_buf[1024];")
+    a("    const char* path = libsre_image_path(path_buf, sizeof path_buf);")
     a("    uint32_t sz = 0;")
-    a('    uint8_t* img = prx_image_load_file("%s", &sz);' % rimg)
+    a("    uint8_t* img = prx_image_load_file(path, &sz);")
     a("    if (!img) {")
-    a('        fprintf(stderr, "[libsre] LIBSRE_LLE set but %s"' % rimg)
-    a('                        " could not be read -- staying on HLE%c", 10);')
+    a('        fprintf(stderr, "[libsre] LIBSRE_LLE set but %s could not be read -- staying on HLE%c", path, 10);')
     a("        return;")
     a("    }")
     a("")

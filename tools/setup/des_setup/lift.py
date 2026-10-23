@@ -151,7 +151,11 @@ class Lift:
         fw = self.inputs / "firmware" / "libsre.prx"
         if libsre_sha and fw.is_file():
             lw, glue = w / "libsre", w / "gen" / "libsre_glue.c"
-            self._step("libsre", {"libsre": libsre_sha}, [str(lw)], lambda: self._run(
+            # The glue reads the image at run time from a path it holds. That path is given from the game module's
+            # folder (compile.py writes the DLL to <data>/game), so the DLL holds no folder of this PC, and two PCs
+            # that build the same game get the same glue.
+            image = "@module/" + Path(os.path.relpath(lw / "libsre_image.bin", self.data / "game")).as_posix()
+            self._step("libsre", {"libsre": libsre_sha}, [str(lw), image], lambda: self._run(
                 "libsre", [self.src / "scripts" / "build_libsre.py", fw, "--ps3recomp", ps3r, "--work", lw,
-                           "--glue", glue, "--runtime-image", lw / "libsre_image.bin"]),
+                           "--glue", glue, "--runtime-image", image]),
                 [lw / "lifted" / "ppu_recomp.c", glue])

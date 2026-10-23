@@ -118,6 +118,13 @@ class LiftTest(unittest.TestCase):
         self.t.lift().run_all("e" * 64, None)
         self.assertNotIn("build_libsre.py", self.t.calls())
 
+    def test_libsre_image_from_the_module(self):
+        # The glue gets the image's path from the game module's folder (<data>/game), not a folder of this PC.
+        self.t.lift().run_all("e" * 64, "f" * 64)
+        calls = (self.t.src / "calls.txt").read_text().splitlines()
+        args = next(c for c in calls if c.startswith("build_libsre.py ")).split(" ")
+        self.assertEqual(args[args.index("--runtime-image") + 1], "@module/../work/libsre/libsre_image.bin")
+
     def test_new_eboot_redoes_the_lift(self):
         self.t.lift().run_all("e" * 64, "f" * 64)
         self.t.reset_calls()

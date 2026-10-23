@@ -20,7 +20,9 @@ rest of the PC and less what the running jobs are still expected to take, holds
 its expected peak. The biggest start first; a smaller one that fits starts
 beside them. A job's expected peak is the one measured the last time (the
 journal keeps it), else its kind's figure (NEED), or the largest measured so
-far in this run among its kind when that is more. A job that runs out of memory
+far in this run among its kind when that is more. A PPU chunk's is at most what
+its source's size gives (PPU_BASE and PPU_PER_MB, or a higher rate a chunk of
+this run took), so smaller chunks run more at once. A job that runs out of memory
 is tried once more with nothing beside it. -j N runs N at a time whatever the
 memory.
 
@@ -48,6 +50,11 @@ KEEP = 2 * GB                                      # left free for the rest of t
 # small files and the workload table well under.
 NEED = {"ppu": 26 * GB // 10, "spu": GB // 2, "libsre": 2 * GB}
 NEED_OTHER = GB // 2
+# A PPU chunk's peak before it has been measured, from its source's size: over the 81 chunks of three setups
+# (docs/53 section 16.3: 14 chunks of 5.7 to 38.7 MB, 53 of 6.7 to 10.7 MB) it was at most 0.15 GB plus 0.128 GB a
+# MB of source; with 10% room, 0.14. Never more than the kind's figure, which a chunk of 19 MB or more reaches.
+PPU_BASE = 15 * GB // 100
+PPU_PER_MB = 14 * GB // 100
 ROOM = 1.1                                         # a measured peak, with 10% room
 SHORT_AFTER = 5.0                                  # seconds held back by memory before it counts as short
 OOM = re.compile(r"out of memory|not enough memory|bad_alloc|std::bad_alloc", re.I)
@@ -239,6 +246,7 @@ class Compile:
         self.memory = memory or (lambda short: None)
         self.free = free or free_memory
         self._seen = {}                            # kind -> the largest peak measured in this run
+        self._per_mb = {}                          # kind -> the highest peak per MB of source in this run (ppu)
         self._sums, self._sums_lock = {}, threading.Lock()
 
     # ---- the description ----
@@ -339,7 +347,12 @@ class Compile:
             return int(own * ROOM)
         # Not measured yet: its kind's figure, or more when one of its kind took more in this run. One that took less
         # says nothing about the others (PPU chunk 012 peaks at 0.9 GB, chunk 009 at 2.2).
-        return max(NEED.get(o.kind, NEED_OTHER), int(self._seen.get(o.kind, 0) * ROOM))
+        need = max(NEED.get(o.kind, NEED_OTHER), int(self._seen.get(o.kind, 0) * ROOM))
+        if o.kind == "ppu" and o.src.is_file():
+            # A PPU chunk: no more than its size gives, at the measured rate or a higher one seen in this run.
+            per_mb = max(PPU_PER_MB, self._per_mb.get(o.kind, 0) * ROOM)
+            need = min(need, int(PPU_BASE + per_mb * o.src.stat().st_size / 1e6))
+        return need
 
     def _compile_all(self, objs, cc_id):
         self.objdir.mkdir(parents=True, exist_ok=True)
@@ -476,8 +489,11 @@ class Compile:
         res = {"deps": sorted({os.path.abspath(d) for d in deps if os.path.normcase(os.path.abspath(d)) != src})}
         if peak:
             res["peak"] = peak
+            size = o.src.stat().st_size if o.kind == "ppu" and o.src.is_file() else 0
             with run.cond:
                 self._seen[o.kind] = max(self._seen.get(o.kind, 0), peak)
+                if size:
+                    self._per_mb[o.kind] = max(self._per_mb.get(o.kind, 0), (peak - PPU_BASE) * 1e6 / size)
         return res
 
     def _exec(self, step, cmd, cwd, run=None, name=None):

@@ -372,6 +372,11 @@ class TestMemory(unittest.TestCase):
     def setUp(self):
         self.t = Tree()
         self.addCleanup(self.t.tmp.cleanup)
+        # The fake chunks are a few bytes, so their size would give them almost no memory: they get the kind's figure,
+        # but in the tests of the size rule, which put the real figures back.
+        self.base = cc.PPU_BASE
+        cc.PPU_BASE = 1 << 50
+        self.addCleanup(setattr, cc, "PPU_BASE", self.base)
         for rel in ("work/recomp/ppu_recomp_000.cpp", "work/recomp/ppu_recomp_001.cpp"):
             p = self.t.data / rel
             Tree.put(p, p.read_text(encoding="utf-8") + f"\n// SLEEP={self.PPU}\n")
@@ -427,6 +432,37 @@ class TestMemory(unittest.TestCase):
         self.assertEqual(c._need(ppu), int(3 * cc.GB * cc.ROOM))
         self.assertEqual(c._need(objs["spu_0000_at_01760280"]), cc.NEED["spu"])
         self.assertEqual(c._need(objs["des_game_module"]), cc.NEED_OTHER)
+
+    def pad(self, rel, size):
+        """The chunk's source made `size` bytes long (spaces after a comment mark; the fake compiler reads it)."""
+        p = self.t.data / rel
+        data = p.read_bytes() + b"\n//"
+        p.write_bytes(data + b" " * (size - len(data) - 1) + b"\n")
+
+    def test_need_by_size(self):
+        cc.PPU_BASE = self.base
+        c = self.t.make(jobs=0)
+        o = next(o for o in c.plan() if o.name == "ppu_recomp_001")
+        self.pad("work/recomp/ppu_recomp_001.cpp", 8_000_000)          # a chunk of 150,000 lines
+        self.assertEqual(c._need(o), int(cc.PPU_BASE + cc.PPU_PER_MB * 8))
+        c._per_mb["ppu"] = cc.GB // 5                      # a chunk of this run took more for its size
+        self.assertAlmostEqual(c._need(o), cc.PPU_BASE + cc.GB // 5 * cc.ROOM * 8, delta=2)
+        c._per_mb.clear()
+        c._seen["ppu"] = 2 * cc.GB                         # a large one measured: says nothing about this one
+        self.assertEqual(c._need(o), int(cc.PPU_BASE + cc.PPU_PER_MB * 8))
+        self.pad("work/recomp/ppu_recomp_001.cpp", 34_000_000)         # a chunk of 600,000 lines: the kind's figure
+        c._seen.clear()
+        self.assertEqual(c._need(o), cc.NEED["ppu"])
+
+    def test_small_chunks_side_by_side(self):
+        # Two 8 MB chunks are expected at 1.27 GB each, so both fit in 2.7 GB over what is kept; at the kind's 2.6 GB
+        # each they ran one at a time (test_small_jobs_beside_a_big_one).
+        cc.PPU_BASE = self.base
+        for rel in ("work/recomp/ppu_recomp_000.cpp", "work/recomp/ppu_recomp_001.cpp"):
+            self.pad(rel, 8_000_000)
+        times = self.run_with(2 + 2.7)
+        by = {n: (n, s, e) for n, s, e in times}
+        self.assertTrue(overlap(by["ppu_recomp_000.obj"], by["ppu_recomp_001.obj"]), times)
 
     def test_memory_not_known(self):
         times = self.run_with(0)                           # half the 8 processors, whatever the jobs need

@@ -2101,10 +2101,36 @@ extern "C" void des_mouse_look(ppu_context* ctx, uint32_t addr)
 extern "C" void des_menu_sfx_init(void);   /* des_menu_sfx.cpp */
 extern "C" void des_chrins_init(void);     /* des_chrins.cpp */
 
-/* First thing in main (ps3recomp's launch hook, docs/88 section 3): setup's
- * screens alone, or the game (des_ui_launch). */
+/* The run defaults every start needs, from setup's Play, Explorer or a
+ * shortcut as much as from tools/des (docs/45 1.3). Without them a player's
+ * start hung on the loading screen: libsre was never loaded, so every SPURS
+ * call stayed on HLE, LFQueue included (measured 10-22, docs/88 section 11). A value
+ * already in the environment wins, so tools/des/deslib.sh (des_env_defaults)
+ * and tools/linux/appimage.sh, which set the same, still decide for their runs. */
+static void run_defaults()
+{
+    static const struct { const char* name; const char* value; } kDefaults[] = {
+        /* The known-good boot (docs/25): load libsre (read by the generated
+         * libsre glue, scripts/gen_libsre_exports.py), these families (LFQueue,
+         * SpursQueue) on Sony's code, the rest on HLE, and no round notify. */
+        {"LIBSRE_LLE", "1"},
+        {"LIBSRE_LLE_ONLY", "011EE38B,1656D49F,8A85674D,73E06F91,082BFB09,E5443BE7,039D70B7,91066667"},
+        {"SPURS_NO_ROUND_NOTIFY", "1"},
+        /* The level's busiest frames need ~850k vertices; growing the buffer
+         * during play stalled a frame for 100-400 ms (docs/28). */
+        {"VP_VB_VERTS", "1572864"},
+        /* No per-event log lines: they go through one lock and fill des.log. */
+        {"PS3_VERBOSE", "0"},
+    };
+    for (const auto& d : kDefaults)
+        if (!getenv(d.name)) ps3_setenv(d.name, d.value);
+}
+
+/* First thing in main (ps3recomp's launch hook, docs/88 section 3): the run
+ * defaults, then setup's screens alone, or the game (des_ui_launch). */
 extern "C" int ps3_title_launch(int* argc, char*** argv)
 {
+    run_defaults();
     return des_ui_launch(argc, argv);
 }
 

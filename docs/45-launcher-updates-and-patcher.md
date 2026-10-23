@@ -25,7 +25,7 @@ The repository is written as `<owner>/DemonsSoulsRecomp`.
 - **Found while reading (read and measured).**
   - The exe needs the Visual C++ runtime DLLs, which are not part of Windows.
   - It imports Media Foundation directly, which Windows N editions lack.
-  - The run defaults (LIBSRE_LLE and others) live in `tools/des/deslib.sh`, not in the exe.
+  - The run defaults (LIBSRE_LLE and others) live in `tools/des/deslib.sh`, not in the exe. *(Since 10-22 the exe sets the ones a start needs itself; see 1.3.)*
   - The game's /dev_hdd1 cache is written into the disc folder.
   - Several paths are relative to the working folder.
   - Host code includes the generated `ppu_recomp.h`.
@@ -86,6 +86,8 @@ This PC: Ryzen 7 9800X3D, 8 cores and 16 threads, 31.1 GB of RAM. Times from the
   - `PS3_SHADER_CACHE`.
 
   Nothing in `port/` sets LIBSRE_LLE. An exe started from Explorer runs without these defaults.
+
+  *Update 10-22:* without them a player's start from setup hung on the loading screen (docs/88 section 11). The host now sets `LIBSRE_LLE=1`, `LIBSRE_LLE_ONLY`, `SPURS_NO_ROUND_NOTIFY=1`, `VP_VB_VERTS` and `PS3_VERBOSE=0` itself at the start of `main`, each only when the environment lacks it (`run_defaults` in `port/des_options.cpp`). `LIBSRE_LLE` is read by the generated libsre glue (`scripts/gen_libsre_exports.py`), not by `port/` or the runtime, so a search of those finds nothing; without it libsre is never loaded. `PS3_VFS_ROOT` comes from setup's `ready.txt` (docs/88 section 7), and the shader cache keeps its default beside the exe.
 - **Paths relative to the working folder.**
   - The libsre image is `work/libsre/libsre_image.bin` (in the glue from `gen_libsre_exports.py`).
   - `/dev_hdd0/` maps to `gamedata/dev_hdd0/` (`libs/filesystem/cellFs.c`).

@@ -29,15 +29,24 @@ inline constexpr const char* kPythonSha256 = "91d828c2da3a029b41699e918674a0cb37
 // inputs, the lift and the build.
 const std::filesystem::path& data_dir();
 
-// What the player chose. An empty game folder: the folders the last run used (the engine keeps them).
+// What the player chose. An empty game folder: the folders the last run used (the engine keeps them), or on the RPCS3
+// route the game in RPCS3's library.
 struct Request {
     std::filesystem::path game;                    // the folder of the disc dump
     std::vector<std::filesystem::path> decrypted;  // more folders to look in for the decrypted files
     std::filesystem::path firmware;                // the decrypted libsre.prx, while libsre is lifted
+    std::string rpcs3;                 // the RPCS3 route (docs/90): the RPCS3 that unlocks the files (setup_rpcs3.hpp's
+                                       // rpcs3_arg); empty: the folder route
+    std::vector<std::string> imports;  // what comes across from that RPCS3 after the build: save, trophies, settings
+    bool noImport = false;             // drop an import still pending (its failure's "Go on without it")
 };
 // For DES_UI_OPEN=setup and setup-run (a developer's test of the screens): DES_SETUP_GAME, DES_SETUP_DECRYPTED (folders
-// split by ';') and DES_SETUP_FIRMWARE.
+// split by ';'), DES_SETUP_FIRMWARE, DES_SETUP_RPCS3 and DES_SETUP_IMPORT (save,trophies,settings).
 Request request_from_env();
+
+// The game's gamedata folder for this install: beside the exe, where a player's start works and keeps its saves (the
+// launch hook's work_in_exe_folder). The RPCS3 route's import writes there (--gamedata).
+std::filesystem::path gamedata_dir();
 
 // The state at start, from setup/ready.txt and the journal's presence only: no Python and no hashing, so it costs
 // nothing at every start (docs/88 section 3).
@@ -72,8 +81,9 @@ public:
     Engine(const Engine&) = delete;
     Engine& operator=(const Engine&) = delete;
 
-    // Starts a run (or a check of the game files only). False if it could not start: why() says why, for the player.
-    bool start(const Request& request, bool check_only = false);
+    // Starts a run (or a check of the game files only, or on the RPCS3 route the check and the unlock only: the unlock
+    // page's run). False if it could not start: why() says why, for the player.
+    bool start(const Request& request, bool check_only = false, bool unlock_only = false);
     // Cancel: ends the download or the engine, and everything it started. The journal keeps what was done, and the
     // download's .part file what it got, so the next run carries on.
     void stop();
@@ -89,6 +99,7 @@ private:
     std::string mWhy;
     Request mRequest;          // this run's, for the engine's start after the download
     bool mCheckOnly = false;
+    bool mUnlockOnly = false;
     bool mFetching = false;    // this run began with the first Python's download
     bool mFromEngine = false;  // the lines come from the engine now, not from the download
     bool mStopAsked = false;   // stop() came during this run

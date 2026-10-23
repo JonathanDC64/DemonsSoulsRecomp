@@ -16,9 +16,10 @@ struct KindName {
 constexpr KindName kKinds[] = {
     {"setup", Line::Kind::Setup},       {"plan", Line::Kind::Plan},   {"step", Line::Kind::Step},
     {"progress", Line::Kind::Progress}, {"overall", Line::Kind::Overall}, {"check", Line::Kind::Check},
-    {"file", Line::Kind::File},         {"rpcs3", Line::Kind::Rpcs3}, {"awake", Line::Kind::Awake},
-    {"memory", Line::Kind::Memory},     {"log", Line::Kind::Log},     {"error", Line::Kind::Error},
-    {"done", Line::Kind::Done},
+    {"file", Line::Kind::File},         {"rpcs3", Line::Kind::Rpcs3}, {"user", Line::Kind::User},
+    {"library", Line::Kind::Library},   {"found", Line::Kind::Found}, {"setting", Line::Kind::Setting},
+    {"awake", Line::Kind::Awake},       {"memory", Line::Kind::Memory}, {"log", Line::Kind::Log},
+    {"error", Line::Kind::Error},       {"done", Line::Kind::Done},
 };
 
 constexpr size_t kTailLines = 200;
@@ -94,6 +95,24 @@ Line parse_line(std::string_view text) {
         l.text = std::string(rest);
         if (l.key.empty() || l.text.empty()) return plain;
         break;
+    case Line::Kind::User:  // <id> <users> <name>
+        l.key = take_word(rest);
+        if (l.key.empty() || !parse_number(take_word(rest), l.n)) return plain;
+        l.text = std::string(rest);
+        break;
+    case Line::Kind::Library:  // <kind> <path>
+    case Line::Kind::Setting:  // <key> <value>
+        l.key = take_word(rest);
+        l.text = std::string(rest);
+        if (l.key.empty()) return plain;
+        break;
+    case Line::Kind::Found:  // <what> <state> <values>...
+        l.key = take_word(rest);
+        l.key2 = take_word(rest);
+        while (!rest.empty())
+            if (const std::string_view w = take_word(rest); !w.empty()) l.list.emplace_back(w);
+        if (l.key.empty() || l.key2.empty()) return plain;
+        break;
     case Line::Kind::Log:
         l.text = std::string(rest);
         if (l.text.empty()) return plain;
@@ -161,6 +180,21 @@ void Status::apply(const Line& l) {
     case Line::Kind::Rpcs3:
         rpcs3State = l.key;
         rpcs3Path = l.text;
+        break;
+    case Line::Kind::User:
+        userId = l.key;
+        users = l.n;
+        userName = l.text == "-" ? std::string() : l.text;
+        break;
+    case Line::Kind::Library:
+        libraryKind = l.key;
+        libraryPath = l.text == "-" ? std::string() : l.text;
+        break;
+    case Line::Kind::Found:
+        found[l.key] = Found{l.key2, l.list};
+        break;
+    case Line::Kind::Setting:
+        settings.emplace_back(l.key, l.text);
         break;
     case Line::Kind::Awake:
         awake = true;

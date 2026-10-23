@@ -62,6 +62,7 @@ constexpr Def kDefs[] = {
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
     {"show_start_screen", "1", Apply::UiOnly},
     {"setup_preset", "", Apply::UiOnly},       // the setup screens' preset (setup_options.hpp); "" = not picked yet
+    {"rpcs3_dir", "", Apply::UiOnly},          // the RPCS3 setup last imported from (setup_rpcs3.hpp, docs/90 3.2)
     {"menu_hint", "1", Apply::UiOnly},
     {"trophy_popups", "1", Apply::UiOnly},     // trophy_toasts.cpp; off hides the toast, the unlock is still kept
     {"trophies_show_hidden", "0", Apply::UiOnly},  // trophies_window.cpp: hidden trophies listed with their names

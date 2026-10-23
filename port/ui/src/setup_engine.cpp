@@ -114,7 +114,18 @@ Request request_from_env() {
     r.game = from_utf8(env("DES_SETUP_GAME"));
     r.decrypted = split_paths(env("DES_SETUP_DECRYPTED"));
     r.firmware = from_utf8(env("DES_SETUP_FIRMWARE"));
+    r.rpcs3 = env("DES_SETUP_RPCS3");
+    for (std::string s = env("DES_SETUP_IMPORT"); !s.empty();) {
+        const size_t comma = s.find(',');
+        if (comma) r.imports.push_back(s.substr(0, comma));
+        s = comma == std::string::npos ? std::string() : s.substr(comma + 1);
+    }
     return r;
+}
+
+std::filesystem::path gamedata_dir() {
+    const auto dir = report::program_dir();
+    return dir.empty() ? dir : dir / "gamedata";
 }
 
 Launch launch_state() {
@@ -162,7 +173,7 @@ std::filesystem::path engine_script() {
     return {};
 }
 
-bool Engine::start(const Request& request, bool check_only) {
+bool Engine::start(const Request& request, bool check_only, bool unlock_only) {
     mWhy.clear();
     if (engine_script().empty() || data_dir().empty()) {
         mWhy = "The setup files are missing from the game's folder. Extract the download again.";
@@ -170,6 +181,7 @@ bool Engine::start(const Request& request, bool check_only) {
     }
     mRequest = request;
     mCheckOnly = check_only;
+    mUnlockOnly = unlock_only && !check_only;
     mStopAsked = false;
     unsigned run = 0;
     {
@@ -227,10 +239,22 @@ bool Engine::start_engine(unsigned run) {
             args.push_back(utf8(mRequest.firmware));
         }
     }
+    if (!mRequest.rpcs3.empty()) {  // the RPCS3 route (docs/90 3.2): without a game folder, the game in its library
+        args.insert(args.end(), {"--rpcs3", mRequest.rpcs3});
+        if (const auto gamedata = gamedata_dir(); !gamedata.empty())
+            args.insert(args.end(), {"--gamedata", utf8(gamedata)});
+    }
+    if (!mRequest.imports.empty()) {
+        std::string items;
+        for (const auto& i : mRequest.imports) items += (items.empty() ? "" : ",") + i;
+        args.insert(args.end(), {"--import", items});
+    }
+    if (mRequest.noImport) args.push_back("--no-import");
     args.insert(args.end(), {"--data", utf8(data_dir()), "--app", kVersion});
     // The shaders phase starts this program again, with no window (`--shaders`, des_prework.cpp).
     if (const auto self = report::program_path(); !self.empty()) args.insert(args.end(), {"--host", utf8(self)});
     if (mCheckOnly) args.push_back("--check-only");
+    else if (mUnlockOnly) args.push_back("--unlock-only");
     mFromEngine = true;
     // (each callback is for its own run: the last run's thread may still be ending while this one starts)
     const bool started = mProcess.start(
@@ -247,8 +271,9 @@ bool Engine::start_engine(unsigned run) {
             mExit = status;
         });
     if (!started) mWhy = "The setup program could not start (" + mProcess.why() + ").";
-    std::fprintf(stderr, "[setup] %s: %s %s\n", started ? "started" : "could not start", utf8(py).c_str(),
-                 mCheckOnly ? "(check only)" : "");
+    std::fprintf(stderr, "[setup] %s: %s %s%s\n", started ? "started" : "could not start", utf8(py).c_str(),
+                 mCheckOnly ? "(check only)" : mUnlockOnly ? "(check and unlock)" : "",
+                 mRequest.rpcs3.empty() ? "" : " with RPCS3");
     return started;
 }
 

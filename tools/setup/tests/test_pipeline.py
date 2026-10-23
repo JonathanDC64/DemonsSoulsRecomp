@@ -374,7 +374,7 @@ class HostAgreesTest(unittest.TestCase):
     def test_every_phase_has_a_task_line(self):
         """The progress page names each phase of the plan (the lift as its two steps, ppu and spu)."""
         ids = set(re.findall(r'\{"(\w+)",\s*"[^"]+",\s*"', (UI / "setup_window.cpp").read_text(encoding="utf-8")))
-        for phase in pipeline.default_phases(rpcs3_route=True):
+        for phase in pipeline.default_phases(rpcs3_route=True, imports=True):
             for step in (["ppu", "spu"] if phase == "lift" else [phase]):
                 self.assertIn(step, ids)
 

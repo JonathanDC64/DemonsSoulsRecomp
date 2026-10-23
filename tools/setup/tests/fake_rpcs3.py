@@ -2,8 +2,8 @@
 folders as RPCS3 does (File.cpp: a `portable` folder beside it first, then RPCS3_CONFIG_DIR on Windows, cut after its
 last separator, or the XDG folders on Linux), writes there what a start of RPCS3 writes (its lock RPCS3.buf, its
 config, an empty TTY.log and a dev_hdd0 tree, but no RPCS3.log: measured, docs/90 2.3), then decrypts its inputs in
-order and names the outputs as decrypt_binaries.cpp does (EBOOT.BIN -> EBOOT.elf, x.sdat -> x.sdat.unedat). The bytes
-come from a fixture folder.
+order and names the outputs as decrypt_binaries.cpp does (EBOOT.BIN -> EBOOT.elf, x.sprx -> x.prx, x.sdat ->
+x.sdat.unedat). The bytes come from a fixture folder.
 
 Its settings are fake.json beside it: "fixtures" (the folder of output bytes, by the input's file name), "calls" (a
 file outside its folder, where each run adds a JSON line: its inputs, the environment it was given and what stdin
@@ -103,7 +103,7 @@ def main():
         with open(p, "rb") as f:
             magic = f.read(4)
         if magic == b"SCE\0":
-            out = p[:p.rfind(".")] + ".elf"
+            out = p[:p.rfind(".")] + (".prx" if name.lower().endswith(".sprx") else ".elf")
         elif magic == b"NPD\0":
             out = p + ".unedat"
         else:

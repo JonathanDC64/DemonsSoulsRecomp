@@ -32,10 +32,11 @@ The flow (docs/52 1.2), with what this patch has:
 | # | Screen | Shows | The player can | In this patch |
 |---|---|---|---|---|
 | 1 | Start | By the state at start (section 3). The first time: "Set up Demon's Souls" and three rows (your copy of the game, the build tools downloaded once, stop and come back). Else "Welcome back" and what setup found: interrupted, a new version, setup's files missing, the game folder moved. Or "Ready to play" | Start; Resume setup or Start over; Update now; Repair; Choose the game folder; Play. Then Settings, Quit | **yes** (setup_screens.cpp, section 2a) |
-| 1a | Where is your game? | A card for each way to the game's files: "I have decrypted files" and "Show me how". The RPCS3 card comes with the RPCS3 route (docs/89 section 6) | pick a card, Back | **yes** |
+| 1a | Where is your game? | A card for each way to the game's files: "Import from RPCS3" (its tag and second line say what the host found: docs/90 1.2), "I have decrypted files" and "Show me how" | pick a card, Back | **yes** |
+| 1b | Your game in RPCS3, RPCS3 was not found, Unlocking the game files | The RPCS3 route's pages (docs/90 1.3 to 1.5, setup_rpcs3_window.cpp) | as docs/90 | **yes** |
 | 2 | Your game folder | The folder (the system's dialog, and the copies found in the usual places), then the check's rows: the game, and the 27 decrypted files (a count, and up to 6 files to fix) | Choose folder, pick a copy found, choose the decrypted files' folder, How do I make these?, Check again, Continue, Back | **yes**; the rows read `run --check-only`'s `@check` lines |
-| 2a | Getting your game's files | Copy your disc; decrypt the 27 files with RPCS3's Decrypt PS3 Binaries | I have decrypted files, Back | **yes** |
-| 3 | Ready to build | Rows: the game; the disk space ("Setup needs about 4 GB free on C: while it builds."); this PC, its time and how many files at a time; On battery or On a laptop | Start building, Back | **yes** |
+| 2a | Getting your game's files | With RPCS3 (easiest): get it ready and add the game; copy your disc; or decrypt the 27 files and libsre.prx yourself with RPCS3's Decrypt PS3 Binaries | Import from RPCS3, I have decrypted files, Back | **yes** |
+| 3 | Ready to build | Rows: the game (on the RPCS3 route, "From RPCS3's library", and a "From RPCS3" row for what comes across); the disk space ("Setup needs about 4 GB free on C: while it builds."); this PC, its time and how many files at a time; On battery or On a laptop | Start building, Back | **yes** |
 | 4 | Progress | The percent, the time left and one bar, then the tasks, each with a spinner, a tick or a cross and its count (docs/89 section 3); "Your PC stays awake until setup is done." when the engine says so; Details: the engine's last 12 lines | Stop (asks first: "Stop the build?"), Details | **yes** (setup_window.cpp) |
 | 5 | Failed | A page: "The build stopped" or "Some game files need fixing", a red callout with the engine's sentence (and the files to fix after the game check), the engine's last lines | Report the problem and Try again (step and internal errors), else Try again or Check again; Show the full log; Close | **yes** |
 | 6 | Stopped | "The build is stopped" | Resume, Close | **yes** |
@@ -78,7 +79,7 @@ Continue is pressable only after a check that ended `ok`; it then has the focus.
 
 **"How do I make these?"** (and "Show me how") opens the help page, "Getting your game's files", with three callouts: Copy your disc (PS3 Disc Dumper with a Blu-ray drive, or multiMAN or IRISMAN on a PS3 with custom firmware), Decrypt the 27 files (RPCS3's Utilities, Decrypt PS3 Binaries; EBOOT.BIN, then the `.sdat` files in chr, chr/c0000, menu, script and script/talk; RPCS3 writes each next to its original), and Decrypt one file of the PS3 system software (since 10-23: install the system software in RPCS3, decrypt `dev_flash/sys/external/libsre.sprx`, copy `libsre.prx` next to `PS3_GAME`). No links: there is no player guide page yet. It names RPCS3, as the engine's own messages already do (gamefiles.py). docs/51 section 8 question 2 (whether a guide may name it) is still open.
 
-**The firmware** (`libsre.prx`, while libsre stays LLE). Until 10-23 the check left it out unless `DES_SETUP_FIRMWARE` named it, so a run from the screens lifted no libsre and stopped at the compile ("...is missing: run the lift first"). Now the check always asks for it, and looks for it by its name beside `PS3_GAME` and in the folder of decrypted files. The game folder page shows it as its own row, not as one of the 27 decrypted files: when it matches, one more row in the game's panel ("The PS3 system software's libsre.prx"); when it is missing, wrong or still encrypted, a part of its own ("One file of the PS3 system software") with the engine's sentence, which says where it comes from and where it goes. There is no file picker: the help page and the sentence say to put it in the game's folder. `DES_SETUP_FIRMWARE` still names one file in a test. docs/51's HLE removes it. The RPCS3 route's unlock does not make it yet: its firmware is in RPCS3's `dev_flash`, which the unlock does not read.
+**The firmware** (`libsre.prx`, while libsre stays LLE). Until 10-23 the check left it out unless `DES_SETUP_FIRMWARE` named it, so a run from the screens lifted no libsre and stopped at the compile ("...is missing: run the lift first"). Now the check always asks for it, and looks for it by its name beside `PS3_GAME` and in the folder of decrypted files. The game folder page shows it as its own row, not as one of the 27 decrypted files: when it matches, one more row in the game's panel ("The PS3 system software's libsre.prx"); when it is missing, wrong or still encrypted, a part of its own ("One file of the PS3 system software") with the engine's sentence, which says where it comes from and where it goes. There is no file picker: the help page and the sentence say to put it in the game's folder. `DES_SETUP_FIRMWARE` still names one file in a test. docs/51's HLE removes it. The RPCS3 route's unlock makes it from RPCS3's `dev_flash` (10-23), and a copy from another system software version is set back to the table's (docs/90 9.2).
 
 **Ready to build's numbers** (setup_pc.cpp).
 - Disk: 4 GB (`kNeedBytes`), docs/52 10.2: about 2.5 GB at the peak, and it asks for 4 GB, after docs/45. Inferred from measured parts; no whole run has been measured. The free space is `std::filesystem::space` on the nearest folder of the data folder that exists. The disk is named by its drive letter, or by the folder on Linux, as the engine's own sentence names it. Below 4 GB the row turns red, with Check again, but Start building stays: the engine checks each phase less what its folders already hold (section 6).
@@ -159,16 +160,20 @@ The engine prints one line for each event, UTF-8, ending in `\n` (a `\r` before 
 | Line | Meaning |
 |---|---|
 | `@setup <version>` | The first line: the protocol's version, 2 (version 2 added the RPCS3 route's unlock phase, `@file`, `@rpcs3` and the `rpcs3` code; docs/90 3.8). The host stops an engine of another version and says the setup files do not match. |
-| `@plan <phase>...` | The phases of this run, in order: `check fetch stage lift compile`, or `check` alone. On the RPCS3 route (docs/90): `check unlock fetch stage lift compile`, or `check unlock` (`--unlock-only`). |
+| `@plan <phase>...` | The phases of this run, in order: `check fetch stage lift compile shaders`, or `check` alone. On the RPCS3 route (docs/90): `check unlock fetch stage lift compile shaders`, with `import` before `shaders` while an import is pending, or `check unlock` (`--unlock-only`). |
 | `@step <phase> start\|done\|skip` | A phase starts, ends, or ends with nothing to do (all its journal steps were done with the same inputs). |
 | `@progress <step> <n>/<m>` | The current step's own count: `check` and `download` in bytes, `ppu` in functions, `spu` in programs, `compile` in objects. Printed when the per cent changes. |
-| `@overall <n>/1000` | The whole run, by phase weights from CPU time (check 2, fetch 4, stage 1, lift 13, compile 80; docs/52 4.3). Never goes back within a run. |
+| `@overall <n>/1000` | The whole run, by phase weights from CPU time (check 2, unlock 1, fetch 4, stage 1, lift 13, compile 80, import 1, shaders 2; docs/52 4.3). Never goes back within a run. |
 | `@check <state> <name> <text>` | One checked file: `ok`, `unmeasured`, `missing`, `mismatch`, `encrypted` or `wrong`; its table name; gamefiles.py's sentence. |
 | `@file <step> <path>` | The file the step works on now: for `unlock`, the original's path under USRDIR. Printed when it changes. |
 | `@rpcs3 <state> <path>` | The RPCS3 route's RPCS3: `own` (it runs with setup's folder), `shared` (a portable install) or `missing`; its folder. |
+| `@user <id> <users> <name>` | The RPCS3 user the route reads, how many users RPCS3 has, and the user's name (`-` when it has none). |
+| `@library <kind> <path>` | Demon's Souls in RPCS3's library: `folder`, `iso`, `store` (the PlayStation Store version) or `none`; its path, or `-`. |
+| `@found <what> <state> ...` | What RPCS3 has to bring across: `save ok\|none\|other-user\|busy - <time>`, `current-save ok\|none <time>` (the port's own save), `trophies ok\|none <earned>/<total>`, `settings ok\|none <n>`. Times are Unix seconds, or `-`. |
+| `@setting <key> <value>` | One RPCS3 setting the route would bring across, by its settings.ini name. |
 | `@awake` | The engine has asked Windows to keep the PC awake until it ends. |
 | `@log <path>` | The log of the step that failed. |
-| `@error <code> <step> <text>` | What failed, in one sentence for the player. Codes: `game`, `busy`, `disk`, `download`, `memory`, `step`, `rpcs3` (the player's RPCS3 could not unlock the files), `internal`. `<step>` is the journal step, or `-`. |
+| `@error <code> <step> <text>` | What failed, in one sentence for the player. Codes: `game`, `busy`, `disk`, `download`, `memory`, `step`, `rpcs3` (the player's RPCS3 could not unlock the files), `import` (bringing something across from RPCS3 failed; the step is `import-save`, `import-trophies` or `import-settings`), `internal`. `<step>` is the journal step, or `-`. |
 | `@done ok\|fix\|failed` | The last line. |
 
 - Names have no spaces; `<text>` and `<path>` are the rest of the line.
@@ -201,7 +206,7 @@ An example, a run resumed after the lift's PPU step failed once:
 @done ok
 ```
 
-`run` options: `run [GAME] [--decrypted DIR]... [--firmware FILE] [--rpcs3 PATH] [--data DIR] [-j N] [--app VERSION] [--check-only | --unlock-only]` (`--rpcs3` and `--unlock-only`: docs/90).
+`run` options: `run [GAME] [--decrypted DIR]... [--firmware FILE] [--rpcs3 PATH] [--data DIR] [-j N] [--app VERSION] [--check-only | --unlock-only] [--import ITEMS | --no-import] [--gamedata DIR] [--host EXE]` (`--rpcs3`, `--unlock-only` and the import: docs/90).
 
 ## 5. Running the engine
 

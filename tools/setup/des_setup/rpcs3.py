@@ -15,8 +15,14 @@ A `portable` folder beside the program wins over that redirect (RPCS3 checks
 it first), so such an install is "shared": setup starts it in its own folder,
 and only while it is closed (docs/90 section 6, question 1 (a)).
 
-Of the player's RPCS3 files, only the first line of its log and PPU Debug's
-dumps of the EBOOT are read, and nothing is written there.
+The firmware's libsre.prx comes the same way when it is missing: a copy of
+the player's <dev_flash>/sys/external/libsre.sprx goes in with the game's
+files, and RPCS3 writes libsre.prx beside it (decrypt_binaries.cpp names the
+output of a .sprx <name>.prx).
+
+Of the player's RPCS3 files, only the first line of its log, PPU Debug's
+dumps of the EBOOT and libsre.sprx are read here (rpcs3_library.py reads the
+rest), and nothing is written there.
 """
 import os
 import shutil
@@ -26,7 +32,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import gamefiles, journal
+from . import firmware, gamefiles, journal
 
 STALL = 30.0                  # seconds without a new or growing output before the watchdog ends RPCS3 (docs/90 2.7)
 POLL = 0.25                   # how often the outputs are looked at
@@ -44,12 +50,14 @@ class UnlockFailed(journal.StepFailed):
 
 @dataclass
 class Job:
-    """One file to unlock: the original in the dump, and its two entries in game_table.json."""
+    """One file to unlock: the original in the dump, and its two entries in game_table.json (for the firmware's
+    file: the player's libsre.sprx, and its "firmware" entry)."""
     src: Path           # the original, where the check found it
     orig: dict          # its "originals" entry
     dec: dict           # the "decrypted" entry made from it
     copy: Path = None   # its copy in the unlock folder, and the output RPCS3 writes beside it (Unlock sets them)
     out: Path = None
+    kind: str = "decrypted"     # or "firmware"
 
     @property
     def name(self) -> str:
@@ -64,6 +72,23 @@ class Job:
 def usrdir(path: str) -> str:
     """A table path under USRDIR: "PS3_GAME/USRDIR/chr/m02.chresdbnd.dcx.sdat" is "chr/m02.chresdbnd.dcx.sdat"."""
     return path.split("USRDIR/", 1)[-1]
+
+
+def different(name: str, kind="decrypted") -> str:
+    """The sentence for an output that is not the known good one."""
+    if kind == "firmware":
+        return (f"{name} came out different from the known good version: your RPCS3's PS3 system software may be "
+                f"another version.")
+    return f"{name} came out different from the known good version."
+
+
+def firmware_job(sprx: Path, entry: dict) -> Job:
+    """The firmware's file as a job: a copy of the player's libsre.sprx in, and the libsre.prx RPCS3 writes beside it
+    out (decrypt_binaries.cpp: a .sprx gives <name>.prx). Its own size and SHA-256, taken now, check the copy."""
+    sprx = Path(sprx)
+    out = sprx.name[:sprx.name.rfind(".")] + ".prx"
+    orig = {"path": sprx.name, "size": sprx.stat().st_size, "sha256": gamefiles.sha256_file(sprx)}
+    return Job(sprx, orig, dict(entry, path=out), kind="firmware")
 
 
 # ---- the player's RPCS3 (read only) ----
@@ -424,7 +449,7 @@ class Unlock:
             if not j.out.is_file():
                 self._fail(f"RPCS3 could not unlock {j.name}.")
             if not self._good(j):
-                self._fail(f"{j.out_name} came out different from the known good version.")
+                self._fail(different(j.out_name, j.kind))
         for j in self.jobs:
             self._note(f"{j.out_name}: {j.out.stat().st_size} bytes, matches")
         return {"files": len(self.jobs), "redirect": "ignored" if self.ignored else "shared" if self.shared else "ok"}
@@ -514,11 +539,14 @@ class Unlock:
         return size == j.dec["size"] if j.dec.get("size") is not None else size > 0
 
     def _good(self, j) -> bool:
-        """The output is the table's: its size and SHA-256, or its first bytes when the table has no sum yet."""
+        """The output is the table's: its size and SHA-256, or its first bytes when the table has no sum yet. The
+        firmware's file may be from another system software version (firmware.py): the stage makes it the table's."""
         if not self._done(j):
             return False
         if j.dec.get("sha256"):
-            return gamefiles.sha256_file(j.out) == j.dec["sha256"]
+            if gamefiles.sha256_file(j.out) == j.dec["sha256"]:
+                return True
+            return j.kind == "firmware" and firmware.matched(j.out, j.dec) is not None
         with open(j.out, "rb") as f:
             return not j.dec.get("magic") or f.read(4) == bytes.fromhex(j.dec["magic"])
 

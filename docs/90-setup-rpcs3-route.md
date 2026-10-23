@@ -693,9 +693,143 @@ The engine's unlock phase, branch `feat/setup-rpcs3-unlock`. No host screen draw
 - A second run skipped the step (`@step unlock skip`, from the journal).
 - Not run yet: RPCS3 open (T2), a portable install, the watchdog on a real hang, a whole setup through the stage and the build on this route, Linux.
 
-**What remains.**
+**What remained on 10-22** (section 9 has what is left now).
 - The host's screens: the RPCS3 card and pages (1.2 to 1.7), finding RPCS3 (3.6), `rpcs3_dir` in settings.ini.
 - The library and import half: `@user`, `@library`, `@found`, `@setting`; games.yml, so that `--rpcs3` alone finds the game; the import phase (3.5) with `--import`, `--no-import` and `--gamedata`.
 - `flatpak:` and the AppImage's FUSE retry (3.7).
 - Before this ships: the ps3recomp fix that stops `.sdat.dec` files beside the game's files (section 4, item 1), then items 2 to 4.
 - The rest of the real-RPCS3 tests: T2 to T7 through the engine, then T10 to T13 (T1 and T3 ran as the unlock above).
+
+## 9. What is built (10-23)
+
+Branch `feat/setup-rpcs3-route`: the library and import half of the engine, the firmware from RPCS3, and the host's pages. With it the route works from the card to Ready to play. Section 8's unlock was already on master.
+
+### 9.1 The engine: RPCS3's library, the import, the firmware
+
+**Files.**
+- `rpcs3_library.py` (new) reads the player's RPCS3, and only reads (3.1):
+  - its folders, from `vfs.yml` or RPCS3's defaults;
+  - the game in `games.yml`: a folder, an ISO file, or the Store version (`NPUB30910`, not supported);
+  - the users, and the one RPCS3 uses (`persistent_settings.dat`);
+  - the save, the trophies (`TROPUSR.DAT`) and the settings and patches;
+  - `dev_flash/sys/external/libsre.sprx`.
+- `rpcs3_import.py` (new) is the import phase (3.5). It writes `<data>/setup/imported.txt` for the done page and `rpcs3_settings.txt` for the options page.
+- `yaml_subset.py` (new) reads the YAML subset RPCS3 writes. A line it cannot read is skipped, never guessed at.
+- `firmware.py` (new): see 9.2.
+- `pipeline.py`:
+  - The plan is now `check unlock fetch stage lift compile import shaders`.
+  - `run --rpcs3` without GAME takes the game from RPCS3's library.
+  - The unlock also makes `libsre.prx` from RPCS3's system software.
+  - `--import save,trophies,settings` stays pending in `request.json` until it is done; `--no-import` drops it.
+  - The save goes into `--gamedata`, else the `gamedata` folder beside `--host`. The host passes `<exe folder>/gamedata`.
+- `protocol.py`:
+  - New lines: `@user <id> <users> <name|->`, `@library <folder|iso|store|none> <path|->`, `@found save|current-save|trophies|settings ...` and `@setting KEY value`.
+  - The `import` code, with the step (`import-save`, `import-trophies`, `import-settings`) in place of the phase.
+  - They come after `@rpcs3` and before the `@check` lines.
+- `gamefiles.py`: the firmware's item can say "your RPCS3 unlocks it next", like the 27 decrypted files.
+- Tests: `test_rpcs3_route.py` and `test_firmware.py` (new). All 171 engine tests pass on Windows.
+
+**Settings brought across.** Frame rate, resolution scale, motion blur off, intro skip and anisotropic filtering (question 2: the four decided, plus anisotropic filtering). Only values that differ from the port's own defaults count.
+
+**V-sync is not brought across**, although question 2 recommended it. RPCS3's default is off and few players change it, so for nearly everyone it would have turned the port's V-sync off.
+
+### 9.2 libsre.prx from another PS3 system software version (measured 10-23)
+
+The first real unlock failed on `libsre.prx`: "came out different from the known good version". This PC's RPCS3 has system software 4.89. The table's sum is for 4.86's copy, the one the port is built and tested with.
+
+**What differs.** A byte compare of the two decrypted files:
+- libsre writes the system software's version into its code as a constant built by `lis rX,0x0048` then `ori rX,rX,0x6000` (4.86) or `0x9000` (4.89).
+- There are 86 such places.
+- Apart from them, the two files are the same, byte for byte.
+
+**The fix** is `firmware.py`, used by the check, the unlock's output check and the stage:
+- It finds the version's places: each `ori` whose `lis` comes shortly before it, with a value from 4.00 to 4.99. The most common value, seen at least 8 times, is the file's version.
+- It sets each place back to the table's version (game_table.json's new `"version": "0x00486000"`).
+- Then the whole file must match the table's SHA-256. A copy that differs anywhere else still fails, so this cannot let a wrong file through.
+- The check says: "libsre.prx matches. It is from PS3 system software 4.89; setup sets its version to 4.86, the one the port is tested with."
+- The stage writes the table's bytes into `inputs/`. The player's file and RPCS3's are not changed.
+- It applies only to the firmware's item. A decrypted game file is never changed this way.
+
+Only 4.86 and 4.89 have been measured. Inferred: other 4.x versions differ the same way, and if one does not, it fails the sum as before.
+
+### 9.3 The host's pages
+
+
+**Files.**
+- `setup_rpcs3.cpp` and `.hpp` (new): finding RPCS3 before any Python exists (3.6), and reading the BLUS30443 line of its game list.
+  - Windows looks, in this order, at: `RPCS3_DIR`, settings.ini's `rpcs3_dir`, the targets of shortcuts (Desktop, the Start menu's Programs, the taskbar's pinned ones), a running rpcs3.exe, Windows' record of programs started (the shell's MuiCache and the Program Compatibility Assistant's store, read only), then two folders deep into Desktop, Documents, Downloads, Scoop's RPCS3 and each fixed drive.
+  - Linux looks at `rpcs3` on `PATH` and at AppImages in Applications, Downloads, Desktop and `.local/bin`. Flatpak is not offered, because the engine has no `flatpak:` route yet.
+  - A folder found by a search counts only when RPCS3 has run there (`config/`, `portable/` or `dev_hdd0/`). The first RPCS3 with the game in its list wins, else the first one found.
+  - **Measured on this PC:** the RPCS3 here has no shortcut and is outside the folders searched (Documents is on OneDrive). Only Windows' record found it.
+- `setup_rpcs3_window.cpp` and `.hpp` (new): "Your game in RPCS3" (1.3), "RPCS3 was not found" (1.4) and "Unlocking the game files" (1.5).
+  - The RPCS3 page runs `run --check-only --rpcs3` and draws these rows from its lines: RPCS3 with Change, the user (two or more users), and the game. The game row covers library, ISO, store, not in the library (with "Choose the game folder", question 5), another copy, or a file that does not match.
+  - "Bring across from RPCS3" has three tick rows, each set from its `@found` state. The save starts unticked when the port's own save is newer (question 4).
+  - Continue opens the unlock page while any file is still to unlock, else Ready to build. The RPCS3 is remembered in settings.ini's `rpcs3_dir`.
+  - The unlock page runs `run --unlock-only` and shows "File n of m", the file and the bar, then the done row.
+  - For a portable RPCS3 the unlock page first shows "Close RPCS3 first" with an Unlock button. On a failure it shows Try again, Show me how, Details and Back.
+- `setup_screens.cpp` changes:
+  - "Where is your game?" gets the RPCS3 card first. The search runs off the UI's thread; the card shows "Looking..." until it answers, and a press before that opens the page when it does.
+  - The help page gets "With RPCS3 (easiest)" and an "Import from RPCS3" button.
+  - Ready to build takes a line for the game ("From RPCS3's library. ...") and a "From RPCS3" row.
+  - The welcome's first row now says RPCS3 is enough.
+- `setup_window.cpp` changes:
+  - The `import` task and the `import` code, with "Go on without it" (`run --no-import`). The `rpcs3` code gets "Show me how".
+  - The done page shows the save and trophy rows from `<data>/setup/imported.txt` (1.9).
+- `setup_options_window.cpp` changes:
+  - When `<data>/setup/rpcs3_settings.txt` exists and no preset is stored yet, Custom is picked first (question 3), with "Starts from your RPCS3 settings." and the imported values.
+  - "A few choices" starts from them and says "Set from your RPCS3 settings."
+  - Finish with Custom also stores motion blur and the intro skip, then deletes the file. Original and Enhanced ignore it.
+- `setup_engine.cpp`: `Request` gains `rpcs3`, `imports` and `noImport`. The host passes `--rpcs3`, `--gamedata <exe folder>/gamedata`, `--import`, `--no-import` and `--unlock-only`.
+- `setup_protocol.cpp`: `@user`, `@library`, `@found` and `@setting` go into `Status`.
+- `setup.rcss`: the tick rows (`button.setup-check`, `icon.setup-box`).
+
+**Seen.** The pages were shot with a stand-in engine that prints these lines, and the card with the real search. The shots are not committed. They show:
+- the card, finding this PC's RPCS3 with the game in its library;
+- the RPCS3 page with two users and the three tick rows (one unticked by the pad);
+- the unlock page at "File 9 of 28", and done;
+- Ready to build with the "From RPCS3" row.
+- the ISO case ("Not yet", with Check again), the unlock failure (Try again, Show me how, Details, Back) and the import failure ("The import from RPCS3 stopped", with Go on without it).
+
+### 9.4 On the real RPCS3 and the real game (measured 10-23)
+
+These ran on this PC's RPCS3 data with the engine, not through the screens.
+- **The card** found this PC's RPCS3 through Windows' record only, and said the game is in its library.
+- **The check** (`run --check-only --rpcs3`) said:
+  - `@rpcs3 own`, `@user 00000001 1`, and `@library folder` with the dump;
+  - `@found save ok`, `@found current-save none`, `@found trophies ok 18/38`;
+  - `@found settings ok 4`: frame rate 60, motion blur off, intro skip on, anisotropic filtering 16.
+- **The unlock** used a copy of the player's RPCS3: its program, with `games.yml`, `libsre.sprx`, the save, the trophies and the settings copied in. On a fresh data folder:
+  - one RPCS3 process unlocked 28 files: EBOOT.BIN, the 26 SDAT files and libsre.prx;
+  - the first run failed on libsre.prx (9.2); after the fix all 28 were checked, exit status 0.
+- **The import** brought across, into a scratch `gamedata` folder:
+  - the save: 14 files, with the port's text PARAM.SFO and PARAM.PFD;
+  - the trophies: 18 of 38;
+  - the 4 settings.
+- **The game loaded that save.** A test package (master with the decrypted-folder fix) started with the imported save in its `gamedata`, scripted with `DES_AUTO_CONTINUE`:
+  - the save loaded (`LOAD complete`);
+  - the RPCS3 character was in Boletarian Palace with its souls, spells and items;
+  - the game autosaved into it.
+- **Nothing of the player's changed.** Every file and folder in the dump (13,765) and in the player's RPCS3 folder (16,204) was listed before the unlock and after the boot, by path, size and time. There were no differences.
+- **A small fix from the run:** the import left an empty `gamedata/import/` folder behind. It now goes once the save is in, and after a failure.
+
+Not run yet:
+- the whole route through the screens with the real engine and a full build (the owner's test of the next package);
+- RPCS3 open during the unlock (T2), a portable install, two RPCS3 users, an ISO in the library, Linux.
+
+### 9.5 The open questions (section 6), as built
+
+The recommendations, except where noted:
+1. Portable installs: (a), from section 8.
+2. Settings: the four, plus anisotropic filtering. Not V-sync (9.1).
+3. The options page starts on Custom after a settings import.
+4. The save row starts unticked when the port's own save is newer. There is a backup either way.
+5. Not in the library: the row offers "Choose the game folder".
+
+### 9.6 What remains
+
+- The owner's test of the whole route on a fresh package.
+- An ISO in RPCS3's library: the row says "Not yet".
+- `flatpak:` and the AppImage's FUSE retry (3.7). The Linux setup window comes first (docs/88 section 8).
+- Section 4: dropping the runtime's SDATA decryption from release builds.
+- Telling the player the old `cache/` folder in their dump can go (section 4, item 2).
+- Tests T2, T5 to T7 and T13 on real installs.

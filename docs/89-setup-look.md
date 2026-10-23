@@ -84,7 +84,7 @@ The user's decisions (10-22):
   | ppu | Translate the main processor code | The game's code, one function at a time | functions |
   | spu | Translate the SPU programs | The code for the PS3's helper processors | programs |
   | compile | Compile | Builds des_game.dll from the translated code | files |
-  | shaders | Prepare the shaders | So that the game starts smoothly | (no engine phase yet) |
+  | shaders | Prepare the shaders | So that the game starts smoothly | shaders (the shaders phase, docs/88 section 13) |
 
   A skipped line reads "Already done". Only the running line, or the failed one, shows its count ("13 / 33").
 - **Stop question.**
@@ -109,7 +109,7 @@ The user's decisions (10-22):
 - **The spinner is a glyph, turning.** It was a 16px ring of border with one bright side, and it came out uneven: RmlUi draws borders without smoothing (seen in the 10-22 shots). It is now Material Symbols' progress_activity arc, which the font draws smoothed.
 - **No fixed-width font for the log's lines.** The UI embeds Cinzel, Alegreya Sans and Material Symbols only (port/ui/CMakeLists.txt), so the lines use the body font, smaller.
 - **No outline on the focused button.** RmlUi has no outline, so the focused button looks like the hovered one: soul-white frame, a lighter background and a glow.
-- **No Options step on the rail yet.** It comes with the options screens. Link, Check the build and Prepare shaders are not tasks either: the engine links inside its compile, and has no check or shaders phase yet (docs/49).
+- **No Options step on the rail yet.** It comes with the options screens. Link and Check the build are not tasks either: the engine links inside its compile, and has no check phase. Prepare the shaders is the shaders phase (docs/88 section 13, 10-23).
 - **The rail's "Your game" has no line under it.** The design's "From RPCS3" or "Decrypted files" comes with the start screens.
 - **The Done page has only the Built row.** The save, trophies and options rows come with the RPCS3 route and the options.
 - **Before saving, the Report question does not show the file's name.** The name has the time it is saved in it.

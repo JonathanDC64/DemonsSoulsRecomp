@@ -417,7 +417,11 @@ void startup_hook() {
         const int rc = run_dialog(argc, argv);
         ExitProcess(UINT(rc));
     }
+    // Setup's shaders phase (des_prework_shaders): no log of its own, since its lines go to setup's log through the
+    // engine, and setup's own process keeps des.log.
+    const bool shaders = argv && argc >= 2 && std::wcscmp(argv[1], L"--shaders") == 0;
     if (argv) LocalFree(argv);
+    if (shaders) return;
     wait_for_launcher();
     if (LPWCH env = GetEnvironmentStringsW()) {
         const wchar_t* p = env;

@@ -158,7 +158,7 @@ def cmd_run(a) -> int:
     """Every phase in order, with the setup screens' protocol (pipeline.py, docs/88)."""
     req = pipeline.make_request(a.game, a.decrypted, a.firmware, a.rpcs3) if a.game else None
     return pipeline.run(Path(a.data), req, app=a.app, jobs=a.jobs, check_only=a.check_only, cc=a.cc, ld=a.ld,
-                        unlock_only=a.unlock_only, rpcs3_path=a.rpcs3)
+                        unlock_only=a.unlock_only, rpcs3_path=a.rpcs3, host=a.host)
 
 
 def cmd_compile(a) -> int:
@@ -276,6 +276,8 @@ def main(argv=None) -> int:
     data_arg(sp)
     sp.add_argument("-j", "--jobs", type=int, default=0, help="workers for the lift and the compile (default: auto)")
     sp.add_argument("--app", default="", metavar="VERSION", help="the host's version, kept in ready.txt")
+    sp.add_argument("--host", metavar="EXE", help="the host program: the shaders phase runs it with --shaders "
+                    "(without it, the game prepares its shaders at its first start)")
     only = sp.add_mutually_exclusive_group()
     only.add_argument("--check-only", action="store_true", help="only check the game files")
     only.add_argument("--unlock-only", action="store_true", help="check, then unlock with RPCS3 (the unlock page)")

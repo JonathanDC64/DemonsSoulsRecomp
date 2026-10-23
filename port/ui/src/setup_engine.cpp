@@ -228,6 +228,8 @@ bool Engine::start_engine(unsigned run) {
         }
     }
     args.insert(args.end(), {"--data", utf8(data_dir()), "--app", kVersion});
+    // The shaders phase starts this program again, with no window (`--shaders`, des_prework.cpp).
+    if (const auto self = report::program_path(); !self.empty()) args.insert(args.end(), {"--host", utf8(self)});
     if (mCheckOnly) args.push_back("--check-only");
     mFromEngine = true;
     // (each callback is for its own run: the last run's thread may still be ending while this one starts)

@@ -564,7 +564,7 @@ These run the game. The exes are in the lane folder under `exe_nozi14/` and
   (53 chunks), both made by setup from the same EBOOT, ps3recomp and
   clang-cl 22.1.8 with the same flags, and both started by the same host
   exe. Deep Palace save, plain windows, `RSX_VSYNC=0 DES_VSYNC=0
-  DES_FPS=unlocked` with a 960 MHz vblank, 8 rounds in ABBA order, on a
+  DES_FPS=unlocked` with a 960 Hz vblank, 8 rounds in ABBA order, on a
   quiet PC (background CPU 1.5-7.4%). [measured]
 
   | | 14 chunks | 53 chunks |

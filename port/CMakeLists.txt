@@ -281,16 +281,34 @@ endif()
 # (HighGraphics' VMX culling function: 1,798 -> 1,105 instructions). +1.9% in
 # Boletarian Palace at ~117 fps, where HighGraphics is on the frame's path; at
 # ~67 fps, with HighGraphics waiting 40% of the time, it measured nothing.
-# DES_PPU_OPT=OFF goes back to /Od (with chunk 005 /O2).
+# DES_PPU_OPT=OFF goes back to /Od, with the chunk of the boot's hot init loop
+# still /O2: the chunk that defines func_00AE1408 (docs/07). It is found by
+# that name, since the chunk size sets its number (chunk 005 at 600,000 lines
+# a chunk, chunk 022 at 150,000).
 option(DES_PPU_OPT "Build des_boot (lifted PPU code and runtime sources) /O2" ON)
+set(DES_HOT_CHUNK "")
+if(NOT DES_PPU_OPT)
+    foreach(_c IN LISTS RECOMP_CHUNKS)
+        file(STRINGS "${_c}" _hit REGEX "^void func_00AE1408\\(" LIMIT_COUNT 1)
+        if(_hit)
+            set(DES_HOT_CHUNK "${_c}")
+            break()
+        endif()
+    endforeach()
+    if(NOT DES_HOT_CHUNK)
+        message(WARNING "DES_PPU_OPT=OFF: no chunk defines func_00AE1408; every chunk builds /Od")
+    endif()
+endif()
 if(MSVC)   # also true for clang-cl
     if(DES_PPU_OPT)
         set(DES_OPT_FLAGS /O2 /clang:-fwrapv /clang:-msse4.1)
     else()
         set(DES_OPT_FLAGS /Od)
-        set(DES_CHUNK005_FLAGS /O2 ${DES_DEBUG_FLAGS})
-        set_source_files_properties("${RECOMP_DIR}/ppu_recomp_005.cpp"
-            PROPERTIES COMPILE_OPTIONS "${DES_CHUNK005_FLAGS}")
+        if(DES_HOT_CHUNK)
+            set(DES_HOT_CHUNK_FLAGS /O2 ${DES_DEBUG_FLAGS})
+            set_source_files_properties("${DES_HOT_CHUNK}"
+                PROPERTIES COMPILE_OPTIONS "${DES_HOT_CHUNK_FLAGS}")
+        endif()
     endif()
     target_compile_options(des_boot PRIVATE
         /bigobj ${DES_OPT_FLAGS} ${DES_DEBUG_FLAGS} /EHsc /Zc:__cplusplus
@@ -324,7 +342,9 @@ else()
         set(DES_OPT_FLAGS -O2 -fwrapv -msse4.1)
     else()
         set(DES_OPT_FLAGS -O0)
-        set_source_files_properties("${RECOMP_DIR}/ppu_recomp_005.cpp" PROPERTIES COMPILE_OPTIONS "-O2")
+        if(DES_HOT_CHUNK)
+            set_source_files_properties("${DES_HOT_CHUNK}" PROPERTIES COMPILE_OPTIONS "-O2")
+        endif()
     endif()
     if(DES_DEBUG_INFO)
         set(DES_DEBUG_FLAGS -g)

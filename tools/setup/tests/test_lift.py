@@ -170,6 +170,8 @@ class SharedFilesTest(unittest.TestCase):
         self.assertEqual(m.group(1), ",".join(flags["override_funcs"]))
         self.assertIn("--insn-hooks @" + flags["insn_hooks"], readme)
         self.assertEqual("--shadow-stack" in readme, bool(flags["shadow_stack"]))
+        m = re.search(r"--chunk-lines (\d+)", readme)
+        self.assertEqual(int(m.group(1)) if m else None, flags.get("chunk_lines"))
 
     def test_spu_table(self):
         t = json.loads((REAL / "scripts" / "spu_table.json").read_text(encoding="utf-8"))

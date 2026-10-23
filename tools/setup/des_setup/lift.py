@@ -106,6 +106,7 @@ class Lift:
                 "--override-funcs", ",".join(flags["override_funcs"]),
                 "--insn-hooks", "@" + str(self.src / flags["insn_hooks"])] + \
                (["--shadow-stack"] if flags.get("shadow_stack") else []) + \
+               (["--chunk-lines", str(flags["chunk_lines"])] if flags.get("chunk_lines") else []) + \
                ["--output", raw, "-j", self.workers]
 
         def parse(line):

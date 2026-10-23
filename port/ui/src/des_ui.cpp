@@ -952,6 +952,10 @@ void setup_only_env() {
     ps3_setenv("RSX_VSYNC", "1");
     ps3_setenv("PS3_PSO_LIBRARY", "0");
     if (!env_on("PS3_TITLE")) ps3_setenv("PS3_TITLE", "Demon's Souls");
+    // No game runs in this process, so none of the backend's vertex-program buffers: 1.2 GB more for the compile
+    // beside the screens (docs/53 section 16). Play starts the game in a new process, with the environment this one
+    // started with.
+    if (!std::getenv("RSX_VP_BUFFERS")) ps3_setenv("RSX_VP_BUFFERS", "0");
 }
 
 // A player's start keeps the saves where a double-click puts them. They are the PS3 file system's gamedata/dev_hdd0

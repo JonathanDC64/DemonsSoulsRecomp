@@ -4,9 +4,11 @@
   package.py check-tag TAG
       TAG is v<VERSION> (VERSION as committed at the tag), on origin/master, and the ps3recomp.pin committed with it
       names one of the fork's release tags.
-  package.py build --rev REV [--ps3recomp DIR] [--out DIR] [--dry-run]
+  package.py build --rev REV [--ps3recomp DIR] [--host EXE] [--out DIR] [--dry-run]
       Writes <out>/DemonsSoulsRecomp-<version>-source.zip and <out>/SHA256SUMS, and leaves the zipped files in
-      <out>/stage for the game-file check. REV is the release tag, or any commit for a dry run.
+      <out>/stage for the game-file check. REV is the release tag, or any commit for a dry run. --host: also
+      <out>/DemonsSoulsRecomp-<version>-windows.zip, the player's download: the same files with EXE (host.yml's
+      des_host.exe) and the des_host.map beside it at the top, where the exe finds setup's engine (tools/setup).
 
 The zip, under DemonsSoulsRecomp-<version>/: the port's tracked files at REV (without .github/ and .claude/); in
 ps3recomp/, the fork's tracked files at the pinned commit (without .github/, scratch/, packaging/ and the runtime's
@@ -169,6 +171,20 @@ def cmd_check_tag(args):
     return 1 if problems else 0
 
 
+def host_files(exe, top):
+    """The player's zip's extra entries: the host exe as des_host.exe, and its linker map (which symbolizes crash
+    addresses in it) when one is beside it, both at the top of the tree."""
+    if not os.path.isfile(exe):
+        raise Error(f"--host {exe}: no such file")
+    entries = []
+    mapfile = os.path.splitext(exe)[0] + ".map"
+    for path, name, mode in ((exe, "des_host.exe", 0o755), (mapfile, "des_host.map", 0o644)):
+        if os.path.isfile(path):
+            with open(path, "rb") as f:
+                entries.append((top + name, mode, f.read()))
+    return entries
+
+
 def cmd_build(args):
     sha = git(["rev-parse", "--verify", f"{args.rev}^{{commit}}"])
     when = int(git(["log", "-1", "--format=%ct", sha]))
@@ -208,14 +224,19 @@ def cmd_build(args):
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         with open(dest, "wb") as f:
             f.write(data)
-    zip_name = f"{NAME}-{version}-source.zip"
-    write_zip(os.path.join(out, zip_name), files, when)
-    with open(os.path.join(out, zip_name), "rb") as f:
-        digest = hashlib.sha256(f.read()).hexdigest()
+    zips = [(f"{NAME}-{version}-source.zip", files)]
+    if args.host:
+        zips.append((f"{NAME}-{version}-windows.zip", files + host_files(args.host, top)))
+    sums = []
+    for zip_name, zipped in zips:
+        write_zip(os.path.join(out, zip_name), zipped, when)
+        with open(os.path.join(out, zip_name), "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        sums.append(f"{digest}  {zip_name}\n")
+        size = os.path.getsize(os.path.join(out, zip_name))
+        print(f"package: {zip_name}: {len(zipped)} files, {size / 1e6:.1f} MB, sha256 {digest}")
     with open(os.path.join(out, "SHA256SUMS"), "w", encoding="ascii", newline="\n") as f:
-        f.write(f"{digest}  {zip_name}\n")
-    size = os.path.getsize(os.path.join(out, zip_name))
-    print(f"package: {zip_name}: {len(files)} files, {size / 1e6:.1f} MB, sha256 {digest}")
+        f.writelines(sums)
     print(f"package: version {version}" + (f", ps3recomp {pin.get('tag')} ({pin['commit'][:12]})" if pin else ""))
     return 0
 
@@ -229,6 +250,7 @@ def main(argv=None):
     b = sub.add_parser("build", help="write the zip, SHA256SUMS and the staged files")
     b.add_argument("--rev", default="HEAD", help="the release tag, or any commit for a dry run (default HEAD)")
     b.add_argument("--ps3recomp", help="a checkout of the fork that has the pinned commit (default: fetch it)")
+    b.add_argument("--host", help="des_host.exe (host.yml's): also write the Windows zip with it")
     b.add_argument("--out", default=os.path.join(ROOT, "dist"), help="output folder (default dist/)")
     b.add_argument("--dry-run", action="store_true", help="allow a revision without ps3recomp.pin")
     args = ap.parse_args(argv)

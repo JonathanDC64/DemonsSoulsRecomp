@@ -69,7 +69,7 @@ class RunTest(unittest.TestCase):
     def test_full_run_then_nothing_to_do(self):
         rc, lines = self.s.run()
         self.assertEqual(rc, 0, lines)
-        self.assertEqual(lines[0], "@setup 1")
+        self.assertEqual(lines[0], "@setup 2")
         self.assertEqual(lines[-1], "@done ok")
         for want in ("@plan check fetch stage lift", "@step check done", "@step fetch skip", "@step stage done",
                      "@step lift done", "@progress ppu 5/10", "@progress spu 2/2", "@overall 1000/1000"):
@@ -137,7 +137,7 @@ class RunTest(unittest.TestCase):
         finally:
             held.close()
         self.assertEqual(rc, 1)
-        self.assertEqual(lines, ["@setup 1", "@error busy - Setup is already running.", "@done failed"])
+        self.assertEqual(lines, ["@setup 2", "@error busy - Setup is already running.", "@done failed"])
         self.assertEqual(self.s.run()[0], 0)
 
     def test_short_of_space(self):
@@ -232,12 +232,29 @@ class EmitterTest(unittest.TestCase):
             e.text("@not the protocol")
             e.done("failed")
         self.assertEqual(self.lines(fn), [
-            "@setup 1", "@plan check lift", "@step lift start", "@progress ppu 1/3", "@progress ppu 3/3",
+            "@setup 2", "@plan check lift", "@step lift start", "@progress ppu 1/3", "@progress ppu 3/3",
             "@overall 500/1000", "@error step spu:a_b It failed on two lines.", " @not the protocol", "@done failed"])
 
     def test_unknown_code_refused(self):
         with self.assertRaises(AssertionError):
             self.lines(lambda e: e.error("oops", "-", "x"))
+
+    def test_rpcs3_lines(self):
+        """Version 2's lines (docs/90 3.8): @file only when the file changes, @rpcs3 with a path that has spaces."""
+        def fn(e):
+            e.setup()
+            e.rpcs3("own", r"C:\Games\RPCS3 nightly")
+            e.file("unlock", "EBOOT.BIN")
+            e.file("unlock", "EBOOT.BIN")
+            e.file("unlock", "chr/c0000/c0000.esd.dcx.sdat")
+            e.error("rpcs3", "unlock", "RPCS3 could not unlock script/m03.luabnd.dcx.sdat.")
+        self.assertEqual(protocol.VERSION, 2)
+        self.assertEqual(self.lines(fn), [
+            "@setup 2", r"@rpcs3 own C:\Games\RPCS3 nightly", "@file unlock EBOOT.BIN",
+            "@file unlock chr/c0000/c0000.esd.dcx.sdat",
+            "@error rpcs3 unlock RPCS3 could not unlock script/m03.luabnd.dcx.sdat."])
+        with self.assertRaises(AssertionError):
+            self.lines(lambda e: e.rpcs3("borrowed", "-"))
 
 
 class HostAgreesTest(unittest.TestCase):

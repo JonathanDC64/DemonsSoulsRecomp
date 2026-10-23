@@ -11,6 +11,9 @@ the screens show the last ones under Details.
   @progress <step> <n>/<m>          the current step's own count
   @overall <n>/1000                 the whole run so far
   @check <state> <name> <text>      one checked file (gamefiles.Item: its state, table name and message)
+  @file <step> <path>               the file the step works on now (the unlock: its path under USRDIR)
+  @rpcs3 <state> <path>             the RPCS3 in use (docs/90): own (it runs with setup's folder),
+                                    shared (a portable install: starting it changes its log) or missing
   @awake                            the PC is kept from sleeping while this runs
   @log <path>                       the log of the step that failed
   @error <code> <step> <text>       what failed, in a sentence for the player (codes: ERRORS)
@@ -18,20 +21,22 @@ the screens show the last ones under Details.
 
 Names (phases, steps, states, codes) have no spaces; <text> and <path> are the
 rest of the line. The host ignores keywords it does not know, so a new kind of
-line needs no new version; a changed meaning does.
+line needs no new version; a changed meaning does. Version 2 added the unlock
+phase, @file, @rpcs3 and the rpcs3 code (docs/90 3.8).
 
 Every line also goes to the run's log (setup/logs/run.log), so a run from a
 terminal leaves the same record as one from the screens.
 """
 import sys
 
-VERSION = 1
-KINDS = ("setup", "plan", "step", "progress", "overall", "check", "awake", "log", "error", "done")
+VERSION = 2
+KINDS = ("setup", "plan", "step", "progress", "overall", "check", "file", "rpcs3", "awake", "log", "error", "done")
 # game: the game folder or its files; busy: another setup is running; disk: not enough free space;
 # download: a download stopped or did not match; memory: out of memory; step: a build step failed;
-# internal: an error of the engine's own.
-ERRORS = ("game", "busy", "disk", "download", "memory", "step", "internal")
+# rpcs3: the player's RPCS3 could not unlock the files; internal: an error of the engine's own.
+ERRORS = ("game", "busy", "disk", "download", "memory", "step", "rpcs3", "internal")
 STEP_STATES = ("start", "done", "skip")
+RPCS3_STATES = ("own", "shared", "missing")
 RESULTS = ("ok", "fix", "failed")
 
 
@@ -111,6 +116,18 @@ class Emitter:
 
     def check(self, item):
         self._line("check", word(item.state), word(item.name), one_line(item.message))
+
+    def file(self, step, path):
+        """Printed when the step's file changes."""
+        key = ("file", step)
+        if self._shown.get(key) == path:
+            return
+        self._shown[key] = path
+        self._line("file", word(step), one_line(path))
+
+    def rpcs3(self, state, path):
+        assert state in RPCS3_STATES, state
+        self._line("rpcs3", state, one_line(path or "-"))
 
     def awake(self):
         self._line("awake")

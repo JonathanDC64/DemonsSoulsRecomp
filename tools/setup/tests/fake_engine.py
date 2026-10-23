@@ -77,7 +77,7 @@ DECRYPTED = ["PS3_GAME/USRDIR/EBOOT.elf"] + [
 
 
 def check(missing):
-    say("@setup 1")
+    say("@setup 2")
     say("@plan check")
     say("@step check start")
     count("check", 0, 5100 << 20, 100, seconds=1.0)
@@ -101,7 +101,7 @@ def main():
     global done_w
     if MODE == "check":
         return check(os.environ.get("FAKE_SETUP_CHECK", "missing") != "ok")
-    say("@setup 1")
+    say("@setup 2")
     say("@plan " + " ".join(p for p, _ in PHASES))
     say("@awake")
     s = TOTAL / 100.0

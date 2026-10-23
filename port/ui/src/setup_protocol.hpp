@@ -11,18 +11,20 @@
 
 namespace ui::setup {
 
-// The protocol's version: the engine's first line says which it speaks ("@setup 1").
-inline constexpr int kProtocol = 1;
+// The protocol's version: the engine's first line says which it speaks ("@setup 2"). 2 added the RPCS3 route's unlock
+// phase, @file, @rpcs3 and the rpcs3 error code (docs/90 3.8).
+inline constexpr int kProtocol = 2;
 
 // One line of the engine's output.
 struct Line {
-    enum class Kind { Text, Setup, Plan, Step, Progress, Overall, Check, Awake, Log, Error, Done };
+    enum class Kind { Text, Setup, Plan, Step, Progress, Overall, Check, File, Rpcs3, Awake, Log, Error, Done };
     Kind kind = Kind::Text;
-    std::string key;                // Step, Progress: the step. Check: the state. Error: the code. Done: the result.
+    std::string key;                // Step, Progress, File: the step. Check, Rpcs3: the state. Error: the code.
+                                    // Done: the result.
     std::string key2;               // Step: start, done or skip. Check: the file. Error: the step.
     long long n = 0, m = 0;         // Progress, Overall: n/m. Setup: n is the version.
     std::vector<std::string> list;  // Plan: the phases
-    std::string text;               // Check, Error: the sentence. Log: the path. A plain line: all of it.
+    std::string text;               // Check, Error: the sentence. File, Rpcs3, Log: the path. A plain line: all of it.
 };
 
 // One line, without its line break. A line that starts with '@' but has a keyword this host does not know, or is
@@ -41,6 +43,9 @@ struct Status {
     std::vector<Step> steps;  // the plan
     std::string progress;     // the last count's step ("ppu", "download", ...), and the count
     long long progressN = 0, progressM = 0;
+    std::string file;         // the file the current step works on (@file: the one RPCS3 unlocks)
+    std::string rpcs3State;   // the RPCS3 in use (@rpcs3): own, shared or missing
+    std::string rpcs3Path;    // and its folder
     int overall = 0;          // the whole run, per mille
     bool awake = false;       // the engine keeps the PC from sleeping
     std::vector<Line> checks;  // the checked files

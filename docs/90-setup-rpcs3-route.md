@@ -1,6 +1,6 @@
 # 90. The setup screens' RPCS3 route (2026-10-22)
 
-The setup design's first card on "Where is your game?" is "Import from RPCS3". Setup finds the game in the player's RPCS3 library. It has the player's own RPCS3 unlock the 27 files the build needs. It can also bring the save, the trophies and some settings across. This note designs that route to the user's decisions of 10-22. It covers what each page says, what the engine does, what must be fixed first, and how to test it. Nothing here is built yet. One run of the player's RPCS3 (tests T1 and T3, section 5) has checked the redirect.
+The setup design's first card on "Where is your game?" is "Import from RPCS3". Setup finds the game in the player's RPCS3 library. It has the player's own RPCS3 unlock the 27 files the build needs. It can also bring the save, the trophies and some settings across. This note designs that route to the user's decisions of 10-22. It covers what each page says, what the engine does, what must be fixed first, and how to test it. The engine's unlock phase is built (section 8); the host's screens, the library reading and the import are not. One run of the player's RPCS3 (tests T1 and T3, section 5) has checked the redirect.
 
 It builds on docs/88 (the engine, its line protocol, the screens before a run), docs/89 (the shell), docs/91 (the options pages) and docs/51. In docs/51's terms this is option (c+), "setup runs the player's RPCS3". That doc's section 8 question 1, for a lawyer, still stands. The RPCS3 facts come from RPCS3's source at 065b490, through the 10-22 research on `rpcs3 --decrypt` and on where RPCS3 keeps things. Where a design point rests on a single line of that source, the line was read again here.
 
@@ -24,7 +24,7 @@ Labels: **measured** (a run says so), **read** (seen in the code or a doc), **in
 - **ISO entries in RPCS3's library are refused for now.** The page says so plainly.
 - **With several RPCS3 users**, setup uses the active one and shows which one.
 - **Before this ships, the runtime must stop writing `.sdat.dec` files beside the game's files** (edat.c:644, read). Nothing else may write into the dump either (section 4).
-- **The engine gains two phases, `unlock` and `import`, and six protocol lines**: `@rpcs3`, `@user`, `@library`, `@found`, `@setting` and `@file`. The protocol becomes version 2.
+- **The engine gains two phases, `unlock` and `import`, and six protocol lines**: `@rpcs3`, `@user`, `@library`, `@found`, `@setting` and `@file`. The protocol becomes version 2. Built so far: the unlock, `@rpcs3`, `@file` and version 2 (section 8).
 
 ## 1. What the player sees
 
@@ -338,13 +338,13 @@ The phase is journal step `unlock`. Its fingerprint is the sorted (name, SHA-256
    - Windows: `STARTF_USESHOWWINDOW` and `SW_HIDE`. Linux: a new session (its own process group).
 6. **Watching.** Every 250 ms, print `@progress unlock <done>/<m>` and `@file unlock <path under USRDIR>` for the first input with no output yet. RPCS3 handles the inputs in order (decrypt_binaries.cpp), so a newer output means the one before it is finished (read and inferred). The watchdog of 2.7 runs alongside.
 7. **After it ends.**
-   - Copy the `DECRYPT:`, `SELF:` and `EDAT:` lines and RPCS3's version line from setup's RPCS3 log into `<data>/setup/logs/unlock.log`.
+   - Copy the `DECRYPT:`, `SELF:` and `EDAT:` lines and RPCS3's version line from setup's RPCS3 log into `<data>/setup/logs/unlock.log`. (Built: RPCS3 writes no log in this mode, so the step log gets what RPCS3 printed before it took the console, its exit status, each output's size, and the version line of the player's own `RPCS3.log`, read only.)
    - Check that the redirect worked (2.5).
    - Read the exit status only for the abort and "Unknown option" cases.
 8. **Checking.** Every output (`EBOOT.elf`, `<name>.sdat.unedat`) needs the table's size and SHA-256.
 9. **One file at a time.** For each missing or wrong output, run RPCS3 again with that file alone, to name the one that fails. If it still fails, `@error rpcs3 unlock <sentence>` names it.
-10. **Keeping the results.** Move each good output to `<data>/inputs/<table path>`: written to `.tmp`, then renamed, as the stage does.
-11. **Cleaning up.** Delete `<data>/setup/unlock/`, after a success or a failure: the encrypted copies, and RPCS3's config, log and dev_hdd0 tree. The decrypted results are now in `inputs/`, kept for as long as the game is installed (docs/52 section 3).
+10. **Keeping the results.** Move each good output to `<data>/inputs/<table path>`: written to `.tmp`, then renamed, as the stage does. (Built differently: the outputs stay in `setup/unlock/in/` until the stage, which finds them there like a `--decrypted` folder and copies them into `inputs/`. Section 8.)
+11. **Cleaning up.** Delete `<data>/setup/unlock/`, after a success or a failure: the encrypted copies, and RPCS3's config, log and dev_hdd0 tree. (Built: after a success the copies and RPCS3's folder go at once and the outputs after the stage; after a failure all of it.) The decrypted results are now in `inputs/`, kept for as long as the game is installed (docs/52 section 3).
 12. **The check again,** for the unlocked items, so `rep.inputs()` holds them for the stage.
 
 ### 3.5 The import phase
@@ -630,3 +630,52 @@ $r='<RPCS3 folder>'; $g='<game folder>'; $w="$env:LOCALAPPDATA\DemonsSoulsRecomp
 - Check the character count and the PPU Debug `exec.elf` hash, if the player has one.
 
 **T13. Linux** (I22), once the Linux setup window exists: Flatpak and AppImage runs of T1's steps.
+
+## 8. What is built (10-22)
+
+The engine's unlock phase, branch `feat/setup-rpcs3-unlock`. No host screen draws it yet.
+
+**Files.**
+- `tools/setup/des_setup/rpcs3.py` (new): finding the program, the shared test, the player's folders (read only), PPU Debug's dumps, the image-path lookup, the redirect, the child process and the unlock itself.
+- `pipeline.py`: the `unlock` phase (weight 1) between check and fetch; `run --unlock-only` plans `check unlock`; the check's RPCS3-route rules of 3.3; the cleanup after the stage.
+- `gamefiles.py`: `unlocks` (the "your RPCS3 unlocks it next" sentences) and `also` (PPU Debug's `exec.elf`). A decrypted file found in several places now counts when any copy is good; before, only the first one found was checked.
+- `protocol.py`: version 2, `@file`, `@rpcs3`, the `rpcs3` code.
+- The host: `setup_protocol.cpp` and `.hpp` read the two lines into `Status::file`, `rpcs3State` and `rpcs3Path`; `setup_window.cpp` knows the `rpcs3` code (Try again) and the `unlock` task's words. Nothing more.
+- `__main__.py`: `run --rpcs3 PATH [--unlock-only]` and `check --rpcs3 PATH`.
+- Tests: `tests/fake_rpcs3.py`, `tests/test_unlock.py` (17 tests); `@setup 2` in `test_pipeline.py` and `fake_engine.py`.
+
+**The command and its environment.** One process for all the files: `<rpcs3> --decrypt <data>\setup\unlock\in\PS3_GAME\USRDIR\EBOOT.BIN --decrypt <data>\setup\unlock\in\PS3_GAME\USRDIR\chr\c0000\c0000.esd.dcx.sdat ...`, absolute paths in table order, started in `<data>\setup\unlock\`. The environment is the engine's, plus:
+- Windows: `RPCS3_CONFIG_DIR=<data>\setup\unlock\rpcs3\`, with the trailing backslash. Linux: `XDG_CONFIG_HOME=<data>/setup/unlock/rpcs3/config` and `XDG_CACHE_HOME=<data>/setup/unlock/rpcs3/cache`. Neither for a shared install.
+- `QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES=1`.
+- stdin is the null device. stdout and stderr go to `setup/unlock/rpcs3-output.txt`, which is copied into `setup/logs/unlock.log`. Nothing reaches the protocol's stdout.
+- Windows: `CREATE_NO_WINDOW` (ignored for a GUI program), `STARTF_USESHOWWINDOW` with `SW_HIDE`, never `DETACHED_PROCESS`. RPCS3 goes into a job object of its own; the watchdog ends the job, so anything RPCS3 started ends too.
+- Linux: a new session, so its own process group, which the watchdog ends with `killpg`. `PR_SET_PDEATHSIG` ends RPCS3 when the engine ends, since the host's Cancel ends only the engine's group.
+
+**Decisions for the owner to confirm.**
+- **Where the outputs wait.** They stay in `setup/unlock/in/` until the stage (3.4 step 10 said: into `inputs/` at once). The check after the unlock finds them there, the stage copies them into `inputs/`, then `setup/unlock/` goes. So after a `--unlock-only` run the decrypted outputs, and nothing else, wait in `setup/unlock/in/` for the build.
+- **The journal.** Step `unlock`; its fingerprint is the sorted (path, SHA-256) list of the originals it unlocks; its outputs are those files in `setup/unlock/in/`. A build after the unlock page skips it. An output that changed in between fails the check after it, and the unlock runs again, once.
+- **Portable installs: question 1 (a).** The check says `@rpcs3 shared <folder>`. The unlock refuses while a process runs from that program ("RPCS3 is open. Close it so setup can start it."), found by its image path: `QueryFullProcessImageNameW` on Windows, `/proc/<pid>/exe` on Linux. Otherwise it runs RPCS3 without the redirect. The page's "Close RPCS3 first" callout and its Unlock button (1.5) are the host's, not built.
+- **An ignored redirect.** No `RPCS3.buf` in setup's folder after the first run: the step log says so, and the program goes into `setup/rpcs3_shared.txt`, so it is `shared` from then on. With no output either, the sentence is "RPCS3 is open. Close it so setup can start it."
+- **The order of the sentences** after the first run: too old ("Unknown option" and a non-zero exit), could not start (no output, and exit status 3, 0xC0000409 or SIGABRT), RPCS3 is open (the redirect ignored, no output), stopped answering (the watchdog), could not write ("Failed to create", no output). Otherwise each file that is not right runs once more alone. Still missing: "RPCS3 could not unlock script/m03.luabnd.dcx.sdat." Still wrong: "script/m03.luabnd.dcx.sdat.unedat came out different from the known good version." There is no retry after the watchdog, since a hang would hang again.
+- **A copy that is not what RPCS3 needs** (its sum, `SCE\0` or `NPD\0`, the SDAT flag, the plain size) stops before RPCS3 runs: `@error step unlock Copying the game files for RPCS3 failed.`
+- **The check on the RPCS3 route** also looks in `<data>/inputs/` and at PPU Debug's `exec.elf`. 3.3's "the stage skips an item whose `found` path is its destination" is not needed: the stage copies to `.tmp` first.
+
+**What the unit tests cover.** They use the stand-in, so they test the engine's side only.
+- T8 in full: the plan; the `@rpcs3`, `@file` and `@progress unlock` lines in order (one test paces the stand-in); the redirect variables, the absolute paths in table order and the null stdin; the step log; a file that fails in the batch and works alone; a file that still fails, missing or wrong, named; the watchdog, with a 1 s stall, ending the stand-in and the helper it started; too old, could not start, could not write; the cleanup after the stage and after a failure; the RPCS3 folder and the dump byte for byte the same through check, unlock, stage and lift; the second run's skip; a changed output unlocked again; the portable case; the remembered ignored redirect; PPU Debug's `exec.elf`; RPCS3 gone; `@setup 2` and HostAgreesTest.
+- Section 5's inferred items, the engine's half only: I6 (RPCS3's output never reaches the protocol), I7 on Linux (stdin is the null device, so a prompt ends), I8 (the job or the group ends the whole tree), I12 (a missing lock is noticed), I15 (a process is found by its image path, tested on a Python child).
+- They have run on Windows only (99 tests pass). The Linux branches (the XDG redirect, `/proc`, `killpg`, `PR_SET_PDEATHSIG`) have not run.
+
+**On a real RPCS3 (measured 10-22).** `run --rpcs3 <folder> --unlock-only` on the US 1.00 dump, with RPCS3 v0.0.43-20290 (an install of its own, RPCS3 closed), on a fresh data folder:
+- The check said `@rpcs3 own <folder>` and took the EBOOT from PPU Debug's `exec.elf` (`@check ok PS3_GAME/USRDIR/EBOOT.elf exec.elf matches.`), so only the 26 SDAT files went to RPCS3.
+- One process unlocked all 26 in about a second, exit status 0. Every output matched the table's size and SHA-256 (the step log names each one).
+- RPCS3 printed `Log file open failed: <data>/setup/unlock/rpcs3/log/RPCS3.log (error 0)` twice: it writes no log inside setup's folder. The unlock is not affected; the step log keeps RPCS3's output.
+- The player's RPCS3 folder had no new or changed files afterwards.
+- A second run skipped the step (`@step unlock skip`, from the journal).
+- Not run yet: RPCS3 open (T2), a portable install, the watchdog on a real hang, a whole setup through the stage and the build on this route, Linux.
+
+**What remains.**
+- The host's screens: the RPCS3 card and pages (1.2 to 1.7), finding RPCS3 (3.6), `rpcs3_dir` in settings.ini.
+- The library and import half: `@user`, `@library`, `@found`, `@setting`; games.yml, so that `--rpcs3` alone finds the game; the import phase (3.5) with `--import`, `--no-import` and `--gamedata`.
+- `flatpak:` and the AppImage's FUSE retry (3.7).
+- Before this ships: the ps3recomp fix that stops `.sdat.dec` files beside the game's files (section 4, item 1), then items 2 to 4.
+- The rest of the real-RPCS3 tests: T2 to T7 through the engine, then T10 to T13 (T1 and T3 ran as the unlock above).

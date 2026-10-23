@@ -157,15 +157,17 @@ The engine prints one line for each event, UTF-8, ending in `\n` (a `\r` before 
 
 | Line | Meaning |
 |---|---|
-| `@setup <version>` | The first line: the protocol's version, 1. The host stops an engine of another version and says the setup files do not match. |
-| `@plan <phase>...` | The phases of this run, in order: `check fetch stage lift compile`, or `check` alone. |
+| `@setup <version>` | The first line: the protocol's version, 2 (version 2 added the RPCS3 route's unlock phase, `@file`, `@rpcs3` and the `rpcs3` code; docs/90 3.8). The host stops an engine of another version and says the setup files do not match. |
+| `@plan <phase>...` | The phases of this run, in order: `check fetch stage lift compile`, or `check` alone. On the RPCS3 route (docs/90): `check unlock fetch stage lift compile`, or `check unlock` (`--unlock-only`). |
 | `@step <phase> start\|done\|skip` | A phase starts, ends, or ends with nothing to do (all its journal steps were done with the same inputs). |
 | `@progress <step> <n>/<m>` | The current step's own count: `check` and `download` in bytes, `ppu` in functions, `spu` in programs, `compile` in objects. Printed when the per cent changes. |
 | `@overall <n>/1000` | The whole run, by phase weights from CPU time (check 2, fetch 4, stage 1, lift 13, compile 80; docs/52 4.3). Never goes back within a run. |
 | `@check <state> <name> <text>` | One checked file: `ok`, `unmeasured`, `missing`, `mismatch`, `encrypted` or `wrong`; its table name; gamefiles.py's sentence. |
+| `@file <step> <path>` | The file the step works on now: for `unlock`, the original's path under USRDIR. Printed when it changes. |
+| `@rpcs3 <state> <path>` | The RPCS3 route's RPCS3: `own` (it runs with setup's folder), `shared` (a portable install) or `missing`; its folder. |
 | `@awake` | The engine has asked Windows to keep the PC awake until it ends. |
 | `@log <path>` | The log of the step that failed. |
-| `@error <code> <step> <text>` | What failed, in one sentence for the player. Codes: `game`, `busy`, `disk`, `download`, `memory`, `step`, `internal`. `<step>` is the journal step, or `-`. |
+| `@error <code> <step> <text>` | What failed, in one sentence for the player. Codes: `game`, `busy`, `disk`, `download`, `memory`, `step`, `rpcs3` (the player's RPCS3 could not unlock the files), `internal`. `<step>` is the journal step, or `-`. |
 | `@done ok\|fix\|failed` | The last line. |
 
 - Names have no spaces; `<text>` and `<path>` are the rest of the line.
@@ -178,7 +180,7 @@ The engine prints one line for each event, UTF-8, ending in `\n` (a `\r` before 
 An example, a run resumed after the lift's PPU step failed once:
 
 ```
-@setup 1
+@setup 2
 @awake
 @plan check fetch stage lift
 @step check start
@@ -198,7 +200,7 @@ An example, a run resumed after the lift's PPU step failed once:
 @done ok
 ```
 
-`run` options: `run [GAME] [--decrypted DIR]... [--firmware FILE] [--data DIR] [-j N] [--app VERSION] [--check-only]`.
+`run` options: `run [GAME] [--decrypted DIR]... [--firmware FILE] [--rpcs3 PATH] [--data DIR] [-j N] [--app VERSION] [--check-only | --unlock-only]` (`--rpcs3` and `--unlock-only`: docs/90).
 
 ## 5. Running the engine
 
@@ -260,6 +262,7 @@ The steps, as built (setup_python.cpp, `PythonFetch`; built and run 10-22: secti
 | download | Check the internet connection, then try again. The download carries on where it stopped. | Try again, Details, Close |
 | memory | Close other programs, then try again. Setup carries on where it stopped. | Try again, Details, Close |
 | step, internal | Try again. If it fails again, please report it. | Try again, Report, Details, Close |
+| rpcs3 | Try again. If it keeps failing, you can unlock the files yourself. | Try again, Details, Close (docs/90 1.5 adds Show me how) |
 
 - **Disk** is checked before each phase that writes much (fetch 0.5 GB, lift 1 GB, compile 2 GB from scratch, docs/52 10.2), less what that phase's folders already hold, so a resumed run is not refused for space it has already used. A full disk during a step is caught from the error text or `ENOSPC`.
 - **Details** shows the engine's last 20 lines and the failed step's log path. The full logs are in `<data>/setup/logs/`.

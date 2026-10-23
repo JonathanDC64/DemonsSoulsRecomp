@@ -1,10 +1,10 @@
 """Setup from the command line (the setup screens call the same functions).
 
-  python -m des_setup check GAME [--decrypted DIR]... [--firmware FILE]
+  python -m des_setup check GAME [--decrypted DIR]... [--firmware FILE] [--rpcs3 PATH]
   python -m des_setup stage GAME [--decrypted DIR]... [--firmware FILE] [--data DIR]
   python -m des_setup lift GAME [--decrypted DIR]... [--firmware FILE] [--data DIR] [-j N]
-  python -m des_setup run [GAME] [--decrypted DIR]... [--firmware FILE] [--data DIR] [-j N] [--app VERSION]
-                          [--check-only] [--cc CLANG-CL --ld LLD-LINK]
+  python -m des_setup run [GAME] [--decrypted DIR]... [--firmware FILE] [--rpcs3 PATH] [--data DIR] [-j N]
+                          [--app VERSION] [--check-only | --unlock-only] [--cc CLANG-CL --ld LLD-LINK]
   python -m des_setup compile [--data DIR] [-j N] [--cc CLANG-CL --ld LLD-LINK]
   python -m des_setup status [--data DIR] [--json [--app VERSION]]
   python -m des_setup tools
@@ -18,6 +18,15 @@ folder defaults to %LOCALAPPDATA%\\DemonsSoulsRecomp (Linux:
 $XDG_DATA_HOME/DemonsSoulsRecomp). A developer's compiler (--cc and --ld, or
 DES_SETUP_CC and DES_SETUP_LD in the environment, so the setup screens' runs
 use it too) replaces the pinned LLVM download, which is then not fetched.
+
+--rpcs3 is the RPCS3 route (docs/90): the folder that holds rpcs3.exe (Linux:
+rpcs3 or an AppImage), or the program. The decrypted files the folders lack
+are then made by that RPCS3 (`rpcs3 --decrypt`) in the unlock phase, before
+the fetch, on copies in <data>/setup/unlock/ and with a folder of setup's own
+for RPCS3's files, so neither the dump nor RPCS3's folder is written to (an
+install with a `portable` folder is run only while it is closed). `check
+--rpcs3` only says which files RPCS3 would unlock. `run --unlock-only` does
+the check and the unlock (the unlock page's run).
 Exit status: 0 done, 1 something to fix (the lines say what), 2 usage.
 """
 import argparse
@@ -27,7 +36,7 @@ import sys
 from pathlib import Path
 
 from . import compile as compile_step, fetch, gamefiles, journal, lift
-from . import pipeline
+from . import pipeline, rpcs3
 from .pipeline import stage  # noqa: F401 (the copy step; the tests import it from here)
 
 NAME = "DemonsSoulsRecomp"
@@ -41,9 +50,10 @@ def default_data() -> Path:
     return Path(base) / NAME
 
 
-def _print_report(rep):
+def _print_report(rep, unlocks=False):
     """One line per problem, but the many files that share a state (the disc's
-    files that match, decrypted files found or missing) on one line each."""
+    files that match, decrypted files found or missing) on one line each.
+    unlocks: the RPCS3 route, where RPCS3 makes the missing decrypted files."""
     def names(items):
         return ", ".join(i.name.rsplit("/", 1)[-1] for i in items)
 
@@ -53,24 +63,43 @@ def _print_report(rep):
     for i in rep.items:
         if i in n_orig or i in unmeasured or (len(missing) > 1 and i in missing):
             continue
-        print(f"{'ok  ' if i.good else 'FIX '} {i.message}")
+        print(f"{'ok  ' if i.good else 'next' if unlocks and i.kind == 'decrypted' else 'FIX '} {i.message}")
     if n_orig:
         print(f"ok   {len(n_orig)} of the disc's files match the US disc, version 1.00.")
     if unmeasured:
         print(f"ok?  {len(unmeasured)} decrypted file(s) found; their sums are not in the table yet, so only their "
               f"first bytes were checked: {names(unmeasured)}.")
-    if len(missing) > 1:
+    if len(missing) > 1 and unlocks:
+        print(f"next {len(missing)} decrypted files are missing: {names(missing)}. Your RPCS3 unlocks them in "
+              f"`run --rpcs3`.")
+    elif len(missing) > 1:
         srcs = sorted({i.name.rsplit("/", 1)[-1].endswith(".elf") and "EBOOT.BIN" or "the .sdat files"
                        for i in missing})
         print(f"FIX  {len(missing)} decrypted files are missing: {names(missing)}. Decrypt {' and '.join(srcs)} "
               f"first (in RPCS3: Utilities, Decrypt PS3 Binaries).")
-    print("Ready." if rep.ok else f"{len(rep.problems())} thing(s) to fix.")
+    probs = pipeline.blocking(rep, unlocks)
+    if probs or rep.root is None:
+        print(f"{len(probs)} thing(s) to fix.")
+    else:
+        print("Ready." if rep.ok else f"Ready once your RPCS3 has unlocked {len(rep.problems())} file(s).")
 
 
 def cmd_check(a) -> int:
-    rep = gamefiles.check(a.game, a.decrypted, a.firmware)
-    _print_report(rep)
-    return 0 if rep.ok else 1
+    if not a.rpcs3:
+        rep = gamefiles.check(a.game, a.decrypted, a.firmware)
+        _print_report(rep)
+        return 0 if rep.ok else 1
+    exe = rpcs3.find(a.rpcs3)
+    if exe is None:
+        print(f"FIX  There is no RPCS3 in {a.rpcs3}.")
+        return 1
+    t = gamefiles.load_table()
+    print(f"ok   RPCS3: {exe}" + (" (a portable install: setup runs it only while it is closed)"
+                                  if (exe.parent / "portable").is_dir() else ""))
+    also = {lift.EBOOT: rpcs3.ppu_debug_eboots(exe, t["title_id"])}
+    rep = gamefiles.check(a.game, a.decrypted, a.firmware, table=t, unlocks=True, also=also)
+    _print_report(rep, unlocks=True)
+    return 1 if pipeline.blocking(rep, True) or rep.root is None else 0
 
 
 def cmd_stage(a) -> int:
@@ -127,8 +156,9 @@ def cmd_lift(a) -> int:
 
 def cmd_run(a) -> int:
     """Every phase in order, with the setup screens' protocol (pipeline.py, docs/88)."""
-    req = pipeline.make_request(a.game, a.decrypted, a.firmware) if a.game else None
-    return pipeline.run(Path(a.data), req, app=a.app, jobs=a.jobs, check_only=a.check_only, cc=a.cc, ld=a.ld)
+    req = pipeline.make_request(a.game, a.decrypted, a.firmware, a.rpcs3) if a.game else None
+    return pipeline.run(Path(a.data), req, app=a.app, jobs=a.jobs, check_only=a.check_only, cc=a.cc, ld=a.ld,
+                        unlock_only=a.unlock_only, rpcs3_path=a.rpcs3)
 
 
 def cmd_compile(a) -> int:
@@ -211,6 +241,10 @@ def main(argv=None) -> int:
                         help="also look here for the decrypted files, by name (repeatable)")
         sp.add_argument("--firmware", metavar="FILE", help="the decrypted libsre.prx")
 
+    def rpcs3_arg(sp):
+        sp.add_argument("--rpcs3", metavar="PATH", help="the RPCS3 route: this RPCS3 (its folder or program) unlocks "
+                        "the decrypted files the folders lack (docs/90)")
+
     def data_arg(sp):
         sp.add_argument("--data", default=str(default_data()), help="setup's data folder")
 
@@ -222,6 +256,7 @@ def main(argv=None) -> int:
 
     sp = sub.add_parser("check", help="check the game folder")
     game_args(sp)
+    rpcs3_arg(sp)
     sp.set_defaults(fn=cmd_check)
     sp = sub.add_parser("stage", help="check, then copy the decrypted files into the data folder")
     game_args(sp)
@@ -237,10 +272,13 @@ def main(argv=None) -> int:
     sp.add_argument("--decrypted", action="append", default=[], metavar="DIR",
                     help="also look here for the decrypted files, by name (repeatable)")
     sp.add_argument("--firmware", metavar="FILE", help="the decrypted libsre.prx")
+    rpcs3_arg(sp)
     data_arg(sp)
     sp.add_argument("-j", "--jobs", type=int, default=0, help="workers for the lift and the compile (default: auto)")
     sp.add_argument("--app", default="", metavar="VERSION", help="the host's version, kept in ready.txt")
-    sp.add_argument("--check-only", action="store_true", help="only check the game files")
+    only = sp.add_mutually_exclusive_group()
+    only.add_argument("--check-only", action="store_true", help="only check the game files")
+    only.add_argument("--unlock-only", action="store_true", help="check, then unlock with RPCS3 (the unlock page)")
     toolchain_args(sp)
     sp.set_defaults(fn=cmd_run)
     sp = sub.add_parser("compile", help="compile and link the lift into des_game.dll (resumes where it stopped)")

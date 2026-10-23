@@ -108,10 +108,16 @@
  *   display's vblanks too (59.94 to 60 Hz, 0.1% faster); elsewhere they
  *   present as with 1.
  *   vrr: for a G-Sync or FreeSync display, which shows each frame as it
- *   comes. Presents at once (as 0), and the rate is capped a little under
- *   the refresh (the refresh x (1 - refresh / 3600): 138 fps at 144 Hz), so
- *   the frames stay inside the display's range. The display and its driver
- *   have to have it on.
+ *   comes. The rate is capped a little under the display mode's refresh
+ *   (the refresh x (1 - refresh / 3600): 138 fps at 144 Hz), so the frames
+ *   stay inside the display's range, and frames present at the refresh
+ *   (as 1). On such a display that shows a frame at once, and one that
+ *   comes a little sooner than a refresh after the last (the clock's timer
+ *   wakes up to half a millisecond off) waits for the last to finish
+ *   drawing instead of tearing through it. Presenting at once, with tearing,
+ *   tore a fifth of the frames at 138 fps (docs/94). The display and its
+ *   driver have to have it on; the log says whether the display follows
+ *   the frames (vrr_note).
  *
  * DES_AUTO_CONTINUE=1 — press through the boot menus into the last save.
  *   From the first pad poll it taps CROSS, CROSS, START in a 600 ms cycle:
@@ -148,6 +154,8 @@ extern "C" void (*g_fs_open_hook)(const char* guest_path);
 extern "C" void ps3_vblank_set_mhz(int mhz);   /* boot_main.cpp; 0 = VBLANK_MHZ */
 extern "C" void ps3_vblank_lock_display(int n);   /* boot_main.cpp; a tick every n refreshes, 0 = the timer */
 extern "C" int rsx_d3d12_display_refresh_mhz(void);   /* the window's display, 0 = not known */
+extern "C" int rsx_d3d12_display_mode_mhz(void);      /* its mode alone, in whole Hz */
+extern "C" int rsx_d3d12_display_shown_mhz(void);     /* how often it refreshed, by the swap chain */
 extern "C" void des_aspect_init(void);         /* des_aspect.cpp: DES_ASPECT, DES_HUD */
 extern "C" void des_aspect_poll(void);         /* des_aspect.cpp: their live changes */
 extern "C" volatile unsigned g_pad0_reads, g_pad0_empty_reads, g_pad0_buttons, g_pad0_lstick;   /* cellPad.c */
@@ -326,13 +334,16 @@ Pacing pacing_for(int fps, int cut, Sync sync)
     const bool ps3_30 = fps <= 0 || cut == 1 || (fps == 30 && sync != Sync::Even);
     p.mode60 = fps <= 0 ? -1 : ps3_30 ? 0 : 1;
     p.vblank_mhz = fps <= 0 ? 0 : cut == 1 ? kPs3VblankMhz : fps_vblank_mhz(fps);
-    p.interval = sync == Sync::Off || sync == Sync::Vrr ? 0 : 1;
+    p.interval = sync == Sync::Off ? 0 : 1;
     const int r = rsx_d3d12_display_refresh_mhz();
     if (r <= 0) return p;
     if (sync == Sync::Vrr && !ps3_30) {
-        static int cap = 0;   /* (moves only by more than 1, as the rate's reading wobbles) */
-        const int c = int(r / 1000.0 * (1.0 - r / 3600000.0));
-        if (std::abs(c - cap) > 1) cap = c;
+        /* From the mode's rate: under a variable refresh the swap chain's
+         * statistics are the frames' own times, and a reading of them that
+         * came near the mode's moved the cap from 138 to 136 and back. */
+        const int mode = rsx_d3d12_display_mode_mhz();
+        const int top = mode > 0 ? mode : r;
+        const int cap = int(top / 1000.0 * (1.0 - top / 3600000.0));
         if (fps > cap) p.vblank_mhz = fps_vblank_mhz(cap);
     } else if (sync == Sync::Even && !s_vblank_pinned) {
         if (ps3_30) {
@@ -376,9 +387,43 @@ void pacing_apply(const Pacing& p, uint32_t obj, Sync sync)
             fprintf(stderr, "[des] DES_VSYNC=%s: the vblank at %.2f Hz, presents %s%s\n", name,
                     (p.vblank_mhz ? p.vblank_mhz : kPs3VblankMhz) / 1000.0,
                     p.interval ? "at the refresh" : "at once",
-                    sync == Sync::Even ? " (this rate does not fit the display: as V-sync)" : "");
+                    sync == Sync::Even ? " (this rate does not fit the display: as V-sync)"
+                    : sync == Sync::Vrr ? " (shown at once where the display follows the frames)" : "");
     }
     s_paced = p;
+}
+
+/* Under vrr, every 2 s: does the display follow the frames? A fixed
+ * refresh counts its refreshes at the mode's rate whatever the frames do;
+ * one that follows them (G-Sync, FreeSync) refreshes as often as they come,
+ * and the cap keeps them 4% or more under the mode. The log says when the
+ * answer changes, after two readings agree. */
+void vrr_note(Sync sync)
+{
+    using clock = std::chrono::steady_clock;
+    static clock::time_point at;
+    static int said = -1, last = -1;
+    if (sync != Sync::Vrr) {
+        said = last = -1;
+        return;
+    }
+    const clock::time_point now = clock::now();
+    if (now - at < std::chrono::seconds(2)) return;
+    at = now;
+    const int shown = rsx_d3d12_display_shown_mhz(), mode = rsx_d3d12_display_mode_mhz();
+    if (shown <= 0 || mode <= 0) return;
+    const int follows = shown * 100LL < mode * 98LL ? 1 : 0;
+    if (follows == last && follows != said) {
+        if (follows)
+            fprintf(stderr, "[des] DES_VSYNC=vrr: the display follows the frames (%.1f Hz): G-Sync / FreeSync is on\n",
+                    shown / 1000.0);
+        else
+            fprintf(stderr, "[des] DES_VSYNC=vrr: the display stays at %.2f Hz: G-Sync / FreeSync is not on "
+                    "for this window (the driver's setting, the display's own menu, the window in front)\n",
+                    shown / 1000.0);
+        said = follows;
+    }
+    last = follows;
 }
 
 void fps_on_flip_request()
@@ -438,6 +483,7 @@ void fps_on_flip_request()
     }
     const Pacing p = pacing_for(s_fps, cut, sync);
     pacing_apply(p, obj, sync);
+    vrr_note(sync);
     if (!s_fps) return;
     /* Under even frames a frame is shown n refreshes after the last, or 2n
      * after a late one: the step is that many whole frames when the time

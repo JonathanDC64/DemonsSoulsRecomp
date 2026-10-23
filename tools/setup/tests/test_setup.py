@@ -28,6 +28,7 @@ EBOOT_BIN = b"SCE\0" + b"x" * 60          # encrypted, as on the disc
 EBOOT_ELF = b"\x7fELF" + b"y" * 60        # what RPCS3 writes beside it
 SDAT = b"NPD\0" + b"z" * 28
 SDAT_DEC = b"DCX\0" + b"w" * 20
+LIBSRE = b"\x7fELFsre"                   # the firmware's file, decrypted
 
 
 def make_table(sfo_bytes):
@@ -45,15 +46,15 @@ def make_table(sfo_bytes):
             {"path": "PS3_GAME/USRDIR/script/m01.luabnd.dcx.sdat.unedat",
              "of": "PS3_GAME/USRDIR/script/m01.luabnd.dcx.sdat", "size": None, "sha256": None, "magic": "44435800"},
         ],
-        "firmware": [{"name": "libsre.prx", "size": 7, "sha256": sha(b"\x7fELFsre"), "magic": "7f454c46",
-                      "from": "dev_flash"}],
+        "firmware": [{"name": "libsre.prx", "size": len(LIBSRE), "sha256": sha(LIBSRE), "magic": "7f454c46",
+                      "from": "dev_flash/sys/external/libsre.sprx, decrypted"}],
     }
 
 
 class GameTree:
     """A fake disc dump in a temporary folder."""
 
-    def __init__(self, title="BLUS30443", ver="01.00", eboot_name="EBOOT.elf", decrypted=True):
+    def __init__(self, title="BLUS30443", ver="01.00", eboot_name="EBOOT.elf", decrypted=True, firmware=True):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name) / "dump"
         g = self.root / "PS3_GAME"
@@ -65,6 +66,8 @@ class GameTree:
         if decrypted:
             (g / "USRDIR" / eboot_name).write_bytes(EBOOT_ELF)
             (g / "USRDIR" / "script" / "m01.luabnd.dcx.sdat.unedat").write_bytes(SDAT_DEC)
+        if firmware:
+            (self.root / "libsre.prx").write_bytes(LIBSRE)
         good = sfo.build({"TITLE_ID": "BLUS30443", "APP_VER": "01.00", "VERSION": "01.00", "CATEGORY": "DG"})
         self.table = make_table(good)
 
@@ -94,7 +97,7 @@ class CheckTest(unittest.TestCase):
             states = {i.name: i.state for i in rep.items}
             self.assertEqual(states["PS3_GAME/USRDIR/EBOOT.elf"], "ok")
             self.assertEqual(states["PS3_GAME/USRDIR/script/m01.luabnd.dcx.sdat.unedat"], "unmeasured")
-            self.assertEqual(len(rep.inputs()), 2)
+            self.assertEqual(len(rep.inputs()), 3)
         finally:
             t.close()
 
@@ -187,13 +190,62 @@ class CheckTest(unittest.TestCase):
             t.close()
 
     def test_firmware(self):
-        t = GameTree()
+        t = GameTree(firmware=False)
         try:
             fw = Path(t.tmp.name) / "libsre.prx"
-            fw.write_bytes(b"\x7fELFsre")
+            fw.write_bytes(LIBSRE)
             self.assertTrue(self.check(t, firmware=fw).ok)
             fw.write_bytes(b"\x7fELFsrX")
             self.assertFalse(self.check(t, firmware=fw).ok)
+        finally:
+            t.close()
+
+    def test_firmware_beside_ps3_game(self):
+        t = GameTree()
+        try:
+            rep = self.check(t)
+            self.assertTrue(rep.ok, [i.message for i in rep.problems()])
+            item = next(i for i in rep.items if i.kind == "firmware")
+            self.assertEqual((item.name, item.state, Path(item.found)), ("libsre.prx", "ok", t.root / "libsre.prx"))
+            self.assertIn(item, rep.inputs())
+        finally:
+            t.close()
+
+    def test_firmware_missing(self):
+        """Always checked: the build lifts it (a game without it hangs at its loading screen)."""
+        t = GameTree(firmware=False)
+        try:
+            rep = self.check(t)
+            self.assertEqual([(i.kind, i.state) for i in rep.problems()], [("firmware", "missing")])
+            msg = rep.problems()[0].message
+            for words in ("libsre.prx is missing", "dev_flash/sys/external/libsre.sprx", "next to PS3_GAME"):
+                self.assertIn(words, msg)
+            self.assertEqual([i.kind for i in lift_blockers(rep)], ["firmware"])
+        finally:
+            t.close()
+
+    def test_firmware_in_a_decrypted_folder(self):
+        t = GameTree(firmware=False)
+        try:
+            dec = Path(t.tmp.name) / "decrypted"
+            dec.mkdir()
+            (dec / "LIBSRE.PRX").write_bytes(LIBSRE)
+            rep = self.check(t, decrypted_dirs=[dec])
+            self.assertTrue(rep.ok, [i.message for i in rep.problems()])
+            # A wrong copy beside PS3_GAME does not hide a good one elsewhere.
+            (t.root / "libsre.prx").write_bytes(b"\x7fELFsrX")
+            self.assertTrue(self.check(t, decrypted_dirs=[dec]).ok)
+            (dec / "LIBSRE.PRX").unlink()
+            self.assertEqual([(i.kind, i.state) for i in self.check(t, decrypted_dirs=[dec]).problems()],
+                             [("firmware", "mismatch")])
+        finally:
+            t.close()
+
+    def test_firmware_still_encrypted(self):
+        t = GameTree(firmware=False)
+        try:
+            (t.root / "libsre.prx").write_bytes(b"SCE\0" + b"q" * 3)
+            self.assertEqual([(i.kind, i.state) for i in self.check(t).problems()], [("firmware", "encrypted")])
         finally:
             t.close()
 
@@ -218,6 +270,7 @@ class CheckTest(unittest.TestCase):
             jr = journal.Journal(data / "setup" / "journal.json")
             dest = stage(rep, data, jr)
             self.assertEqual((dest / "PS3_GAME/USRDIR/EBOOT.elf").read_bytes(), EBOOT_ELF)
+            self.assertEqual((dest / "firmware/libsre.prx").read_bytes(), LIBSRE)
             ran, _ = jr.run("stage", jr.state("stage")["inputs"], lambda: self.fail("ran again"))
             self.assertFalse(ran)
         finally:

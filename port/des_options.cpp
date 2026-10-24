@@ -158,6 +158,7 @@ extern "C" int rsx_d3d12_display_mode_mhz(void);      /* its mode alone, in whol
 extern "C" int rsx_d3d12_display_shown_mhz(void);     /* how often it refreshed, by the swap chain */
 extern "C" void des_aspect_init(void);         /* des_aspect.cpp: DES_ASPECT, DES_HUD */
 extern "C" void des_aspect_poll(void);         /* des_aspect.cpp: their live changes */
+extern "C" void des_hud_init(void);            /* des_hud.cpp: DES_HUD_SIZE, the corners, hidden groups */
 extern "C" volatile unsigned g_pad0_reads, g_pad0_empty_reads, g_pad0_buttons, g_pad0_lstick;   /* cellPad.c */
 extern "C" void cellPad_host_stick(int stick, unsigned char x, unsigned char y, unsigned reads);   /* cellPad.c */
 #ifdef _WIN32
@@ -2511,6 +2512,7 @@ extern "C" void ps3_title_options_init(void)
     des_dev_boot();        /* developer build: the marker (log, window title) and the cheats' offline rule (docs/55) */
 #endif
     des_aspect_init();     /* DES_ASPECT, DES_HUD: before the first camera is built */
+    des_hud_init();        /* the HUD's size, corners and hidden groups */
     des_menu_sfx_init();   /* the UI's sounds through the game's menu sounds */
     des_chrins_init();     /* the character step's handshake without its lost-kick race */
     /* DES_SKIP_INTRO and DES_AUTO_CONTINUE are read as they are used, so the

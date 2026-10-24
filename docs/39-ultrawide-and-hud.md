@@ -542,3 +542,4 @@ Found while building the first ultrawide version (branch `feat/ultrawide`, 2026-
 
 - **Three markers in the left side band.** With the HUD centred at a wide aspect ratio, three small markers show in the left band: a red triangle, a green triangle and a blue ring (seen while testing the live aspect change, docs/79, and also at a 21:9 start). They look like the developers' own icons, placed outside the 16:9 canvas where a 16:9 screen never shows them. What the game uses them for is unknown, so hiding them could change something else. Left as they are for now.
   - Docket: find which HUD element draws them (its dialog and the code that places it) and what it is for, then decide whether to keep them off screen at wide ratios.
+  - Done (docs/102): they are the HUD's "HP icon", "SP icon" and "MP icon" at x = -168, and are no longer drawn on a widened canvas. docs/102 also moves the HUD's corner groups to the screen's corners (`DES_HUD` "", Corners).

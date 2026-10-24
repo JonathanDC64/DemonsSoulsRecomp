@@ -55,7 +55,11 @@
  *     times at most). With DES_HUD_FADES=1 a rect that is exactly the canvas
  *     is widened to [-L, 1280 + L]. That is opt-in until a run shows the
  *     plates are drawn from that rect.
- *   Not adjusted: anything drawn on the canvases that 0x00096348 records.
+ *   - Other canvases. 0x00096348 records three more 1280x720 canvases at boot
+ *     (one is the boot screen's: its logo and souls were stretched). The
+ *     lifter calls no hook at their records, but des_hud_ctx sees every
+ *     record in the 0x3A handler before it is read, and widens any other
+ *     record of the whole canvas the same way.
  *
  * Live: a change of DES_ASPECT or DES_HUD while the game runs (des_aspect_poll,
  *   at each flip request) gives the same picture as starting with it.
@@ -77,7 +81,8 @@
  *     word of the command, r3 = the context), notes the context that handles
  *     the HUD's record, and a change writes the matrix's x scale (+0x90) and x
  *     offset (+0xC0) for the new canvas, as the handler would compute them.
- *     Poking that matrix while playing moved the HUD on the next frame.
+ *     Poking that matrix while playing moved the HUD on the next frame. The
+ *     contexts of the other whole-canvas records get the same.
  *   - RSX_ASPECT follows, unless it was given at start. The window keeps its
  *     size; the picture is fitted into it.
  *   Not followed: a render context's first projection (0x0190433C) in the
@@ -137,6 +142,12 @@ std::vector<uint32_t> s_cams;   /* cameras built from the defaults (des_cam_ctor
 
 uint32_t s_hud_rec;   /* the HUD canvas record's first word (des_hud_canvas); 0 before boot records it */
 uint32_t s_hud_ctx;   /* the render context that turned it into its matrix (des_hud_ctx); 0 until then */
+
+/* The render contexts that turned another 1280x720 canvas into their matrix
+ * (des_hud_ctx): the boot screen's, and whatever else draws on such a canvas. */
+constexpr size_t kMaxOtherCtx = 16;
+uint32_t s_other_ctx[kMaxOtherCtx];
+size_t   s_other_n;
 
 float vm_readf(uint32_t ea)
 {
@@ -280,14 +291,40 @@ extern "C" float des_hud_side_width(void)
 }
 
 /* After 0x00CD4854 in the 0x3A handler: r5 = the command's first word, r3 =
- * the render context. The one that handles the HUD's record keeps its matrix
- * at +0x90 from then on. */
+ * the render context, before the handler reads the words. The one that
+ * handles the HUD's record keeps its matrix at +0x90 from then on. Any other
+ * record of the game's whole canvas (top 0, bottom 720, left 0, right 1280:
+ * the three 0x00096348 records at boot, one of them the boot screen's) gets
+ * the HUD's width here, so what is drawn on it is not stretched either, and
+ * its context is noted for a live change. */
 extern "C" void des_hud_ctx(ppu_context* ctx, uint32_t addr)
 {
     (void)addr;
-    if (!s_hud_rec || s_hud_ctx || (uint32_t)ctx->gpr[5] != s_hud_rec) return;
-    s_hud_ctx = (uint32_t)ctx->gpr[3];
-    fprintf(stderr, "[des] HUD canvas: matrix at 0x%08X (render context 0x%08X)\n", s_hud_ctx + kCtxOrtho, s_hud_ctx);
+    const uint32_t rec = (uint32_t)ctx->gpr[5], rctx = (uint32_t)ctx->gpr[3];
+    if (s_hud_rec && rec == s_hud_rec) {
+        if (s_hud_ctx) return;
+        s_hud_ctx = rctx;
+        fprintf(stderr, "[des] HUD canvas: matrix at 0x%08X (render context 0x%08X)\n", s_hud_ctx + kCtxOrtho, s_hud_ctx);
+        return;
+    }
+    const float left = vm_readf(rec + 8), right = vm_readf(rec + 12);   /* (widened already if seen before) */
+    if (vm_readf(rec) != 0.0f || vm_readf(rec + 4) != kCanvasH || left > 0.0f ||
+        std::fabs(left + right - kCanvasW) > 0.01f)
+        return;
+    bool known = false;
+    {
+        std::lock_guard<std::mutex> lk(s_cam_mu);
+        for (size_t i = 0; i < s_other_n; i++) known |= s_other_ctx[i] == rctx;
+        if (!known && s_other_n < kMaxOtherCtx) s_other_ctx[s_other_n++] = rctx;
+    }
+    const float l = 0.0f - s_hud_l;   /* (0, not -0, for the game's own canvas) */
+    if (left != l) {
+        vm_writef(rec + 8, l);
+        vm_writef(rec + 12, kCanvasW - l);
+    }
+    if (!known)
+        fprintf(stderr, "[des] canvas 0x%08X (render context 0x%08X): x %.2f to %.2f, as the HUD's\n", rec, rctx, l,
+                kCanvasW - l);
 }
 
 /* After a camera constructor's store of the default aspect (0x0012F074,
@@ -375,12 +412,12 @@ bool near_value(float got, float want)
     return std::fabs(got - want) <= std::fabs(want) * 1e-5f;
 }
 
-/* A live change of the HUD canvas, into the HUD context's matrix while it
- * still holds the one for the old canvas. */
-bool hud_rewrite(float was_l, float l)
+/* A live change of a canvas, into its context's matrix while it still holds
+ * the one for the old canvas. */
+bool ctx_rewrite(uint32_t rctx, float was_l, float l)
 {
-    if (!s_hud_ctx) return false;
-    const uint32_t m = s_hud_ctx + kCtxOrtho;
+    if (!rctx) return false;
+    const uint32_t m = rctx + kCtxOrtho;
     float was00, was30, m00, m30;
     hud_matrix(was_l, was00, was30);
     hud_matrix(l, m00, m30);
@@ -389,6 +426,14 @@ bool hud_rewrite(float was_l, float l)
     vm_writef(m, m00);
     vm_writef(m + 0x30, m30);
     return true;
+}
+
+/* The HUD's canvas, and the other whole-canvas contexts with it. */
+bool hud_rewrite(float was_l, float l)
+{
+    std::lock_guard<std::mutex> lk(s_cam_mu);
+    for (size_t i = 0; i < s_other_n; i++) ctx_rewrite(s_other_ctx[i], was_l, l);
+    return ctx_rewrite(s_hud_ctx, was_l, l);
 }
 
 /* DES_ASPECT and DES_HUD -> the default words, the listed cameras, RSX_ASPECT

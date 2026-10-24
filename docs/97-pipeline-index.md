@@ -174,6 +174,17 @@ through the Nexus to Boletarian Palace 1-1, at RSX_SCALE=200 and 144 fps with VR
 - Its 155 new rows went into the index, which holds 591 rows now: 41 vertex and 195 fragment programs in 238
   pairs.
 
+**The second play test** (2026-10-24): the next morning's test build, on a copy of the save the break recording
+was made on, played by hand in Boletarian Palace 1-1 (two loads), then in the Tutorial's map, at RSX_SCALE=200.
+
+- The start found all 591 of the index's pipelines in the library already (its cache came from the first play
+  test's), in 255 ms.
+- In play, 473 draws loaded their pipeline from the library, and 58 compiled one. By area: the Palace 21 and
+  24, the Tutorial 12, the menus 1.
+- No new row used the clamp form.
+- Its 58 new rows went into the index, which holds 649 rows now: 42 vertex and 206 fragment programs in 258
+  pairs.
+
 ## Limits
 
 - A fragment program with more inline constants than the constant buffer holds has them baked into its text.

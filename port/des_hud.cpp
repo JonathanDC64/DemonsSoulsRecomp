@@ -26,9 +26,9 @@
  *   the draw, 0x00F5EAC0 (0x00F5F878 when +0x9C is set). The draw maps the
  *   dialog's layout rect (+0x84: left, top, right, bottom) onto its current rect
  *   (+0x74), scale and offset, and draws each child through that: moving the
- *   current rect moved and scaled the whole HUD, text included, on the next
- *   frame. An object is drawn only while bit 0x40000000 of its +0x18 is set
- *   (its draw, 0x00F62A88).
+ *   current rect moved and scaled the whole HUD on the next frame. Text moved
+ *   with it but kept its size (below). An object is drawn only while bit
+ *   0x40000000 of its +0x18 is set (its draw, 0x00F62A88).
  * - So 0x00F60BD0 is wrapped (ppu_register_function: the vtable call goes
  *   through it). For PCGauge, each group whose transform differs gets a draw
  *   of its own: the current rect is set to the group's transform, and only
@@ -43,10 +43,22 @@
  * - "HP icon", "SP icon" and "MP icon" sit at x = -168, left of the 16:9
  *   canvas, where the PS3 never shows them. A widened canvas showed them in
  *   the left band (docs/39, section 8): while it is widened they are not drawn.
+ * - Text kept its size because its glyphs are sized by its font, not by the
+ *   dialog's rect: the text shape's "set scale" (font +0x28) does nothing for
+ *   the menu font. Each text begins with a font number (font +0x08,
+ *   0x0071B728); the drawer queues it as a command, and its playback
+ *   (0x000B15C8) sets the glyph scale (text state +0x38, +0x3C) and the line
+ *   spacing (+0x94) from that font's entry in a table of 13. The HUD uses
+ *   fonts 5 to 8. So while a group is drawn at another size, the number is
+ *   queued with the size in its top bits, and the playback's wrapper gives the
+ *   game the plain number and then multiplies the scale and spacing by the
+ *   size. The text shape then sets the spacing again (font +0x38, 0x0071B5A0,
+ *   0 for one line; played back by 0x000B14C8): a scaled one is passed exactly
+ *   as 1/64ths with the top bit set, and that playback's wrapper writes it.
  */
 
 #include "ps3emu/ppu_lift.h"   /* ppu_context, vm_read32 */
-#include "des_game_calls.h"     /* func_00F60BD0 (the game DLL's with DES_SPLIT) */
+#include "des_game_calls.h"     /* func_00F60BD0... (the game DLL's with DES_SPLIT) */
 #include "ps3emu/ps3_knob.h"   /* ps3_env_gen */
 #include <cstdint>
 #include <cstdio>
@@ -70,6 +82,16 @@ constexpr uint32_t kObjFlags    = 0x18u, kObjRecord = 0x1Cu;
 constexpr uint32_t kObjDrawn    = 0x40000000u;   /* in kObjFlags: the object is drawn */
 constexpr float    kCanvasW     = 1280.0f, kCanvasH = 720.0f;
 constexpr uint32_t kMaxChildren = 256;
+constexpr uint32_t kFontBegin   = 0x0071B728u;   /* the menu font's "begin" with a font number (vtable 0x01865E10 +0x08) */
+constexpr uint32_t kFontPlay    = 0x000B15C8u;   /* plays the number back into the text state */
+constexpr uint32_t kFontSpacing = 0x0071B5A0u;   /* the menu font's line spacing (vtable +0x38) */
+constexpr uint32_t kSpacingPlay = 0x000B14C8u;   /* plays the spacing back into the text state */
+constexpr uint32_t kGlyphScale  = 0x38u;         /* in the text state: the glyph scale, x then y (floats) */
+constexpr uint32_t kLineSpacing = 0x94u;         /* in the text state: the line spacing (float) */
+constexpr uint32_t kFontScaled  = 0x80000000u;   /* in the font number: a scale in 1/1024ths at bit 16 */
+constexpr uint32_t kSpacingExact = 0x8000u;      /* in the spacing: 1/64ths of a pixel follow */
+constexpr float    kSpacingFrac = 64.0f;
+constexpr float    kScaleFrac   = 1024.0f;
 
 enum Group : uint8_t { kOther, kBars, kArea, kEquip, kSouls, kBoss, kOffCanvas, kGroups };
 
@@ -130,6 +152,7 @@ struct Wanted {
 };
 Wanted s_want;
 unsigned s_want_gen;
+PPU_THREAD_LOCAL float s_text_scale = 1.0f;   /* the size of the group being drawn (dialog_draw) */
 
 /* A pointer read from the game's objects, checked before it is followed. */
 bool guest_ok(uint32_t a, uint32_t align)
@@ -350,8 +373,10 @@ void dialog_draw(ppu_context* ctx)   /* for 0x00F60BD0 */
         }
         if (!any) continue;
         for (int k = 0; k < 4; k++) vm_writef(dlg + kDlgRect + 4 * (uint32_t)k, rect[p][k]);
+        s_text_scale = p == kOther ? 1.0f : w.size;
         draw_once(ctx, dlg, renderer, lr);
     }
+    s_text_scale = 1.0f;
     ctx->lr = lr;
     for (int k = 0; k < 4; k++) vm_writef(dlg + kDlgRect + 4 * (uint32_t)k, r[k]);
     for (uint32_t i = 0; i < n; i++) {
@@ -361,6 +386,77 @@ void dialog_draw(ppu_context* ctx)   /* for 0x00F60BD0 */
     }
 }
 
+/* The text state the drawer's commands play back into: +0x24 in the object at
+ * +0x38 of the list's owner (+0x14). */
+uint32_t text_state(uint32_t list)
+{
+    return vm_read32(vm_read32(list + 0x14) + 0x38) + 0x24u;
+}
+
+/* A text begins with its font's number (r4). Inside a group drawn at another
+ * size, the group's size goes with it in the number's top bits. */
+void font_begin(ppu_context* ctx)   /* for 0x0071B728 */
+{
+    const float s = s_text_scale;
+    const uint32_t font = (uint32_t)ctx->gpr[4];
+    if (s != 1.0f && font < 0x10000u) {
+        int q = (int)(s * kScaleFrac + 0.5f);
+        q = q < 1 ? 1 : q > 0x7FFF ? 0x7FFF : q;
+        ctx->gpr[4] = kFontScaled | (uint32_t)q << 16 | font;
+    }
+    func_0071B728(ctx);
+}
+
+/* Its playback: r3 = the drawer's list, the number at the next 4-byte boundary
+ * of the read position (+0x08). The playback sets the glyph scale and the line
+ * spacing from the font's entry, so it is given the number as the game gave
+ * it, and then both are multiplied by the size. */
+void font_play(ppu_context* ctx)   /* for 0x000B15C8 */
+{
+    const uint32_t list = (uint32_t)ctx->gpr[3];
+    const uint32_t at = (vm_read32(list + 0x08) + 3u) & ~3u;
+    const uint32_t end = vm_read32(list + 0x0C) + vm_read32(list + 0x10);
+    const uint32_t font = end > at + 4u ? vm_read32(at) : 0u;   /* (the playback's own bounds check) */
+    if (!(font & kFontScaled)) {
+        func_000B15C8(ctx);
+        return;
+    }
+    vm_write32(at, font & 0xFFFFu);
+    func_000B15C8(ctx);
+    vm_write32(at, font);
+    const float s = (float)((font >> 16) & 0x7FFFu) / kScaleFrac;
+    const uint32_t state = text_state(list);
+    const uint32_t scaled[] = {kGlyphScale, kGlyphScale + 4u, kLineSpacing};
+    for (uint32_t off : scaled) vm_writef(state + off, vm_readf(state + off) * s);
+}
+
+/* A text shape then sets its line spacing (r4, pixels; 0 for one line). Inside
+ * a group drawn at another size, the spacing is scaled with it. */
+void line_spacing(ppu_context* ctx)   /* for 0x0071B5A0 */
+{
+    const float s = s_text_scale;
+    const int px = (int16_t)ctx->gpr[4];
+    if (s != 1.0f && px > 0) {
+        const float want = (float)px * s;
+        if (want * kSpacingFrac < (float)(kSpacingExact - 1u))
+            ctx->gpr[4] = kSpacingExact | (uint32_t)(want * kSpacingFrac + 0.5f);
+        else
+            ctx->gpr[4] = (uint32_t)(int)(want + 0.5f);
+    }
+    func_0071B5A0(ctx);
+}
+
+/* Its playback: the 16-bit spacing at the next 2-byte boundary of the read
+ * position. A scaled one is written exactly. */
+void spacing_play(ppu_context* ctx)   /* for 0x000B14C8 */
+{
+    const uint32_t list = (uint32_t)ctx->gpr[3];
+    const uint32_t raw = vm_read16((vm_read32(list + 0x08) + 1u) & ~1u);
+    func_000B14C8(ctx);
+    if (raw & kSpacingExact)
+        vm_writef(text_state(list) + kLineSpacing, (float)(raw & (kSpacingExact - 1u)) / kSpacingFrac);
+}
+
 } // namespace
 
 /* From ps3_title_options_init, before the guest runs. Wrapped whatever the
@@ -368,6 +464,10 @@ void dialog_draw(ppu_context* ctx)   /* for 0x00F60BD0 */
 extern "C" void des_hud_init(void)
 {
     ppu_register_function(kDialogDraw, dialog_draw);
+    ppu_register_function(kFontBegin, font_begin);
+    ppu_register_function(kFontPlay, font_play);
+    ppu_register_function(kFontSpacing, line_spacing);
+    ppu_register_function(kSpacingPlay, spacing_play);
     s_want_gen = ps3_env_gen;
     want_read();
 }

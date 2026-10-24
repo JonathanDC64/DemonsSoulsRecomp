@@ -7,7 +7,8 @@ plan. Labels: **measured** (a run says so), **read** (seen in the code, a shader
 ## Short answer
 
 - **Feasible.** Recommended order:
-  1. **Now, no code: try NVIDIA RTX HDR** (section 5.1). This PC has an RTX 5070 Ti and an HDR display.
+  1. **Now, no code: NVIDIA RTX HDR** (section 5.1). Tried on this PC on 2026-10-24: it works with the port and
+     "looks quite nice". For players with an RTX GPU this is the answer today.
   2. **Stage A, HDR output** (section 5.2, 3.5 to 5 days): correct shadows and a paper-white setting. The game
      otherwise looks as it does today.
   3. **Stage B, the game's own highlights** (section 5.3, 2.5 to 4 days): the brightness the game already
@@ -140,9 +141,11 @@ on the screen). Stage A decodes with gamma 2.2 by default (sRGB as an option) an
     with Alt+Z, Game Filter.
   - Works with DX12. Multi-monitor support came in the NVIDIA app with driver 565.90 or newer, for an extended
     desktop with an HDR main display and an SDR side display. That is this PC's setup.
-  - Borderless windows work in some games and not in others. Not tried with `des_host.exe`.
+  - Borderless windows work in some games and not in others.
   - It brightens the HUD as well, and costs some frame rate.
   - It also maps the shadows with its own curve, so it may fix section 4 by itself.
+  - **Tried with the port** (2026-10-24, this PC: RTX 5070 Ti, the Dell with Windows HDR on): it works with `des_host.exe` and "looks quite nice" (the user). Frame rate, shadows and the HUD were not
+    measured separately.
 - **Auto HDR**: Windows decides which DX11 and DX12 games get it. There is a per-app off switch (Settings, Display,
   Graphics) but no way to force it on. Not tried.
 - Either one sets the bar that Stages A and B must beat. Never stack them on top of Stages A and B: the picture
@@ -242,7 +245,8 @@ Scratch only, never committed. A probe on the D3D12 backend (worktree branch `pr
 
 - Sunlit areas, fire and spells (section 3).
 - Whether the brightness setting changes the LUT, a constant or the exposure.
-- Whether RTX HDR works with `des_host.exe` in a borderless window and with the wrapper UI.
+- RTX HDR works with `des_host.exe` (section 5.1). Still open: its frame-rate cost, and how it treats the wrapper
+  UI.
 - Whether the motion-blur programs clamp.
 - Whether the game ever reads T's guest memory, which decides whether the write-back is needed at all.
 

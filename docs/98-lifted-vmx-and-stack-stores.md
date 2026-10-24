@@ -29,6 +29,9 @@ The code is in ps3recomp's `tools/ppu_lifter.py` (the helpers in its preamble) a
   sides, section 4).
 - **Other titles**: ps3recomp keeps `PS3_MAIN_STACK_LV2` opt-in. A title that leaves it off should measure
   before taking the third commit.
+- **The port's hooks had to follow the stack** (found in the first play test). The pointer check the hooks use
+  took only addresses below 0x50000000. With the main thread's stack moved, it refused the main thread's locals,
+  and breakables and debris were drawn at the 30 Hz physics rate again. It takes the stack area now (section 2).
 - The PR's lift and build pass regress and the break replay (section 3).
 
 ## How it was found
@@ -93,6 +96,18 @@ the step -4.2%, every run better; the deep Palace overlaps in two A/Bs. So the p
 player's start (`run_defaults` in `des_options.cpp`), `play.sh`'s defaults (`deslib.sh`) and the AppImage's
 launcher, each only when it is unset. With it, a regress run puts the main thread's stack top at 0xD0112000.
 
+**The hooks' pointer check had to follow it** (found in the first play test: breakables and debris moved at
+30 Hz again, corpses stayed smooth). The port's hooks check guest pointers with `guest_ptr_ok` (`des_options.cpp`,
+a copy in `des_dev.cpp`), which took 0x00010000 to 0x50000000 only. `des_body_xform` (docs/71) draws a moving
+body between its steps: it writes the in-between pose over the matrix that 0x0109F250 copies out of the body's
+transform. The copy's callers keep that matrix in a local (r1 + 0x110, 0xB0, 0x130, read) on the main thread. So
+with the stack moved the check refused every copy. On the break replay with a scratch counter, all 2,350,000
+copies of moving bodies went to the main thread's stack (0xD0111290 and near, stack top 0xD0112000). With the
+check fixed, 642,522 of them were drawn between steps; with the old check, none could be (measured). Ragdolls
+were not hit: their pose slots are on the heap. The check now takes the stack area too (0xD0000000-0xDFFFFFFF).
+The hooks that read r1-relative addresses directly (the DoF switch, the foot fix, the cutscene blend) never used
+it (read).
+
 The machine code is what was meant: a stack store is one compare against the limit, then the store (read, in the
 DLL). The design:
 
@@ -136,6 +151,8 @@ DLL). The design:
   0xD0112000, no `[coh] an SPU reserved stack line` (measured).
 - **The break replay** on the real build: after the breaks 267.2 fps, step 5.13 ms; no HALT, no crash line, no
   `[coh]` line (one run, measured).
+- **The hooks with the stack moved** (after the play test): every `guest_ptr_ok` caller and every hook that
+  reads guest memory through r1 (read); the breakables' in-between pose on the break replay (section 2, measured).
 
 ## 4. Measured
 

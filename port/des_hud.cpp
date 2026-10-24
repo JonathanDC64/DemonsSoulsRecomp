@@ -40,6 +40,10 @@
  * - Not in a group, drawn as before: the lock-on marker and the enemies'
  *   health bars (they follow the world), the status plate in the middle, and
  *   any object with a name not listed here.
+ * - The loading screen (DsMenuDlgNowLoading, vtable 0x0186FBC0) is drawn over
+ *   the HUD, and covers only the 16:9 band on a wide picture. While it is
+ *   drawn, the groups moved out to the corners are not drawn. Its own soul_0
+ *   to soul_99, parked right of the canvas, are not drawn on a widened one.
  * - "HP icon", "SP icon" and "MP icon" sit at x = -168, left of the 16:9
  *   canvas, where the PS3 never shows them. A widened canvas showed them in
  *   the left band (docs/39, section 8): while it is widened they are not drawn.
@@ -75,6 +79,7 @@ namespace {
 
 constexpr uint32_t kDialogDraw  = 0x00F60BD0u;   /* every EzMenu dialog's draw (vtable +0x4C) */
 constexpr uint32_t kHudDialogVt = 0x018698A0u;   /* DsMenuDlgPCGauge */
+constexpr uint32_t kLoadingVt   = 0x0186FBC0u;   /* DsMenuDlgNowLoading, the loading screen */
 constexpr uint32_t kDlgChildren = 0x0Cu, kDlgChildCount = 0x10u;
 constexpr uint32_t kDlgRect     = 0x74u;         /* current rect: left, top, right, bottom */
 constexpr uint32_t kDlgVisible  = 0x94u;         /* byte; 0 = the dialog draws nothing */
@@ -153,6 +158,8 @@ struct Wanted {
 Wanted s_want;
 unsigned s_want_gen;
 PPU_THREAD_LOCAL float s_text_scale = 1.0f;   /* the size of the group being drawn (dialog_draw) */
+uint32_t s_hud_draws = 1;   /* draws of the HUD dialog, from 1 */
+uint32_t s_loading_at;      /* s_hud_draws at the loading screen's last draw; 0 = never */
 
 /* A pointer read from the game's objects, checked before it is followed. */
 bool guest_ok(uint32_t a, uint32_t align)
@@ -268,7 +275,7 @@ void draw_once(ppu_context* ctx, uint32_t dlg, uint32_t renderer, uint64_t lr)
     }
 }
 
-/* The children of the HUD dialog; false if it has none to go through. */
+/* A dialog's children; false if it has none to go through. */
 bool hud_children(uint32_t dlg, uint32_t& arr, uint32_t& n)
 {
     arr = vm_read32(dlg + kDlgChildren);
@@ -294,14 +301,66 @@ void hud_said_once(uint32_t dlg)
             count[kBoss], count[kOffCanvas], count[kOther]);
 }
 
+/* soul_0 to soul_99: a digit after "soul_". */
+bool soul_cell(uint32_t obj)
+{
+    const uint32_t rec = vm_read32(obj + kObjRecord);
+    const uint32_t name = guest_ok(rec, 4) ? vm_read32(rec) : 0u;
+    if (!guest_ok(name, 2)) return false;
+    for (uint32_t i = 0; i < 5; i++)
+        if (vm_read16(name + 2 * i) != (uint8_t)"soul_"[i]) return false;
+    const uint16_t c = vm_read16(name + 10);
+    return c >= '0' && c <= '9';
+}
+
+/* The loading screen. Its soul_0 to soul_99 hold the frames of its two soul
+ * icons (des_options.cpp), parked right of the canvas, where a 16:9 screen
+ * never shows them. A widened canvas showed them as a column in the right
+ * band: while it is widened they are not drawn. */
+void loading_draw(ppu_context* ctx, uint32_t dlg)
+{
+    s_loading_at = s_hud_draws;
+    uint32_t arr, n;
+    if (des_hud_side_width() <= 0.0f || !hud_children(dlg, arr, n)) {
+        func_00F60BD0(ctx);
+        return;
+    }
+    uint32_t hid[kMaxChildren], nh = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        const uint32_t obj = vm_read32(arr + 4 * i);
+        if (!guest_ok(obj, 4)) continue;
+        const uint32_t f = vm_read32(obj + kObjFlags);
+        if (!(f & kObjDrawn) || !soul_cell(obj)) continue;
+        vm_write32(obj + kObjFlags, f & ~kObjDrawn);
+        hid[nh++] = obj;
+    }
+    if (!nh) {
+        func_00F60BD0(ctx);
+        return;
+    }
+    const uint64_t lr = ctx->lr;
+    draw_once(ctx, dlg, (uint32_t)ctx->gpr[4], lr);
+    ctx->lr = lr;
+    for (uint32_t k = 0; k < nh; k++) vm_write32(hid[k] + kObjFlags, vm_read32(hid[k] + kObjFlags) | kObjDrawn);
+}
+
 void dialog_draw(ppu_context* ctx)   /* for 0x00F60BD0 */
 {
     const uint32_t dlg = (uint32_t)ctx->gpr[3];
-    if (!guest_ok(dlg, 4) || vm_read32(dlg) != kHudDialogVt || vm_read8(dlg + kDlgVisible) == 0) {
+    const uint32_t vt = guest_ok(dlg, 4) ? vm_read32(dlg) : 0u;
+    if (vt == kLoadingVt && vm_read8(dlg + kDlgVisible) != 0) {
+        loading_draw(ctx, dlg);
+        return;
+    }
+    if (vt != kHudDialogVt || vm_read8(dlg + kDlgVisible) == 0) {
         func_00F60BD0(ctx);
         return;
     }
     hud_said_once(dlg);
+    /* Up to now or in the frame before: the loading screen draws before or
+     * after the HUD. */
+    const uint32_t draw_n = ++s_hud_draws;
+    const bool loading = s_loading_at != 0 && draw_n - s_loading_at <= 1u;
     if (s_want_gen != ps3_env_gen) {
         s_want_gen = ps3_env_gen;
         want_read();
@@ -328,7 +387,7 @@ void dialog_draw(ppu_context* ctx)   /* for 0x00F60BD0 */
         const float size = g == kOther ? 1.0f : w.size;
         const float shift = w.corners ? (float)a.side * side : 0.0f;
         group_rect(r, a, size, shift, rect[g]);
-        shown[g] = w.shown[g] && !(g == kOffCanvas && side > 0.0f);
+        shown[g] = w.shown[g] && !(g == kOffCanvas && side > 0.0f) && !(loading && shift != 0.0f);
         pass_of[g] = g;
         for (int e = 0; e < g; e++)
             if (memcmp(rect[e], rect[g], sizeof rect[g]) == 0) {

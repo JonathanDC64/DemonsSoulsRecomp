@@ -109,19 +109,18 @@ Tutorial, regression save, 1280x720, this PC's Dell (HDR on, 280-nit peak, 240-n
 - The settings window on the FP16 back buffer: same look as SDR once converted back.
 - Frame time (`tools/des/knobab.sh`, `RSX_HDR=1` switched live, Tutorial, uncapped): 493 fps off, 485 fps on,
   -1.5% or 0.03 ms a frame, p 0.39 (under the tool's 1.5% bar). The first window with HDR on includes the one-time
-  compiles of the four variants. T and one copy are FP16 (twice the bytes of RGBA8) while HDR is on.
+  pipeline builds (section 7). T and one copy are FP16 (twice the bytes of RGBA8) while HDR is on.
 
 ## 5. Limits and differences
 
-- **FXAA (`RSX_AA=1`) is skipped** while T is FP16: its pass takes RGBA8 only. FXAA at present (`RSX_AA_AT=present`)
-  is unaffected.
 - **No highlights on held frames:** while a menu is open the overlay repaints the held frame, which has no T to add.
   The picture under the menu is the SDR-range one.
 - **Draws into T before the composite are no longer clipped at T's 8-bit limit** when they blend past it (additive
   effects). The composite still clamps at 2, so the result stays inside the original's 2x range; blurred highlights
   can come out slightly wider (inferred).
-- **In-game brightness:** the display copy's table applies up to white. Highlights above white are added after it and
-  do not follow the brightness setting (inferred; the table is identity at the default brightness).
+- **In-game brightness** (Options, Brightness, 0 to 10, default 5) is the display copy's table, which applies up to
+  white. It bends the curve between black and white and keeps both ends; the highlights above white are added after
+  it and do not change with it (measured, section 7).
 - **Linux:** no HDR. vkd3d's swap chain has no colour-space methods, so the display always reads as SDR there.
 - **The D3D11 menu renderer** ignores HDR. Windows uses the D3D12 one.
 - **Other titles:** Stage A works for any title. Stage B needs the title's scene program named in
@@ -136,3 +135,54 @@ Tutorial, regression save, 1280x720, this PC's Dell (HDR on, 280-nit peak, 240-n
   nothing above white), `FP_KILL` on the motion blur write-back, `FP_PICK` for the HLSL of the copies (no colour clamp
   in them), and a snapshot of T itself.
 - HDR off: the regression route (`tools/des/regress.sh`) against the accepted set.
+
+## 7. Follow-ups (2026-10-24, later)
+
+### FXAA with HDR
+
+FXAA (`RSX_AA=1`) used to be skipped while HDR kept T in FP16, because its pass had an RGBA8 pipeline only. It now has
+an FP16 pipeline as well and runs on T in the same place as in SDR: after the post chain, before the HUD. The filter
+works on values above 1 as it does below.
+
+Measured (Tutorial, regression save, `RSX_HDR=1 RSX_AA=1`): the log says `[AA] FXAA on T=0x007A0000 1280x720` where it
+used to say the scene target was not RGBA8. With FXAA switched off live between two snapshots of the same view, the
+difference is along edges (the character's outline, the arch, the textured floor), the HUD is untouched, and the
+brightest value is the same.
+
+### Switching HDR on, and the pipeline index
+
+Turning HDR on asks for pipelines the SDR picture never uses. In the Tutorial (measured): 91 rows, 81 of them draws into
+T and its copy, which are FP16 now (the HUD is drawn into T too), and 10 HDR variants (the composite's raised clamp
+and 9 draws whose reads of T are clamped). None were in the pipeline index, so each was built the moment HDR came on.
+
+The index rows now carry the variant (an optional 15th field, `hdrv`, docs/97), the start-up pass makes the variant's
+text, and the 91 rows are in the index. Measured on a shader cache without its pipeline library, HDR on from the start:
+
+| Index | Built at the start | Draws that waited for the driver |
+|---|---|---|
+| Before (658 rows) | 658 | 91 |
+| With the HDR rows (749) | 749, in 0.5 s | 0 |
+
+Other areas will add rows of their own (menus and effects drawn into T); merge the seen files of HDR play as usual.
+
+### In-game brightness
+
+The display copy's table (local memory 0x3E0, 256 entries), read with the debug console at three settings of Options,
+Brightness (measured; input and output out of 255):
+
+| Input | 0 | 5 (default) | 10 |
+|---|---|---|---|
+| 16 | 1 | 16 | 33 |
+| 64 | 20 | 64 | 92 |
+| 128 | 72 | 128 | 154 |
+| 192 | 152 | 192 | 207 |
+| 255 | 255 | 255 | 255 |
+
+- 5 is the identity: the game as it was made.
+- Above 5 it lifts shadows and mid-tones (about gamma 0.74 at 10); below 5 it darkens them (about gamma 1.84 at 0, with
+  the darkest shades crushed to black).
+- Black and white stay where they are, so with HDR the picture still meets paper white at the same point, and the
+  highlights above it are added unchanged. Raising the setting makes the scene brighter but the highlights stand out
+  less.
+- With HDR on, the HDR rows are the better tools: HDR brightness (paper white) scales the whole picture, highlights
+  included, and HDR shadows (the sRGB curve) lifts only the darkest shades.

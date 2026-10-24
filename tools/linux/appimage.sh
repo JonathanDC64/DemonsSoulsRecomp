@@ -80,12 +80,14 @@ ln -sfn "$HERE/usr/share/des/libsre" "$DATA/work/libsre"
 export PS3_VFS_ROOT="$GAME"
 export DES_DATA_DIR="$DATA"
 export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-# As tools/des/play.sh (deslib.sh's des_env_defaults): the known-good libsre setup and the vertex buffer size.
+# As tools/des/play.sh (deslib.sh's des_env_defaults): the known-good libsre setup, the vertex buffer size and
+# the main thread's stack in the stack region.
 export LIBSRE_LLE="${LIBSRE_LLE:-1}"
 export LIBSRE_LLE_ONLY="${LIBSRE_LLE_ONLY:-011EE38B,1656D49F,8A85674D,73E06F91,082BFB09,E5443BE7,039D70B7,91066667}"
 export SPURS_NO_ROUND_NOTIFY="${SPURS_NO_ROUND_NOTIFY:-1}"
 export PS3_VERBOSE="${PS3_VERBOSE:-0}"
 export VP_VB_VERTS="${VP_VB_VERTS:-1572864}"
+export PS3_MAIN_STACK_LV2="${PS3_MAIN_STACK_LV2:-1}"
 export PS3_HDD1_ROOT="${PS3_HDD1_ROOT:-$DATA/gamedata/dev_hdd1}"
 export PS3_SHADER_CACHE="${PS3_SHADER_CACHE:-$DATA/gamedata/shader_cache}"
 mkdir -p "$PS3_HDD1_ROOT" "$PS3_SHADER_CACHE"

@@ -35,6 +35,9 @@ des_env_defaults() {
   export LIBSRE_LLE="${LIBSRE_LLE:-1}"
   export LIBSRE_LLE_ONLY="${LIBSRE_LLE_ONLY:-011EE38B,1656D49F,8A85674D,73E06F91,082BFB09,E5443BE7,039D70B7,91066667}"
   export SPURS_NO_ROUND_NOTIFY="${SPURS_NO_ROUND_NOTIFY:-1}"
+  # The main thread's stack in the stack region, as lv2 places it: the lifter's
+  # stack stores take their direct path only there (docs/98).
+  export PS3_MAIN_STACK_LV2="${PS3_MAIN_STACK_LV2:-1}"
   # Behind the lock screen DWM holds the back buffers and every frame waits on
   # the GPU (docs/28, unattended runs). A test run checks the lock at launch
   # and renders without presenting there; set RSX_PRESENT to pin it instead.

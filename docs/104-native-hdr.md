@@ -107,7 +107,9 @@ Tutorial, regression save, 1280x720, this PC's Dell (HDR on, 280-nit peak, 240-n
   above white.
 - HDR off and on again while playing: the swap chain switches each time, and the highlights come back with it.
 - The settings window on the FP16 back buffer: same look as SDR once converted back.
-- Frame time: not measured. T and one copy are FP16 (twice the bytes of RGBA8) while HDR is on.
+- Frame time (`tools/des/knobab.sh`, `RSX_HDR=1` switched live, Tutorial, uncapped): 493 fps off, 485 fps on,
+  -1.5% or 0.03 ms a frame, p 0.39 (under the tool's 1.5% bar). The first window with HDR on includes the one-time
+  compiles of the four variants. T and one copy are FP16 (twice the bytes of RGBA8) while HDR is on.
 
 ## 5. Limits and differences
 

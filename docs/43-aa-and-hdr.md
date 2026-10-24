@@ -241,6 +241,8 @@ Effort: four weeks or more, for a result that ghosts. Not worth it while SMAA pl
 
 ## 8. HDR output
 
+2026-10-24: docs/103 measures how much the game has above white and updates this plan: stage 2 and section 8.5 are replaced by "the game's own highlights".
+
 ### 8.1 What Windows needs (Read: Microsoft's Advanced Color and `DISPLAYCONFIG_SDR_WHITE_LEVEL` pages)
 
 - A flip-model swap chain. We have one.

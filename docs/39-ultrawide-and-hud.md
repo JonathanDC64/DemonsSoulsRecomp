@@ -238,7 +238,7 @@ Every function that loads one of these constants through the TOC:
 | 0x007B5AB0, 0x007B6178 | 0x018F3D7C (1280), 0x018F3D84 (720) | TargettingSite on-screen test; 0x007B6178 is its update |
 | 0x008AEA98 | 0x018F8BF0 (1280), 0x018F8BF8 (720) | FloatingPCGauge on-screen test |
 | 0x0012E638, 0x0012E6A8 | 0x018CEF38 (720), 0x018CEF40 (1280) | ortho camera constructors (their default canvas) |
-| 0x00096348 | 0x018CBA4C, 0x018CBA54 | another 0x3A record; called three times from 0x000275A8 (0x00027B8C/BC/EC), which runs at boot; unclassified |
+| 0x00096348 | 0x018CBA4C, 0x018CBA54 | another 0x3A record; called three times from 0x000275A8 (0x00027B8C/BC/EC), which runs at boot; one is the boot screen's. Widened with the HUD's canvas since docs/102 section 8 |
 | 0x003E0A10, 0x003E8150 | 0x018DE2DC/E4, 0x018DE568/70 | 0x3A records for the scene and post passes, called from the scene setup 0x0021D280 |
 | 0x00095918, 0x003E1768, 0x003E8C68 | (same kind) | twins, no callers |
 | 0x00182CF0, 0x008AAAF0 | 1280, 720 | pass 1280x720 to 0x00949228, probably the movie player (its state machine is at 0x0094AB90, docs/35); 0x008AAAF0 sits in DsMenuDlgMovieDisplay's code |
@@ -402,7 +402,7 @@ The defaults are 16:9, Centred and 100%, which gives the original look; this fol
 1. **Pop-in at the edges.** The game decides what to draw for each area, and that was tuned for a 70 degree view. A wider FOV may show missing walls, or enemies that appear late at the left and right edges. This stays unknown until R1. If it happens, limit the choices to 21:9 or find the visibility source.
 2. **Cameras with their own aspect.** Cutscenes or the character-creation preview could look stretched or squashed (R5, R6).
 3. **Screen-space effects stretched by k.** Flare and blur shapes. This is cosmetic.
-4. **Other 2D contexts.** Anything drawn in 0x00096348's three canvases stays stretched (R3, R4).
+4. **Other 2D contexts.** Anything drawn in 0x00096348's three canvases stays stretched (R3, R4). Done (docs/102 section 8): every record of the whole canvas is widened as the HUD's; the boot screen's logo was the one seen stretched.
 5. **Cost.** A wider view draws more, and step B adds k times the pixels (R8).
 6. **Re-lifts.** The instruction hooks need a re-lift, which is slow. Group the hooks.
 
@@ -526,7 +526,7 @@ Use the usual `play.sh` line (pinned save, scratch dir, `RSX_PRESENT` from the l
 | 0x0186E1E0, 0x01870C30 | FadePlate, CommonBackPlate vtables | widen the rect |
 | 0x0071A6B8, 0x00F58000, 0x00F63698 | dialog base update, EzMenuDlgObj update, layout base update | H3 anchors |
 | 0x0071B800 | default clip rect [0, -1280, 1280, 1280] | H3 risk |
-| 0x00096348 | second 1280x720 canvas record (three contexts at boot) | check in R3/R4 |
+| 0x00096348 | second 1280x720 canvas record (three contexts at boot) | widened, docs/102 section 8 |
 | 0x00949228, 0x0094F978 | movie player calls with 1280x720 | check in R4 |
 
 ## 7. Corrections from the first implementation
@@ -543,3 +543,5 @@ Found while building the first ultrawide version (branch `feat/ultrawide`, 2026-
 - **Three markers in the left side band.** With the HUD centred at a wide aspect ratio, three small markers show in the left band: a red triangle, a green triangle and a blue ring (seen while testing the live aspect change, docs/79, and also at a 21:9 start). They look like the developers' own icons, placed outside the 16:9 canvas where a 16:9 screen never shows them. What the game uses them for is unknown, so hiding them could change something else. Left as they are for now.
   - Docket: find which HUD element draws them (its dialog and the code that places it) and what it is for, then decide whether to keep them off screen at wide ratios.
   - Done (docs/102): they are the HUD's "HP icon", "SP icon" and "MP icon" at x = -168, and are no longer drawn on a widened canvas. docs/102 also moves the HUD's corner groups to the screen's corners (`DES_HUD` "", Corners).
+- **The boot screen was stretched** at a wide aspect ratio (player report, 2026-10-24): it is drawn on one of 0x00096348's canvases. Done (docs/102 section 8).
+- **The HUD in the corners showed during loads**: the loading screen covers only the 16:9 band. Done (docs/102 section 3): the corner groups are not drawn while it is.

@@ -1,7 +1,7 @@
-# 102. HUD size, the HUD in the corners, and hiding parts of it (2026-10-24)
+# 102. HUD size, the HUD in the corners, hiding parts of it, and the HUD editor (2026-10-24)
 
 New settings for the in-game HUD: a size, its four corner groups pushed out to the screen's corners on a wide
-picture, and a switch to hide each group. Labels: **measured** (a run says so), **read** (seen in the code, the EBOOT
+picture, a switch to hide each group, and an editor that moves and resizes each one on the game's picture. Labels: **measured** (a run says so), **read** (seen in the code, the EBOOT
 or a heap dump), **inferred**.
 
 ## Short answer
@@ -16,6 +16,7 @@ or a heap dump), **inferred**.
   | Area name | `DES_HUD_AREA` | as above |
   | Equipment | `DES_HUD_EQUIP` | as above |
   | Souls | `DES_HUD_SOULS` | as above |
+  | Edit HUD | `DES_HUD_<PART>_POS`, `DES_HUD_<PART>_SIZE` | a button: the HUD editor (section 9) |
 
 - **Each group grows or shrinks from its own corner** of the screen; the boss's health bar from the bottom middle.
   At 16:9 with the defaults nothing changes: the game draws its HUD as before (measured, section 4).
@@ -24,8 +25,9 @@ or a heap dump), **inferred**.
 - **The three stray markers are gone.** docs/39 section 8 listed a red triangle, a green triangle and a blue ring in
   the left band on a wide picture. They are the HUD's own "HP icon", "SP icon" and "MP icon", placed at x = -168,
   left of the 16:9 canvas, where the PS3 never shows them (read). They are no longer drawn on a widened canvas.
-- **Per-group sizes: not offered.** The mechanism would allow one size per group at no extra cost, but four more
-  number rows add little: the groups share one look and read best at one size. Easy to add if wanted (section 5).
+- **The HUD editor** (section 9) shows the game with a box over each part: drag to move, drag a corner to resize,
+  the eye to hide or show, Reset all to put everything back. Each part stays on screen. The cursor shows what a drag
+  will do.
 - **HUD text on a wide picture is right** (section 7): it is squeezed with the icons and stretched back with them. An
   earlier note in this branch said otherwise; a closer look showed it was wrong.
 - **Text now grows and shrinks with its group** (section 6). The first version moved text but kept its size: at 50%
@@ -124,12 +126,12 @@ Second round, after a player test (the same save and build kind, this branch):
 | 150% | `DES_HUD_SIZE=150` | the same text one and a half times the size, the whole item name shown |
 | 21:9, 60% | `DES_ASPECT=2560:1080` | text at 60% in the corners |
 | boot at 21:9 | from the start, a frame every 15 | the boot logo the right shape; logos, title, profile list, Nexus as before |
-| load at 21:9 | Nexus to Boletaria 1-1 | RESULT |
+| load at 21:9 | the first load, title to the Nexus, a frame every 12 | the loading art in the middle; the side bars stay black, with no HUD group or soul column (this row first said "Nexus to Boletaria 1-1": that trip needs a developer build's warp) |
 
 ## 5. Per-group sizes
 
-`group_rect()` already takes a size per call; a size per group would be four more knobs and four number rows. Not
-done, for the reason in the short answer.
+Offered through the HUD editor (section 9): `DES_HUD_<PART>_SIZE`, a percent of HUD size, set by dragging a
+corner. The settings window has no number rows for them.
 
 ## 6. Text size (read and measured)
 
@@ -194,7 +196,92 @@ done, for the reason in the short answer.
 - **Seen** (frames from the run, stretched to 21:9 as the display shows them): the logo the right shape, at the left
   edge of the 16:9 middle. The notices, the company logo, the title, the profile list and the Nexus look as before.
 
-## 9. Address table
+## 9. The HUD editor
+
+**What it is.** Settings, Game tab, HUD: **Edit HUD**. The settings window steps aside and the game shows, with a
+box over each of the four parts, named above it:
+- **Move:** drag inside a box. A part can't leave the screen.
+- **Resize:** drag a corner (top left, bottom left or bottom right). The part keeps its shape, and the opposite
+  corner stays put. A resize that would cross the screen's edge stops there.
+- **Hide or show:** click the eye in the circle at the top right. A hidden part's box goes dim and its eye is crossed
+  out.
+- **Reset all** puts all four back (place, size, shown).
+- **Done**, Esc, Circle or F1 go back to Settings. Left and right move between Reset all and Done on a keyboard or a
+  gamepad.
+
+**Cursors.** Over a box: move (four arrows). On a corner: the diagonal resize arrow for that corner. On the eye and
+the buttons: the hand. On a part whose settings came from outside (a pinned setting): unavailable, and it can't be
+changed. RmlUi's Win32 backend knows one resize cursor only, so `host.cpp` adds `nwse-resize` and `nesw-resize`
+(Windows' IDC_SIZENWSE and IDC_SIZENESW, SDL's SIZENWSE and SIZENESW).
+
+**The settings** (also usable without the editor, like the other options):
+
+| Option | Values |
+|---|---|
+| `DES_HUD_BARS_POS`, `DES_HUD_AREA_POS`, `DES_HUD_EQUIP_POS`, `DES_HUD_SOULS_POS` | `"x,y"`: moved by that much from where the other HUD settings put it, in the game's 1280x720 units; default `"0,0"` |
+| `DES_HUD_BARS_SIZE`, `DES_HUD_AREA_SIZE`, `DES_HUD_EQUIP_SIZE`, `DES_HUD_SOULS_SIZE` | percent of HUD size, 25 to 300; default 100 |
+| `DES_HUD_BARS` ... | the eye (section 3) |
+
+While a box is dragged the game gets each step at once. settings.ini is written when the drag ends.
+
+**Kept on screen.** The draw cuts a move back so the part's pieces stay inside the canvas the picture shows
+([-L, 1280 + L] by [0, 720], L from section 3), or no further out than with no move. The editor shows the same cut, so
+a box stops at the edge. A move given in settings.ini or the environment is cut back the same way from the first
+frame (measured: `DES_HUD_SOULS_POS=-2000,-2000` puts the souls in the top left corner).
+
+**How a part's box is found** (`port/des_hud.cpp`; read and measured):
+- **An object's rect.** 0x00F62E68 (r3 = answer, r4 = object) gives an object's rect in its dialog's layout, from its
+  shape (vtable +0x2C). The wrapper calls it on the draw's thread, with a frame of its own on the guest stack.
+- **When.** Every 4th HUD draw while the editor is open, and for 120 draws after its last request, or while a part is
+  moved or resized. A part's box is kept while none of its pieces is drawn.
+- **Parked pieces.** Pieces wholly outside the layout don't count. A moved or resized part also leaves them out of
+  its draw:
+  - The bars' outlines (`outline_hp`, `_sp`, `_mp`) are drawn parked at y = -140 to -78, above the canvas. Moved
+    down, one showed as a thin bar at the top of the screen.
+  - The HP, SP and MP icons at x = -168 (section 1) showed in the same way once the bars moved right. They are no
+    longer drawn once the bars are moved or resized.
+- **Hosted dialogs.** `soul_param` hosts a `DsMenuDlgFEGetSoul` (vtable 0x018696C0, the word at the piece's +0x48).
+  That dialog is as big as the canvas (rect 0,0 to 1276,708; layout 0,0 to 1280,720), and its six pieces sit at the
+  bottom right. For a piece as big as the layout that hosts a dialog whose current rect is the piece's rect, the box
+  is that dialog's drawn pieces, mapped from its layout onto its rect.
+
+  The first version boxed the whole screen for the souls, and that box caught every drag. The equipment slots host
+  dialogs too (`DsMenuDlgFeShortcut`, vtable 0x018697B0). Their own rects are the slots, so they are used as they
+  are; inside, each slot keeps plates parked above it.
+- **Not on screen yet.** Until a part has been seen drawn, the box of all its pieces stands in. This covers an area
+  name the game is not showing at the moment.
+- **Measured (the Nexus, 16:9):** bars 65,43 to 351,173; area 891,65 to 1202,139; equipment 82,480 to 507,671; souls
+  991,627 to 1201,667.
+
+**The picture in the window.** The editor places the boxes on the picture as the D3D12 backend shows it: fitted to the
+window at `RSX_ASPECT` (which `DES_ASPECT` sets), else 16:9, in the middle.
+
+**Drags.** The boxes use RmlUi's own drag (`drag: drag` in `hud_editor.rcss`). Its events reach the box wherever the
+mouse goes, also outside the window, and see the button go up there. With plain mouse events, a drag past the
+window's edge stopped getting moves and missed the release.
+
+**Tests** (measured, 2026-10-24). The archstone save in the Nexus, offline, this branch. The editor was driven with
+`DES_UI_MOUSE`, a new test hook (`des_ui.cpp`, beside `DES_UI_PRESS`: `x,y[,down|up][;...]` in back buffer pixels,
+one setenv per drag), and the window was saved with PrintWindow:
+
+| Step | Done | Seen |
+|---|---|---|
+| open | Settings, Game, Edit HUD | a box over each part, with its name and eye; Settings hidden |
+| move | bars dragged by +300,+180 | `DES_HUD_BARS_POS=300,180`; the bars there, no stray icons or outlines |
+| resize | the souls' top left corner dragged out | 140%, the bottom right corner where it was (`+32,+21`) |
+| eye | the area name's eye | `DES_HUD_AREA=0`; the name gone, its box dim, the eye crossed out |
+| Reset all | Left, Enter | all four back |
+| Esc | | back in Settings, on Edit HUD |
+| 21:9 | `DES_ASPECT=2560:1080` | boxes on the corner groups; the bars dragged past the window's top left corner stop at the screen's corner (`-65,-43`), the eye and corners moved inside the box |
+| settings at start | `DES_HUD_SOULS_POS=-2000,-2000`, `DES_HUD_EQUIP_SIZE=60` | the souls in the top left corner; the equipment at 60% from its corner |
+
+**Limits.**
+- Only the four parts move. The boss bar, pop-ups and menus stay where the game puts them.
+- A part's box follows its drawn pieces. The bars' box narrows while the long health background is not drawn, so a
+  part pushed against an edge can shift a little when it comes back.
+- The cursors were not seen in a test (a window capture has no cursor).
+
+## 10. Address table
 
 | Address | What |
 |---|---|
@@ -217,3 +304,7 @@ done, for the reason in the short answer.
 | 0x00719B58, 0x000B06B0 | renderer text draw; queues the text command |
 | 0x000B0D60 | plays the text command back (function descriptor 0x01920228) |
 | 0x009D1790 | glyph quad, font renderer vtable 0x01872608 +0x10 |
+| 0x00F62E68 | an object's rect in its dialog's layout (r3 = answer, r4 = object), from its shape's vtable +0x2C |
+| object +0x48 | the dialog a piece hosts, for the pieces that host one (`soul_param`, the equipment slots) |
+| 0x018696C0 | `DsMenuDlgFEGetSoul` vtable (the souls, hosted by `soul_param`) |
+| 0x018697B0 | `DsMenuDlgFeShortcut` vtable (an equipment slot) |

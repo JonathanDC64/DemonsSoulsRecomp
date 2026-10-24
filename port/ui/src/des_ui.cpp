@@ -173,6 +173,7 @@ struct ScriptKey {
 };
 std::vector<ScriptKey> sScriptKeys;
 int vk_from_name(const std::string& name);
+std::vector<std::string> split(const std::string& s, char sep);
 
 // The game's on-screen keyboard (cellOskDialog_set_host). The game opens and closes it on its own threads; frame
 // shows and closes the window.
@@ -687,6 +688,21 @@ void watch_thread() {
                 push_event({InputEvent::KeyDown, vk});
                 push_event({InputEvent::KeyUp, vk});
                 if (is_menu_key(WPARAM(vk)) && !sCapturing.load()) wake_overlay();
+            }
+        }
+        // DES_UI_MOUSE=x,y[,down|up][;x,y[,down|up]...] (a test, likewise): the mouse moves to each point (back
+        // buffer pixels) in turn, the left button going down or up there; one setenv is one drag.
+        if (const char* v = std::getenv("DES_UI_MOUSE"); v && *v) {
+            const std::string steps = v;
+            ps3_setenv("DES_UI_MOUSE", "");
+            for (const std::string& step : split(steps, ';')) {
+                int x = 0, y = 0;
+                char act[8] = {};
+                const int got = std::sscanf(step.c_str(), "%d,%d,%7s", &x, &y, act);
+                if (got < 2) continue;
+                push_event({InputEvent::MouseMove, x, y});
+                if (got == 3 && !std::strcmp(act, "down")) push_event({InputEvent::MouseDown, 0});
+                if (got == 3 && !std::strcmp(act, "up")) push_event({InputEvent::MouseUp, 0});
             }
         }
         if (const unsigned long long at = sWakeAt.load()) {

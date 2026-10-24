@@ -1,0 +1,234 @@
+/* Written for Demon's Souls (docs/102, section 9). The HUD editor (hud_editor.cpp): the game's picture, a box over
+   each part of the HUD and a bar at the top. The cursor says what a drag does: move inside a box, a diagonal arrow on
+   its corners, a hand on the eye and the buttons. */
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-family-body);
+    font-size: var(--font-size-md);
+    color: var(--color-text);
+    z-index: 3;
+}
+
+hud-bar {
+    position: absolute;
+    top: var(--space-xl);
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 2;
+}
+
+hud-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-sm);
+    max-width: 90%;
+    padding: var(--space-md) var(--space-xl);
+    background-color: rgba(var(--color-surface-rgb), 85%);
+    border-width: 1dp;
+    border-color: rgba(var(--color-border-rgb), 60%);
+    border-radius: var(--radius-window);
+    pointer-events: auto;
+}
+
+hud-hint {
+    display: block;
+    text-align: center;
+}
+
+hud-note {
+    display: none;
+    text-align: center;
+    color: var(--color-warning);
+}
+
+hud-actions {
+    display: flex;
+    gap: var(--space-md);
+}
+
+hud-actions button {
+    font-size: var(--font-size-lg);
+    padding: var(--space-xs) var(--space-lg);
+}
+
+/* A part's box. */
+hud-part {
+    position: absolute;
+    display: none;
+    border-width: 2dp;
+    border-color: rgba(var(--color-accent-rgb), 80%);
+    border-radius: var(--radius-small);
+    background-color: rgba(var(--color-accent-rgb), 6%);
+    cursor: move;
+    drag: drag;  /* RmlUi's drag events: they follow the mouse out of the window and see the button go up there */
+    z-index: 1;
+}
+
+hud-part:hover,
+hud-part.dragged {
+    border-color: var(--color-white);
+    background-color: rgba(var(--color-accent-rgb), 14%);
+}
+
+hud-part.off {
+    border-color: rgba(var(--color-border-rgb), 55%);
+    background-color: rgba(var(--color-black-rgb), 40%);
+}
+
+hud-part.locked {
+    cursor: unavailable;
+    border-color: rgba(var(--color-border-rgb), 40%);
+}
+
+hud-name {
+    position: absolute;
+    left: -2dp;
+    bottom: 100%;
+    margin-bottom: var(--space-2xs);
+    padding: 0 var(--space-sm);
+    font-size: var(--font-size-sm);
+    white-space: nowrap;
+    background-color: rgba(var(--color-surface-rgb), 80%);
+    border-radius: var(--radius-small);
+}
+
+hud-part.label-below hud-name {
+    bottom: auto;
+    top: 100%;
+    margin-bottom: 0;
+    margin-top: var(--space-2xs);
+}
+
+hud-part.off hud-name {
+    color: rgba(var(--color-text-rgb), 60%);
+}
+
+/* The corners that resize (top right is the eye). */
+hud-grip {
+    position: absolute;
+    width: 14dp;
+    height: 14dp;
+    background-color: var(--color-accent);
+    border-width: 1dp;
+    border-color: rgba(var(--color-black-rgb), 70%);
+}
+
+hud-grip.tl {
+    left: -8dp;
+    top: -8dp;
+    cursor: nwse-resize;
+}
+
+hud-grip.br {
+    right: -8dp;
+    bottom: -8dp;
+    cursor: nwse-resize;
+}
+
+hud-grip.bl {
+    left: -8dp;
+    bottom: -8dp;
+    cursor: nesw-resize;
+}
+
+hud-part.locked hud-grip {
+    display: none;
+}
+
+/* Near the window's edge (hud_editor.cpp, kNearEdge): the corners and the eye go inside the box on that side. */
+hud-part.edge-top hud-grip.tl {
+    top: 0;
+}
+
+hud-part.edge-left hud-grip.tl,
+hud-part.edge-left hud-grip.bl {
+    left: 0;
+}
+
+hud-part.edge-bottom hud-grip.bl,
+hud-part.edge-bottom hud-grip.br {
+    bottom: 0;
+}
+
+hud-part.edge-right hud-grip.br {
+    right: 0;
+}
+
+/* Hide or show, in a circle on the top right corner. */
+hud-eye {
+    position: absolute;
+    right: -13dp;
+    top: -13dp;
+    width: 26dp;
+    height: 26dp;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 13dp;
+    border-width: 1dp;
+    border-color: rgba(var(--color-accent-rgb), 80%);
+    background-color: rgba(var(--color-surface-rgb), 90%);
+    font-size: var(--font-size-lg);
+    cursor: pointer;
+    drag: block;  /* a click, not a drag */
+}
+
+hud-part.edge-top hud-eye {
+    top: 2dp;
+}
+
+hud-part.edge-right hud-eye {
+    right: 2dp;
+}
+
+hud-eye:hover {
+    border-color: var(--color-white);
+    background-color: rgba(var(--color-control-rgb), 100%);
+    color: var(--color-white);
+}
+
+hud-eye icon {
+    pointer-events: none;
+}
+
+icon.eye-on {
+    decorator: text("&#xe8f4;" center center);
+}
+
+icon.eye-off {
+    decorator: text("&#xe8f5;" center center);
+}
+
+hud-part.locked hud-eye {
+    cursor: unavailable;
+}
+
+/* Over everything while dragging, with the drag's cursor (the mouse can run ahead of the box). */
+hud-shield {
+    position: absolute;
+    display: none;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+}
+
+hud-shield.move {
+    cursor: move;
+}
+
+hud-shield.nwse {
+    cursor: nwse-resize;
+}
+
+hud-shield.nesw {
+    cursor: nesw-resize;
+}

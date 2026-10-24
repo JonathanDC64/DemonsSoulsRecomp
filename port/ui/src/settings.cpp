@@ -50,6 +50,16 @@ constexpr Def kDefs[] = {
     {"DES_HUD_AREA", "1", Apply::Live},        // 0 hides the area name
     {"DES_HUD_EQUIP", "1", Apply::Live},       // 0 hides the equipped items and spells
     {"DES_HUD_SOULS", "1", Apply::Live},       // 0 hides the souls
+    // The HUD editor's moves and sizes (hud_editor.cpp): "x,y" in the game's 1280x720 units from the part's own place,
+    // and percent of DES_HUD_SIZE; des_hud.cpp, as DES_HUD_SIZE.
+    {"DES_HUD_BARS_POS", "0,0", Apply::Live},
+    {"DES_HUD_BARS_SIZE", "100", Apply::Live},
+    {"DES_HUD_AREA_POS", "0,0", Apply::Live},
+    {"DES_HUD_AREA_SIZE", "100", Apply::Live},
+    {"DES_HUD_EQUIP_POS", "0,0", Apply::Live},
+    {"DES_HUD_EQUIP_SIZE", "100", Apply::Live},
+    {"DES_HUD_SOULS_POS", "0,0", Apply::Live},
+    {"DES_HUD_SOULS_SIZE", "100", Apply::Live},
     // Online play (apply_network): the runtime registers its sockets and NP at boot, so all of these but the password
     // need a restart.
     {"DES_ONLINE", "1", Apply::Restart},       // "1" = online (the default), "0" = offline

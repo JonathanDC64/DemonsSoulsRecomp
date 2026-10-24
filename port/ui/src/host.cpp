@@ -57,14 +57,29 @@ void* sWindow = nullptr;  // the game's window: an HWND on Windows, an SDL_Windo
 
 #ifdef _WIN32
 
-// RmlUi's Win32 system interface, with its warnings and errors printed.
+// RmlUi's Win32 system interface, with its warnings and errors printed and the two diagonal resize cursors it lacks
+// (the HUD editor's corners).
 class System final : public SystemInterface_Win32 {
 public:
-    explicit System(void* window) { SetWindow(static_cast<HWND>(window)); }
+    explicit System(void* window) : mWindow(static_cast<HWND>(window)) { SetWindow(mWindow); }
     bool LogMessage(Rml::Log::Type type, const Rml::String& message) override {
         log_message(type, message);
         return true;
     }
+    void SetMouseCursor(const Rml::String& name) override {
+        HCURSOR cursor = nullptr;
+        if (name == "nwse-resize") cursor = LoadCursor(nullptr, IDC_SIZENWSE);
+        else if (name == "nesw-resize") cursor = LoadCursor(nullptr, IDC_SIZENESW);
+        if (!cursor || !mWindow) {
+            SystemInterface_Win32::SetMouseCursor(name);
+            return;
+        }
+        SetCursor(cursor);
+        SetClassLongPtrA(mWindow, GCLP_HCURSOR, (LONG_PTR)cursor);  // (as the base does)
+    }
+
+private:
+    HWND mWindow = nullptr;
 };
 
 unsigned dpi_of_window() {
@@ -109,7 +124,8 @@ public:
         if (name == "pointer") shape = SDL_SYSTEM_CURSOR_HAND;
         else if (name == "text") shape = SDL_SYSTEM_CURSOR_IBEAM;
         else if (name == "move" || name.rfind("rmlui-scroll", 0) == 0) shape = SDL_SYSTEM_CURSOR_SIZEALL;
-        else if (name == "resize") shape = SDL_SYSTEM_CURSOR_SIZENWSE;
+        else if (name == "resize" || name == "nwse-resize") shape = SDL_SYSTEM_CURSOR_SIZENWSE;
+        else if (name == "nesw-resize") shape = SDL_SYSTEM_CURSOR_SIZENESW;
         else if (name == "cross") shape = SDL_SYSTEM_CURSOR_CROSSHAIR;
         else if (name == "unavailable") shape = SDL_SYSTEM_CURSOR_NO;
         mouse::set_cursor(shape);

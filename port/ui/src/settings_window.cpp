@@ -8,6 +8,7 @@
 #include "app.hpp"
 #include "bool_button.hpp"
 #include "controls_window.hpp"
+#include "hud_editor.hpp"
 #include "input.hpp"
 #include "number_button.hpp"
 #include "pane.hpp"
@@ -356,6 +357,15 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             true);
 
         leftPane.add_section("HUD");
+        leftPane.register_control(
+            leftPane.add_group_button({.text = "Edit HUD"}).on_pressed([this] {
+                play_sound(kSoundClick);
+                push(std::make_unique<HudEditor>());
+            }),
+            rightPane, [](Pane& pane) {
+                pane.clear();
+                pane.add_text("Move, resize, hide or show each part of the HUD on the game screen.");
+            });
         auto& hudSize = leftPane.add_child<NumberButton>(NumberButton::Props{
             .key = "HUD size",
             .getValue = hud_size_percent,

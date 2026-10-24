@@ -9,7 +9,8 @@ Labels as in docs/48: **measured** (from a run), **read** (seen in the code or t
 | Row | Setting | Now | How |
 |---|---|---|---|
 | Aspect ratio | `DES_ASPECT` | **live** | the cameras built so far get the new aspect; the default words, the HUD and `RSX_ASPECT` follow (section 2) |
-| HUD | `DES_HUD` | **live** | the HUD's matrix is rewritten in place (section 2.3) |
+| HUD on wide screens (was HUD) | `DES_HUD` | **live** | the HUD's matrix is rewritten in place (section 2.3) |
+| HUD size, the four HUD groups | `DES_HUD_SIZE`, `DES_HUD_BARS`, `DES_HUD_AREA`, `DES_HUD_EQUIP`, `DES_HUD_SOULS` | **live** | read again after any change, at the HUD's next draw (docs/102) |
 | Boot logos | `DES_SKIP_INTRO` | **live** | read at each update of the logo dialog. The logos only play at start, so a change shows on a logo that is on screen, or at the next start |
 | Continue automatically | `DES_AUTO_CONTINUE` | **live** until the first level loads | read at each pad poll: turning it on at the title presses through to the last save, turning it off stops the presses. After the first level there is nothing left for it to do |
 | Online | `DES_ONLINE` | next start | section 3 |

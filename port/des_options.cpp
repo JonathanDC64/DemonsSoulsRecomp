@@ -2450,6 +2450,10 @@ static void run_defaults()
         {"VP_VB_VERTS", "1572864"},
         /* No per-event log lines: they go through one lock and fill des.log. */
         {"PS3_VERBOSE", "0"},
+        /* The main thread's stack where lv2 puts it, in the stack region
+         * (0xD0000000 up): the lifter's stack stores take their direct path
+         * only there (docs/98). */
+        {"PS3_MAIN_STACK_LV2", "1"},
     };
     for (const auto& d : kDefaults)
         if (!getenv(d.name)) ps3_setenv(d.name, d.value);

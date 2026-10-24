@@ -175,6 +175,17 @@ int mouse_sens_percent() {
     return std::clamp(int(std::lround(sens / mouse_sens_default() * 100.0)), kMouseSensMin, kMouseSensMax);
 }
 
+// HUD size in percent (DES_HUD_SIZE; des_hud.cpp takes 25 to 200, this row offers 50 to 150).
+constexpr int kHudSizeMin = 50;
+constexpr int kHudSizeMax = 150;
+
+int hud_size_percent() {
+    const std::string v =
+        settings::pinned("DES_HUD_SIZE") ? settings::pinned_value("DES_HUD_SIZE") : settings::get("DES_HUD_SIZE");
+    const int pct = v.empty() ? 100 : std::atoi(v.c_str());
+    return std::clamp(pct > 0 ? pct : 100, kHudSizeMin, kHudSizeMax);
+}
+
 // The Network tab's rows (settings.hpp, "Online play"). A value in use: the environment's when set there.
 std::string net_value(const char* key) {
     return settings::pinned(key) ? settings::pinned_value(key) : settings::get(key);
@@ -254,9 +265,6 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             {"16:9 (original)", "21:9 (2560x1080)", "21:9 (3440x1440)", "21:9 (3840x1600)", "32:9", "Match the display"},
             "The shape of the picture, for ultrawide displays. Wider shows more at the sides. Raise Render "
             "resolution to keep a wide picture sharp.<br/><br/>(DES_ASPECT)");
-        choice_row(leftPane, rightPane, "HUD", "DES_HUD", {"", "stretch"}, {"Centred 16:9", "Stretched"},
-            "Where the HUD goes on a wide picture. Centred keeps it 16:9 in the middle; Stretched spreads it "
-            "across the screen. No effect at 16:9.<br/><br/>(DES_HUD)");
         choice_row(leftPane, rightPane, "Render resolution", "RSX_SCALE", {"100", "150", "200", "300"},
             {"100% (original)", "150%", "200%", "300%"},
             "Draws the game sharper: 150% is 1080p, 200% 1440p, 300% 4K. Higher costs more GPU time."
@@ -346,6 +354,45 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         bool_row(leftPane, rightPane, "Sound", "AUDIO_MUTE",
             "The game's sound and music.<br/><br/>(AUDIO_MUTE)",
             true);
+
+        leftPane.add_section("HUD");
+        auto& hudSize = leftPane.add_child<NumberButton>(NumberButton::Props{
+            .key = "HUD size",
+            .getValue = hud_size_percent,
+            .setValue =
+                [](int value) {
+                    if (settings::pinned("DES_HUD_SIZE")) {
+                        return;
+                    }
+                    settings::set("DES_HUD_SIZE", std::to_string(value));
+                },
+            .isDisabled = [] { return settings::pinned("DES_HUD_SIZE"); },
+            .isModified = [] { return !settings::is_default("DES_HUD_SIZE"); },
+            .min = kHudSizeMin,
+            .max = kHudSizeMax,
+            .step = 5,
+            .suffix = "%",
+        });
+        leftPane.register_control(hudSize, rightPane,
+            [helpText = with_note("DES_HUD_SIZE",
+                 "The size of the bars, area name, equipment and souls. Each grows or shrinks from its corner of "
+                 "the screen.<br/><br/>(DES_HUD_SIZE)")](Pane& pane) {
+                pane.clear();
+                pane.add_rml(helpText);
+            });
+        choice_row(leftPane, rightPane, "HUD on wide screens", "DES_HUD", {"", "centre", "stretch"},
+            {"Corners", "Centred 16:9", "Stretched"},
+            "Where the HUD goes when Aspect ratio is wider than 16:9. Corners puts each part in its corner of the "
+            "screen. Centred keeps the HUD in a 16:9 area in the middle. Stretched spreads it across.<br/><br/>"
+            "(DES_HUD)");
+        bool_row(leftPane, rightPane, "Health, magic, stamina", "DES_HUD_BARS",
+            "The bars at the top left.<br/><br/>(DES_HUD_BARS)");
+        bool_row(leftPane, rightPane, "Area name", "DES_HUD_AREA",
+            "The name of the area at the top right.<br/><br/>(DES_HUD_AREA)");
+        bool_row(leftPane, rightPane, "Equipment", "DES_HUD_EQUIP",
+            "Your weapons, item and spell at the bottom left.<br/><br/>(DES_HUD_EQUIP)");
+        bool_row(leftPane, rightPane, "Souls", "DES_HUD_SOULS",
+            "Your souls at the bottom right.<br/><br/>(DES_HUD_SOULS)");
     });
 
     add_tab("Controls", [this](Rml::Element* content) {

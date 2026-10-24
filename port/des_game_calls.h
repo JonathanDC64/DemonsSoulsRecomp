@@ -54,4 +54,5 @@ DES_GAME_CALLS(DES_GAME_CALL_DECL_)
 #define func_00B5CFA0 des_game_calls::f_00B5CFA0
 #define func_00B5D2F8 des_game_calls::f_00B5D2F8
 #define func_00B5D548 des_game_calls::f_00B5D548
+#define func_00F60BD0 des_game_calls::f_00F60BD0
 #endif

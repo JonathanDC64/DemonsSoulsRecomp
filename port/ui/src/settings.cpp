@@ -44,7 +44,12 @@ constexpr Def kDefs[] = {
     {"RSX_TEXFILTER", "0", Apply::Live},       // 0 = the game's filters; the backend's sampler key, per draw
     {"RSX_ANISO", "0", Apply::Live},           // 0 = the game's own level
     {"DES_ASPECT", "", Apply::Live},           // "" = 16:9; des_aspect.cpp, at start and at the next flip after a change
-    {"DES_HUD", "", Apply::Live},              // "" = centred at 16:9, "stretch"; des_aspect.cpp, as DES_ASPECT
+    {"DES_HUD", "", Apply::Live},              // "" = corners, "centre" = centred at 16:9, "stretch"; des_aspect.cpp
+    {"DES_HUD_SIZE", "100", Apply::Live},      // percent; des_hud.cpp, after any change
+    {"DES_HUD_BARS", "1", Apply::Live},        // 0 hides health, magic and stamina; des_hud.cpp, as DES_HUD_SIZE
+    {"DES_HUD_AREA", "1", Apply::Live},        // 0 hides the area name
+    {"DES_HUD_EQUIP", "1", Apply::Live},       // 0 hides the equipped items and spells
+    {"DES_HUD_SOULS", "1", Apply::Live},       // 0 hides the souls
     // Online play (apply_network): the runtime registers its sockets and NP at boot, so all of these but the password
     // need a restart.
     {"DES_ONLINE", "1", Apply::Restart},       // "1" = online (the default), "0" = offline
@@ -107,7 +112,7 @@ void apply_env(std::string_view key, const std::string& value) {
     const std::string k(key);
     // (an unset option stays unset; DES_FPS "" is the game's mode, PAD_MAP "" the game's buttons, PAD_KEYS "" the
     // layout as it is, the two online rows' "" the game's behaviour again, and DES_ASPECT's and DES_HUD's "" 16:9 and
-    // a centred HUD again)
+    // the HUD in the corners again)
     if (value.empty() && key != "DES_FPS" && key != "PAD_MAP" && key != "PAD_KEYS" && key != "DES_NET_TENDENCY" &&
         key != "DES_NET_RATING_POLL" && key != "DES_ASPECT" && key != "DES_HUD")
         return;

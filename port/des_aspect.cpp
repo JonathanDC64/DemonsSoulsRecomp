@@ -21,8 +21,10 @@
  *   display's shape.
  *
  * DES_HUD=stretch - the HUD and menus spread across the full width. By default
- *   (when DES_ASPECT is wider than 16:9) they keep their size and shape in a
- *   16:9 band in the middle:
+ *   ("", Corners) and with DES_HUD=centre (when DES_ASPECT is wider than 16:9)
+ *   they keep their size and shape in a 16:9 band in the middle, and with
+ *   Corners des_hud.cpp then moves the HUD's four corner groups out to the
+ *   picture's corners (docs/102). The band:
  *   - The canvas. At boot, 0x00718918 records the menu context's ortho canvas
  *     once, command 0x3A [top 0, bottom 720, left 0, right 1280, near -128,
  *     far 128], the words one after another at the list cursor. The lifter
@@ -271,6 +273,12 @@ extern "C" void des_hud_canvas(ppu_context* ctx, uint32_t addr)
     }
 }
 
+/* The canvas's extra width on each side (0: the game's canvas), for des_hud.cpp. */
+extern "C" float des_hud_side_width(void)
+{
+    return s_hud_l;
+}
+
 /* After 0x00CD4854 in the 0x3A handler: r5 = the command's first word, r3 =
  * the render context. The one that handles the HUD's record keeps its matrix
  * at +0x90 from then on. */
@@ -442,8 +450,9 @@ void aspect_apply(const char* v, const char* hud, bool live)
     if (live) fprintf(stderr, ", %d of %zu listed cameras changed", changed, listed);
     if (a == kGameAspect) fprintf(stderr, "; HUD at the game's canvas");
     else if (stretch) fprintf(stderr, "; HUD stretched across (DES_HUD=stretch)");
-    else fprintf(stderr, "; HUD centred at 16:9, canvas x %.2f to %.2f%s", -s_hud_l, kCanvasW + s_hud_l,
-                 s_widen_plates ? ", full-screen plates widened (DES_HUD_FADES=1)" : "");
+    else fprintf(stderr, "; HUD %s, canvas x %.2f to %.2f%s",
+                 hud && strcmp(hud, "centre") == 0 ? "centred at 16:9" : "in the corners",
+                 -s_hud_l, kCanvasW + s_hud_l, s_widen_plates ? ", full-screen plates widened (DES_HUD_FADES=1)" : "");
     if (live && l != was_l) fputs(hud_moved ? " (moved)" : " (not moved: no HUD matrix found)", stderr);
     fprintf(stderr, "\n");
 }

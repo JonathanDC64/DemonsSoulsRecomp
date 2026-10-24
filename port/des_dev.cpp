@@ -91,7 +91,10 @@ constexpr float    kAtkMax      = 1000.0f;
 constexpr float    kSpeedMin    = 0.25f, kSpeedMax = 10.0f;
 constexpr double   kDamageCap   = 10000000.0;
 
-bool guest_ptr_ok(uint32_t a) { return a >= 0x00010000u && a < 0x50000000u && !(a & 3u); }   /* as in des_options.cpp */
+bool guest_ptr_ok(uint32_t a)   /* as in des_options.cpp: the stack area too */
+{
+    return ((a >= 0x00010000u && a < 0x50000000u) || (a >= 0xD0000000u && a < 0xE0000000u)) && !(a & 3u);
+}
 
 float vm_readf(uint32_t ea)
 {

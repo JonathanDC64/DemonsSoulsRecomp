@@ -26,8 +26,8 @@ or a heap dump), **inferred**.
   left of the 16:9 canvas, where the PS3 never shows them (read). They are no longer drawn on a widened canvas.
 - **Per-group sizes: not offered.** The mechanism would allow one size per group at no extra cost, but four more
   number rows add little: the groups share one look and read best at one size. Easy to add if wanted (section 5).
-- **Left as it was:** on a wide picture, HUD text is wider than it should be (section 6). Centred mode has the same,
-  so this is older than this change.
+- **HUD text on a wide picture is right** (section 6): it is squeezed with the icons and stretched back with them. An
+  earlier note in this branch said otherwise; a closer look showed it was wrong.
 
 ## 1. How the HUD is built (read)
 
@@ -105,20 +105,31 @@ The game ran on to the end of each run; nothing in the log.
 `group_rect()` already takes a size per call; a size per group would be four more knobs and four number rows. Not
 done, for the reason in the short answer.
 
-## 6. Known limits
+## 6. Text on a wide picture, and known limits
 
-- **HUD text on a wide picture is too wide.** The canvas is widened, so the backend squeezes the whole HUD
-  horizontally and the display stretches it back. Icons come out right; text glyphs are not squeezed, so after the
-  stretch they are 1.33 times too wide at 21:9 and twice at 32:9 (measured: the 32:9 frame before the stretch shows
-  the icons squeezed and the text not). Text positions are right, so nothing overlaps. Read so far:
+- **HUD text on a wide picture is right** (measured). An earlier note in this branch said text was too wide on a
+  wide picture. It is not:
+  - The glyphs are in canvas units, like the icons. A probe on the glyph quad builder logged the same item name at
+    16:9 and live 32:9: every glyph had the same width (11.54 units for the first), and the whole line moved by
+    -640 (L at 32:9) with its corner group.
+  - In the saved frames (1280x720, before the display stretch), "Crescent Moon Grass" is 204 pixels wide at 16:9 and
+    about 103 at 32:9; "The Nexus" 115 and 57. Text is squeezed by one half, the same as the icons.
+  - The 32:9 crop stretched back to double width matches the 16:9 crop letter for letter, only softer.
+
+  The softness is the price of every wide picture today: the game still draws 1280 pixels across, and the display
+  stretches them (docs/39, section 2, option (b)). A higher render scale (`RSX_SCALE`) gives that detail back.
+- **How text is drawn** (read and measured), for later work:
   - text shapes (vtables 0x01883738..0x01883BE8) all draw through 0x00F9E0A8;
   - that gets the font object from the renderer (renderer vtable 0x01865C80, +0x5C; font at renderer +0x70, vtable
     0x01865E10), whose draw (+0x10, 0x0071B6D0) calls the renderer's text draw 0x00719B58;
-  - 0x00719B58 puts the text rect through the renderer's matrix and queues a text command with the string
-    (0x000B06B0) in the 2D drawer's list (renderer +0x24);
-  - the font's "set scale" (+0x28, 0x0071B498) does nothing.
-
-  Next: find where that command is played back and how it turns the font's pixel size into canvas units.
+  - 0x00719B58 puts the text rect through the renderer's matrix and queues a text command (0x000B06B0) in the 2D
+    drawer's list (renderer +0x24). The command's first word is a function descriptor (0x01920228): the command is
+    played back by 0x000B0D60;
+  - 0x000B0D60 lays out the string (0x00B35118, glyph metrics from the font's +0x18, 0x00A183E8) and draws it
+    (0x00A34698): per glyph, the font's renderer (vtable 0x01872608, made by 0x00A17CF8) builds a quad at
+    +0x10, 0x009D1790, from the layout's corners in canvas units;
+  - the game's own font subclass (vtables 0x018758C0 and renderer 0x018758F8, quad at 0x00B5FDE8) is not used for
+    the HUD (measured: no calls in the Nexus).
 - **Narrower pictures** (16:10, 4:3) are still shown 16:9 with bars (docs/39).
 - **Pop-ups outside PCGauge** keep their size: item pick-ups (`DsMenuDlgGetItem`), messages, the boss's name, the
   menus. They stay in the 16:9 band on a wide picture.
@@ -137,3 +148,5 @@ done, for the reason in the short answer.
 | 0x00F9E0A8 | text shape draw |
 | 0x01865C80 | menu renderer vtable (+0x48 set matrix, +0x4C get matrix, +0x5C font) |
 | 0x00719B58, 0x000B06B0 | renderer text draw; queues the text command |
+| 0x000B0D60 | plays the text command back (function descriptor 0x01920228) |
+| 0x009D1790 | glyph quad, font renderer vtable 0x01872608 +0x10 |

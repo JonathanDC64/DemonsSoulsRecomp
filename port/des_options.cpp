@@ -2462,6 +2462,10 @@ static void run_defaults()
          * (0xD0000000 up): the lifter's stack stores take their direct path
          * only there (docs/98). */
         {"PS3_MAIN_STACK_LV2", "1"},
+        /* HDR output's highlights (RSX_HDR): the composite stores the scene at
+         * half brightness and clamps it to white once doubled; with HDR on it
+         * clamps at the target's own limit, twice white (docs/103). */
+        {"RSX_HDR_SCENE_FP", "B42C01:2"},
     };
     for (const auto& d : kDefaults)
         if (!getenv(d.name)) ps3_setenv(d.name, d.value);

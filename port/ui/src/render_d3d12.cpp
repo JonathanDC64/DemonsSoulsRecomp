@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -118,6 +119,19 @@ const char kPsPassthrough[] = DES_UI_HLSL_COMMON R"(
 float4 main(PS_IN i) : SV_Target { return t0.Sample(s_clamp, i.uv); }
 )";
 
+// The finished UI onto an FP16 scRGB back buffer (set_hdr): decoded, scaled to the game's paper white, premultiplied
+// again for the blend.
+const char kPsHdrOut[] = DES_UI_HLSL_COMMON R"(
+cbuffer Hdr : register(b1) { float m_scale; float m_srgb; float2 m_pad; };
+float4 main(PS_IN i) : SV_Target {
+    float4 c = t0.Sample(s_clamp, i.uv);
+    if (c.a <= 0.0) return float4(0.0, 0.0, 0.0, 0.0);
+    float3 u = saturate(c.rgb / c.a);
+    float3 l = m_srgb > 0.5 ? (u <= 0.04045 ? u / 12.92 : pow((u + 0.055) / 1.055, 2.4)) : pow(u, 2.2);
+    return float4(l * m_scale * c.a, c.a);
+}
+)";
+
 // The colour matrix filters, in premultiplied space (RmlUi's: rgb only).
 const char kPsColorMatrix[] = DES_UI_HLSL_COMMON R"(
 cbuffer ColorMatrix : register(b1) { float4x4 m_color_matrix; };
@@ -188,11 +202,15 @@ float4 main(PS_IN i) : SV_Target {
 }
 )";
 
-enum Program { kColor, kTexture, kGradient, kPassthrough, kColorMatrix, kBlendMask, kBlur, kDropShadow, kProgramCount };
+enum Program {
+    kColor, kTexture, kGradient, kPassthrough, kColorMatrix, kBlendMask, kBlur, kDropShadow, kHdrOut, kProgramCount
+};
 const char* const kProgramPs[kProgramCount] = {kPsColor,       kPsTexture,   kPsGradient, kPsPassthrough,
-                                               kPsColorMatrix, kPsBlendMask, kPsBlur,     kPsDropShadow};
+                                               kPsColorMatrix, kPsBlendMask, kPsBlur,     kPsDropShadow,
+                                               kPsHdrOut};
 const char* const kProgramName[kProgramCount] = {"color",        "texture",    "gradient", "passthrough",
-                                                 "color matrix", "blend mask", "blur",     "drop shadow"};
+                                                 "color matrix", "blend mask", "blur",     "drop shadow",
+                                                 "hdr out"};
 
 enum Blend { kPremultiplied, kReplace, kFactor, kNoColor };
 enum Stencil { kStencilOff, kStencilTest, kStencilSet, kStencilIntersect, kStencilAuto };
@@ -380,6 +398,10 @@ public:
     void end_frame() override;
     bool read_back(void* back_buffer, unsigned index, int width, int height, std::vector<unsigned char>& rgba) override;
     void release_back_buffers() override;
+    void set_hdr(float scale, bool srgb) override {
+        mHdrScale = scale;
+        mHdrSrgb = srgb;
+    }
 
     // ---- Rml::RenderInterface ----
     Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex> vertices, Rml::Span<const int> indices) override;
@@ -435,6 +457,7 @@ private:
     Target* layer(int i) { return i >= 0 && i < mLayerCount && i < int(mLayers.size()) ? mLayers[i].get() : nullptr; }
     Target* post(int i);
     bool back_buffer(ID3D12Resource* res, Target& out);
+    unsigned char hdr_to_byte(const uint8_t* half, bool alpha) const;
     ID3D12PipelineState* pipeline(Program p, Blend b, Stencil s, const Target& t);
 
     // Command lists and the GPU's progress
@@ -510,6 +533,9 @@ private:
     ID3D12PipelineState* mPso = nullptr;
     UINT mRefSet = kNone;
     float mFactorSet = -1.f;
+    // HDR output (set_hdr)
+    float mHdrScale = 1.f;
+    bool mHdrSrgb = false;
 };
 
 // ---- Set-up ----
@@ -1159,11 +1185,35 @@ void RendererImpl::end_frame() {
         mBlend = kPremultiplied;
         mScissor = Rml::Rectanglei::MakeInvalid();
         sample(2, *primary);
-        if (prepare(kPassthrough)) draw_quad(0, 0, 1, 1);
+        if (out.format == DXGI_FORMAT_R16G16B16A16_FLOAT) {  // HDR: scRGB, white at paper white (set_hdr)
+            const float hdr[4] = {mHdrScale, mHdrSrgb ? 1.f : 0.f, 0.f, 0.f};
+            if (prepare(kHdrOut))
+                if (const auto gpu = constants(hdr, sizeof hdr)) {
+                    mList->SetGraphicsRootConstantBufferView(1, gpu);
+                    draw_quad(0, 0, 1, 1);
+                }
+        } else if (prepare(kPassthrough)) {
+            draw_quad(0, 0, 1, 1);
+        }
         transition(out, D3D12_RESOURCE_STATE_PRESENT);
     }
     mLayerCount = 0;
     submit();
+}
+
+// One channel of an FP16 scRGB back buffer as the 8-bit SDR value it stands for: divided by paper white and encoded
+// the way set_hdr decodes. Alpha as it is.
+unsigned char RendererImpl::hdr_to_byte(const uint8_t* half, bool alpha) const {
+    uint16_t h;
+    std::memcpy(&h, half, 2);
+    const uint32_t e = (h >> 10) & 0x1Fu, m = h & 0x3FFu;
+    float v = e == 0 ? float(m) / 16777216.f : e == 31 ? 65504.f : std::ldexp(1.f + float(m) / 1024.f, int(e) - 15);
+    if (h & 0x8000u) v = 0.f;
+    if (!alpha) {
+        v = std::clamp(v / std::max(mHdrScale, 1e-3f), 0.f, 1.f);
+        v = mHdrSrgb ? (v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.f / 2.4f) - 0.055f) : std::pow(v, 1.f / 2.2f);
+    }
+    return static_cast<unsigned char>(std::clamp(v, 0.f, 1.f) * 255.f + 0.5f);
 }
 
 bool RendererImpl::read_back(void* back_buffer, unsigned, int width, int height, std::vector<unsigned char>& rgba) {
@@ -1172,7 +1222,8 @@ bool RendererImpl::read_back(void* back_buffer, unsigned, int width, int height,
     const D3D12_RESOURCE_DESC d = res->GetDesc();
     width = std::min(width, int(d.Width));
     height = std::min(height, int(d.Height));
-    const UINT pitch = (UINT(width) * 4 + kPitchAlign - 1) & ~(kPitchAlign - 1);
+    const bool half = d.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;  // HDR (set_hdr): read back as the SDR picture
+    const UINT pitch = (UINT(width) * (half ? 8 : 4) + kPitchAlign - 1) & ~(kPitchAlign - 1);
     ID3D12Resource* buffer = make_buffer(D3D12_HEAP_TYPE_READBACK, size_t(pitch) * size_t(height), D3D12_RESOURCE_STATE_COPY_DEST);
     if (!buffer) return false;
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_PRESENT;
@@ -1202,7 +1253,12 @@ bool RendererImpl::read_back(void* back_buffer, unsigned, int width, int height,
         rgba.resize(row * size_t(height));
         for (int y = 0; y < height; y++) {
             unsigned char* out = rgba.data() + row * size_t(y);
-            std::memcpy(out, static_cast<const uint8_t*>(p) + size_t(pitch) * size_t(y), row);
+            const uint8_t* in = static_cast<const uint8_t*>(p) + size_t(pitch) * size_t(y);
+            if (half) {
+                for (int x = 0; x < width * 4; x++) out[x] = hdr_to_byte(in + size_t(x) * 2, x % 4 == 3);
+                continue;
+            }
+            std::memcpy(out, in, row);
             if (bgra)
                 for (size_t x = 0; x < row; x += 4) std::swap(out[x], out[x + 2]);
         }

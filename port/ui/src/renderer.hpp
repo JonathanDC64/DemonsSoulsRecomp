@@ -33,6 +33,13 @@ public:
 
     // Before the window's buffers are resized: waits for the UI's work on them and forgets their views.
     virtual void release_back_buffers() = 0;
+
+    // HDR output (RSX_HDR): on an FP16 scRGB back buffer the UI's colours are decoded (the sRGB curve if srgb, else
+    // gamma 2.2) and multiplied by scale, so its white sits at the game's paper white. The D3D11 renderer ignores it.
+    virtual void set_hdr(float scale, bool srgb) {
+        (void)scale;
+        (void)srgb;
+    }
 };
 
 namespace d3d12 {

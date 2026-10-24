@@ -321,6 +321,9 @@ Rml::Context* context() { return s.rml; }
 void* window() { return sWindow; }
 
 void set_ui_scale(float scale) { s.ui_scale = std::clamp(scale, 0.0f, 4.0f); }
+void set_hdr(float scale, bool srgb) {
+    if (s.renderer) s.renderer->set_hdr(scale, srgb);
+}
 void set_follow_height(bool on) { s.follow_height = on; }
 
 unsigned window_dpi() { return dpi_of_window(); }

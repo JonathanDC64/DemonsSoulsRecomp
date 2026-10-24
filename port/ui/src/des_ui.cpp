@@ -66,6 +66,7 @@ typedef struct rsx_d3d12_overlay {
 } rsx_d3d12_overlay;
 void rsx_d3d12_set_overlay(const rsx_d3d12_overlay* overlay);
 void rsx_d3d12_overlay_repaint(int on);
+int rsx_d3d12_hdr(float* ui_scale, int* srgb);  // HDR output: the back buffers are scRGB, the menus' scale
 void rsx_d3d12_overlay_wake(void);
 long long ps3_ms_since_frame(void);  // boot_main.cpp: since the game's last frame, -1 before the first
 unsigned ppu_boot_frames_presented(void);  // boot_main.cpp: the game's frames so far
@@ -872,6 +873,12 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
 
     if (sReportCountdown > 0 && !visible && --sReportCountdown == 0)  // (the game's picture, before the UI is drawn)
         ui::report::send_issue_report(back_buffer, index, int(width), int(height), session_text(width, height));
+    {  // HDR output (RSX_HDR): the menus at the game's paper white
+        float scale = 1.0f;
+        int srgb = 0;
+        rsx_d3d12_hdr(&scale, &srgb);
+        ui::host::set_hdr(scale, srgb != 0);
+    }
     ui::host::render(back_buffer, index, int(width), int(height), shot);
 
     auto* overlay = static_cast<ui::Overlay*>(ui::find_document(ui::DocumentScope::Overlay));

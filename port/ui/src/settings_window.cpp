@@ -273,6 +273,19 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         choice_row(leftPane, rightPane, "Scaling filter", "RSX_OUTFILTER", {"0", "1"}, {"Bilinear", "Sharp"},
             "How the picture is fitted to the window. Sharp is cleaner, most of all with a high Render resolution."
             "<br/><br/>(RSX_OUTFILTER)");
+        choice_row(leftPane, rightPane, "HDR", "RSX_HDR", {"0", "1"}, {"Off (original)", "On"},
+            "Brighter lights and sky on an HDR display. Turn on HDR in Windows first. Turn off RTX HDR and Auto HDR "
+            "for the game when this is on.<br/><br/>(RSX_HDR)");
+        choice_row(leftPane, rightPane, "HDR brightness", "RSX_HDR_WHITE",
+            {"0", "100", "150", "200", "250", "300", "400"},
+            {"Windows' setting", "100 nits", "150 nits", "200 nits", "250 nits", "300 nits", "400 nits"},
+            "How bright white is with HDR on. Lower leaves more room for the highlights.<br/><br/>(RSX_HDR_WHITE)");
+        choice_row(leftPane, rightPane, "HDR peak", "RSX_HDR_PEAK", {"0", "400", "600", "1000", "1500"},
+            {"The display's", "400 nits", "600 nits", "1000 nits", "1500 nits"},
+            "The brightest the highlights get with HDR on. The display's own figure suits most.<br/><br/>(RSX_HDR_PEAK)");
+        choice_row(leftPane, rightPane, "HDR shadows", "RSX_HDR_GAMMA", {"0", "1"},
+            {"Gamma 2.2 (darker)", "sRGB (lighter)"},
+            "How dark areas look with HDR on. Gamma 2.2 matches a TV.<br/><br/>(RSX_HDR_GAMMA)");
         choice_row(leftPane, rightPane, "Texture filtering", "RSX_TEXFILTER", {"0", "1", "2", "3"},
             {"Original", "Nearest", "Bilinear", "Trilinear"},
             "How textures are smoothed. Original uses the game's choice. Nearest looks pixelated; Trilinear is the "

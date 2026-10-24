@@ -185,6 +185,11 @@ was made on, played by hand in Boletarian Palace 1-1 (two loads), then in the Tu
 - Its 58 new rows went into the index, which holds 649 rows now: 42 vertex and 206 fragment programs in 258
   pairs.
 
+**The third play test** (2026-10-24, the same save and scale, on the second test's cache): 396 draws loaded
+their pipeline from the library and 2 compiled one, both in the Palace (a couple of stutters were seen). With
+them and 7 rows from the scripted break replay (Palace 1-1, render scale 100), the index holds 658 rows: 42
+vertex and 207 fragment programs in 260 pairs.
+
 ## Limits
 
 - A fragment program with more inline constants than the constant buffer holds has them baked into its text.

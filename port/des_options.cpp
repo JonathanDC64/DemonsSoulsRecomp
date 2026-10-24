@@ -511,7 +511,14 @@ void fps_on_flip_request()
  * the float x, y, z at *(*(chr + 0x20) + 0x10) + 0x10. Any link can be 0 or
  * stale during a load; every one is range-checked. */
 constexpr uint32_t kChrMan       = 0x01B3D6E0u;
-bool guest_ptr_ok(uint32_t a) { return a >= 0x00010000u && a < 0x50000000u && !(a & 3u); }
+/* Main memory and the lv2 areas below 0x50000000, or the stack area
+ * (0xD0000000-0xDFFFFFFF), where lv2 puts every thread's stack. The main
+ * thread's is there too with PS3_MAIN_STACK_LV2=1, and hooks such as
+ * des_body_xform write to its locals. */
+bool guest_ptr_ok(uint32_t a)
+{
+    return ((a >= 0x00010000u && a < 0x50000000u) || (a >= 0xD0000000u && a < 0xE0000000u)) && !(a & 3u);
+}
 
 /* The character also holds its stamina (int, +0x3D4) and the move speed it
  * asks for (float m/s, +0xCCC): found by dumping it while dashing. */

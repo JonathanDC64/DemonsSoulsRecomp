@@ -97,11 +97,11 @@ screen does not offer it straight back.
    A copy, not a move: the rebuild starts from the module there, and a version whose game code did not change keeps
    it (its journal steps are all skipped).
 6. **The swap.** The program files are the names at the top of the install that `release-files.txt` lists (the
-   player's zip has it, written by `package.py`). Only plain names count: a line with `..`, a separator (`/` or
-   `\`), a drive colon or a control character names nothing. An install from before that file: the names the new release has.
-   Each of them moves into `DIR/.previous/OLD`, then the new release's names move in. The exe moves out last and in
-   first, so the install has none for the shortest time. The old `.previous` is renamed to `.previous.old` first and
-   deleted only once the swap is done.
+   player's zip has it, written by `package.py`). Only plain names count: a line with `..`, a separator (`/` or `\`),
+   a drive colon or a control character names nothing. An install from before that file: the names the new release
+   has. Each of them moves into `DIR/.previous/OLD`, then the new release's names move in. The exe moves out last and
+   in first, so the install has none for the shortest time. The old `.previous` is renamed to `.previous.old` first
+   and deleted only once the swap is done.
 7. **Clean up:** `.update/NEW`, the zip, and the version kept before go. One version is kept.
 
 Renames on the same drive are quick; Windows lets a running exe be renamed (measured in the end-to-end run, section

@@ -32,6 +32,7 @@ libraries), and a check that no object read a header from outside the source
 tree, the lift and the compiler's own (no libc headers: the player has none).
 """
 import argparse
+import difflib
 import json
 import os
 import re
@@ -261,6 +262,7 @@ def _link_arg(t, build, roots):
 
 
 def describe(build, ninja, headers_too=True):
+    build = os.path.abspath(build)   # {gen} is a folder in it: a relative one would lose to {src}, being shorter
     v = cache_vars(build)
     if v.get("DES_SPLIT", "").upper() not in ("ON", "TRUE", "1"):
         raise SystemExit(f"{build} is not a DES_SPLIT=ON build")
@@ -448,6 +450,9 @@ def main(argv=None):
             old = json.dumps(o, indent=1) + "\n"
         if old != text:
             print(f"{a.out} differs from the build's commands; run without --check to update it")
+            diff = list(difflib.unified_diff(old.splitlines(), text.splitlines(), "committed", "this build",
+                                             n=2, lineterm=""))
+            print("\n".join(diff[:80] + ([f"... {len(diff) - 80} more lines"] if len(diff) > 80 else [])))
             return 1
         print(f"{a.out} matches the build")
         return 0

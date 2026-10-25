@@ -25,12 +25,16 @@ says Ready while something the player asked for is still to come across.
 Only one run at a time: setup/run.lock is held while it runs, and the system
 drops it when the process ends, however it ends.
 """
+import atexit
 import errno
 import json
 import os
 import re
+import select
 import shutil
+import signal
 import subprocess
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -189,9 +193,9 @@ def lock(path: Path):
 
 def quiet_and_awake(emit):
     """Below-normal priority for this process and everything it starts (docs/52 4.1),
-    and on Windows a request that keeps the PC from sleeping until this process
-    ends. Off Windows only the priority: keeping Linux awake needs the desktop's
-    session bus (docs/88 section 8)."""
+    and a request that keeps the PC from sleeping until this process ends: on
+    Windows the execution state, on Linux a logind sleep lock (_inhibit_sleep),
+    where systemd is."""
     try:
         if os.name == "nt":
             import ctypes
@@ -205,8 +209,72 @@ def quiet_and_awake(emit):
                 emit.awake()
         else:
             os.nice(5)
+            if _inhibit_sleep():
+                emit.awake()
     except (OSError, AttributeError, ValueError):
         pass
+
+
+_INHIBITOR = None
+
+
+def _inhibit_sleep() -> bool:
+    """Linux (docs/87): systemd-inhibit holds a logind lock against sleep and idle for as long as the command it runs
+    lives, here a sleep that never ends on its own. It is a child of this process, in its process group, so it ends
+    with the run (and with die_with_parent's end of the group); logind lets the active session's user take such a
+    lock. False where there is no systemd-inhibit, or when it refused (it ended at once)."""
+    global _INHIBITOR
+    exe = shutil.which("systemd-inhibit")
+    if not exe:
+        return False
+    try:
+        p = subprocess.Popen([exe, "--what=sleep:idle", "--who=Demon's Souls setup", "--why=Building the game",
+                              "--mode=block", "sleep", "2147483647"],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        return False
+    try:
+        p.wait(0.5)
+        return False
+    except subprocess.TimeoutExpired:
+        _INHIBITOR = p
+        atexit.register(p.kill)
+        return True
+
+
+def die_with_parent():
+    """POSIX: the host starts the engine as the leader of a process group of its own and ends the group to stop it
+    (port/ui/src/child_process.cpp). If the host itself dies, nothing ends it: Windows' job object does that there.
+    So a thread watches the parent, and once this process has been handed to another (the host is gone), it ends
+    its group, which is this process and everything it started (the lifter's workers, the compilers). Run by hand
+    from a shell, this process may not lead its group; then it ends only itself.
+    On Linux (5.3 and later) it waits on a pidfd of the parent, which becomes readable when the parent ends;
+    elsewhere it looks once a second."""
+    if os.name == "nt":
+        return
+    parent = os.getppid()
+    if parent <= 1:
+        return
+
+    def end():
+        if os.getpgid(0) == os.getpid():
+            os.killpg(os.getpid(), signal.SIGKILL)
+        os._exit(1)
+
+    def watch():
+        try:
+            fd = os.pidfd_open(parent)
+        except (AttributeError, OSError):
+            fd = None
+        # Still this process's parent once the pidfd is open: then the pidfd is that parent's, not a later
+        # process's with the same number.
+        if fd is not None and os.getppid() == parent:
+            select.select([fd], [], [])
+            end()
+        while os.getppid() == parent:
+            time.sleep(1)
+        end()
+    threading.Thread(target=watch, name="die-with-parent", daemon=True).start()
 
 
 # ---- disk ----

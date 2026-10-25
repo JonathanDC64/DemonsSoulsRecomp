@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import tarfile
 import tempfile
 import threading
 import unittest
@@ -458,6 +459,81 @@ class FetchTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p = fetch.ensure(self.entry(b.getvalue()), Path(d) / "dl", Path(d) / "tools", allow_http=True)
             self.assertEqual((p / "bin/clang.exe").read_bytes(), b"MZ" + b"x" * 4000)
+
+    def test_suffix(self):
+        self.assertEqual(fetch.suffix("https://x/y/llvm-linux-x64-22.1.8-1.tar.xz"), ".tar.xz")
+        self.assertEqual(fetch.suffix("https://x/20261021/cpython-3.13.17%2B20261021-x86_64-unknown-linux-gnu-"
+                                      "install_only_stripped.tar.gz"), ".tar.gz")
+        self.assertEqual(fetch.suffix("https://x/y/llvm-win64-22.1.8-1.zip"), ".zip")
+        self.assertEqual(fetch.suffix("https://x/y/notes.txt.xz"), ".xz")
+
+    def test_tar_unpacks_and_keeps_the_execute_bit(self):
+        """The Linux compiler archive (docs/87): a .tar.xz, unpacked with the owner's execute bit kept."""
+        blob = _tar([("bin/clang", b"\x7fELF" + b"x" * 100, 0o755), ("lib/clang/22/include/stddef.h", b"/**/", 0o644)])
+        with tempfile.TemporaryDirectory() as d:
+            e = self.entry(blob, url=self.url.replace("tool.zip", "tool.tar.xz"))
+            p = fetch.ensure(e, Path(d) / "dl", Path(d) / "tools", allow_http=True)
+            self.assertTrue((Path(d) / "dl" / "tool-1.0.tar.xz").is_file())
+            self.assertEqual((p / "bin/clang").read_bytes()[:4], b"\x7fELF")
+            self.assertEqual((p / "lib/clang/22/include/stddef.h").read_bytes(), b"/**/")
+            if os.name != "nt":
+                self.assertTrue(os.access(p / "bin/clang", os.X_OK))
+
+    def test_tar_keeps_links_inside_the_folder(self):
+        """Linux's Python (python-build-standalone) has 1,048 symlinks, all inside its folder (bin/python3 ->
+        python3.13). Where links cannot be made (Windows without the right), tarfile puts a copy there."""
+        blob = _tar([("python/bin/python3.13", b"\x7fELF" + b"p" * 50, 0o755),
+                     ("python/bin/python3", "python3.13", "sym"),
+                     ("python/share/a/x", b"term", 0o644), ("python/share/1/y", "../a/x", "sym"),
+                     ("python/bin/py", "python/bin/python3.13", "hard")])
+        with tempfile.TemporaryDirectory() as d:
+            a = Path(d) / "ok.tar.gz"
+            a.write_bytes(blob)
+            out = fetch.unpack(a, Path(d) / "out")
+            self.assertEqual((out / "python/bin/python3").read_bytes()[:4], b"\x7fELF")
+            self.assertEqual((out / "python/share/1/y").read_bytes(), b"term")
+            self.assertEqual((out / "python/bin/py").read_bytes()[:4], b"\x7fELF")
+
+    def test_tar_refuses_escapes_links_and_devices(self):
+        cases = {
+            "dotdot": [("../evil.txt", b"no", 0o644)],
+            "absolute": [("/tmp/evil.txt", b"no", 0o644)],
+            "symlink out": [("bin/ld.lld", "../../lld", "sym")],
+            "symlink absolute": [("bin/ld.lld", "/usr/bin/lld", "sym")],
+            "hardlink out": [("bin/b", "../a", "hard")],
+            "device": [("dev/null", None, "chr")],
+        }
+        for what, members in cases.items():
+            with self.subTest(what), tempfile.TemporaryDirectory() as d:
+                a = Path(d) / "evil.tar.xz"
+                a.write_bytes(_tar(members))
+                with self.assertRaises(fetch.FetchError):
+                    fetch.unpack(a, Path(d) / "out")
+                self.assertFalse((Path(d) / "evil.txt").exists())
+                self.assertFalse((Path(d) / "out").exists())
+                self.assertFalse((Path(d) / "out.tmp").exists())
+
+
+def _tar(members) -> bytes:
+    """A .tar.xz in memory: (name, data, mode) files, or (name, target, "sym" | "hard") links, or (name, None,
+    "chr") a character device."""
+    b = io.BytesIO()
+    with tarfile.open(fileobj=b, mode="w:xz") as t:
+        for name, data, kind in members:
+            info = tarfile.TarInfo(name)
+            if kind == "sym":
+                info.type, info.linkname = tarfile.SYMTYPE, data
+                t.addfile(info)
+            elif kind == "hard":
+                info.type, info.linkname = tarfile.LNKTYPE, data
+                t.addfile(info)
+            elif kind == "chr":
+                info.type, info.devmajor, info.devminor = tarfile.CHRTYPE, 1, 3
+                t.addfile(info)
+            else:
+                info.size, info.mode = len(data), kind
+                t.addfile(info, io.BytesIO(data))
+    return b.getvalue()
 
 
 if __name__ == "__main__":

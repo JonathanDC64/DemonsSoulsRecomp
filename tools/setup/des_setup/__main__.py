@@ -405,4 +405,5 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    pipeline.die_with_parent()   # (POSIX: ends with the host that started it)
     sys.exit(main())

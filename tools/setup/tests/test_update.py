@@ -18,11 +18,14 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools" / "release"))
-from des_setup import journal, protocol, update  # noqa: E402
+from des_setup import fetch, journal, protocol, update  # noqa: E402
 import package  # noqa: E402
 
 EXE = update.EXE
 PLAYER = "windows" if os.name == "nt" else "linux"   # this system's player's download
+# The Linux download is a tar.xz, which fetch.unpack takes with the Linux setup work (docs/87). Until that is in,
+# the tests that unpack one run on Windows only.
+unpacks = unittest.skipUnless(PLAYER == "windows" or hasattr(fetch, "TARS"), "fetch.unpack takes no tar.xz yet")
 
 
 def release(tag, assets=(PLAYER, "sums"), draft=False, pre=False, body="", base="http://127.0.0.1:1"):
@@ -194,6 +197,7 @@ class ApplyTest(unittest.TestCase):
         self.assertEqual((self.install / "notes-of-mine.txt").read_bytes(), b"mine")
         self.assertTrue((self.install / "portable.txt").is_file())
 
+    @unpacks
     def test_apply_then_back(self):
         rc, out = self.run_cmd(update.apply, "0.1.0", "0.2.0")
         self.assertEqual(rc, 0, out)
@@ -245,6 +249,7 @@ class ApplyTest(unittest.TestCase):
         self.assertIsNone(update.kept_version(self.install))
         self.assertFalse((self.data / "previous").exists() and list((self.data / "previous").iterdir()))
 
+    @unpacks
     def test_file_in_use_undoes_the_swap(self):
         real = update._rename
 
@@ -276,6 +281,7 @@ class ApplyTest(unittest.TestCase):
         self.assertFalse((self.install / update.PREVIOUS).exists())
         self.assertFalse(update.recover(self.install))
 
+    @unpacks
     def test_install_without_a_list(self):
         # An install from before release-files.txt: the names the new release has are swapped, the rest stay.
         (self.install / "release-files.txt").unlink()

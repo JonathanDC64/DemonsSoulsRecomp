@@ -276,8 +276,10 @@ default) hide what other players put in your world. Read from the EBOOT, 2026-10
 
 - **Online on by default** (your decision). Test runs stay offline: `deslib.sh` sets `DES_ONLINE=0` for every test
   kind, and a developer-cheat session clears the network knobs, as before.
-- **Default server.** The Archstones is the first preset, so a fresh install that goes online talks to Yuvi's
-  donation-funded server. docs/46 A6 suggested asking first; that's decision 1 below.
+- **Default server** (changed 2026-10-25). The project's own server is the first preset and the default. Until it
+  has a host name (`kNetProjectHost` in port/ui/src/settings.hpp), online stays off with it: "not available
+  yet". The Archstones is a preset in developer builds only. In a release build a saved `archstones` reads as
+  the default, and Custom still takes any address.
 - **IP addresses.** P2P shares your public IP with the players you meet, as on a PS3 and on RPCS3. The Network tab
   says so.
 - **Cheats.** docs/55's offline rule now has the ps3recomp lock it was missing: once cheats are used, the network
@@ -376,7 +378,8 @@ Online, other players' ghosts walked far too fast above 30 fps.
 
 ## 8. Decisions for you
 
-1. **Archstones as the default server:** ask Yuvi first (Demon's Souls Discord), or ship the preset now?
+1. **Archstones as the default server** (settled 2026-10-25: the project's own server, section 6): ask Yuvi first
+   (Demon's Souls Discord), or ship the preset now?
    Recommended: ask first, and until he answers keep the preset but default to **no server**, so a fresh install
    doesn't connect anywhere. That partly undoes "online on by default".
 2. **RPCN:** ask RPCN's maintainers (RipleyTom) whether a third-party client may use `np.rpcs3.net` (docs/70

@@ -576,8 +576,10 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         }
         serverHelp += "<br/>";
         for (const settings::NetServer& s : settings::kNetServers) {
-            serverHelp += "<br/><b>" + escape(s.name) + "</b>" + (*s.address ? " (" + escape(s.address) + ")" : "") +
-                          ": " + escape(s.note);
+            const bool custom = s.key == std::string_view(settings::kNetCustomKey);
+            serverHelp += "<br/><b>" + escape(s.name) + "</b>" +
+                          (*s.address ? " (" + escape(s.address) + ")" : custom ? "" : " (not available yet)") + ": " +
+                          escape(s.note);
         }
         choice_row(leftPane, rightPane, "Server", "DES_NET_SERVER", std::move(serverValues), std::move(serverLabels),
             serverHelp + "<br/><br/>(DES_NET_SERVER)");

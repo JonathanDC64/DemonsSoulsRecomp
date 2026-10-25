@@ -19,8 +19,8 @@ version and both commits; port/cmake/DesVersion.cmake reads it where there is no
 is made from the game (the game-file check), so nothing in the zip is.
 
 --linux-host DIR also writes <out>/DemonsSoulsRecomp-<version>-linux.tar.xz, the Linux player's download: the same
-files with DIR's at the top (host.yml's host-linux folder: des_host, its map, the SDL2 and vkd3d libraries it finds
-beside it, and their licences in licenses/) and its own release-files.txt. A tar, which keeps the execute bits that
+files with DIR's at the top (host.yml's host-linux folder: des_host, its map, the SDL2, vkd3d and FFmpeg libraries
+it finds beside it, and their licences in licenses/) and its own release-files.txt. A tar, which keeps the execute bits that
 a zip unpacked by Python loses, with the same fixed dates, owner and modes.
 
 The same REV gives the same zip: entries sorted, dated with REV's commit time, fixed permissions, LF line endings as

@@ -6,3 +6,5 @@ libSDL2-2.0.so.0       # SDL2, built from its pinned source, beside the Linux ho
 libvkd3d.so.1          # vkd3d, built from its pinned source, beside the Linux host
 libvkd3d-shader.so.1   # vkd3d's shader compiler, likewise
 libvkd3d-utils.so.1    # vkd3d's helpers, likewise
+libavcodec.so.62       # FFmpeg's codec library (MPEG-2 video only), built from its pinned release, beside the Linux host
+libavutil.so.60        # FFmpeg's utility library, likewise

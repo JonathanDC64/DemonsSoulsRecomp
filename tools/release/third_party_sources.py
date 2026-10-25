@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """The source archives of the LGPL libraries a release ships, for the release page.
 
-The Linux tarball carries vkd3d's libraries beside des_host. vkd3d is LGPL 2.1 or later, which asks for its source
-to go with the binaries, so every release attaches the exact archive host.yml built them from. The version and
-SHA-256 are read from host.yml's env (VKD3D_VERSION, VKD3D_SHA256), so the two can't drift apart.
+The Linux tarball carries vkd3d's and FFmpeg's libraries beside des_host. Both are LGPL 2.1 or later, which asks
+for their source to go with the binaries, so every release attaches the exact archives host.yml built them from.
+The versions and SHA-256s are read from host.yml's env (VKD3D_VERSION, VKD3D_SHA256, FFMPEG_VERSION,
+FFMPEG_SHA256), so the two can't drift apart.
 
   third_party_sources.py [--workflow FILE] --out DIR
 
@@ -24,6 +25,8 @@ HOST_YML = os.path.join(ROOT, ".github", "workflows", "host.yml")
 SOURCES = {
     "vkd3d": ("VKD3D_VERSION", "VKD3D_SHA256",
               "https://dl.winehq.org/vkd3d/source/vkd3d-{v}.tar.xz", "vkd3d-{v}.tar.xz"),
+    "ffmpeg": ("FFMPEG_VERSION", "FFMPEG_SHA256",
+               "https://ffmpeg.org/releases/ffmpeg-{v}.tar.xz", "ffmpeg-{v}.tar.xz"),
 }
 
 

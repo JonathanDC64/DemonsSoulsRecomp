@@ -27,13 +27,14 @@ is left.
 | **The download** (`-linux.tar.xz`) | `des_host`, executable, and `des_host.map` | built in CI (`host.yml`, `host-linux`) |
 | | `libSDL2-2.0.so.0` (SDL 2.32.10) | beside the host; `RUNPATH $ORIGIN` finds it |
 | | `libvkd3d.so.1`, `libvkd3d-shader.so.1`, `libvkd3d-utils.so.1` (vkd3d 2.1) | the same |
-| | `licenses/SDL2/`, `licenses/vkd3d/` | zlib; LGPL 2.1 or later |
+| | `libavcodec.so.62`, `libavutil.so.60` (FFmpeg 8.1.3) | the same; only the MPEG-2 video decoder and its parser, for the movies |
+| | `licenses/SDL2/`, `licenses/vkd3d/`, `licenses/ffmpeg/` | zlib; LGPL 2.1 or later; LGPL 2.1 or later, with the configure options |
 | | setup's engine, the lifters, ps3recomp's sources | the same tree as the Windows zip |
 | **Setup's downloads** | Python 3.13.17 (python-build-standalone 20261021) | 35,356,674 bytes, pinned in the host |
 | | the compiler, `llvm-linux-x64-22.1.8-2.tar.xz` | 97,274,644 bytes, pinned in `toolchain.json` |
 
-What the player does **not** need: a C or C++ compiler, libc headers (`libc6-dev`), libstdc++, SDL2 or vkd3d
-packages, root, or Steam.
+What the player does **not** need: a C or C++ compiler, libc headers (`libc6-dev`), libstdc++, SDL2, vkd3d or
+FFmpeg packages, root, or Steam.
 
 ## 2. What setup does on Linux
 
@@ -64,13 +65,14 @@ The same steps as on Windows (docs/81). What is Linux's own:
 | an AppImage | **a tar.xz** | asked for 2026-10-24. Setup's updater (docs/105) swaps plain files in the install folder; a tar keeps the execute bit, a zip unpacked by Python does not |
 | the compiler: clang, ld.lld, clang's headers | the same, plus **`lib/libxml2.so.2`** and **zstd's licence** | LLVM links its lld with libxml2 as `libxml2.so.2`, which new distros no longer have; it is built in CI from GNOME's pinned 2.9.14 source with every option off. LLVM's Linux clang and lld have zstd 1.4.8 built in, so its BSD licence ships |
 | Python: a standalone build or the system's | **python-build-standalone 3.13.17**, pinned | decided 2026-10-24: the same 3.13 line as Windows, the same on every PC |
-| movies through the system's FFmpeg | **no movies yet** | the FFmpeg loader needs FFmpeg's headers in CI, and which FFmpeg to use is open (section 7) |
+| movies through the system's FFmpeg | **FFmpeg 8.1.3 beside the host** | decided 2026-10-25. The loader opens only the major version its headers name, so a host built against ubuntu-22.04's FFmpeg 4.4 would find it almost nowhere. CI builds FFmpeg's release with only the MPEG-2 video decoder and its parser, LGPL 2.1 or later; the game's movies need nothing else (the sound is LPCM, read by the runtime) |
 
 ## 4. CI
 
 All jobs pin their actions by commit SHA.
-- **`host.yml`, `host-linux`**: des_host on `ubuntu-22.04` with LLVM 22.1.8's own clang and libc++, SDL2 and vkd3d
-  built from pinned sources (and Khronos' Vulkan-Headers 1.3.275, since vkd3d 2.1 needs 1.3.228 or newer).
+- **`host.yml`, `host-linux`**: des_host on `ubuntu-22.04` with LLVM 22.1.8's own clang and libc++, SDL2, vkd3d and
+  FFmpeg built from pinned sources (and Khronos' Vulkan-Headers 1.3.275, since vkd3d 2.1 needs 1.3.228 or newer).
+  FFmpeg's configure must report LGPL 2.1 or later, and the runtime is built with `PS3RECOMP_FFMPEG_RUNTIME`.
   `tools/ci/check_host_elf.py` then fails on any NEEDED library players may not have, a missing `RUNPATH $ORIGIN`, a
   shared C++ library or a `GLIBC_` version above 2.35. The artifact is `des_host-linux-<sha>`.
 - **`llvm-archive.yml`, `target: linux`**: makes the compiler download from LLVM's 1.94 GB
@@ -109,15 +111,11 @@ All jobs pin their actions by commit SHA.
 ## 7. Not done yet
 
 - **Publish `llvm-linux-22.1.8-2`** (a draft now). Until then a Linux setup cannot fetch its compiler.
-- **Movies** (FFmpeg): the Linux host has none. Open: the system's FFmpeg opened at run time (the loader exists,
-  docs/76) or a pinned build beside the host.
 - **Shader precompile** on Linux (docs/93, docs/97): not checked yet.
 - **A real Linux PC**: a Steam Deck, Ubuntu 24.04 and one rolling distro, each on its own GPU driver; and a
   frame-rate check there (WSL sits at 60 Hz, docs/76).
 - **Updates on Linux** (docs/105): the update check names the tarball, and the restart starts the program's own
   path. Once both are on master, the tarball should carry `release-files.txt`, as the zip does.
-- **vkd3d's source**: the tarball ships vkd3d's licence (LGPL 2.1 or later). The LGPL also asks for the library's
-  source or a written offer: attaching vkd3d 2.1's source to each release would cover it.
 - **No `curl`**: a PC without it cannot fetch the first Python. A `wget` fallback would cover minimal installs.
 
 ## Sources

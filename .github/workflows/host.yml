@@ -183,8 +183,9 @@ jobs:
   #     opens X11, Wayland, PulseAudio, PipeWire, ALSA and the rest at run time, as distros build it; vkd3d opens
   #     the Vulkan loader the same way.
   # The compiler is LLVM's own 22.1.8 Linux build, the one setup uses for the game part (docs/86; llvm-archive.yml
-  # checks its attestation and signature, this job its size and SHA-256). Movies are left out for now: the
-  # runtime's FFmpeg loader needs FFmpeg's headers, and which FFmpeg the Linux build uses is still open.
+  # checks its attestation and signature, this job its size and SHA-256). For the movies, FFmpeg's libavcodec and
+  # libavutil go beside it too, built from FFmpeg's release with only the MPEG-2 video decoder and its parser
+  # (LGPL); the runtime opens them when a movie starts (PS3RECOMP_FFMPEG_RUNTIME).
   host-linux:
     name: des_host (Linux, clang 22.1.8, libc++, SDL2 and vkd3d beside it)
     runs-on: ubuntu-22.04
@@ -205,6 +206,12 @@ jobs:
       VULKAN_HEADERS_VERSION: 1.3.275
       VULKAN_HEADERS_COMMIT: 217e93c664ec6704ec2d8c36fa116c1a4a1e2d40
       DEPS_DIR: ${{ github.workspace }}/../deps
+      # FFmpeg's release tarball of tag n8.1.3 (commit 1041abdc962f4cc4f394aa8de9dc5236c0c3b9e7, a signed tag): the
+      # tag's files plus VERSION. tools/release/third_party_sources.py attaches the same archive to releases.
+      FFMPEG_VERSION: 8.1.3
+      FFMPEG_SIZE: '11732036'
+      FFMPEG_SHA256: 7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3
+      FFMPEG_DIR: ${{ github.workspace }}/../ffmpeg
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -226,11 +233,12 @@ jobs:
           path: ps3recomp
           persist-credentials: false
 
-      # Build tools and the headers SDL2 opens its back ends with; patchelf for the libraries' RUNPATH.
+      # Build tools and the headers SDL2 opens its back ends with; patchelf for the libraries' RUNPATH; nasm for
+      # FFmpeg's x86 code.
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build pkg-config patchelf flex bison libjson-perl spirv-headers \
+          sudo apt-get install -y ninja-build pkg-config patchelf nasm flex bison libjson-perl spirv-headers \
             libvulkan-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev \
             libxss-dev libxinerama-dev libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev \
             libegl-dev libgl-dev libgles-dev libdrm-dev libgbm-dev libpulse-dev libasound2-dev \
@@ -289,6 +297,52 @@ jobs:
         with:
           path: ${{ env.DEPS_DIR }}
           key: ${{ steps.deps-cache.outputs.cache-primary-key }}
+
+      - name: Restore FFmpeg
+        id: ffmpeg-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.FFMPEG_DIR }}
+          key: host-linux-ffmpeg-${{ env.FFMPEG_SHA256 }}-ubuntu-22.04-v1
+
+      # Only what the movies use: libavcodec with the MPEG-2 video decoder and its parser, and libavutil. LGPL 2.1
+      # or later (configure must say so: no --enable-gpl, --enable-version3 or --enable-nonfree), and nothing from
+      # the system (--disable-autodetect). Its licence, and a note with the source and the configure options, go
+      # with the libraries.
+      - name: Build FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 5 --retry-all-errors -o ffmpeg.tar.xz \
+            "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
+          [ "$(stat -c %s ffmpeg.tar.xz)" = "$FFMPEG_SIZE" ] || { echo "::error::ffmpeg.tar.xz has the wrong size"; exit 1; }
+          echo "$FFMPEG_SHA256  ffmpeg.tar.xz" | sha256sum -c -
+          tar xf ffmpeg.tar.xz
+          cd "ffmpeg-$FFMPEG_VERSION"
+          opts=(--enable-shared --disable-static --disable-programs --disable-doc --disable-autodetect
+                --disable-network --disable-everything --disable-avdevice --disable-avformat --disable-avfilter
+                --disable-swscale --disable-swresample --enable-decoder=mpeg2video --enable-parser=mpegvideo)
+          ./configure --prefix="$FFMPEG_DIR" "${opts[@]}" | tee configure.txt
+          grep -qx 'License: LGPL version 2.1 or later' configure.txt \
+            || { echo "::error::FFmpeg is not configured as LGPL 2.1 or later"; exit 1; }
+          make -s -j"$(nproc)"
+          make -s install
+          mkdir -p "$FFMPEG_DIR/share/licenses/ffmpeg"
+          cp COPYING.LGPLv2.1 LICENSE.md CREDITS "$FFMPEG_DIR/share/licenses/ffmpeg/"
+          {
+            echo "FFmpeg $FFMPEG_VERSION, unchanged: libavcodec and libavutil, LGPL 2.1 or later."
+            echo "Source: ffmpeg-$FFMPEG_VERSION.tar.xz on this release's page, the same archive as"
+            echo "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz (SHA-256 $FFMPEG_SHA256)."
+            echo "Configured with: ./configure ${opts[*]}"
+            echo "You may replace these libraries with your own build of the same major versions."
+          } > "$FFMPEG_DIR/share/licenses/ffmpeg/README.txt"
+
+      - name: Save FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.FFMPEG_DIR }}
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
 
       - name: Restore LLVM
         id: llvm-cache
@@ -364,6 +418,8 @@ jobs:
           -DPS3RECOMP_BUILD_TESTS=OFF
           -DPS3RECOMP_RSX_D3D12_VKD3D=ON
           -DPS3RECOMP_GAME_SPLIT=ON
+          -DPS3RECOMP_FFMPEG_RUNTIME=ON
+          "-DPS3RECOMP_FFMPEG_INCLUDE_DIR=$FFMPEG_DIR/include"
 
       - name: Build the runtime library
         run: cmake --build ps3recomp/build_split --target ps3recomp_runtime
@@ -396,10 +452,20 @@ jobs:
             cp -L "$DEPS_DIR/lib/$so" dist/host-linux/
             patchelf --set-rpath '$ORIGIN' "dist/host-linux/$so"
           done
+          # FFmpeg's under the names the runtime opens, the majors its headers name (libavcodec.so.62, ...).
+          for lib in avcodec avutil; do
+            maj=$(cat "$FFMPEG_DIR/include/lib$lib/"version*.h \
+              | sed -n "s/^#define LIB${lib^^}_VERSION_MAJOR *\([0-9]*\)$/\1/p")
+            [ -n "$maj" ] || { echo "::error::no major version for lib$lib"; exit 1; }
+            cp -L "$FFMPEG_DIR/lib/lib$lib.so.$maj" dist/host-linux/
+            patchelf --set-rpath '$ORIGIN' "dist/host-linux/lib$lib.so.$maj"
+          done
           for lib in SDL2 vkd3d; do
             [ -d "$DEPS_DIR/share/licenses/$lib" ] || { echo "::error::no licence files for $lib"; exit 1; }
             cp -r "$DEPS_DIR/share/licenses/$lib" dist/host-linux/licenses/
           done
+          [ -d "$FFMPEG_DIR/share/licenses/ffmpeg" ] || { echo "::error::no licence files for ffmpeg"; exit 1; }
+          cp -r "$FFMPEG_DIR/share/licenses/ffmpeg" dist/host-linux/licenses/
           ls -laR dist/host-linux
           find dist/host-linux -type f -exec sha256sum {} +
 

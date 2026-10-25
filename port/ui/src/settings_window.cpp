@@ -480,6 +480,9 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         info_row(leftPane, rightPane, "Gamepads", pads.value, pads.help);
         bool_row(leftPane, rightPane, "Vibration", "PAD_RUMBLE",
             "Lets the game make your gamepad vibrate.<br/><br/>(PAD_RUMBLE)");
+        bool_row(leftPane, rightPane, "Roll toward the stick", "DES_ROLLDIR",
+            "Locked on, a roll goes where the stick points. Off, it goes only forward, back, left or right, as in "
+            "the original.<br/><br/>(DES_ROLLDIR)");
         info_row(leftPane, rightPane, "Keyboard and mouse", "WASD, mouse, Space",
             "As in the Souls games on PC:<br/>"
             "<b>W A S D</b> move &nbsp; <b>Left Alt</b> (held) walk &nbsp; <b>Mouse</b> camera (Mouse look, "

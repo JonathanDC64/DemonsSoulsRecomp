@@ -190,3 +190,10 @@
 0x00FF5680=des_ik_rate   # lfs f11, 0x68(r12): onOffGain 0.8, the solver's weight eased up (ease)
 0x00FF58CC=des_ik_rate   # lfs f11, 0x68(r12): onOffGain 0.8, the solver's weight eased down (ease)
 0x00FF54D4=des_ik_rate   # fmuls f13: the foot height's step, its two gains' product (0.64; ease)
+
+# des_roll_dir (port/des_options.cpp): DES_ROLLDIR, a roll while locked on goes
+# where the stick points. The roll's start turns the player's facing, and the
+# locked facing update aims at the turned facing for the roll's first 0.3 s.
+0x002FF8F0=des_roll_dir   # extsw r4, r4: script function 110 before bl 0x002EB3E8; r3 = the controller, r4 = k
+0x00301C24=des_roll_dir   # li r4, 0: the same call's other path (k = 0)
+0x0030F734=des_roll_dir   # fadds f1, f1, f0: the locked facing update's yaw to the target; r26 = the controller

@@ -236,6 +236,11 @@ void load_file() {
         const Def* d = find(key);
         if (!d || d->apply == Apply::Session) continue;  // (a per-session value is never read from the file)
         if (key == "keys_layout") layout_line = true;
+        if (key == "DES_NET_SERVER" && !net_server(value)) {  // (The Archstones, saved before it was developer-only)
+            std::fprintf(stderr, "[ui] settings: server %s is not in this build's list: the default server\n",
+                         value.c_str());
+            continue;
+        }
         sValues[key] = value;
         if (d->apply != Apply::UiOnly && !sPinned.count(key) && !value.empty()) {
             apply_env(key, value);
@@ -355,9 +360,13 @@ void apply_network() {
     const std::string address = net_server_address();
     if (address.empty() && !env_set("PS3_NET_HOSTS")) {
         const NetServer* s = net_server(effective("DES_NET_SERVER"));
-        sNetStatus = s ? "Off: no valid server address" : "Off: unknown server " + effective("DES_NET_SERVER");
-        std::fprintf(stderr, "[ui] network: off, %s (DES_NET_SERVER=%s)\n",
-                     s ? "no valid server address" : "unknown server", effective("DES_NET_SERVER").c_str());
+        const bool not_yet = s && !*s->address && s->key != std::string_view(kNetCustomKey);
+        const std::string why = !s       ? "unknown server " + effective("DES_NET_SERVER")
+                                : not_yet ? std::string(s->name) + " is not available yet"
+                                          : "no valid server address";
+        sNetStatus = "Off: " + why;
+        std::fprintf(stderr, "[ui] network: off, %s (DES_NET_SERVER=%s)\n", why.c_str(),
+                     effective("DES_NET_SERVER").c_str());
         return;
     }
     // No online name, no sign-in: the runtime's NP stays signed out, and the game then asks for the network over and
@@ -547,7 +556,8 @@ std::string suggest_net_name() {
 std::string net_server_address() {
     const NetServer* s = net_server(effective("DES_NET_SERVER"));
     if (!s) return {};
-    const std::string a = *s->address ? std::string(s->address) : trim(effective("DES_NET_CUSTOM"));
+    const std::string a = s->key == std::string_view(kNetCustomKey) ? trim(effective("DES_NET_CUSTOM"))
+                                                                    : std::string(s->address);
     return net_address_ok(a) ? a : std::string();
 }
 

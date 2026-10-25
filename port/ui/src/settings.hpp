@@ -80,19 +80,27 @@ bool no_user_input();
 
 // ---- Online play (the Network tab; docs/46 A5) ----
 
-// The game servers the Server row offers. Each address is the one the server's own setup page publishes for
-// emulators (The Archstones: thearchstones.com, "serverinfo"); edit this table to add, change or drop one. The key is
-// what settings.ini stores (DES_NET_SERVER); the first entry is the default. An entry with no address is Custom: it
-// uses DES_NET_CUSTOM.
+// This project's own server: its host name, once it has one. Until then its entry has no address, and online stays
+// off with it ("not available yet").
+inline constexpr const char* kNetProjectHost = "";
+
+// The game servers the Server row offers; edit this table to add, change or drop one. The key is what settings.ini
+// stores (DES_NET_SERVER); the first entry, the project's server, is the default. A stored key that is not in the
+// table (The Archstones' in a release build) reads as the default. Custom uses DES_NET_CUSTOM.
 struct NetServer {
     const char* key;
     const char* name;
-    const char* address;  // IPv4 or host name; "" = DES_NET_CUSTOM
+    const char* address;  // IPv4 or host name; "" for Custom, or for a server with no address yet
     const char* note;     // the Server row's help text for it
 };
 inline constexpr NetServer kNetServers[] = {
+    {"project", "Demon's Souls Recomp", kNetProjectHost, "This project's own server."},
+#if DES_DEV
+    // Developer builds only. The address is the one its setup page publishes for emulators (thearchstones.com,
+    // "serverinfo").
     {"archstones", "The Archstones", "206.189.232.242",
-     "The community server most players use, run by a volunteer."},
+     "The community server RPCS3 players use, run by a volunteer. Developer builds only."},
+#endif
     {"local", "Local test server", "127.0.0.1", "A server on this PC, for testing."},
     {"custom", "Custom", "", "The address in Custom server, below."},
 };
@@ -120,7 +128,7 @@ std::string suggest_net_name();
 std::string net_server_address();
 // PS3_NET_HOSTS for an address: each of kNetHosts mapped to it, joined with "&&" (RPCS3's IP/Host switch form).
 std::string net_hosts(const std::string& address);
-// What load_and_apply_env decided about the network at start, for the Network tab ("Online (The Archstones)", "Off:
+// What load_and_apply_env decided about the network at start, for the Network tab ("Online (Local test server)", "Off:
 // Online is off", ...). A developer build's cheat session clears the network after this (des_dev_boot); the tab
 // says so from DES_DEV_SESSION.
 const std::string& net_status();

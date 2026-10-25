@@ -22,10 +22,19 @@ REAL = Path(__file__).resolve().parents[3]          # this source tree
 # dependency file and the object as the sum of what it read. A source with FAIL
 # in it fails; one with OOM_ONCE runs out of memory the first time; one with
 # OOM_EXIT ends with Windows' out-of-memory status and prints nothing about it.
-# SLEEP=<s> makes it take that long; each call's start and end go to a file
-# of its own in cc_times.
-FAKECC = r'''import hashlib, os, re, sys, time
+# SLEEP=<s> makes it take that long. Each call is noted in a file of its own in
+# cc_calls (ld_calls for the linker), and its start and end in cc_times:
+# appends from processes running side by side can lose lines on Windows.
+NOTE = r'''
+def note(folder, text):
+    os.makedirs(folder, exist_ok=True)
+    fd, _ = tempfile.mkstemp(dir=folder, suffix=".txt")
+    os.write(fd, text.encode()); os.close(fd)
+'''
+FAKECC = r'''import hashlib, os, re, sys, tempfile, time
+''' + NOTE + r'''
 t0 = time.time()
+t0_ns = time.time_ns()
 a = sys.argv[1:]
 if "--" in a:
     src = a[a.index("--") + 1]
@@ -35,13 +44,12 @@ else:
     src, obj, dep = a[a.index("-c") + 1], a[a.index("-o") + 1], a[a.index("-MF") + 1]
 inc = [x[2:] for x in a if x.startswith("-I")]
 here = os.path.dirname(os.path.abspath(__file__))
-open(os.path.join(here, "cc_calls.txt"), "a").write(os.path.basename(obj) + "\n")
+note(os.path.join(here, "cc_calls"), f"{t0_ns} {os.path.basename(obj)}")
 text = open(src, encoding="utf-8").read()
 m = re.search(r"SLEEP=([0-9.]+)", text)
 if m:
     time.sleep(float(m.group(1)))
-os.makedirs(os.path.join(here, "cc_times"), exist_ok=True)
-open(os.path.join(here, "cc_times", f"{os.getpid()}.txt"), "w").write(f"{os.path.basename(obj)} {t0} {time.time()}\n")
+note(os.path.join(here, "cc_times"), f"{os.path.basename(obj)} {t0} {time.time()}\n")
 if "FAIL" in text:
     print("error: made to fail"); sys.exit(1)
 if "OOM_EXIT" in text:
@@ -60,22 +68,24 @@ for name in re.findall(r'#include "([^"]+)"', text):
 open(obj, "w").write(h.hexdigest())
 open(dep, "w").write(obj.replace(" ", "\\ ") + ": " + " \\\n  ".join(x.replace(" ", "\\ ") for x in [src] + deps) + "\n")
 '''
-FAKELD = r'''import os, sys
+FAKELD = r'''import os, sys, tempfile, time
+''' + NOTE + r'''
+t0_ns = time.time_ns()
 a = sys.argv[1:]
 here = os.path.dirname(os.path.abspath(__file__))
 if "-o" in a:   # the clang driver linking des_game.so (Linux)
-    open(os.path.join(here, "ld_calls.txt"), "a").write("link\n")
+    note(os.path.join(here, "ld_calls"), f"{t0_ns} link")
     objs = [x for x in a if x.endswith(".o")]
     open(a[a.index("-o") + 1], "w").write("\n".join(os.path.basename(o) + " " + open(o).read() for o in objs))
     sys.exit(0)
 out = next(x[5:] for x in a if x.lower().startswith("/out:"))
 if a[0] == "/lib":   # an import library from a .def file; one with FAIL in it fails
-    open(os.path.join(here, "ld_calls.txt"), "a").write("lib\n")
+    note(os.path.join(here, "ld_calls"), f"{t0_ns} lib")
     text = open(next(x[5:] for x in a if x.lower().startswith("/def:"))).read()
     if "FAIL" in text:
         print("error: made to fail"); sys.exit(1)
     open(out, "w").write(text); sys.exit(0)
-open(os.path.join(here, "ld_calls.txt"), "a").write("link\n")
+note(os.path.join(here, "ld_calls"), f"{t0_ns} link")
 objs = [x for x in a if x.endswith(".obj") or x.endswith(".lib")]
 open(out, "w").write("\n".join(os.path.basename(o) + " " + open(o).read() for o in objs))
 '''
@@ -152,12 +162,13 @@ class Tree:
         return out
 
     def calls(self, name):
-        p = self.tools / f"{name}_calls.txt"
-        if not p.exists():
-            return []
-        out = p.read_text().split()
-        p.unlink()
-        return out
+        """The tool's calls in the order they started, then forgotten (a file each, as cc_times)."""
+        rows = []
+        for p in (self.tools / f"{name}_calls").glob("*.txt"):
+            t, text = p.read_text().split(" ", 1)
+            rows.append((int(t), text))
+            p.unlink()
+        return [text for _, text in sorted(rows)]
 
 
 class TestPieces(unittest.TestCase):

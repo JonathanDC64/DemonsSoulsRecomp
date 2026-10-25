@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from des_setup import compile as compile_step, fetch, journal, lift, pipeline, protocol  # noqa: E402
-from test_lift import REAL, FakeTree  # noqa: E402
+from test_lift import PPU_STEPS, REAL, FakeTree  # noqa: E402
 from test_setup import GameTree  # noqa: E402
 
 PHASES = ["check", "fetch", "stage", "lift"]
@@ -128,7 +128,8 @@ class RunTest(unittest.TestCase):
         self.s.tree.reset_calls()
         rc, lines = self.s.run()
         self.assertEqual(rc, 0, lines)
-        self.assertEqual(self.s.tree.calls()[0], "ppu_lifter.py")
+        # The PPU side starts again at the step that failed (the SPU side runs beside it).
+        self.assertEqual([c for c in self.s.tree.calls() if c in PPU_STEPS][0], "ppu_lifter.py")
 
     def test_busy(self):
         held = pipeline.lock(self.s.data / "setup" / "run.lock")

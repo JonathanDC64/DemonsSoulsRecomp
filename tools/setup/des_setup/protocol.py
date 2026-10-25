@@ -27,13 +27,18 @@ the screens show the last ones under Details.
                                     short (so closing other programs makes it faster), or no longer does
   @log <path>                       the log of the step that failed
   @error <code> <step> <text>       what failed, in a sentence for the player (codes: ERRORS)
+  @release <version> <time> <page>  update-check (update.py): the newer release, its time (Unix seconds, 0 when
+                                    not known) and its page
+  @note <text>                      update-check: one line of that release's notes (Markdown), after @release
   @done ok|fix|failed               the last line
 
 Names (phases, steps, states, codes) have no spaces; <text> and <path> are the
 rest of the line. The host ignores keywords it does not know, so a new kind of
 line needs no new version; a changed meaning does. Version 2 added the RPCS3
 route (docs/90 3.8): the unlock and import phases, @file, @rpcs3, @user,
-@library, @found, @setting, and the rpcs3 and import codes.
+@library, @found, @setting, and the rpcs3 and import codes. The update
+commands (update.py, docs/105) added @release and @note, and the download
+and install phases; the version stayed 2.
 
 Every line also goes to the run's log (setup/logs/run.log), so a run from a
 terminal leaves the same record as one from the screens.
@@ -42,7 +47,7 @@ import sys
 
 VERSION = 2
 KINDS = ("setup", "plan", "step", "progress", "overall", "check", "file", "rpcs3", "user", "library", "found",
-         "setting", "awake", "memory", "log", "error", "done")
+         "setting", "awake", "memory", "log", "error", "done", "release", "note")
 # game: the game folder or its files; busy: another setup is running; disk: not enough free space;
 # download: a download stopped or did not match; memory: out of memory; step: a build step failed;
 # rpcs3: the player's RPCS3 could not unlock the files; import: bringing the save, trophies or settings across from
@@ -179,6 +184,15 @@ class Emitter:
     def error(self, code, step, text):
         assert code in ERRORS, code
         self._line("error", code, word(step or "-"), one_line(text))
+
+    def release(self, version, when, page):
+        self._line("release", word(version), int(when or 0), one_line(page) or "-")
+
+    def note(self, text):
+        """One line of release notes as it is, its indent too (Markdown's lists), and an empty one as "@note", so the
+        paragraphs stay."""
+        line = str(text).replace("\t", "    ").replace("\r", "").replace("\n", " ").rstrip()
+        self._put("@note " + line if line else "@note")
 
     def done(self, result):
         assert result in RESULTS, result

@@ -10,6 +10,9 @@
   python -m des_setup status [--data DIR] [--json [--app VERSION]]
   python -m des_setup tools
   python -m des_setup fetch NAME [--data DIR]
+  python -m des_setup update-check --app VERSION [--data DIR]
+  python -m des_setup update-apply --app VERSION --to VERSION --install DIR [--data DIR]
+  python -m des_setup update-back --app VERSION --install DIR [--data DIR]
 
 Run from tools/setup (or with it on PYTHONPATH; the host runs run_setup.py,
 docs/88). GAME is the folder of the disc dump that holds PS3_GAME. `run` does
@@ -37,6 +40,10 @@ the end of the build (docs/90 3.5): the save into the game's gamedata folder
 the trophies merged into the port's trophy file, the settings into
 <data>/setup/rpcs3_settings.txt. It stays pending in request.json until it
 is done; --no-import drops it.
+
+The update commands (update.py, docs/105) find a newer release, put it in
+place of this one in the install folder DIR, and go back to the version kept
+before it.
 Exit status: 0 done, 1 something to fix (the lines say what), 2 usage.
 """
 import argparse
@@ -47,7 +54,7 @@ import time
 from pathlib import Path
 
 from . import compile as compile_step, fetch, gamefiles, journal, lift
-from . import pipeline, rpcs3, rpcs3_import, rpcs3_library
+from . import pipeline, rpcs3, rpcs3_import, rpcs3_library, update
 from .pipeline import stage  # noqa: F401 (the copy step; the tests import it from here)
 
 NAME = "DemonsSoulsRecomp"
@@ -398,6 +405,21 @@ def main(argv=None) -> int:
     sp.add_argument("name")
     data_arg(sp)
     sp.set_defaults(fn=cmd_fetch)
+    sp = sub.add_parser("update-check", help="look for a newer release (docs/105)")
+    sp.add_argument("--app", required=True, metavar="VERSION", help="the host's version")
+    data_arg(sp)
+    sp.set_defaults(fn=update.main_check)
+    sp = sub.add_parser("update-apply", help="download a newer release and put it in place of this one")
+    sp.add_argument("--app", required=True, metavar="VERSION", help="the host's version, kept to go back to")
+    sp.add_argument("--to", required=True, metavar="VERSION", help="the release to put in place")
+    sp.add_argument("--install", required=True, metavar="DIR", help="the folder the player's zip was unpacked in")
+    data_arg(sp)
+    sp.set_defaults(fn=update.main_apply)
+    sp = sub.add_parser("update-back", help="put the version kept by the last update back in place")
+    sp.add_argument("--app", required=True, metavar="VERSION", help="the host's version, kept in its place")
+    sp.add_argument("--install", required=True, metavar="DIR", help="the folder the player's zip was unpacked in")
+    data_arg(sp)
+    sp.set_defaults(fn=update.main_back)
     a = p.parse_args(argv)
     if a.cmd == "run":
         _check_run_args(p, a)

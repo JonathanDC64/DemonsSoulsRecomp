@@ -517,7 +517,7 @@ std::filesystem::path SetupWindow::log_file() const {
 void SetupWindow::open_log() {
     const auto path = log_file();
     std::fprintf(stderr, "[setup] the log: %s\n", path.empty() ? "none" : utf8(path).c_str());
-    if (!path.empty()) report::open_url(utf8(path));
+    if (!path.empty()) report::open_local(path);
 }
 
 // The engine's last plain lines, at most `lines` of them, each cut at 300 characters.

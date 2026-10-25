@@ -1861,6 +1861,84 @@ extern "C" void des_slide_rate(ppu_context* ctx, uint32_t addr)
     }
 }
 
+/* DES_ROLLDIR=1 (the default; 0 is the original): a roll while locked on goes
+ * where the stick points. Locked on, the game rolls only forward, back, left
+ * or right of the target (docs/47, section 3): the player's script asks its
+ * function 110 (0x002EB3E8, r3 = the character's controller, r4 = k) once a
+ * roll for the move set's roll animation k (0 forward, 1 back, 2 left, 3
+ * right; 4 is the backstep), and the animation moves the character along its
+ * facing. The lifter calls this just before that call (0x002FF8F0; 0x00301C24
+ * is the call's other path). For the player's roll it turns the facing (the
+ * yaw at *(controller + 0x10) + 4, the bearing + pi) to the target's bearing
+ * plus the stick's angle from k's direction, at most 90 degrees, so the roll
+ * runs along the stick. On its own that turn is undone: the locked facing
+ * update turns the character back to the target before the roll moves. So for
+ * the first 0.3 s of game time this adds the same angle to the yaw that update
+ * aims at (0x0030F734, r26 = the controller). The roll keeps its facing to its
+ * end, and the lock then turns the character back as usual. Live.
+ * DES_ROLLLOG=1 prints each of the player's calls. */
+static uint32_t player_controller()
+{
+    uint32_t p = vm_read32(kChrMan);
+    if (!guest_ptr_ok(p) || !guest_ptr_ok(p = vm_read32(p + 0x1BC))) return 0;
+    p = vm_read32(p + 0x20);
+    return guest_ptr_ok(p) ? p : 0;
+}
+
+extern "C" void des_roll_dir(ppu_context* ctx, uint32_t addr)
+{
+    constexpr float kPi = 3.14159265f, kHold = 0.3f;
+    static const float kDir[4] = {0.0f, kPi, -kPi / 2, kPi / 2};   /* roll k's direction from the facing; + = right */
+    static struct { uint32_t ctrl; float turn, yaw, left; } s;
+    static int on = 1, log = 0;
+    PS3_KNOB(on, ps3_env_int("DES_ROLLDIR", 1) != 0);
+    PS3_KNOB(log, env_on("DES_ROLLLOG"));
+    if (addr == 0x0030F734u) {   /* fadds f1, f1, f0: f1 = the yaw the locked facing update aims at */
+        if (!(s.left > 0.0f) || (uint32_t)ctx->gpr[26] != s.ctrl) return;
+        const uint32_t xf = vm_read32(s.ctrl + 0x10);
+        /* Off, or the facing jumped away from the turned roll's (the lock was dropped in between): done. */
+        if (!on || !guest_ptr_ok(xf) || std::fabs(std::remainder(vm_readf(xf + 4) - s.yaw, 2 * kPi)) > 0.25f) {
+            s.left = 0.0f;
+            return;
+        }
+        s.yaw = vm_readf(xf + 4);
+        ctx->fpr[1] = (float)(ctx->fpr[1] + s.turn);
+        const float dt = vm_readf(kFrameDt);
+        s.left -= dt > 0.0f && dt < 0.25f ? dt : 1.0f / 30.0f;
+        return;
+    }
+    /* 0x002FF8F0 (extsw r4, r4) or 0x00301C24 (li r4, 0) */
+    const uint32_t ctrl = (uint32_t)ctx->gpr[3];
+    if (ctrl != player_controller()) return;
+    const int k = (int)(int32_t)ctx->gpr[4];
+    const unsigned st = g_pad0_lstick;
+    const float x = ((int)(st >> 8) - 128) / 127.0f, up = (128 - (int)(st & 0xFFu)) / 127.0f;
+    const float stick = std::atan2(x, up);   /* from up; + = right */
+    float turn = 0.0f;
+    uint32_t xf = 0, lock = 0;
+    const char* why = nullptr;
+    if (!on) why = "off";
+    else if (vm_read8(ctrl + 0x139)) why = "not locked on";
+    else if (k < 0 || k > 3) why = "not a roll";
+    else if (x * x + up * up < 0.2f * 0.2f) why = "stick centred";
+    else if (std::fabs(turn = std::remainder(stick - kDir[k], 2 * kPi)) > kPi / 2) why = "stick too far from the roll";
+    else if (std::fabs(turn) < 0.01f) why = "stick along the roll";
+    else if (!guest_ptr_ok(xf = vm_read32(ctrl + 0x10)) || !guest_ptr_ok(lock = vm_read32(ctrl + 4)) ||
+             !vm_read8(lock + 0x100))
+        why = "no target";
+    else {
+        /* The target's bearing, as the locked facing update takes it: its position is at +0x110. */
+        const float dx = vm_readf(lock + 0x110) - vm_readf(xf + 0x10);
+        const float dz = vm_readf(lock + 0x118) - vm_readf(xf + 0x18);
+        const float yaw = vm_readf(xf + 4);
+        s = {ctrl, turn, yaw + std::remainder(std::atan2(dx, dz) + kPi + turn - yaw, 2 * kPi), kHold};
+        vm_writef(xf + 4, s.yaw);
+    }
+    if (log)
+        fprintf(stderr, "[rolllog] %08X k=%d stick %+.2f %+.2f (%+.0f deg), turn %+.0f deg: %s\n", addr, k, x, up,
+                stick * 180.0f / kPi, turn * 180.0f / kPi, why ? why : "turned");
+}
+
 /* The character creation screen's previews turn with the right stick: the
  * whole body (0x008DB170, from Create Profile on) and the face in Edit
  * Appearance (0x008DA0E0). Each step gets r3 = the preview and f1, f2 = the

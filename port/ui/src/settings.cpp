@@ -89,6 +89,7 @@ constexpr Def kDefs[] = {
     {"PAD_MAP", "", Apply::Live},              // cellPad, gamepad buttons (controls_window.cpp)
     {"PAD_KEYS", "", Apply::Live},             // cellPad, changes to the keyboard and mouse layout (kKeysLayout)
     {"PAD_RUMBLE", "1", Apply::Live},          // cellPad's vibration thread, live; 0 = no pad vibrates
+    {"DES_ROLLDIR", "1", Apply::Live},         // des_roll_dir, read at each roll; 0 = locked-on rolls go 4 ways only
     {"keys_layout", "souls", Apply::UiOnly},   // the layout PAD_KEYS changes; a file without this line is older
     {"DES_MOUSE_LOOK", "0", Apply::Live},      // mouse look (des_mouse_look; port/ui/src/mouse.cpp), read each frame
     {"DES_MOUSE_SENS", "0.09", Apply::Live},   // mouse look's degrees per mouse count

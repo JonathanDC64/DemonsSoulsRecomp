@@ -63,7 +63,8 @@ screen does not offer it straight back.
   and its ETag are kept in `<data>/setup/update/feed.json`. An unchanged list then answers 304, which does not count
   against GitHub's limit of 60 requests an hour without a token (read: GitHub's REST docs).
 - **What counts:** published releases only (not drafts or pre-releases), with a `vX.Y.Z` tag, a player's download for
-  this system (`DemonsSoulsRecomp-X.Y.Z-windows.zip`) and `SHA256SUMS`. So `llvm-22.1.8-1`, setup's compiler release,
+  this system (`DemonsSoulsRecomp-X.Y.Z-windows.zip`, or on Linux `DemonsSoulsRecomp-X.Y.Z-linux.tar.xz`) and
+  `SHA256SUMS`. So `llvm-22.1.8-1`, setup's compiler release,
   never counts, though GitHub marks it Latest today.
 - **Compared as numbers:** 0.2.10 is newer than 0.2.9. Only a plain X.Y.Z build compares, so a developer's build
   (0.1.0-dev.5+g1234) finds nothing.
@@ -179,14 +180,20 @@ version:
 
 - `DES_UI_OPEN=setup-run` opens setup's progress screen and runs setup at once, with the last run's folders.
 - The player's zip is `DemonsSoulsRecomp-X.Y.Z-windows.zip` with `DemonsSoulsRecomp-X.Y.Z/` inside, the exe
-  `des_host.exe` and `release-files.txt` at its top, beside `SHA256SUMS` in the same release.
+  `des_host.exe` and `release-files.txt` at its top, beside `SHA256SUMS` in the same release. On Linux it is
+  `DemonsSoulsRecomp-X.Y.Z-linux.tar.xz` (`package.py --linux-host`), the same layout with `des_host` (a tar keeps
+  its execute bit; `fetch.unpack` takes both).
 - `update-back` reads `.previous/<version>` and `<data>/previous/<version>`, as written here.
 
 ## 11. Later
 
-- **Linux:** no player's download yet, so no update is ever offered there. When the Linux package exists, add its name
-  to `player_asset`, and make the POSIX `start_again` start the path the program started from: it starts
-  `/proc/self/exe`, which follows the renamed old file.
+- **Linux:** done on the update side: `player_asset` names the tar.xz, and the POSIX `start_again` starts the path
+  the program started from. `/proc/self/exe` follows the running file, so after a swap it named `.previous/<version>`
+  and started the old version again (checked with a stand-in in WSL); `report::program_path()` now reads it once at
+  the start. The package itself is the Linux setup branch's (`package.py --linux-host`, host.yml's `host-linux`
+  job), so Linux updates start with the first release that has both. Once both are in, the Linux tarball should
+  carry `release-files.txt` too, as the zip does (one line in `cmd_build`); until then an update swaps the names
+  the new release has.
 - **Signing** the exe and the releases (docs/45 section 5).
 - **Smaller downloads:** today an update is the whole zip (11.6 MB for this branch's package, 1,076 files, measured).
   docs/45 has the component plan.

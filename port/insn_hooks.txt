@@ -180,6 +180,12 @@
 0x003147EC=des_ghost_rate  # lfs f12: 10.0, the next sample's move and turn split into per-frame steps
 0x00314ABC=des_ghost_rate  # lfs f12: 30.0, SetMoveVector's step-to-speed factor (walk or run)
 
+# des_twist_rate (port/des_options.cpp): moving locked on, the bone turner
+# (0x003D3BC0) eases the lower body's turn against the upper body by a fixed
+# share an update, so above 30 fps a change of direction snapped round; the
+# hook makes it ease as at 30 fps (docs/28, "Locked-on direction changes").
+0x003D42BC=des_twist_rate   # lfs f12, 0x20(r31): the bone's ease share (0.35, the locomotion controller's +0x154)
+
 # des_ik_rate (port/des_options.cpp): the foot IK (issue #140, docs/92). The
 # driver 0x002F5B08 and Havok's foot placement solver (0x00FF4DC0) smooth by
 # a fixed amount an update, so above 30 fps the hips and feet settle faster

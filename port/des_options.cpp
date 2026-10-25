@@ -1246,6 +1246,31 @@ extern "C" void des_ik_rate(ppu_context* ctx, uint32_t addr)
     ctx->fpr[fd] = (float)(addr == 0x002F5CCCu ? std::pow(k, (double)steps) : 1.0 - std::pow(1.0 - k, (double)steps));
 }
 
+/* The lower body's turn against the upper body (docs/28, "Locked-on direction
+ * changes above 30 fps"). Moving locked on, the locomotion controller (vtable
+ * 0x0185C338) plays one of four direction clips and turns the Master,
+ * Upper_Root and Neck bones by the angle between the move and the clip. That
+ * angle jumps when the clip changes (about 85 degrees on a diagonal), and the
+ * bone turner (0x003D3BC0) eases each bone toward it by a fixed share an update:
+ * cur += (target - cur) * k, with k = 0.35 (the controller's +0x154, stored to
+ * each bone at 0x00322AB0). At 30 fps that settles in about 0.18 s, alongside the
+ * clips' 0.2 s blend; at 240 fps in about 20 ms, so the body snaps round while
+ * the legs still blend. The lifter calls this after the load of k (0x003D42BC):
+ * k becomes 1 - (1 - k)^(30 dt), with dt the game's frame time, so a second
+ * eases as at 30 fps. The turner's other user, a two-bone controller
+ * (0x0031B56C), gets the same. DES_TWISTFIX=0 turns it off live. */
+extern "C" void des_twist_rate(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_TWISTFIX", 1) != 0);
+    if (!on || s_fps <= 0) return;
+    const int fd = (vm_read32(addr) >> 21) & 31;   /* the lfs's target */
+    const double k = ctx->fpr[fd];
+    const float steps = vm_readf(kFrameDt) * 30.0f;
+    if (!(k > 0.0 && k < 1.0) || !(steps > 0.0f) || steps == 1.0f) return;
+    ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
+}
+
 /* DES_PHYS_HZ=<n> (default 30; 0 = step every frame): at most n Havok steps
  * a second. The physics update 0x001D1E30 steps the world once a frame with
  * the frame's dt (f31). Havok counts its solver passes and its sleep checks

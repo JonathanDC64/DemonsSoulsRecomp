@@ -10,12 +10,13 @@
 #   s4_on      after walking on
 # then compares the set with the last accepted one (shotdiff.py) and prints
 # the per-shot summary. Exit status: 0 all ok, 1 a shot regressed or is
-# missing, 2 the run never reached the level, 3 the save folder could not be
-# used: another run holds it (waited DES_SAVE_LOCK_WAIT s), or the player's
-# save could not be copied aside, so nothing was swapped; 4 a run that has
-# gone left the save folder swapped out, and this one did not undo it: the
-# [save] lines say what was found and what to do (DES_SAVE_TAKEOVER,
-# des_save_lock in deslib.sh).
+# missing, 2 the run never reached the level, 3 the save could not be copied
+# for the run, or (a build that swaps the save, below) the save folder could
+# not be used: another run or a play session holds it (waited
+# DES_SAVE_LOCK_WAIT s), or the player's save could not be copied aside, so
+# nothing was swapped; 4 a run that has gone left the save folder swapped
+# out, and this one did not undo it: the [save] lines say what was found and
+# what to do (DES_SAVE_TAKEOVER, des_save_lock in deslib.sh).
 #
 #   regress.sh                 new set named by date+time, diffed against "good"
 #   regress.sh accept <name>   make <name> the new "good" set
@@ -23,9 +24,12 @@
 #
 # Sets live in REGRESS_DIR (default $DES_SCRATCH/regress). Screenshots are
 # game-derived: point REGRESS_DIR outside the repository and never commit them.
-# The run plays from a pinned save ($REG/save, `regress.sh pin-save [dir]`);
-# the player's save is copied aside before the run and put back after it, so
-# neither their progress nor an autosave moves the spawn point.
+# The run plays from a pinned save ($REG/save, `regress.sh pin-save [dir]`),
+# so neither the player's progress nor an autosave moves the spawn point. The
+# game gets its own copy of it ($RUN/saves, as PS3_SAVEDATA_ROOT; des_run_save
+# in deslib.sh) and never sees the player's save folder. A build from before
+# PS3_SAVEDATA_ROOT (ps3recomp #80) swaps it in instead: the player's save is
+# copied aside before the run and put back after it.
 #
 # The route runs on the game's clock, not the wall clock (regress_route.py).
 # The run writes a frame log (DES_FRAMELOG, $RUN/frames.txt), and game time is
@@ -81,28 +85,42 @@ if [ "${1:-}" = accept ]; then
 fi
 
 NAME="${1:-$(date +%Y%m%d_%H%M%S)}"; SET="$REG/$NAME"
-take_save
-RUN="$DES_SCRATCH/regress_run"; rm -rf "$RUN" "$SET"; mkdir -p "$RUN/shots" "$SET"
-OUT="$RUN/run.txt"; PAD="$RUN/pad"; CON="$RUN/con"; : > "$PAD"; : > "$OUT"
-
-if [ -d "$SAVE" ]; then
-  des_backup_save "$SAVE" "$RUN/save" || { echo "[regress] could not back up $SAVE; save not swapped"; exit 3; }
-  des_save_note "$SAVE" "$RUN/save" || { echo "[regress] could not note the backup in $SAVE.lock; save not swapped"; exit 3; }
+RUN="$DES_SCRATCH/regress_run"
+FROM="$REG/save"
+[ -d "$FROM" ] || { echo "[regress] no pinned save ($FROM): using the current one; see pin-save"; FROM="$SAVE"; }
+ROOT=()
+if des_save_root_ok; then
+  # The run's own copy of the save (des_run_save): nothing of the player's to
+  # put back.
+  rm -rf "$RUN" "$SET"; mkdir -p "$RUN/shots" "$SET"
+  r=$(des_run_save "$FROM" "$RUN/saves") || { echo "[regress] could not copy $FROM for the run"; exit 3; }
+  ROOT=("PS3_SAVEDATA_ROOT=$r")
+  restore() { trap '' TERM INT HUP; des_kill_own; trap - TERM INT HUP; }
+else
+  take_save
+  rm -rf "$RUN" "$SET"; mkdir -p "$RUN/shots" "$SET"
+  if [ -d "$SAVE" ]; then
+    des_backup_save "$SAVE" "$RUN/save" || { echo "[regress] could not back up $SAVE; save not swapped"; exit 3; }
+    des_save_note "$SAVE" "$RUN/save" || { echo "[regress] could not note the backup in $SAVE.lock; save not swapped"; exit 3; }
+  fi
+  restore() {   # as in levelcap.sh
+    trap '' TERM INT HUP
+    if ! des_kill_own; then
+      echo "[regress] a game of this run is still running, so $SAVE stays swapped out and $SAVE.lock stays: the next run puts the save back once that game has gone"
+    elif [ ! -d "$RUN/save" ] || des_restore_save "$RUN/save" "$SAVE"; then des_save_unlock "$SAVE"; fi
+    trap - TERM INT HUP
+  }
+  trap restore EXIT
+  if [ "$FROM" != "$SAVE" ]; then
+    des_save_swap "$FROM" "$SAVE" || { echo "[regress] could not put $FROM in place"; exit 2; }
+  fi
 fi
-restore() {   # as in levelcap.sh
-  trap '' TERM INT HUP
-  des_kill_own
-  if [ ! -d "$RUN/save" ] || des_restore_save "$RUN/save" "$SAVE"; then des_save_unlock "$SAVE"; fi
-  trap - TERM INT HUP
-}
 trap restore EXIT
-if [ -d "$REG/save" ]; then
-  des_save_swap "$REG/save" "$SAVE" || { echo "[regress] could not put $REG/save in place"; exit 2; }
-else echo "[regress] no pinned save ($REG/save): using the current one; see pin-save"; fi
+OUT="$RUN/run.txt"; PAD="$RUN/pad"; CON="$RUN/con"; : > "$PAD"; : > "$OUT"
 
 # No periodic frame dump: each shot asks for the next frame (CELLMARK_DUMP_NOW),
 # and MINDRAWS keeps an empty present from being the one saved.
-tools/des/desrun.sh "${REGRESS_MAX:-600}" "$OUT" DES_SKIP_INTRO=1 DES_AUTO_CONTINUE=1 \
+tools/des/desrun.sh "${REGRESS_MAX:-600}" "$OUT" DES_SKIP_INTRO=1 DES_AUTO_CONTINUE=1 "${ROOT[@]}" \
   PAD_FILE="$(cygpath -m "$PAD")" PS3_DEBUG="$(cygpath -m "$CON")" PS3_OSK_TEXT=Aldia HLE_FIRST=1 \
   DES_FRAMELOG="$(cygpath -m "$RUN/frames.txt")" \
   CELLMARK_DUMP_MINDRAWS=1 CELLMARK_DUMP_DIR="$(cygpath -m "$RUN/shots")" > "$RUN/summary.txt" 2>&1 &

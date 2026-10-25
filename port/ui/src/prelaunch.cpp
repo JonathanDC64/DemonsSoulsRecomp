@@ -11,6 +11,8 @@
 #include "settings_window.hpp"
 #include "trophies_window.hpp"
 #include "ui.hpp"
+#include "updates.hpp"
+#include "update_window.hpp"
 #include "version.hpp"
 
 namespace ui {
@@ -101,6 +103,18 @@ void Prelaunch::build_menu_buttons() {
     });
     apply_intro_animation(mMenuButtons.back()->root(), "delay-3");
 
+    // Hidden until the update check finds a newer release (show_update).
+    mUpdateIndex = mMenuButtons.size();
+    mMenuButtons.push_back(std::make_unique<Button>(menuList, "Update"));
+    mMenuButtons.back()->on_pressed([] {
+        play_sound(kSoundWindowOpen);
+        push_document(std::make_unique<UpdateWindow>(
+            UpdateWindow::Props{.open = UpdateWindow::Open::Notes, .release = updates::found(),
+                                .overGame = updates::over_game()}));
+    });
+    mMenuButtons.back()->root()->SetClass("anim-done", true);
+    set_display(mMenuButtons.back()->root(), Rml::Style::Display::None);
+
     mMenuButtons.push_back(std::make_unique<Button>(menuList, "Quit"));
     mMenuButtons.back()->on_pressed([] { request_quit_confirm(); });
     apply_intro_animation(mMenuButtons.back()->root(), "delay-4");
@@ -135,11 +149,27 @@ void Prelaunch::hide(bool close) {
     }
 }
 
+// "Update to <version>" while the check has found a release the player has not skipped.
+void Prelaunch::show_update() {
+    const bool found = updates::state() == updates::State::Found && !updates::skipped();
+    const std::string version = found ? updates::found().version : std::string();
+    if (version == mUpdateShown) return;
+    mUpdateShown = version;
+    Button& button = *mMenuButtons[mUpdateIndex];
+    if (found) {
+        button.set_text("Update to " + version);
+        button.root()->RemoveProperty(Rml::PropertyId::Display);  // (back to the menu's own look)
+    } else {
+        set_display(button.root(), Rml::Style::Display::None);
+    }
+}
+
 void Prelaunch::update() {
     if (!mEntranceAnimationStarted && mDocument != nullptr) {
         mDocument->SetClass("animate-in", true);
         mEntranceAnimationStarted = true;
     }
+    show_update();
     for (const auto& button : mMenuButtons) {
         button->update();
     }
@@ -189,6 +219,10 @@ bool Prelaunch::handle_nav_command(Rml::Event& event, NavCommand cmd) {
     const auto n = static_cast<int>(mMenuButtons.size());
     int i = ((focusedButton + direction) % n + n) % n;
     while (i >= 0 && i < int(mMenuButtons.size())) {
+        if (size_t(i) == mUpdateIndex && mUpdateShown.empty()) {  // (hidden)
+            i += direction;
+            continue;
+        }
         if (mMenuButtons[i]->focus()) {
             play_sound(kSoundItemFocus);
             event.StopPropagation();

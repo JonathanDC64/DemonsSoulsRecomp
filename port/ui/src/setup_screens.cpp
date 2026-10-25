@@ -17,6 +17,8 @@
 #include "setup_rpcs3_window.hpp"
 #include "setup_window.hpp"
 #include "ui.hpp"
+#include "updates.hpp"
+#include "update_window.hpp"
 #include "version.hpp"
 
 #include <algorithm>
@@ -266,11 +268,34 @@ void SetupStartWindow::refresh() {
         break;
     }
     }
+    // A newer release (updates.hpp), whatever the state: updating first saves a build for the version it replaces.
+    std::vector<Action> more;
+    mUpdateShown = updates::state() == updates::State::Found && !updates::skipped() ? updates::found().version : "";
+    if (!mUpdateShown.empty()) {
+        callout(mBody, "info", "Version " + mUpdateShown + " is out",
+                "See what is new in it. Updating keeps your saves, settings and game files.");
+        more.push_back({"What's new", [this] { open_update(); }, Look::Plain});
+    }
+    more.push_back({"Settings", [this] { push(std::make_unique<SettingsWindow>(true)); }, Look::Quiet});
+    more.push_back({"Quit", [this] { ask_quit(); }, Look::Quiet});
     set_buttons(mMain, row, std::move(main));
-    set_buttons(mMore, footer_end(),
-                {{"Settings", [this] { push(std::make_unique<SettingsWindow>(true)); }, Look::Quiet},
-                 {"Quit", [this] { ask_quit(); }, Look::Quiet}});
+    set_buttons(mMore, footer_end(), std::move(more));
     std::fprintf(stderr, "[setup] the start screen: %s\n", state_name(mLaunch.state));
+}
+
+void SetupStartWindow::tick() {
+    const bool found = updates::state() == updates::State::Found && !updates::skipped();
+    if ((found ? updates::found().version : std::string()) == mUpdateShown || asking()) return;
+    const auto place = focus_place();
+    refresh();
+    if (visible() && !focus_at(place) && !button_focused()) focus();
+}
+
+// The release's notes, Update, Later and Skip this version (update_window.hpp). No game runs below setup's screens,
+// so its Update runs at once.
+void SetupStartWindow::open_update() {
+    push(std::make_unique<UpdateWindow>(
+        UpdateWindow::Props{.open = UpdateWindow::Open::Notes, .release = updates::found(), .overGame = false}));
 }
 
 void SetupStartWindow::open_source() {

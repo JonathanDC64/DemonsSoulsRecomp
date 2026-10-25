@@ -183,11 +183,18 @@ std::string pc_name() {
 }
 
 #else
+// The program's path as it was started. /proc/self/exe follows the running file wherever it goes: once an update
+// has moved this version into .previous/ (updates.cpp), it names that copy, and a start from it would run the old
+// version again. So it is read once, at the start, as GetModuleFileNameW keeps the path the exe was loaded from.
 std::filesystem::path exe_path() {
-    std::error_code ec;
-    const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
-    return ec ? std::filesystem::path{} : exe;
+    static const std::filesystem::path exe = [] {
+        std::error_code ec;
+        const auto p = std::filesystem::read_symlink("/proc/self/exe", ec);
+        return ec ? std::filesystem::path{} : p;
+    }();
+    return exe;
 }
+[[maybe_unused]] const std::filesystem::path g_exe_at_start = exe_path();  // (read before main, before any update)
 
 // $XDG_DATA_HOME/DemonsSoulsRecomp/DemonsSouls, else ~/.local/share/... (what SDL_GetPrefPath gives there).
 std::filesystem::path pref_dir() {

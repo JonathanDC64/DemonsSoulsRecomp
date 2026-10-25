@@ -8,7 +8,9 @@
       Writes <out>/DemonsSoulsRecomp-<version>-source.zip and <out>/SHA256SUMS, and leaves the zipped files in
       <out>/stage for the game-file check. REV is the release tag, or any commit for a dry run. --host: also
       <out>/DemonsSoulsRecomp-<version>-windows.zip, the player's download: the same files with EXE (host.yml's
-      des_host.exe) and the des_host.map beside it at the top, where the exe finds setup's engine (tools/setup).
+      des_host.exe) and the des_host.map beside it at the top, where the exe finds setup's engine (tools/setup),
+      and release-files.txt, the list of the zip's files, which tells the update which files are the program's
+      (tools/setup/des_setup/update.py, docs/105).
 
 The zip, under DemonsSoulsRecomp-<version>/: the port's tracked files at REV (without .github/ and .claude/); in
 ps3recomp/, the fork's tracked files at the pinned commit (without .github/, scratch/, packaging/ and the runtime's
@@ -185,6 +187,18 @@ def host_files(exe, top):
     return entries
 
 
+MANIFEST = "release-files.txt"
+
+
+def manifest(files, top):
+    """release-files.txt for a zip of `files` (itself listed too): the update swaps the names at the top of the
+    install that it lists, and leaves the player's own files alone (docs/105)."""
+    names = sorted({f[0][len(top):] for f in files} | {MANIFEST})
+    text = ("# Written by tools/release/package.py: the files of this release, which an update replaces (docs/105).\n"
+            + "".join(n + "\n" for n in names))
+    return (top + MANIFEST, 0o644, text.encode())
+
+
 def cmd_build(args):
     sha = git(["rev-parse", "--verify", f"{args.rev}^{{commit}}"])
     when = int(git(["log", "-1", "--format=%ct", sha]))
@@ -226,7 +240,8 @@ def cmd_build(args):
             f.write(data)
     zips = [(f"{NAME}-{version}-source.zip", files)]
     if args.host:
-        zips.append((f"{NAME}-{version}-windows.zip", files + host_files(args.host, top)))
+        player = files + host_files(args.host, top)
+        zips.append((f"{NAME}-{version}-windows.zip", player + [manifest(player, top)]))
     sums = []
     for zip_name, zipped in zips:
         write_zip(os.path.join(out, zip_name), zipped, when)

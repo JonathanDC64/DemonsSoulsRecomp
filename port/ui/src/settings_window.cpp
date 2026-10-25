@@ -10,12 +10,15 @@
 #include "controls_window.hpp"
 #include "hud_editor.hpp"
 #include "input.hpp"
+#include "modal.hpp"
 #include "number_button.hpp"
 #include "pane.hpp"
 #include "report.hpp"
 #include "settings.hpp"
 #include "string_button.hpp"
 #include "ui.hpp"
+#include "updates.hpp"
+#include "update_window.hpp"
 #include "version.hpp"
 #if DES_DEV
 #include "../../des_dev_marker.h"
@@ -248,6 +251,39 @@ constexpr Credit kCredits[] = {
     {"Material Symbols", "The icons of the menus.", "Apache-2.0", "https://fonts.google.com/icons"},
     {"RPCS3", "A behavioural reference for the PS3 system libraries. No RPCS3 code is copied.", "", "https://rpcs3.net"},
 };
+
+// Go back to the version the last update kept (updates.hpp), asked first. Over the game, the program starts again with
+// setup's screens alone for it: a running game cannot replace its own files.
+void ask_go_back(const std::string& kept) {
+    push_document(std::make_unique<Modal>(Modal::Props{
+        .title = "Go back to " + kept + "?",
+        .bodyText = "The game starts again as version " + kept + ", with the game build it had. Your saves and settings "
+                    "stay. Version " + updates::this_version() + " is kept, so you can update to it again.",
+        .actions =
+            {
+                ModalAction{.label = "Cancel",
+                    .onPressed =
+                        [](Modal& modal) {
+                            play_sound(kSoundWindowClose);
+                            modal.pop();
+                        }},
+                ModalAction{.label = "Go back",
+                    .onPressed =
+                        [](Modal& modal) {
+                            play_sound(kSoundClick);
+                            modal.pop();
+                            if (updates::over_game()) {
+                                updates::restart_into("update-back", "");
+                            } else {
+                                push_document(std::make_unique<UpdateWindow>(
+                                    UpdateWindow::Props{.open = UpdateWindow::Open::Back}));
+                            }
+                        }},
+            },
+        .onDismiss = [](Modal& modal) { modal.pop(); },
+        .icon = "question-mark",
+    }));
+}
 
 }  // namespace
 
@@ -755,6 +791,37 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                     play_sound(kSoundClick);
                     open_url("https://github.com/JonathanDC64/DemonsSoulsRecomp");
                 });
+            });
+        bool_row(leftPane, rightPane, "Check for updates", "update_check",
+            "Looks for a newer version each time the game starts. It asks before it changes anything.");
+        leftPane.register_control(
+            leftPane.add_select_button({
+                .key = "Updates",
+                .getValue = [] { return Rml::String(updates::status_line()); },
+            }),
+            rightPane, [](Pane& pane) {
+                pane.add_rml(escape(updates::status_line()) +
+                             "<br/><br/>An update keeps your saves and settings. The version before it is kept, so "
+                             "you can go back to it.");
+                pane.add_button({.text = "Check now",
+                                    .isDisabled = [] {
+                                        return !updates::possible() || updates::state() == updates::State::Checking;
+                                    }})
+                    .on_pressed([] {
+                        play_sound(kSoundClick);
+                        updates::start_check();
+                    });
+                if (updates::state() == updates::State::Found) {
+                    pane.add_button("What's new in " + updates::found().version).on_pressed([] {
+                        play_sound(kSoundWindowOpen);
+                        push_document(std::make_unique<UpdateWindow>(UpdateWindow::Props{
+                            .open = UpdateWindow::Open::Notes,
+                            .release = updates::found(),
+                            .overGame = updates::over_game()}));
+                    });
+                }
+                if (const std::string kept = updates::kept_version(); !kept.empty())
+                    pane.add_button("Go back to " + kept).on_pressed([kept] { ask_go_back(kept); });
             });
         info_row(leftPane, rightPane, "ps3recomp", kPs3recompVersion,
             "The recompiler this build uses.<br/><br/>" + escape(kPs3recompVersion) + ".");

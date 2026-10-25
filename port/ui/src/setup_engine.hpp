@@ -84,6 +84,9 @@ public:
     // Starts a run (or a check of the game files only, or on the RPCS3 route the check and the unlock only: the unlock
     // page's run). False if it could not start: why() says why, for the player.
     bool start(const Request& request, bool check_only = false, bool unlock_only = false);
+    // Starts another of the engine's commands (`run_setup.py <args>`: update-check and the rest, updates.hpp), read the
+    // same way. Only with the Python there is already: false (why() says why) before setup has fetched it.
+    bool start_command(const std::vector<std::string>& args);
     // Cancel: ends the download or the engine, and everything it started. The journal keeps what was done, and the
     // download's .part file what it got, so the next run carries on.
     void stop();
@@ -95,6 +98,7 @@ public:
 
 private:
     bool start_engine(unsigned run);
+    bool launch(unsigned run, const std::vector<std::string>& args, const char* what);
 
     std::string mWhy;
     Request mRequest;          // this run's, for the engine's start after the download

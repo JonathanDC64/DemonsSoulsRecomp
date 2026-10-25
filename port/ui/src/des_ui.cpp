@@ -37,6 +37,8 @@
 #include "trophies_window.hpp"
 #include "trophy_toasts.hpp"
 #include "ui.hpp"
+#include "updates.hpp"
+#include "update_window.hpp"
 #include "version.hpp"
 
 #ifdef _WIN32
@@ -276,6 +278,10 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
     const bool capturing = sCapturing.load(std::memory_order_acquire);
     switch (msg) {
     case WM_CLOSE:
+        if (ui::updates::close_held()) {  // (the update is swapping the program files: a second)
+            *result = 0;
+            return 1;
+        }
         if (!sCloseAsks || sQuitConfirmed.load()) return 0;
         sCloseRequested.store(true);
         *result = 0;
@@ -455,18 +461,40 @@ void play_from_setup() {
 // running game (a runtime without the launch hook) it only closes them.
 void push_setup(const char* open) {
     const std::function<void()> onPlay = sSetupOnly ? std::function<void()>(play_from_setup) : nullptr;
-    if (open && !std::strcmp(open, "setup-run"))
+    if (open && !std::strcmp(open, "setup-run")) {
         ui::push_document(std::make_unique<ui::SetupWindow>(
             ui::SetupWindow::Props{.request = ui::setup::request_from_env(), .onPlay = onPlay}));
-    else
-        ui::push_document(std::make_unique<ui::SetupStartWindow>(
-            ui::SetupStartWindow::Props{.request = ui::setup::request_from_env(), .onPlay = onPlay}));
+        return;
+    }
+    ui::push_document(std::make_unique<ui::SetupStartWindow>(
+        ui::SetupStartWindow::Props{.request = ui::setup::request_from_env(), .onPlay = onPlay}));
+    // The update, or going back, that the game's start screen asked for (updates.hpp's restart_into), over setup's
+    // start screen, which shows once it closes.
+    const bool update = open && !std::strcmp(open, "update-run"), back = open && !std::strcmp(open, "update-back");
+    if (update || back) {
+        const char* to = std::getenv("DES_UPDATE_TO");
+        ui::updates::Release release;
+        release.version = to ? to : "";
+        ui::push_document(std::make_unique<ui::UpdateWindow>(ui::UpdateWindow::Props{
+            .open = back ? ui::UpdateWindow::Open::Back : ui::UpdateWindow::Open::Update, .release = release}));
+    }
+}
+
+// DES_UI_OPEN's values that open setup's screens alone (des_ui_launch): no game below them.
+bool setup_only_open(const char* open) {
+    return open && (!std::strcmp(open, "setup") || !std::strcmp(open, "setup-run") ||
+                    !std::strcmp(open, "update-run") || !std::strcmp(open, "update-back"));
 }
 
 void push_documents() {
     if (sDocumentsPushed) return;
     sDocumentsPushed = true;
     ui::push_document(std::make_unique<ui::Overlay>(), true, true);
+    // The update check (updates.hpp), off this thread: what it finds shows on the start screens and in Settings, About.
+    ui::updates::set_over_game(!sSetupOnly);
+    if (const char* open = std::getenv("DES_UI_OPEN");
+        ui::updates::wanted() && !(open && !std::strncmp(open, "update-", 7)))
+        ui::updates::start_check();
     if (sSetupOnly) {  // (no game: no menu and none of the game's screens)
         push_setup(std::getenv("DES_UI_OPEN"));
         return;
@@ -1009,9 +1037,9 @@ void work_in_exe_folder() {
 
 extern "C" int des_ui_launch(int* argc, char*** argv) {
     if (const char* v = std::getenv("DES_UI"); v && !std::strcmp(v, "0")) return -1;
-    if (const char* open = std::getenv("DES_UI_OPEN");
-        open && (!std::strcmp(open, "setup") || !std::strcmp(open, "setup-run")))
-        return -2;
+    // An update's swap cut short (updates.hpp): undone, then the program that is in place now starts.
+    if (ui::updates::recover_swap() && ui::crash_report::start_again({}, false)) return 0;
+    if (setup_only_open(std::getenv("DES_UI_OPEN"))) return -2;
     if (elf_given(*argc, *argv)) return -1;
     const ui::setup::Launch launch = ui::setup::launch_state();
     if (launch.state != ui::setup::State::Ready) {

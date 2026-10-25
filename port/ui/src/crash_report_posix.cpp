@@ -183,11 +183,17 @@ void install() {
     g_prev_abort = std::signal(SIGABRT, on_abort);
 }
 
-bool start_again() {
+bool start_again(const std::vector<std::string>& set, bool play) {
+    std::vector<std::string> drops = {"DES_UI_OPEN=", "DES_SKIP_UI=", "DES_LAUNCH_AFTER=", "DES_UPDATE_TO="};
+    for (const std::string& v : set) drops.push_back(v.substr(0, v.find('=') + 1));
     std::vector<std::string> vars;
-    for (const std::string& v : started_environment())
-        if (v.rfind("DES_UI_OPEN=", 0) && v.rfind("DES_SKIP_UI=", 0) && v.rfind("DES_LAUNCH_AFTER=", 0)) vars.push_back(v);
-    vars.push_back("DES_SKIP_UI=1");
+    for (const std::string& v : started_environment()) {
+        bool drop = false;
+        for (const std::string& name : drops) drop = drop || v.rfind(name, 0) == 0;
+        if (!drop) vars.push_back(v);
+    }
+    if (play) vars.push_back("DES_SKIP_UI=1");
+    vars.insert(vars.end(), set.begin(), set.end());
     vars.push_back("DES_LAUNCH_AFTER=" + std::to_string(getpid()));
     std::vector<std::string> args = started_arguments();
     if (args.empty()) return false;
@@ -196,8 +202,14 @@ bool start_again() {
     envp.push_back(nullptr);
     for (std::string& a : args) argv.push_back(a.data());
     argv.push_back(nullptr);
+    // The program's file where it was started (report::program_path, read at the start): after an update that path
+    // holds the new version, while /proc/self/exe follows this one's file into .previous/. /proc/self/exe only if
+    // the path cannot be started.
     pid_t child = 0;
-    if (posix_spawn(&child, "/proc/self/exe", nullptr, nullptr, argv.data(), envp.data()) != 0) return false;
+    const std::string exe = report::program_path().string();
+    if ((exe.empty() || posix_spawn(&child, exe.c_str(), nullptr, nullptr, argv.data(), envp.data()) != 0) &&
+        posix_spawn(&child, "/proc/self/exe", nullptr, nullptr, argv.data(), envp.data()) != 0)
+        return false;
     // A test run's PS3_PIDFILE (each process appends itself, late in its boot): the new one goes in now, so the script
     // that started this one sees the game at once, to wait for it or stop it.
     if (const char* pids = std::getenv("PS3_PIDFILE"); pids && *pids)

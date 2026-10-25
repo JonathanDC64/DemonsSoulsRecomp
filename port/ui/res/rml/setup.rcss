@@ -1168,3 +1168,38 @@ button.setup-btn.small {
     padding: 5dp 12dp;
     font-size: var(--font-size-sm);
 }
+
+/* The update's release notes (update_window.cpp): headings, list items and lines, from the release's Markdown. */
+setup-panel.update-notes {
+    gap: var(--space-2xs);
+}
+
+update-note-head,
+update-note-item,
+update-note-text {
+    display: block;
+}
+
+update-note-head {
+    margin-top: var(--space-md);
+    font-size: var(--font-size-sm);
+    letter-spacing: 1dp;
+    text-transform: uppercase;
+    color: var(--setup-muted);
+}
+
+update-note-head:first-child {
+    margin-top: 0;
+}
+
+update-note-item {
+    padding-left: var(--space-md);
+}
+
+update-note-item.sub {
+    padding-left: 32dp;
+}
+
+update-note-text {
+    color: var(--setup-muted);
+}

@@ -10,6 +10,9 @@
 // handler still run (they print the guest state). Test harness runs (no data folder) install nothing.
 #pragma once
 
+#include <string>
+#include <vector>
+
 namespace ui::crash_report {
 
 // From des_ui_early_init (after boot_main installed its own filter and abort handler, which are chained). Nothing
@@ -30,6 +33,10 @@ bool hang_dialog_open();
 // and DES_LAUNCH_AFTER=<this process's id>: the new one waits for this one to end before it starts its log, so one
 // window shows. The environment it started with, not this process's: settings.ini put its values in this one's, and
 // the new one would take them as set from outside, over what setup stored since. False if it could not start.
-bool start_again();
+// The update (updates.hpp) passes `set`, NAME=value variables for the new one in place of DES_SKIP_UI=1 (what its setup
+// screens open: DES_UI_OPEN=update-run or setup-run), and `play` false; any variable named there is dropped from the
+// environment first. On Windows the new one is the program at the path this one started from, which an update has
+// just filled with the new version's program.
+bool start_again(const std::vector<std::string>& set = {}, bool play = true);
 
 }  // namespace ui::crash_report

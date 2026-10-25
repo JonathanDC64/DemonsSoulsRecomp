@@ -494,17 +494,19 @@ void install() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);  // no "abort() has been called" dialog
 }
 
-bool start_again() {
-    // The environment block it started with (name=value strings, each ended by a 0), less setup's variables, plus the
-    // two for the new one, sorted by name as CreateProcess wants it.
+bool start_again(const std::vector<std::string>& set, bool play) {
+    // The environment block it started with (name=value strings, each ended by a 0), less setup's variables and those
+    // `set` names, plus the new one's, sorted by name as CreateProcess wants it.
+    std::vector<std::wstring> drops = {L"DES_UI_OPEN=", L"DES_SKIP_UI=", L"DES_LAUNCH_AFTER=", L"DES_UPDATE_TO="};
+    for (const std::string& v : set) drops.push_back(report::widen(v.substr(0, v.find('=') + 1)));
     std::vector<std::wstring> vars;
     for (const wchar_t* p = g_environment.empty() ? L"" : g_environment.data(); *p; p += std::wcslen(p) + 1) {
         bool drop = false;
-        for (const wchar_t* name : {L"DES_UI_OPEN=", L"DES_SKIP_UI=", L"DES_LAUNCH_AFTER="})
-            drop = drop || _wcsnicmp(p, name, std::wcslen(name)) == 0;
+        for (const std::wstring& name : drops) drop = drop || _wcsnicmp(p, name.c_str(), name.size()) == 0;
         if (!drop) vars.emplace_back(p);
     }
-    vars.emplace_back(L"DES_SKIP_UI=1");
+    if (play) vars.emplace_back(L"DES_SKIP_UI=1");
+    for (const std::string& v : set) vars.emplace_back(report::widen(v));
     vars.emplace_back(L"DES_LAUNCH_AFTER=" + std::to_wstring(GetCurrentProcessId()));
     std::sort(vars.begin(), vars.end(), [](const std::wstring& a, const std::wstring& b) {
         return _wcsicmp(a.substr(0, a.find(L'=', 1)).c_str(), b.substr(0, b.find(L'=', 1)).c_str()) < 0;

@@ -200,6 +200,10 @@ jobs:
       SDL2_SHA256: 5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165
       VKD3D_VERSION: "2.1"
       VKD3D_SHA256: 7510146aff2adfb4ae07ab890701a607e5ff7c66e57100cfc9f630ec92eeda6a
+      # vkd3d 2.1 needs Vulkan headers 1.3.228 or newer; ubuntu-22.04 has 1.3.204. Khronos' v1.3.275 (Ubuntu
+      # 24.04's), by its commit.
+      VULKAN_HEADERS_VERSION: 1.3.275
+      VULKAN_HEADERS_COMMIT: 217e93c664ec6704ec2d8c36fa116c1a4a1e2d40
       DEPS_DIR: ${{ github.workspace }}/../deps
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -238,11 +242,26 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.DEPS_DIR }}
-          key: host-linux-deps-sdl2-${{ env.SDL2_VERSION }}-vkd3d-${{ env.VKD3D_VERSION }}-ubuntu-22.04-v1
+          key: host-linux-deps-sdl2-${{ env.SDL2_VERSION }}-vkd3d-${{ env.VKD3D_VERSION }}-vulkan-${{ env.VULKAN_HEADERS_VERSION }}-ubuntu-22.04-v1
 
+      - name: Check out the Vulkan headers
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: KhronosGroup/Vulkan-Headers
+          ref: ${{ env.VULKAN_HEADERS_COMMIT }}
+          path: vulkan-headers
+          persist-credentials: false
+
+      # The Vulkan headers go into the same folder, so vkd3d, the runtime and des_host all build against them.
       - name: Build SDL2 and vkd3d
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
+          grep -q "VK_HEADER_VERSION ${VULKAN_HEADERS_VERSION##*.}$" vulkan-headers/include/vulkan/vulkan_core.h \
+            || { echo "::error::the Vulkan headers are not $VULKAN_HEADERS_VERSION"; exit 1; }
+          mkdir -p "$DEPS_DIR/include"
+          cp -r vulkan-headers/include/vulkan vulkan-headers/include/vk_video "$DEPS_DIR/include/"
+          rm -rf vulkan-headers
           cd "$RUNNER_TEMP"
           curl -fsSL --retry 5 --retry-all-errors -o sdl2.tar.gz \
             "https://github.com/libsdl-org/SDL/releases/download/release-$SDL2_VERSION/SDL2-$SDL2_VERSION.tar.gz"
@@ -257,7 +276,7 @@ jobs:
           echo "$VKD3D_SHA256  vkd3d-$VKD3D_VERSION.tar.xz" | sha256sum -c -
           tar xf "vkd3d-$VKD3D_VERSION.tar.xz"
           cd "vkd3d-$VKD3D_VERSION"
-          ./configure -q --prefix="$DEPS_DIR" --disable-doxygen-doc
+          ./configure -q --prefix="$DEPS_DIR" --disable-doxygen-doc CPPFLAGS="-I$DEPS_DIR/include"
           make -s -j"$(nproc)"
           make -s install
 
@@ -321,13 +340,15 @@ jobs:
           echo "HOST_LIFT=$lift" >> "$GITHUB_ENV"
 
       # The same compiler, C++ library and link flags for the runtime library, des_host and what CMake fetches
-      # (FreeType, RmlUi). lld finds libc++abi in any order.
+      # (FreeType, RmlUi). lld finds libc++abi in any order. The deps folder's include comes first, for its
+      # Vulkan headers (vkd3d.h includes vulkan/vulkan.h).
       - name: Toolchain flags
         run: |
           {
             echo "CC=$LLVM_DIR/bin/clang"
             echo "CXX=$LLVM_DIR/bin/clang++"
-            echo "CXXFLAGS=-stdlib=libc++"
+            echo "CFLAGS=-I$DEPS_DIR/include"
+            echo "CXXFLAGS=-stdlib=libc++ -I$DEPS_DIR/include"
             echo "LDFLAGS=-fuse-ld=lld -stdlib=libc++ -static-libstdc++ -rtlib=libgcc -unwindlib=libgcc -static-libgcc -Wl,-Bstatic -lc++abi -Wl,-Bdynamic"
             echo "PKG_CONFIG_PATH=$DEPS_DIR/lib/pkgconfig"
             echo "CMAKE_PREFIX_PATH=$DEPS_DIR"

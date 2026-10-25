@@ -1,7 +1,8 @@
 // Written for Demon's Souls (ps3recomp's docs/ONLINE.md, "Sign-in").
-// What the online sign-in has to tell the player, as a toast: a refused sign-in (a ban, maintenance, an old build,
-// with the server's own words) or refused co-op. The runtime keeps the newest message (ps3_net_signin_notice); the
-// frame hook picks it up and the UI shows it.
+// What the online server has to tell the player, as toasts: a refused sign-in (a ban, maintenance, an old build,
+// with the server's own words), refused co-op, and the server's banners. The runtime keeps the newest message
+// (ps3_net_signin_notice) and each new banner (ps3_net_signin_banner); the frame hook picks them up and the UI
+// shows them, one after another.
 #pragma once
 
 namespace ui::net_notices {

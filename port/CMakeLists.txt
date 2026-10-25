@@ -467,22 +467,44 @@ endif()
 #             (or PS3_GAME_MODULE).
 # Both take their sources, include folders, definitions and options from
 # des_boot itself, so they follow it; this section stays last. Windows
-# (clang-cl) only, and not with DES_SHADOW_STACK. DES_SPLIT_FREESTANDING=ON
-# builds des_game.dll with no C runtime, SDK or C++ library of its own
-# (cmake/DesGameFreestanding.cmake, docs/84); use its own build directory.
+# (clang-cl) and x86-64 Linux (clang), not with DES_SHADOW_STACK.
+# DES_SPLIT_FREESTANDING=ON builds des_game.dll with no C runtime, SDK or C++
+# library of its own (cmake/DesGameFreestanding.cmake, docs/84); use its own
+# build directory. On Linux the module is des_game.so, always freestanding
+# (docs/87): the player's PC builds it with no C library headers.
 option(DES_SPLIT "Also build des_host.exe and des_game.dll (the lifted code as a DLL)" OFF)
 if(DES_HOST_ONLY AND NOT DES_SPLIT)
     message(FATAL_ERROR "DES_HOST_ONLY needs -DDES_SPLIT=ON")
 endif()
 if(DES_SPLIT)
-    if(NOT MSVC)
+    if(WIN32 AND NOT MSVC)
         message(FATAL_ERROR "DES_SPLIT needs clang-cl")
+    endif()
+    if(NOT WIN32 AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_C_COMPILER_ID STREQUAL "Clang"
+                          AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_SIZEOF_VOID_P EQUAL 8))
+        message(FATAL_ERROR "DES_SPLIT off Windows needs x86-64 Linux and clang for C and C++")
+    endif()
+    if(NOT WIN32 AND NOT DES_SPLIT_FREESTANDING)
+        message(FATAL_ERROR "DES_SPLIT on Linux builds des_game.so freestanding only: add -DDES_SPLIT_FREESTANDING=ON")
     endif()
     if(DES_SHADOW_STACK)
         message(FATAL_ERROR "DES_SPLIT does not support DES_SHADOW_STACK")
     endif()
-    set(PS3RECOMP_SPLIT_LIB "${PS3RECOMP_DIR}/build_split/ps3recomp_runtime.lib" CACHE FILEPATH
-        "ps3recomp_runtime.lib built with PS3RECOMP_GAME_SPLIT=ON")
+    # What differs: the module's name, the runtime library's, the forced include's flag (clang takes -include<file>
+    # as one word, which CMake does not split or merge) and the linker map's.
+    if(WIN32)
+        set(DES_GAME_MODULE "des_game.dll")
+        set(_des_split_lib "ps3recomp_runtime.lib")
+        set(DES_FORCE_INCLUDE "/FI")
+        set(_des_map "/MAP:")
+    else()
+        set(DES_GAME_MODULE "des_game.so")
+        set(_des_split_lib "libps3recomp_runtime.a")
+        set(DES_FORCE_INCLUDE "-include")
+        set(_des_map "-Wl,-Map=")
+    endif()
+    set(PS3RECOMP_SPLIT_LIB "${PS3RECOMP_DIR}/build_split/${_des_split_lib}" CACHE FILEPATH
+        "the ps3recomp runtime library built with PS3RECOMP_GAME_SPLIT=ON")
     add_library(ps3recomp_runtime_split STATIC IMPORTED GLOBAL)
     set_target_properties(ps3recomp_runtime_split PROPERTIES IMPORTED_LOCATION "${PS3RECOMP_SPLIT_LIB}")
     set(DES_SPLIT_GEN "${CMAKE_CURRENT_BINARY_DIR}/split_gen")
@@ -589,9 +611,12 @@ if(DES_SPLIT)
         target_include_directories(des_game PRIVATE ${_des_boot_INCLUDE_DIRECTORIES})
         target_compile_definitions(des_game PRIVATE ${_des_boot_COMPILE_DEFINITIONS})
         target_compile_options(des_game PRIVATE ${_des_boot_COMPILE_OPTIONS})
-        target_link_options(des_game PRIVATE "/MAP:des_game.map")
-        if(DES_DEBUG_INFO)
+        target_link_options(des_game PRIVATE "${_des_map}des_game.map")
+        if(DES_DEBUG_INFO AND WIN32)
             target_link_options(des_game PRIVATE /DEBUG /OPT:REF /OPT:ICF)
+        endif()
+        if(NOT WIN32)   # des_game.so, as the host looks for it (CMake would name it libdes_game.so)
+            set_target_properties(des_game PROPERTIES PREFIX "" SUFFIX ".so")
         endif()
         if(DES_HOST_STATIC_CRT)
             target_link_options(des_game PRIVATE ${DES_HYBRID_CRT_LINK})
@@ -613,18 +638,18 @@ if(DES_SPLIT)
     list(REMOVE_ITEM _des_boot_LINK_LIBRARIES ps3recomp_runtime)
     add_executable(des_host
         ${_des_host_src}
-        "${PS3RECOMP_DIR}/runtime/ppu/game_host.c"              # loads des_game.dll
+        "${PS3RECOMP_DIR}/runtime/ppu/game_host.c"              # loads des_game.dll (des_game.so)
         "${CMAKE_CURRENT_SOURCE_DIR}/des_game_host.cpp"         # the lifted functions the port calls
         "${CMAKE_CURRENT_SOURCE_DIR}/des_game_title.c"          # the port functions the lift calls
     )
     target_include_directories(des_host PRIVATE ${_des_boot_INCLUDE_DIRECTORIES} "${DES_SPLIT_GEN}")
     target_compile_definitions(des_host PRIVATE ${_des_boot_COMPILE_DEFINITIONS} PS3_GAME_SPLIT
-        PS3_GAME_MODULE_NAME="des_game.dll" PS3_GAME_MODULE_INIT="des_game_init")
+        PS3_GAME_MODULE_NAME="${DES_GAME_MODULE}" PS3_GAME_MODULE_INIT="des_game_init")
     target_compile_options(des_host PRIVATE ${_des_boot_COMPILE_OPTIONS}
-        "/FI${PS3RECOMP_DIR}/include/ps3emu/game_split.h")
+        "${DES_FORCE_INCLUDE}${PS3RECOMP_DIR}/include/ps3emu/game_split.h")
     target_link_libraries(des_host PRIVATE ps3recomp_runtime_split ${_des_boot_LINK_LIBRARIES})
-    target_link_options(des_host PRIVATE "/MAP:des_host.map")
-    if(DES_DEBUG_INFO)
+    target_link_options(des_host PRIVATE "${_des_map}des_host.map")
+    if(DES_DEBUG_INFO AND WIN32)
         target_link_options(des_host PRIVATE /DEBUG /OPT:REF /OPT:ICF)
     endif()
     add_dependencies(des_host des_version)
@@ -645,9 +670,9 @@ if(DES_SPLIT)
         include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DesGameFreestanding.cmake")
     endif()
     if(DES_HOST_ONLY)
-        set(_des_split_what "des_host.exe only (DES_HOST_ONLY)")
+        set(_des_split_what "des_host only (DES_HOST_ONLY)")
     else()
-        set(_des_split_what "des_host.exe + des_game.dll")
+        set(_des_split_what "des_host + ${DES_GAME_MODULE}")
     endif()
     message(STATUS "des_boot: split build ON: ${_des_split_what} (runtime ${PS3RECOMP_SPLIT_LIB}, ${_des_nfns} port functions for the lift)")
 endif()

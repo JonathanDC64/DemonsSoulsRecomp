@@ -59,7 +59,8 @@ jobs:
           name: des_host-${{ github.sha }}
           path: host
 
-      # The Linux host folder (des_host, the SDL2 and vkd3d libraries beside it, their licences), for the Linux tarball.
+      # The Linux host folder (des_host, the SDL2, vkd3d and FFmpeg libraries beside it, their licences), for the Linux
+      # tarball.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: des_host-linux-${{ github.sha }}
@@ -82,7 +83,7 @@ jobs:
           python .github/scripts/check_game_files.py --dir host-linux --allow .github/game-files-allow.txt \
             --allow .github/host-files-allow.txt
 
-      # The LGPL libraries in the Linux tarball (vkd3d) ask for their source to go with them: the exact archives
+      # The LGPL libraries in the Linux tarball (vkd3d, FFmpeg) ask for their source to go with them: the exact archives
       # host.yml built from, checked against the same pinned SHA-256.
       - name: Third-party sources
         run: python tools/release/third_party_sources.py --out dist/third-party

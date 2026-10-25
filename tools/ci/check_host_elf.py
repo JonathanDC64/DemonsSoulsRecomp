@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """check_host_elf.py: fails when the Linux host folder needs a library players may not have (docs/87).
 
-The Linux des_host links the C++ library into itself and has SDL2 and vkd3d beside it, which it finds through
-RUNPATH $ORIGIN. So every program and library in the folder may need only glibc's own libraries, GCC's
+The Linux des_host links the C++ library into itself and has SDL2, vkd3d and FFmpeg beside it, which it finds
+through RUNPATH $ORIGIN. So every program and library in the folder may need only glibc's own libraries, GCC's
 runtime (libgcc_s.so.1, on every Linux) and the folder's other libraries, and no glibc symbol newer than the
 floor (2.35, the ubuntu-22.04 runner's). This reads each ELF file itself (no readelf or ldd needed), prints
 what it needs, and fails on:

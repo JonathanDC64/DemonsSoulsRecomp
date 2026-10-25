@@ -97,7 +97,8 @@ screen does not offer it straight back.
    A copy, not a move: the rebuild starts from the module there, and a version whose game code did not change keeps
    it (its journal steps are all skipped).
 6. **The swap.** The program files are the names at the top of the install that `release-files.txt` lists (the
-   player's zip has it, written by `package.py`). An install from before that file: the names the new release has.
+   player's zip has it, written by `package.py`). Only plain names count: a line with `..`, a separator (`/` or
+   `\`), a drive colon or a control character names nothing. An install from before that file: the names the new release has.
    Each of them moves into `DIR/.previous/OLD`, then the new release's names move in. The exe moves out last and in
    first, so the install has none for the shortest time. The old `.previous` is renamed to `.previous.old` first and
    deleted only once the swap is done.
@@ -133,6 +134,8 @@ swap is undone and the page says "A file in the game's folder is in use".
   fields, `made <folder>` and `move <from> <to>`. A swap that fails is undone from the last line up at once.
 - **A swap cut short** (a power cut) is undone at the program's next start, by the host itself
   (`updates::recover_swap`, read in `des_ui_launch` before anything else), since the engine may be half swapped too.
+  Both sides undo a journal only if every path in it is inside the install; one that names anything else is left
+  as it is (the engine says so and stops the update).
   The host then starts the program that is in place and ends. The next update-apply or update-back would undo it as
   well.
 - **The close button does nothing while the files go in place** (the install step: the unpack, the copy of the game
@@ -184,8 +187,9 @@ then read the draft and publish it (docs/54 section 8.4).
   an OpenSSH-made signature, refusals (another key, another namespace, a changed file, broken armour, no key), the
   key list; the signing script with gh, git and ssh-keygen stood in for (a file that does not match, no
   attestation, a published release, a key the version before does not list).
-- **Unit tests** (`tools/setup/tests/test_update.py`, 14 tests, measured: all pass): releases signed with a key the
-  build does not list are neither offered nor installed, a build with no key installs nothing, and the release filter (drafts,
+- **Unit tests** (`tools/setup/tests/test_update.py`, 16 tests, measured: all pass): releases signed with a key the
+  build does not list are neither offered nor installed, a build with no key installs nothing, release-files.txt
+  names that would leave the install and a journal path outside it are refused, and the release filter (drafts,
   pre-releases, the llvm release, a release without SHA256SUMS, 0.2.10 over 0.2.9, developer builds), the check's
   lines, an update and then going back on a made-up install served from 127.0.0.1 (player files kept, the build kept
   and restored, the journal's link forgotten), a bad checksum (nothing changed), a file in use half way (the swap

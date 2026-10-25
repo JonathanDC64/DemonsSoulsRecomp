@@ -12,6 +12,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cwctype>
 #include <fstream>
 #include <system_error>
 
@@ -66,6 +67,30 @@ struct Check {
 
 std::filesystem::path from_utf8(const std::string& s) {
     return std::filesystem::path(std::u8string(s.begin(), s.end()));
+}
+
+// `p` is an absolute path in `root` or below it, compared as text once both are normalised (update.py's inside()):
+// no ".." can climb out. Names compare without case on Windows, as its file system does.
+bool inside(std::filesystem::path root, const std::filesystem::path& p) {
+    if (root.empty() || !p.is_absolute()) return false;
+    std::error_code ec;
+    if (auto c = std::filesystem::weakly_canonical(root, ec); !ec) root = c;  // (the engine's install is resolved too)
+    root = root.lexically_normal();
+    if (!root.has_filename()) root = root.parent_path();  // (a trailing separator)
+    const auto q = p.lexically_normal();
+    auto qi = q.begin();
+    for (auto ri = root.begin(); ri != root.end(); ++ri, ++qi) {
+        if (qi == q.end()) return false;
+#ifdef _WIN32
+        std::wstring a = ri->native(), b = qi->native();
+        for (auto* s : {&a, &b})
+            for (wchar_t& c : *s) c = static_cast<wchar_t>(std::towlower(c));
+        if (a != b) return false;
+#else
+        if (*ri != *qi) return false;
+#endif
+    }
+    return true;
 }
 
 // Removes `p` if it is a folder of empty folders (update.py's _clear_empty). False if something is left.
@@ -240,6 +265,15 @@ bool recover_swap() {
                 steps.push_back(std::move(fields));
         }
     }
+    // Only renames inside the game's folder are undone: a journal that names anything else is left as it is (the
+    // engine refuses it too, and says so).
+    for (const auto& s : steps)
+        for (size_t i = 1; i < s.size(); ++i)
+            if (!inside(install_dir(), from_utf8(s[i]))) {
+                std::fprintf(stderr, "[update] the swap journal names a path outside the game's folder; it is left as "
+                                     "it is\n");
+                return false;
+            }
     bool ok = true;
     for (auto it = steps.rbegin(); it != steps.rend(); ++it) {
         if ((*it)[0] == "made") {

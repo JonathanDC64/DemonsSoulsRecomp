@@ -306,8 +306,26 @@ class Swap:
         return s
 
 
+def plain_name(name: str) -> bool:
+    """One name in a folder: not empty, "." or "..", with no separator ("/" or "\\"), drive colon or control
+    character."""
+    return bool(name) and name not in (".", "..") and not any(c in "/\\:" or ord(c) < 0x20 for c in name)
+
+
+def inside(root: Path, path: str) -> bool:
+    """`path` is an absolute path in `root` or below it (both normalised as text; no link is followed)."""
+    if not os.path.isabs(path):
+        return False
+    r, p = os.path.normcase(os.path.abspath(root)), os.path.normcase(os.path.abspath(path))
+    try:
+        return os.path.commonpath([r, p]) == r
+    except ValueError:              # (another drive)
+        return False
+
+
 def recover(install: Path, emit=None) -> bool:
-    """A swap cut short (its journal is still there): undone. True if there was one."""
+    """A swap cut short (its journal is still there): undone. True if there was one. A journal that names a path
+    outside the install is not acted on."""
     path = Path(install) / UPDATE / SWAP
     if not path.is_file():
         return False
@@ -315,6 +333,10 @@ def recover(install: Path, emit=None) -> bool:
         s = Swap.read(path)
     except OSError:
         s = Swap(path)
+    if any(not inside(install, f) for step in s.steps for f in step[1:]):
+        raise UpdateFailed("internal", "install", "The journal of an earlier update (.update/swap.txt) names a file "
+                                                  "outside the game's folder, so it was left as it is. Extract the "
+                                                  "release again over the folder.")
     n = sum(1 for x in s.steps if x[0] == "move")
     s.undo()
     if emit:
@@ -323,13 +345,14 @@ def recover(install: Path, emit=None) -> bool:
 
 
 def listed(root: Path):
-    """The names at the top of a release's folder that its release-files.txt lists, or None without one."""
+    """The names at the top of a release's folder that its release-files.txt lists, or None without one. Only plain
+    names count: a line cannot reach outside the folder."""
     m = Path(root) / MANIFEST
     if not m.is_file():
         return None
     names = {line.strip().split("/", 1)[0] for line in m.read_text(encoding="utf-8").splitlines()
              if line.strip() and not line.startswith("#")}
-    return {n for n in names if n and n not in KEEP and n not in (".", "..")}
+    return {n for n in names if plain_name(n) and n not in KEEP}
 
 
 def program_names(root: Path) -> set:

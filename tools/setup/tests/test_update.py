@@ -307,6 +307,30 @@ class ApplyTest(unittest.TestCase):
         self.assertFalse([x for x in out if x.startswith("@release ")], out)
         self.assertEqual(out[-1], "@done ok")
 
+    def test_list_names_stay_inside(self):
+        m = self.install / "release-files.txt"
+        m.write_text(m.read_text() + "../outside.txt\n..\\outside.txt\nC:evil\n\x01x\n./x\n")
+        names = update.listed(self.install)
+        self.assertIn(EXE, names)
+        for bad in ("..", "..\\outside.txt", "C:evil", "\x01x", "."):
+            self.assertNotIn(bad, names)
+
+    def test_journal_outside_the_install_is_left(self):
+        # A journal that would move a file out of the install: not acted on, and an update stops on it.
+        (self.install / "moved.txt").write_bytes(b"x")
+        outside = Path(self.tmp.name) / "outside.txt"
+        sw = update.Swap(self.install / update.UPDATE / update.SWAP)
+        sw.steps.append(("move", str(outside), str(self.install / "moved.txt")))
+        sw._save()
+        with self.assertRaises(update.UpdateFailed):
+            update.recover(self.install)
+        self.assertTrue((self.install / "moved.txt").is_file())
+        self.assertFalse(outside.exists())
+        rc, out = self.run_cmd(update.apply, "0.1.0", "0.2.0")
+        self.assertEqual(rc, 1)
+        self.assertTrue(out[-2].startswith("@error internal install "), out)
+        self.assertEqual((self.install / EXE).read_bytes(), b"exe 0.1.0")
+
     def test_file_in_use_undoes_the_swap(self):
         real = update._rename
 

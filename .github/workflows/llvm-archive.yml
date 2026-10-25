@@ -90,6 +90,12 @@ env:
   LICENSE_LLD_SHA256: f7891568956e34643eb6a0db1462db30820d40d7266e2a78063f2fe233ece5a0
   LICENSE_LIBXML2_URL: https://gitlab.gnome.org/GNOME/libxml2/-/raw/v2.9.12/Copyright
   LICENSE_LIBXML2_SHA256: c5c63674f8a83c4d2e385d96d1c670a03cb871ba2927755467017317878574bd
+  # Linux: LLVM's lld needs libxml2.so.2, which the download carries (the libxml2 step). GNOME's source tarball,
+  # size and SHA-256 from its .sha256sum file, read 2026-10-25.
+  LIBXML2_VERSION: 2.9.14
+  LIBXML2_URL: https://download.gnome.org/sources/libxml2/2.9/libxml2-2.9.14.tar.xz
+  LIBXML2_SIZE: '3129968'
+  LIBXML2_SHA256: 60d74a257d1ccec0475e749cba2f21559e48139efba6ff28224357c7c798dfee
   # The entries' date: LLVM 22.1.8's release day, so the same archive always gives the same download.
   PKG_DATE: '2026-06-16'
 
@@ -225,9 +231,35 @@ jobs:
             get libxml2 Copyright "$LICENSE_LIBXML2_URL" "$LICENSE_LIBXML2_SHA256"
           fi
 
+      # LLVM builds its Linux lld with libxml2 (for lld-link's Windows manifests; ld.lld never calls it), linked
+      # as libxml2.so.2, a name newer distros no longer have (libxml2 2.14 is libxml2.so.16). So the download
+      # carries one in lib/, where lld's RUNPATH ($ORIGIN/../lib) finds it: GNOME's pinned source with every
+      # option off, so it needs glibc alone. Built by the runner's compiler, it is the one file of the download
+      # that is not LLVM's own bytes.
+      - name: libxml2 for ld.lld
+        if: inputs.target == 'linux'
+        run: |
+          mkdir -p _llvm/libxml2 _llvm/extra/lib _llvm/licenses/libxml2
+          cd _llvm/libxml2
+          curl -fsSL --retry 5 --retry-all-errors -o libxml2.tar.xz "$LIBXML2_URL"
+          [ "$(stat -c %s libxml2.tar.xz)" = "$LIBXML2_SIZE" ] || { echo "::error::libxml2.tar.xz has the wrong size"; exit 1; }
+          echo "$LIBXML2_SHA256  libxml2.tar.xz" | sha256sum -c - || { echo "::error::libxml2.tar.xz does not match its pinned SHA-256"; exit 1; }
+          tar xf libxml2.tar.xz
+          cd "libxml2-$LIBXML2_VERSION"
+          ./configure -q --disable-static --without-python --without-icu --without-lzma --without-zlib \
+            --without-http --without-ftp --without-modules
+          make -s -j"$(nproc)"
+          cp ".libs/libxml2.so.$LIBXML2_VERSION" ../../extra/lib/libxml2.so.2
+          strip --strip-unneeded ../../extra/lib/libxml2.so.2
+          cp Copyright ../../licenses/libxml2/Copyright
+
       - name: Pack
         run: |
-          python -I .github/scripts/llvm_pack.py pack --system "$TARGET" \
+          extra=()
+          if [ "$TARGET" = linux ]; then
+            extra=(--extra _llvm/extra --extra-note "lib/libxml2.so.2 is libxml2 $LIBXML2_VERSION, built from $LIBXML2_URL (SHA-256 $LIBXML2_SHA256) with every option off; LLVM's lld needs it for lld-link's Windows manifests, which ld.lld never uses. MIT licence: licenses/libxml2/Copyright.")
+          fi
+          python -I .github/scripts/llvm_pack.py pack --system "$TARGET" "${extra[@]}" \
             --archive "_llvm/src/$LLVM_ARCHIVE" --source-url "$LLVM_URL" --source-sha256 "$LLVM_SHA256" \
             --llvm-version "$LLVM_VERSION" --name "$PKG_NAME" --version "$PKG_VERSION" \
             --licenses _llvm/licenses --compression "$METHOD" --date "$PKG_DATE" --url "$ASSET_URL" \

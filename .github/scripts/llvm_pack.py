@@ -12,8 +12,9 @@ pack keeps only what compiling and linking the game part needs, plus the licence
     <name>-<version>.zip (sorted entries, one date, fixed modes: the same archive gives the same zip).
   - Linux (--system linux, from LLVM-<version>-Linux-X64.tar.xz): bin/clang, bin/ld.lld and the same headers.
     The install tree's clang and ld.lld are links (to clang-<major> and lld); the real files go in under the
-    names setup runs, so the download holds no links. It writes <name>-<version>.tar.xz (sorted entries, one
-    date, owner 0, fixed modes, xz in one thread: the same archive gives the same tar.xz). A tar, because a zip
+    names setup runs, so the download holds no links. --extra adds files the workflow made under their own
+    paths (lib/libxml2.so.2, which LLVM's lld needs). It writes <name>-<version>.tar.xz (sorted entries, one
+    date, owner 0, fixed modes, xz in one thread: the same files give the same tar.xz). A tar, because a zip
     unpacked by Python loses the execute bit.
 Both also write <name>-<version>.json, which holds the toolchain.json entry.
 
@@ -21,8 +22,9 @@ smoke builds a tiny freestanding library with only the unpacked files, checks it
   - Windows: a DLL (no Windows SDK, no MSVC, no C runtime) with no imports. It also lists the DLLs clang.exe
     and lld-link.exe import, and fails if one is not part of Windows.
   - Linux: a .so built with the game part's own flags (docs/87), with no NEEDED entries, only its own
-    exports and an initial-exec thread-local. It also lists the libraries clang and ld.lld need, and fails on
-    one a desktop Linux may not have, or on a glibc symbol newer than GLIBC_FLOOR.
+    exports and an initial-exec thread-local. It also lists the libraries clang, ld.lld and the download's
+    own libraries need, and fails on one a desktop Linux may not have that the download does not carry, or on
+    a glibc symbol newer than GLIBC_FLOOR.
 
 Standard library only.
 """
@@ -329,13 +331,25 @@ def cmd_pack_linux(a):
             chosen["licenses/" + p.relative_to(lic).as_posix()] = (0o644, p, None)
     if not any(r.startswith("licenses/llvm/") for r in chosen):
         raise Error("no licenses/llvm/ file: LLVM's licence must ship with the download")
+    # Files the workflow made itself (lib/libxml2.so.2, for ld.lld), under their own paths.
+    extra = []
+    if a.extra:
+        root = Path(a.extra)
+        for p in sorted(root.rglob("*")):
+            if p.is_file():
+                rel = p.relative_to(root).as_posix()
+                if rel in chosen or rel.startswith(("bin/", "licenses/", header_dir)):
+                    raise Error(f"--extra {rel}: that path is the download's own")
+                chosen[rel] = (0o644, p, None)
+                extra.append(rel)
     readme = stage / "README.txt"
     readme.write_text(
         f"clang, ld.lld and clang's headers from LLVM {a.llvm_version}, for Demon's Souls setup (docs/86, docs/87).\n"
         f"\nTaken unchanged from LLVM's own archive:\n  {a.source_url}\n  SHA-256 {a.source_sha256}\n"
         f"\nOnly these files were kept: bin/clang (LLVM's {chosen['bin/clang'][2]}), bin/ld.lld (LLVM's "
         f"{chosen['bin/ld.lld'][2]}) and lib/clang/{major}/include.\nLLVM is under the Apache License v2.0 with "
-        "LLVM Exceptions: licenses/llvm/LICENSE.TXT.\n",
+        "LLVM Exceptions: licenses/llvm/LICENSE.TXT.\n"
+        + (f"\nAdded by the workflow: {', '.join(extra)}. {a.extra_note}\n" if extra else ""),
         encoding="utf-8", newline="\n")
     chosen["README.txt"] = (0o644, readme, None)
 
@@ -365,6 +379,7 @@ def cmd_pack_linux(a):
                    "licence_files_inside": sorted(seen["licences"]),
                    "tools_from": {n: chosen[n][2] for n in LINUX_TOOLS},
                    "links_in_bin": dict(sorted(seen["links"].items())), "llvm_config": config},
+        "added": {"files": extra, "note": a.extra_note if extra else None},
         "compression": "xz", "date": a.date, "unpacked_bytes": raw,
         "files": [{"path": rel, "size": p.stat().st_size, "sha256": sha256_file(p)} for rel, _, p in tar],
     }
@@ -380,6 +395,7 @@ def cmd_pack_linux(a):
         f"| Unpacked | {raw:,} bytes, {len(tar)} files ({hdrs} headers) |",
         f"| From | `{archive.name}`, {archive.stat().st_size:,} bytes, {seen['members']:,} entries |",
         f"| Tools | bin/clang from {chosen['bin/clang'][2]}, bin/ld.lld from {chosen['bin/ld.lld'][2]} |",
+        f"| Added by the workflow | {', '.join(extra) or 'nothing'} |",
         f"| Licence files inside LLVM's archive | {', '.join(sorted(seen['licences'])) or 'none'} |",
         f"| LLVMConfig.cmake | {'; '.join(config) or 'not in the archive'} |",
         "", "toolchain.json entry:", "", "```json", json.dumps(record["entry"], indent=1), "```", ""]))
@@ -726,26 +742,42 @@ def smoke_linux(a):
     work.mkdir(parents=True)
     # Only the system's own folders on PATH, and no compiler, include or library variables.
     env = {"PATH": "/usr/bin:/bin", "HOME": str(work), "TMPDIR": str(work), "LC_ALL": "C"}
-    lines, ldd = [], []
+    lines, ldd, problems = [], [], []
 
-    for exe in (clang, lld):
-        info = elf_info(exe)
+    def needs(path, rel):
+        """Report what a program or library of the download needs; note what a player's PC may not have."""
+        info = elf_info(path)
         if info["machine"] != 62 or info["type"] not in (2, 3):
-            raise Error(f"{exe.name} is not an x86-64 program: {info['type']}, {info['machine']}")
-        newest = glibc_newest(info)
-        other = newest_others(info)
-        lines.append(f"| {exe.name} needs | {', '.join(info['needed']) or 'nothing'}; newest GLIBC_"
+            raise Error(f"{rel} is not x86-64 ELF code: {info['type']}, {info['machine']}")
+        newest, other = glibc_newest(info), newest_others(info)
+        lines.append(f"| {rel} needs | {', '.join(info['needed']) or 'nothing'}; newest GLIBC_"
                      f"{'.'.join(map(str, newest))}{'; ' + ', '.join(other) if other else ''}"
                      f"{'; RUNPATH ' + info['runpath'] if info['runpath'] else ''}"
                      f"{'; RPATH ' + info['rpath'] if info['rpath'] else ''} |")
-        bad = [n for n in info["needed"] if n not in SYSTEM_LIBS]
-        if bad:
-            raise Error(f"{exe.name} needs libraries a desktop Linux may not have: {', '.join(bad)}")
+        # A library outside SYSTEM_LIBS must be one the download carries in lib/, where the program's own search
+        # path leads (LLVM's tools have $ORIGIN/../lib).
+        search = (info["runpath"] or info["rpath"] or "").split(":")
+        for n in info["needed"]:
+            if n in SYSTEM_LIBS:
+                continue
+            if not (tools / "lib" / n).is_file():
+                problems.append(f"{rel} needs {n}, which a desktop Linux may not have and the download does not carry")
+            elif rel.startswith("bin/") and not {"$ORIGIN/../lib", "${ORIGIN}/../lib"} & set(search):
+                problems.append(f"{rel} needs the download's lib/{n}, but its RUNPATH does not lead to lib/")
         if newest > GLIBC_FLOOR:
-            raise Error(f"{exe.name} needs GLIBC_{'.'.join(map(str, newest))}, newer than the floor "
-                        f"{'.'.join(map(str, GLIBC_FLOOR))} (docs/87)")
+            problems.append(f"{rel} needs GLIBC_{'.'.join(map(str, newest))}, newer than the floor "
+                            f"{'.'.join(map(str, GLIBC_FLOOR))} (docs/87)")
+
+    for exe in (clang, lld):
+        needs(exe, f"bin/{exe.name}")
         r = subprocess.run(["ldd", str(exe)], capture_output=True, text=True, errors="replace")
         ldd += [f"$ ldd bin/{exe.name}", (r.stdout + r.stderr).rstrip()]
+    for lib in sorted(p for p in (tools / "lib").glob("*.so*") if p.is_file()):
+        needs(lib, f"lib/{lib.name}")
+    if problems:
+        summary(a.summary, "\n".join(["### Smoke test", "", "| | |", "|---|---|", *lines, "",
+                                      "```", *ldd, "```", ""]))
+        raise Error("; ".join(problems))
 
     v = run([str(clang), "--version"], env, work).splitlines()[0]
     if f"clang version {a.llvm_version}" not in v:
@@ -839,6 +871,8 @@ def main(argv=None):
     k.add_argument("--name", required=True)
     k.add_argument("--version", required=True)
     k.add_argument("--licenses", required=True)
+    k.add_argument("--extra", help="linux: a folder of files the workflow made, packed under their own paths")
+    k.add_argument("--extra-note", default="", help="linux: a line for the README about --extra's files")
     k.add_argument("--compression", choices=sorted(METHODS), default="lzma")
     k.add_argument("--date", required=True, help="the zip entries' date, YYYY-MM-DD")
     k.add_argument("--url", required=True)

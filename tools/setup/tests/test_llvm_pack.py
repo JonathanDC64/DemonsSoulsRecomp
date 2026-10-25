@@ -172,13 +172,32 @@ class PackLinuxTest(unittest.TestCase):
                 tf.addfile(ti, io.BytesIO(data))
         return path, hashlib.sha256(path.read_bytes()).hexdigest()
 
-    def pack(self, arc, digest, out):
+    def pack(self, arc, digest, out, extra=()):
         with contextlib.redirect_stdout(io.StringIO()):
             return self.lp.main(["pack", "--system", "linux", "--archive", str(arc),
                                  "--source-url", "https://example.invalid/l.tar.xz", "--source-sha256", digest,
                                  "--llvm-version", "22.1.8", "--name", "llvm-linux-x64", "--version", "22.1.8-1",
                                  "--licenses", str(self.lic), "--date", "2026-06-16", "--url", LURL,
-                                 "--checked", "test", "--out", str(out)])
+                                 "--checked", "test", "--out", str(out), *extra])
+
+    def test_extra_files(self):
+        """--extra: a library the workflow built goes in under its own path; the download's own paths are refused."""
+        arc, digest = self.archive()
+        ex = self.work / "extra"
+        (ex / "lib").mkdir(parents=True)
+        (ex / "lib" / "libxml2.so.2").write_bytes(b"\x7fELF fake libxml2")
+        out = self.work / "out"
+        self.assertEqual(self.pack(arc, digest, out, ["--extra", str(ex), "--extra-note", "Built for lld."]), 0)
+        with tarfile.open(out / "llvm-linux-x64-22.1.8-1.tar.xz") as tf:
+            m = tf.getmember("lib/libxml2.so.2")
+            self.assertEqual((m.mode, tf.extractfile(m).read()), (0o644, b"\x7fELF fake libxml2"))
+            readme = tf.extractfile("README.txt").read().decode()
+        self.assertIn("Added by the workflow: lib/libxml2.so.2. Built for lld.", readme)
+        rec = json.loads((out / "llvm-linux-x64-22.1.8-1.json").read_text(encoding="utf-8"))
+        self.assertEqual(rec["added"], {"files": ["lib/libxml2.so.2"], "note": "Built for lld."})
+        (ex / "bin").mkdir()
+        (ex / "bin" / "clang").write_bytes(b"not LLVM's")
+        self.assertEqual(self.pack(arc, digest, self.work / "out2", ["--extra", str(ex)]), 1)
 
     def test_pack_is_repeatable_and_unpacks(self):
         for hard in (False, True):

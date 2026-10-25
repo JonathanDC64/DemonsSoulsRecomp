@@ -49,6 +49,7 @@ jobs:
           unzip -l dist/DemonsSoulsRecomp-*-windows.zip | grep -E ' DemonsSoulsRecomp-[^/]+/des_host\.exe$'
           tar -tvJf dist/DemonsSoulsRecomp-*-linux.tar.xz | grep -E '^-rwxr-xr-x .* DemonsSoulsRecomp-[^/]+/des_host$'
           tar -tvJf dist/DemonsSoulsRecomp-*-linux.tar.xz | grep -E ' DemonsSoulsRecomp-[^/]+/licenses/SDL2/LICENSE\.txt$'
+          tar -xOJf dist/DemonsSoulsRecomp-*-linux.tar.xz --wildcards '*/release-files.txt' | grep -x 'des_host'
 
       - name: Third-party sources
         run: |

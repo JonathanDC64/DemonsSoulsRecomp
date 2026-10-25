@@ -20,8 +20,8 @@ is made from the game (the game-file check), so nothing in the zip is.
 
 --linux-host DIR also writes <out>/DemonsSoulsRecomp-<version>-linux.tar.xz, the Linux player's download: the same
 files with DIR's at the top (host.yml's host-linux folder: des_host, its map, the SDL2 and vkd3d libraries it finds
-beside it, and their licences in licenses/). A tar, which keeps the execute bits that a zip unpacked by Python
-loses, with the same fixed dates, owner and modes.
+beside it, and their licences in licenses/) and its own release-files.txt. A tar, which keeps the execute bits that
+a zip unpacked by Python loses, with the same fixed dates, owner and modes.
 
 The same REV gives the same zip: entries sorted, dated with REV's commit time, fixed permissions, LF line endings as
 committed. (Deflate output can differ between zlib versions; the release workflow pins Python.) --ps3recomp takes the
@@ -295,6 +295,7 @@ def cmd_build(args):
         names = [f[0] for f in tarred]
         if len(names) != len(set(names)):
             raise Error("--linux-host: a file of the host folder has the path of a packaged file")
+        tarred.append(manifest(tarred, top))   # the update's list of program files, as in the Windows zip
         write_tar_xz(os.path.join(out, tar_name), tarred, when)
         with open(os.path.join(out, tar_name), "rb") as f:
             digest = hashlib.sha256(f.read()).hexdigest()

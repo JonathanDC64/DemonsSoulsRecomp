@@ -139,9 +139,9 @@ std::atomic<bool> s_used{false};
 const char* session_name(int s) { return s == kCheats ? "cheats" : s == kOnline ? "online" : "offline"; }
 
 /* ps3recomp goes online with the first two: PS3_NET_ONLINE (host sockets, cellNetCtl, NP) and PSNR_SERVER (NP's
- * server). Any value counts, as there (getenv(...) ? 1 : 0). PS3_NET_HOSTS (docs/46's planned host map) is only
- * cleared with them. */
-const char* const kNetKnobs[] = {"PS3_NET_ONLINE", "PSNR_SERVER", "PS3_NET_HOSTS"};
+ * server). Any value counts, as there (getenv(...) ? 1 : 0). PS3_NET_HOSTS (docs/46's planned host map) and
+ * PS3_NET_SIGNIN (a cheat session never signs in with the install's key) are only cleared with them. */
+const char* const kNetKnobs[] = {"PS3_NET_ONLINE", "PSNR_SERVER", "PS3_NET_HOSTS", "PS3_NET_SIGNIN"};
 constexpr int kNetKnobsOnline = 2;
 
 /* The first of the network knobs that is set, or null. getenv is boot_main's lock-free cache, cheap at a hook. */

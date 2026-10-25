@@ -2,6 +2,7 @@
 #include "settings.hpp"
 
 #include "report.hpp"
+#include "version.hpp"
 
 #include <cctype>
 #include <cstdint>
@@ -340,9 +341,11 @@ std::string net_options_header() {
 // The network rows -> the runtime's knobs, once at start (the sockets and NP are set up after this, at boot):
 //   online: PS3_NET_ONLINE=1, PS3_NET_HOSTS=<the six names>=<server>, PS3_NP_ONLINE_ID=<name>,
 //           PS3_NET_P2P_PORT=<port>; online needs a valid online name (this row's, or PS3_NP_ONLINE_ID's);
+//           for a server with the sign-in (NetServer::signin): PS3_NET_SIGNIN=<server>:18000, PS3_NET_KEY_FILE,
+//           PS3_NET_CLIENT_VERSION, PS3_NET_NETWORK_VERSION; for one with psnr: PSNR_SERVER=<server>:36100;
 //   offline: none of them is set. Not even to "0": the runtime counts any value as on.
-// PSNR_SERVER is never set here (no row yet). Fails closed: with no valid server address and no PS3_NET_HOSTS from the
-// environment, the game stays offline rather than reach whoever owns the original names now.
+// Fails closed: with no valid server address and no PS3_NET_HOSTS from the environment, the game stays offline rather
+// than reach whoever owns the original names now.
 // A developer build's cheat session wins over this: des_dev_boot runs after des_ui_early_init (which calls
 // load_and_apply_env) in ps3_title_options_init, and clears PS3_NET_ONLINE, PSNR_SERVER and PS3_NET_HOSTS when a cheat
 // is set at start (docs/55 section 6). So nothing here checks DES_DEV_SESSION; the Network tab reads it to say why.
@@ -389,6 +392,20 @@ void apply_network() {
     const std::string header = net_options_header();
     sHeaderPinned = env_set("PS3_HTTP_HEADER");
     if (!header.empty()) set_net_knob("PS3_HTTP_HEADER", header);
+    // This project's server: the runtime signs in to it (the install's key, this build's version for the server's
+    // gate) and, for the project's own, finds co-op through its psnr. Not with PS3_NET_HOSTS from the environment
+    // (no address here).
+    const NetServer* chosen = net_server(effective("DES_NET_SERVER"));
+    const std::string key_file = net_key_file();
+    if (chosen && chosen->signin && !address.empty() && !key_file.empty()) {
+        make_dirs(key_file);
+        set_net_knob("PS3_NET_SIGNIN", address + ":" + std::to_string(kNetSigninPort));
+        set_net_knob("PS3_NET_KEY_FILE", key_file);
+        set_net_knob("PS3_NET_CLIENT_VERSION", kVersion);
+        set_net_knob("PS3_NET_NETWORK_VERSION", std::to_string(kNetNetworkVersion));
+    }
+    if (chosen && chosen->psnr && !address.empty())
+        set_net_knob("PSNR_SERVER", address + ":" + std::to_string(kNetPsnrPort));
     sNetOnline = true;
     // (what is in use, the environment's values included)
     const NetServer* s = net_server(effective("DES_NET_SERVER"));
@@ -559,6 +576,11 @@ std::string net_server_address() {
     const std::string a = s->key == std::string_view(kNetCustomKey) ? trim(effective("DES_NET_CUSTOM"))
                                                                     : std::string(s->address);
     return net_address_ok(a) ? a : std::string();
+}
+
+std::string net_key_file() {
+    const auto& dir = report::data_dir();
+    return dir.empty() ? std::string() : report::narrow((dir / L"online-key.bin").wstring());
 }
 
 std::string net_hosts(const std::string& address) {

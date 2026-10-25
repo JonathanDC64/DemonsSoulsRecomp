@@ -8,6 +8,7 @@ import io
 import json
 import os
 import sys
+import tarfile
 import tempfile
 import threading
 import unittest
@@ -21,12 +22,13 @@ from des_setup import journal, protocol, update  # noqa: E402
 import package  # noqa: E402
 
 EXE = update.EXE
+PLAYER = "windows" if os.name == "nt" else "linux"   # this system's player's download
 
 
-def release(tag, assets=("windows", "sums"), draft=False, pre=False, body="", base="http://127.0.0.1:1"):
+def release(tag, assets=(PLAYER, "sums"), draft=False, pre=False, body="", base="http://127.0.0.1:1"):
     v = tag.lstrip("v")
     names = {"windows": f"DemonsSoulsRecomp-{v}-windows.zip", "sums": "SHA256SUMS",
-             "linux": f"DemonsSoulsRecomp-{v}-linux.zip"}
+             "linux": f"DemonsSoulsRecomp-{v}-linux.tar.xz"}
     return {"tag_name": tag, "draft": draft, "prerelease": pre, "body": body,
             "html_url": f"https://github.com/{update.REPO}/releases/tag/{tag}", "published_at": "2026-10-25T10:00:00Z",
             "assets": [{"name": names[a], "size": 0, "browser_download_url": f"{base}/{names[a]}"} for a in assets]}
@@ -36,7 +38,6 @@ def lines(out: io.StringIO) -> list:
     return out.getvalue().splitlines()
 
 
-@unittest.skipUnless(os.name == "nt", "the player's download is Windows' only so far (docs/87)")
 class FeedTest(unittest.TestCase):
     def test_versions(self):
         self.assertEqual(update.version_of("v1.2.3"), (1, 2, 3))
@@ -46,7 +47,7 @@ class FeedTest(unittest.TestCase):
 
     def test_newest_stable_only(self):
         feed = [release("v0.3.0", pre=True), release("v0.4.0", draft=True), release("llvm-22.1.8-1"),
-                release("v0.2.9", assets=("windows",)),          # no SHA256SUMS: not offered
+                release("v0.2.9", assets=(PLAYER,)),             # no SHA256SUMS: not offered
                 release("v0.2.10"), release("v0.2.2"), release("v0.1.0")]
         self.assertEqual(update.newer(feed, "0.1.0")[0], "0.2.10")   # (numbers, not text: 10 > 9)
         self.assertIsNone(update.newer(feed, "0.2.10"))
@@ -97,16 +98,33 @@ class _Server(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def make_zip(version, files) -> bytes:
-    """A player's zip as package.py writes it: DemonsSoulsRecomp-<version>/ with release-files.txt."""
+def make_package(version, files) -> bytes:
+    """This system's player's download as package.py writes it, DemonsSoulsRecomp-<version>/ with release-files.txt:
+    a zip on Windows, a tar.xz on Linux (the program executable)."""
     top = f"DemonsSoulsRecomp-{version}/"
-    entries = [(top + k, 0o644, v) for k, v in files.items()]
+    entries = [(top + k, 0o755 if k == EXE else 0o644, v) for k, v in files.items()]
     entries.append(package.manifest(entries, top))
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
-        for name, _mode, data in entries:
-            z.writestr(name, data)
+    if PLAYER == "windows":
+        with zipfile.ZipFile(buf, "w") as z:
+            for name, _mode, data in entries:
+                z.writestr(name, data)
+    else:
+        with tarfile.open(fileobj=buf, mode="w:xz") as t:
+            for name, mode, data in entries:
+                info = tarfile.TarInfo(name)
+                info.size, info.mode = len(data), mode
+                t.addfile(info, io.BytesIO(data))
     return buf.getvalue()
+
+
+def unpack_package(data, dest):
+    if PLAYER == "windows":
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            z.extractall(dest)
+    else:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:xz") as t:
+            t.extractall(dest, filter="data")
 
 
 def program(version, extra=None) -> dict:
@@ -117,7 +135,6 @@ def program(version, extra=None) -> dict:
     return files
 
 
-@unittest.skipUnless(os.name == "nt", "the player's download is Windows' only so far (docs/87)")
 class ApplyTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -134,10 +151,8 @@ class ApplyTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         self.install, self.data = root / "game", root / "data"
-        # The install of 0.1.0 (from its zip, with release-files.txt), and the player's files beside it.
-        z = make_zip("0.1.0", program("0.1.0", {"docs/old-only.md": b"gone in 0.2.0"}))
-        with zipfile.ZipFile(io.BytesIO(z)) as zf:
-            zf.extractall(root / "x")
+        # The install of 0.1.0 (from its download, with release-files.txt), and the player's files beside it.
+        unpack_package(make_package("0.1.0", program("0.1.0", {"docs/old-only.md": b"gone in 0.2.0"})), root / "x")
         os.replace(root / "x" / "DemonsSoulsRecomp-0.1.0", self.install)
         for rel, body in {"gamedata/dev_hdd0/home/00000001/savedata/S/SAVE": b"save",
                           "shader_cache/abc.bin": b"shader", "portable.txt": b"", "data/settings.ini": b"x=1",
@@ -158,8 +173,8 @@ class ApplyTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def serve(self, version, files, sums_for=None):
-        z = make_zip(version, files)
-        name = f"DemonsSoulsRecomp-{version}-windows.zip"
+        z = make_package(version, files)
+        name = update.player_asset(version)
         digest = hashlib.sha256(sums_for if sums_for is not None else z).hexdigest()
         _Server.files = {name: z, "SHA256SUMS": f"{digest}  {name}\n".encode()}
         rel = release(f"v{version}", base=self.base)
@@ -199,7 +214,7 @@ class ApplyTest(unittest.TestCase):
         self.assertTrue((self.data / "game/des_game.dll").is_file())       # (copied: the rebuild starts from it)
         self.assertFalse((self.install / update.UPDATE / update.SWAP).exists())
         self.assertFalse((self.install / update.UPDATE / "0.2.0").exists())
-        self.assertFalse(list((self.data / "downloads").glob("*.zip")))
+        self.assertFalse(list((self.data / "downloads").glob("DemonsSoulsRecomp-*")))
 
         # The rebuild of 0.2.0, then back to 0.1.0.
         (self.data / "game" / "des_game.dll").write_bytes(b"module 0.2.0")

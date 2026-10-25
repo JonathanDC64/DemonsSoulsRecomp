@@ -7,10 +7,11 @@ version before it kept to go back to. The host runs these at the start screen an
       Nothing newer: @done ok alone. No answer (offline, or GitHub's limit): @error download - <sentence> and
       @done failed. Only a plain X.Y.Z version is compared, so a developer's build (0.1.0-dev.5+g1234) finds none.
   update-apply --app VERSION --to VERSION --install DIR [--data DIR]
-      download: the release's player zip and its SHA256SUMS, the zip checked against them. install: the zip
-      unpacked beside the install (DIR/.update), the game build (the data folder's game/ and setup/ready.txt)
-      copied into <data>/previous/<VERSION>, then the program files swapped: this version's into
-      DIR/.previous/<VERSION>, the new one's in their place. The setup run that follows rebuilds the game.
+      download: the release's player download (a zip; a tar.xz on Linux) and its SHA256SUMS, the download checked
+      against them. install: the download unpacked beside the install (DIR/.update), the game build (the data
+      folder's game/ and setup/ready.txt) copied into <data>/previous/<VERSION>, then the program files swapped:
+      this version's into DIR/.previous/<VERSION>, the new one's in their place. The setup run that follows
+      rebuilds the game.
   update-back --app VERSION --install DIR [--data DIR]
       The kept version back in place: the same swap the other way, so this version is then the one kept.
 
@@ -71,8 +72,9 @@ def system() -> str:
 
 
 def player_asset(version) -> str:
-    """The player's download of `version` for this system (package.py's names). Linux has none yet (docs/87)."""
-    return f"{NAME}-{version}-windows.zip" if system() == "windows" else f"{NAME}-{version}-linux.zip"
+    """The player's download of `version` for this system (package.py's names): the zip on Windows, the tar.xz
+    (--linux-host) on Linux, which keeps the program's execute bit. fetch.unpack takes both."""
+    return f"{NAME}-{version}-windows.zip" if system() == "windows" else f"{NAME}-{version}-linux.tar.xz"
 
 
 # ---- the releases list ----

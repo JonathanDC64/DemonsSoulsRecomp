@@ -141,6 +141,8 @@ class PackLinuxTest(unittest.TestCase):
         for comp in ("llvm", "clang", "lld"):
             (self.lic / comp).mkdir(parents=True)
             (self.lic / comp / "LICENSE.TXT").write_text(f"the {comp} licence\n", encoding="utf-8")
+        (self.lic / "zstd").mkdir()
+        (self.lic / "zstd" / "LICENSE").write_bytes(b"zstd's licence\n")
 
     def archive(self, name="l.tar.xz", links=None, hard=False, extra=None):
         files = {
@@ -198,6 +200,24 @@ class PackLinuxTest(unittest.TestCase):
         (ex / "bin").mkdir()
         (ex / "bin" / "clang").write_bytes(b"not LLVM's")
         self.assertEqual(self.pack(arc, digest, self.work / "out2", ["--extra", str(ex)]), 1)
+
+    def test_zstd_licence(self):
+        """LLVM built with zstd (its Linux build links it in): zstd's licence ships and the README says so;
+        without it the pack fails. Built without zstd, nothing is asked."""
+        arc, digest = self.archive()
+        out = self.work / "out"
+        self.assertEqual(self.pack(arc, digest, out), 0)
+        with tarfile.open(out / "llvm-linux-x64-22.1.8-1.tar.xz") as tf:
+            self.assertEqual(tf.extractfile("licenses/zstd/LICENSE").read(), b"zstd's licence\n")
+            self.assertIn("links zstd into clang and ld.lld (BSD licence): licenses/zstd/",
+                          tf.extractfile("README.txt").read().decode())
+        shutil.rmtree(self.lic / "zstd")
+        self.assertEqual(self.pack(arc, digest, self.work / "out2"), 1)
+        arc, digest = self.archive("nozstd.tar.xz", extra={"lib/cmake/llvm/LLVMConfig.cmake":
+                                                            b"set(LLVM_ENABLE_ZLIB ON)\nset(LLVM_ENABLE_ZSTD OFF)\n"})
+        self.assertEqual(self.pack(arc, digest, self.work / "out3"), 0)
+        with tarfile.open(self.work / "out3" / "llvm-linux-x64-22.1.8-1.tar.xz") as tf:
+            self.assertNotIn("zstd", tf.extractfile("README.txt").read().decode())
 
     def test_pack_is_repeatable_and_unpacks(self):
         for hard in (False, True):

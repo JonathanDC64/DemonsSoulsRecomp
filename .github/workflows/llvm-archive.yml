@@ -90,6 +90,10 @@ env:
   LICENSE_LLD_SHA256: f7891568956e34643eb6a0db1462db30820d40d7266e2a78063f2fe233ece5a0
   LICENSE_LIBXML2_URL: https://gitlab.gnome.org/GNOME/libxml2/-/raw/v2.9.12/Copyright
   LICENSE_LIBXML2_SHA256: c5c63674f8a83c4d2e385d96d1c670a03cb871ba2927755467017317878574bd
+  # Linux only: LLVM's Linux build links zstd 1.4.8 into clang and lld (LLVM_USE_STATIC_ZSTD in its release
+  # cache; the version string inside them is 1.4.8). zstd's BSD licence at its v1.4.8 commit, measured 2026-10-25.
+  LICENSE_ZSTD_URL: https://raw.githubusercontent.com/facebook/zstd/97a3da1df009d4dc67251de0c4b1c9d7fe286fc1/LICENSE
+  LICENSE_ZSTD_SHA256: 2c1a7fa704df8f3a606f6fc010b8b5aaebf403f3aeec339a12048f1ba7331a0b
   # Linux: LLVM's lld needs libxml2.so.2, which the download carries (the libxml2 step). GNOME's source tarball,
   # size and SHA-256 from its .sha256sum file, read 2026-10-25.
   LIBXML2_VERSION: 2.9.14
@@ -229,6 +233,8 @@ jobs:
           get lld LICENSE.TXT "$LICENSE_LLD_URL" "$LICENSE_LLD_SHA256"
           if [ "$TARGET" = windows ]; then
             get libxml2 Copyright "$LICENSE_LIBXML2_URL" "$LICENSE_LIBXML2_SHA256"
+          else
+            get zstd LICENSE "$LICENSE_ZSTD_URL" "$LICENSE_ZSTD_SHA256"
           fi
 
       # LLVM builds its Linux lld with libxml2 (for lld-link's Windows manifests; ld.lld never calls it), linked

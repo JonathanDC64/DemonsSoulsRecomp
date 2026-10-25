@@ -342,16 +342,6 @@ def cmd_pack_linux(a):
                     raise Error(f"--extra {rel}: that path is the download's own")
                 chosen[rel] = (0o644, p, None)
                 extra.append(rel)
-    readme = stage / "README.txt"
-    readme.write_text(
-        f"clang, ld.lld and clang's headers from LLVM {a.llvm_version}, for Demon's Souls setup (docs/86, docs/87).\n"
-        f"\nTaken unchanged from LLVM's own archive:\n  {a.source_url}\n  SHA-256 {a.source_sha256}\n"
-        f"\nOnly these files were kept: bin/clang (LLVM's {chosen['bin/clang'][2]}), bin/ld.lld (LLVM's "
-        f"{chosen['bin/ld.lld'][2]}) and lib/clang/{major}/include.\nLLVM is under the Apache License v2.0 with "
-        "LLVM Exceptions: licenses/llvm/LICENSE.TXT.\n"
-        + (f"\nAdded by the workflow: {', '.join(extra)}. {a.extra_note}\n" if extra else ""),
-        encoding="utf-8", newline="\n")
-    chosen["README.txt"] = (0o644, readme, None)
 
     # Which libraries LLVM was built with, for the report: a library built in may bring a licence to ship.
     config = []
@@ -359,6 +349,23 @@ def cmd_pack_linux(a):
         config = [ln.strip() for ln in files[LLVM_CONFIG].read_text(encoding="utf-8", errors="replace").splitlines()
                   if re.match(r"\s*set\((LLVM_ENABLE_(ZLIB|ZSTD|LIBXML2|LIBEDIT|TERMINFO|LIBCXX|FFI|CURL|HTTPLIB)|"
                               r"LLVM_USE_STATIC_ZSTD|LLVM_LINK_LLVM_DYLIB|LLVM_BUILD_LLVM_DYLIB)\b", ln)]
+    # LLVM's Linux build links zstd into its tools (LLVM_USE_STATIC_ZSTD in its release cache, which
+    # LLVMConfig.cmake does not repeat), so a build with zstd ships zstd's licence.
+    zstd = any(re.fullmatch(r"set\(LLVM_ENABLE_ZSTD\s+(ON|TRUE|YES|1|FORCE_ON)\)", c, re.I) for c in config)
+    if zstd and not any(r.startswith("licenses/zstd/") for r in chosen):
+        raise Error("LLVM was built with zstd, which its Linux build links into clang and lld: zstd's licence must "
+                    "ship, under licenses/zstd/")
+    readme = stage / "README.txt"
+    readme.write_text(
+        f"clang, ld.lld and clang's headers from LLVM {a.llvm_version}, for Demon's Souls setup (docs/86, docs/87).\n"
+        f"\nTaken unchanged from LLVM's own archive:\n  {a.source_url}\n  SHA-256 {a.source_sha256}\n"
+        f"\nOnly these files were kept: bin/clang (LLVM's {chosen['bin/clang'][2]}), bin/ld.lld (LLVM's "
+        f"{chosen['bin/ld.lld'][2]}) and lib/clang/{major}/include.\nLLVM is under the Apache License v2.0 with "
+        "LLVM Exceptions: licenses/llvm/LICENSE.TXT.\n"
+        + ("LLVM's Linux build links zstd into clang and ld.lld (BSD licence): licenses/zstd/.\n" if zstd else "")
+        + (f"\nAdded by the workflow: {', '.join(extra)}. {a.extra_note}\n" if extra else ""),
+        encoding="utf-8", newline="\n")
+    chosen["README.txt"] = (0o644, readme, None)
 
     tar = sorted((rel, mode, p) for rel, (mode, p, _) in chosen.items())
     name = f"{a.name}-{a.version}"

@@ -32,16 +32,23 @@ jobs:
           python tools/release/changelog.py --out dist/notes.md
           cat dist/notes.md
 
-      # With a stand-in for host.yml's des_host.exe, which only Windows builds: the player's zip is made around it
-      # the same way, and the exe must land at the top of its tree.
+      # With stand-ins for host.yml's des_host.exe and its Linux host folder: the player's zip and the Linux tarball
+      # are made around them the same way, and the program must land at the top of its tree (the Linux one
+      # executable).
       - name: Package, twice
         run: |
-          mkdir -p host && printf 'stand-in' > host/des_host.exe
-          python tools/release/package.py build --rev HEAD --host host/des_host.exe --out dist --dry-run
-          python tools/release/package.py build --rev HEAD --host host/des_host.exe --out dist2 --dry-run
+          mkdir -p host host-linux/licenses/SDL2 && printf 'stand-in' > host/des_host.exe
+          printf 'stand-in' > host-linux/des_host && printf 'stand-in' > host-linux/libSDL2-2.0.so.0
+          printf 'stand-in' > host-linux/licenses/SDL2/LICENSE.txt
+          for out in dist dist2; do
+            python tools/release/package.py build --rev HEAD --host host/des_host.exe --linux-host host-linux \
+              --out "$out" --dry-run
+          done
           cmp dist/SHA256SUMS dist2/SHA256SUMS
           cat dist/SHA256SUMS
           unzip -l dist/DemonsSoulsRecomp-*-windows.zip | grep -E ' DemonsSoulsRecomp-[^/]+/des_host\.exe$'
+          tar -tvJf dist/DemonsSoulsRecomp-*-linux.tar.xz | grep -E '^-rwxr-xr-x .* DemonsSoulsRecomp-[^/]+/des_host$'
+          tar -tvJf dist/DemonsSoulsRecomp-*-linux.tar.xz | grep -E ' DemonsSoulsRecomp-[^/]+/licenses/SDL2/LICENSE\.txt$'
 
       - name: No game-derived files in the package
         run: |

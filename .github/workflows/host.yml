@@ -242,7 +242,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.DEPS_DIR }}
-          key: host-linux-deps-sdl2-${{ env.SDL2_VERSION }}-vkd3d-${{ env.VKD3D_VERSION }}-vulkan-${{ env.VULKAN_HEADERS_VERSION }}-ubuntu-22.04-v1
+          key: host-linux-deps-sdl2-${{ env.SDL2_VERSION }}-vkd3d-${{ env.VKD3D_VERSION }}-vulkan-${{ env.VULKAN_HEADERS_VERSION }}-ubuntu-22.04-v2
 
       - name: Check out the Vulkan headers
         if: steps.deps-cache.outputs.cache-hit != 'true'
@@ -279,6 +279,9 @@ jobs:
           ./configure -q --prefix="$DEPS_DIR" --disable-doxygen-doc CPPFLAGS="-I$DEPS_DIR/include"
           make -s -j"$(nproc)"
           make -s install
+          # vkd3d is LGPL 2.1 or later: its licence and notices go with its libraries (SDL2's install has its own).
+          mkdir -p "$DEPS_DIR/share/licenses/vkd3d"
+          cp LICENSE COPYING AUTHORS "$DEPS_DIR/share/licenses/vkd3d/"
 
       - name: Save SDL2 and vkd3d
         if: steps.deps-cache.outputs.cache-hit != 'true'
@@ -383,17 +386,22 @@ jobs:
       - name: Build des_host
         run: cmake --build build/host --target des_host
 
-      # The libraries under their sonames, each finding the others beside it.
+      # The libraries under their sonames, each finding the others beside it, and their licences (package.py puts
+      # the folder at the top of the Linux tarball).
       - name: Stage the artifact
         run: |
-          mkdir -p dist/host-linux
+          mkdir -p dist/host-linux/licenses
           cp build/host/des_host build/host/des_host.map dist/host-linux/
           for so in libSDL2-2.0.so.0 libvkd3d.so.1 libvkd3d-shader.so.1 libvkd3d-utils.so.1; do
             cp -L "$DEPS_DIR/lib/$so" dist/host-linux/
             patchelf --set-rpath '$ORIGIN' "dist/host-linux/$so"
           done
-          ls -la dist/host-linux
-          sha256sum dist/host-linux/*
+          for lib in SDL2 vkd3d; do
+            [ -d "$DEPS_DIR/share/licenses/$lib" ] || { echo "::error::no licence files for $lib"; exit 1; }
+            cp -r "$DEPS_DIR/share/licenses/$lib" dist/host-linux/licenses/
+          done
+          ls -laR dist/host-linux
+          find dist/host-linux -type f -exec sha256sum {} +
 
       - name: What each file needs, self-test
         run: python tools/ci/check_host_elf.py --self-test

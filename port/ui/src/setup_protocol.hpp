@@ -21,7 +21,7 @@ inline constexpr int kProtocol = 2;
 struct Line {
     enum class Kind {
         Text, Setup, Plan, Step, Progress, Overall, Check, File, Rpcs3, User, Library, Found, Setting, Awake, Memory, Log,
-        Error, Done
+        Error, Done, Release, Note
     };
     Kind kind = Kind::Text;
     std::string key;                // Step, Progress, File: the step. Check, Rpcs3, Library: the state or kind. Error: the
@@ -29,9 +29,11 @@ struct Line {
                                     // (save, current-save, trophies, settings). Setting: its settings.ini name.
     std::string key2;               // Step: start, done or skip. Check: the file. Error: the step. Found: its state.
     long long n = 0, m = 0;         // Progress, Overall: n/m. Setup: n is the version. User: n is RPCS3's user count.
+                                    // Release: n is its time (Unix seconds, 0: not known). Release's key: its version.
     std::vector<std::string> list;  // Plan: the phases. Found: the words after its state.
     std::string text;               // Check, Error: the sentence. File, Rpcs3, Log, Library: the path. User: the name.
-                                    // Setting: the value. A plain line: all of it.
+                                    // Setting: the value. Release: its page. Note: the line, its indent kept (empty for
+                                    // an empty line). A plain line: all of it.
 };
 
 // One line, without its line break. A line that starts with '@' but has a keyword this host does not know, or is
@@ -71,6 +73,12 @@ struct Status {
     std::string errorCode, errorStep, errorText, logPath;
     std::string result;            // ok, fix or failed (the last line's), stopped (Cancel); empty while it runs
     std::deque<std::string> tail;  // the last plain lines, for Details
+    // update-check (update.py, docs/105): the newer release, and its notes (Markdown, a line each).
+    struct Release {
+        std::string version, page;
+        long long when = 0;
+    } release;
+    std::vector<std::string> notes;
 
     void apply(const Line& line);
     // The engine's process has ended: `stopped` if Cancel ended it. One that ended without its last line failed.

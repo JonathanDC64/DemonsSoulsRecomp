@@ -5,6 +5,7 @@
 #include "document.hpp"
 
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace ui {
@@ -28,9 +29,12 @@ protected:
 private:
     void build_menu_buttons();
     void play();
+    void show_update();
 
     bool mEntranceAnimationStarted = false;
     std::vector<std::unique_ptr<Button>> mMenuButtons;
+    size_t mUpdateIndex = 0;     // "Update to <version>" among them, shown once the check found one (updates.hpp)
+    std::string mUpdateShown;    // the version it shows; empty: hidden
     Rml::Element* mRoot = nullptr;
     Rml::Element* mVersion = nullptr;
     Rml::Element* mHint = nullptr;

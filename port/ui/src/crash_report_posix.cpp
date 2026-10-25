@@ -183,11 +183,17 @@ void install() {
     g_prev_abort = std::signal(SIGABRT, on_abort);
 }
 
-bool start_again() {
+bool start_again(const std::vector<std::string>& set, bool play) {
+    std::vector<std::string> drops = {"DES_UI_OPEN=", "DES_SKIP_UI=", "DES_LAUNCH_AFTER=", "DES_UPDATE_TO="};
+    for (const std::string& v : set) drops.push_back(v.substr(0, v.find('=') + 1));
     std::vector<std::string> vars;
-    for (const std::string& v : started_environment())
-        if (v.rfind("DES_UI_OPEN=", 0) && v.rfind("DES_SKIP_UI=", 0) && v.rfind("DES_LAUNCH_AFTER=", 0)) vars.push_back(v);
-    vars.push_back("DES_SKIP_UI=1");
+    for (const std::string& v : started_environment()) {
+        bool drop = false;
+        for (const std::string& name : drops) drop = drop || v.rfind(name, 0) == 0;
+        if (!drop) vars.push_back(v);
+    }
+    if (play) vars.push_back("DES_SKIP_UI=1");
+    vars.insert(vars.end(), set.begin(), set.end());
     vars.push_back("DES_LAUNCH_AFTER=" + std::to_string(getpid()));
     std::vector<std::string> args = started_arguments();
     if (args.empty()) return false;

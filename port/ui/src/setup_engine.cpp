@@ -255,6 +255,38 @@ bool Engine::start_engine(unsigned run) {
     if (const auto self = report::program_path(); !self.empty()) args.insert(args.end(), {"--host", utf8(self)});
     if (mCheckOnly) args.push_back("--check-only");
     else if (mUnlockOnly) args.push_back("--unlock-only");
+    const std::string what = std::string(mCheckOnly ? "(check only)" : mUnlockOnly ? "(check and unlock)" : "") +
+                             (mRequest.rpcs3.empty() ? "" : " with RPCS3");
+    return launch(run, args, what.c_str());
+}
+
+bool Engine::start_command(const std::vector<std::string>& args) {
+    mWhy.clear();
+    const auto py = python();
+    if (py.empty() || engine_script().empty() || data_dir().empty()) {
+        mWhy = py.empty() ? "Python for setup is not downloaded yet."
+                          : "The setup files are missing from the game's folder. Extract the download again.";
+        return false;
+    }
+    mStopAsked = false;
+    unsigned run = 0;
+    {
+        std::lock_guard<std::mutex> lock(mLock);
+        run = ++mRun;
+        mLines.clear();
+        mEnded = mStopped = false;
+        mFetchEnded = mFetchOk = mFetchStopped = false;
+        mExit = 0;
+    }
+    mFetching = false;
+    std::vector<std::string> full = {"-X", "utf8", "-u", utf8(engine_script())};
+    full.insert(full.end(), args.begin(), args.end());
+    return launch(run, full, args.empty() ? "" : args[0].c_str());
+}
+
+// The engine's process with `args` (Python's own first), its lines and its end for run `run`.
+bool Engine::launch(unsigned run, const std::vector<std::string>& args, const char* what) {
+    const auto py = python();
     mFromEngine = true;
     // (each callback is for its own run: the last run's thread may still be ending while this one starts)
     const bool started = mProcess.start(
@@ -271,9 +303,7 @@ bool Engine::start_engine(unsigned run) {
             mExit = status;
         });
     if (!started) mWhy = "The setup program could not start (" + mProcess.why() + ").";
-    std::fprintf(stderr, "[setup] %s: %s %s%s\n", started ? "started" : "could not start", utf8(py).c_str(),
-                 mCheckOnly ? "(check only)" : mUnlockOnly ? "(check and unlock)" : "",
-                 mRequest.rpcs3.empty() ? "" : " with RPCS3");
+    std::fprintf(stderr, "[setup] %s: %s %s\n", started ? "started" : "could not start", utf8(py).c_str(), what);
     return started;
 }
 

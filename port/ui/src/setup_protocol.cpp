@@ -19,10 +19,12 @@ constexpr KindName kKinds[] = {
     {"file", Line::Kind::File},         {"rpcs3", Line::Kind::Rpcs3}, {"user", Line::Kind::User},
     {"library", Line::Kind::Library},   {"found", Line::Kind::Found}, {"setting", Line::Kind::Setting},
     {"awake", Line::Kind::Awake},       {"memory", Line::Kind::Memory}, {"log", Line::Kind::Log},
-    {"error", Line::Kind::Error},       {"done", Line::Kind::Done},
+    {"error", Line::Kind::Error},       {"done", Line::Kind::Done},     {"release", Line::Kind::Release},
+    {"note", Line::Kind::Note},
 };
 
 constexpr size_t kTailLines = 200;
+constexpr size_t kNoteLines = 400;
 
 // The next word of `rest` (up to a space), and `rest` moved past it and the space.
 std::string_view take_word(std::string_view& rest) {
@@ -125,6 +127,14 @@ Line parse_line(std::string_view text) {
         l.key = take_word(rest);
         if (l.key != "short" && l.key != "ok") return plain;
         break;
+    case Line::Kind::Release:  // <version> <time> <page>
+        l.key = take_word(rest);
+        if (l.key.empty() || !parse_number(take_word(rest), l.n)) return plain;
+        l.text = std::string(rest);
+        break;
+    case Line::Kind::Note:  // the rest as it is, its indent too
+        l.text = std::string(rest);
+        break;
     case Line::Kind::Awake:
     case Line::Kind::Text:
         break;
@@ -215,6 +225,13 @@ void Status::apply(const Line& l) {
     case Line::Kind::Done:
         if (result.empty()) result = l.key;
         if (result == "ok") overall = 1000;
+        break;
+    case Line::Kind::Release:
+        release = {l.key, l.text == "-" ? std::string() : l.text, l.n};
+        notes.clear();
+        break;
+    case Line::Kind::Note:
+        if (notes.size() < kNoteLines) notes.push_back(l.text);
         break;
     }
 }

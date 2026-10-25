@@ -80,6 +80,8 @@ constexpr Def kDefs[] = {
     {"DES_NET_SYNC", "", Apply::Live},         // des_net_sync: position packets a second; "" = every 6th frame
     {"ui_scale", "0", Apply::UiOnly},          // 0 = Auto, else percent
     {"show_start_screen", "1", Apply::UiOnly},
+    {"update_check", "1", Apply::UiOnly},      // updates.hpp: look for a newer release at each start (docs/105)
+    {"update_skip", "", Apply::UiOnly},        // the release the player chose to skip ("Skip this version")
     {"setup_preset", "", Apply::UiOnly},       // the setup screens' preset (setup_options.hpp); "" = not picked yet
     {"rpcs3_dir", "", Apply::UiOnly},          // the RPCS3 setup last imported from (setup_rpcs3.hpp, docs/90 3.2)
     {"menu_hint", "1", Apply::UiOnly},

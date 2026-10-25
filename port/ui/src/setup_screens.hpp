@@ -70,10 +70,12 @@ public:
 
 protected:
     std::vector<std::vector<Button*>> nav_lines() const override;
+    void tick() override;  // (the update check's answer: updates.hpp)
     void back() override;
 
 private:
     void refresh();
+    void open_update();
     void open_source();
     void open_folder();
     void run(setup::Request request);
@@ -84,6 +86,7 @@ private:
     setup::Launch mLaunch;
     Rml::Element* mBody = nullptr;
     Buttons mMain, mMore;
+    std::string mUpdateShown;  // the newer release the screen shows (updates.hpp); empty: none
 };
 
 // 2. "Where is your game?": a card for each way to the game's files. A card opens its page at once.

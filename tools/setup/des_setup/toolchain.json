@@ -30,12 +30,12 @@
   },
   {
    "name": "llvm-linux-x64",
-   "version": "22.1.8-1",
-   "url": "https://github.com/JonathanDC64/DemonsSoulsRecomp/releases/download/llvm-linux-22.1.8-1/llvm-linux-x64-22.1.8-1.tar.xz",
-   "size": null,
-   "sha256": null,
+   "version": "22.1.8-2",
+   "url": "https://github.com/JonathanDC64/DemonsSoulsRecomp/releases/download/llvm-linux-22.1.8-2/llvm-linux-x64-22.1.8-2.tar.xz",
+   "size": 97274644,
+   "sha256": "ab7f31065867f984573064315266664fca6bd2521c9209b071803829fd713996",
    "why": "Compiles and links the game part on Linux: clang, ld.lld and clang's headers from LLVM 22.1.8 (docs/86).",
-   "checked": "not made yet: the LLVM archive workflow's Linux job makes it from LLVM's own LLVM-22.1.8-Linux-X64.tar.xz"
+   "checked": "made by LLVM archive run https://github.com/JonathanDC64/DemonsSoulsRecomp/actions/runs/40160368044 from LLVM-22.1.8-Linux-X64.tar.xz (size, SHA-256, attestation and GPG signature checked), 2026-10-25"
   }
  ]
 }

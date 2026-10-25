@@ -272,6 +272,20 @@ default) hide what other players put in your world. Read from the EBOOT, 2026-10
   above is from the cache). When a row changes, the hook zeroes that list's last time in the scheduler (0x0054E8C0
   bloodstains, 0x0054E8F8 messages), so it is parsed again on the next tick.
 
+### Replays
+
+Ghost and bloodstain replays, and the message, bloodstain and ghost lists, come from the server, and the game
+takes their counts as they are. The port checks them before the game uses them (`des_net_replay` and
+`des_net_show`, port/des_options.cpp; the sites are in port/insn_hooks.txt):
+- **A replay** whose frame count does not fit its data is dropped, through the game's own path for a replay that
+  did not unpack (a bloodstain's at 0x00391818, a wandering ghost's at 0x003A596C and 0x003A5EA0), and the reader
+  0x003957B8 refuses one larger than the 4 KiB the unpacks write. The ghost or bloodstain just has no replay.
+- **A list** is held to the room its array has: the array's own element count (just before it in memory), and for
+  messages and bloodstains also the list's room field. Entries past that are left out.
+- Each drop is logged the first few times (`[des] a ghost replay from the server was dropped`,
+  `[des] the server's message list has ...`). `DES_NET_REPLAY_CHECK=0` turns the replay checks off; the list limits
+  stay.
+
 ## 6. Safety, consent and defaults
 
 - **Online on by default** (your decision). Test runs stay offline: `deslib.sh` sets `DES_ONLINE=0` for every test

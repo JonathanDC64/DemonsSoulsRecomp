@@ -1713,7 +1713,37 @@ extern "C" void des_net_grade_poll(ppu_context* ctx, uint32_t)
  * A switch applies at once: the network scheduler 0x0054E7E8 loads each
  * list's last time (bloodstains +0xC8 at 0x0054E8C0, messages +0xD0 at
  * 0x0054E8F8), and a 0 there makes it parse the list again, from its cache.
- * Main thread. */
+ * Main thread.
+ *
+ * The same sites, and the ghost list's 0x00558884, hold each count to the
+ * room its array has: the parsers write that many records from the server's
+ * reply with no bound (docs/69, "Replays"). Each list's array is allocated
+ * with its element count just before it (array - 4; array - 8 is the
+ * allocation): messages *(list + 0x144), 0x3C bytes each; bloodstains
+ * *(list + 0x140), 0x40 each; the ghost reply's two lists, counts at
+ * +0x18C and +0x190, *(list + 0x150) and *(list + 0x14C), 12 bytes each.
+ * Messages and bloodstains also copy the last list's ids into a stack array
+ * of list + 0x4 and list + 0x0 entries, so their counts stay within those
+ * too. A count held back is logged, the first few times. */
+static void list_fit(ppu_context* ctx, int reg, const char* what, uint32_t list, uint32_t array_at, int room_at)
+{
+    const uint32_t n = (uint32_t)ctx->gpr[reg];
+    if (!n) return;
+    uint32_t room = 0;
+    if (guest_ptr_ok(list)) {
+        const uint32_t a = vm_read32(list + array_at);
+        if (guest_ptr_ok(a) && guest_ptr_ok(a - 8)) room = vm_read32(a - 4);
+        if (room_at >= 0 && vm_read32(list + (uint32_t)room_at) < room) room = vm_read32(list + (uint32_t)room_at);
+    }
+    if (n <= room) return;
+    static int said = 0;
+    if (said < 8) {
+        said++;
+        fprintf(stderr, "[des] the server's %s list has %u entries; %u fit, the rest are left out\n", what, n, room);
+    }
+    ctx->gpr[reg] = room;
+}
+
 extern "C" void des_net_show(ppu_context* ctx, uint32_t addr)
 {
     static int msgs = 1, stains = 1, ghosts = 1;
@@ -1723,12 +1753,25 @@ extern "C" void des_net_show(ppu_context* ctx, uint32_t addr)
     static int msgs_seen = 1, stains_seen = 1;
     switch (addr) {
     case 0x00562BC4u:   /* mr r21, r3: the message count */
+        list_fit(ctx, 21, "message", (uint32_t)ctx->gpr[23], 0x144, 0x4);
         if (!msgs && ctx->gpr[21]) {
             fprintf(stderr, "[des] messages hidden (%u from the server)\n", (unsigned)ctx->gpr[21]);
             ctx->gpr[21] = 0;
         }
         break;
+    case 0x00558884u: {   /* lwz r0, 0x18c(r31): the ghost list's first count; the loops read both from r31 */
+        const uint32_t list = (uint32_t)ctx->gpr[31];
+        if (!guest_ptr_ok(list)) break;
+        for (const uint32_t off : { 0x18Cu, 0x190u }) {
+            ctx->gpr[0] = vm_read32(list + off);
+            list_fit(ctx, 0, "ghost", list, off == 0x18Cu ? 0x150 : 0x14C, -1);
+            vm_write32(list + off, (uint32_t)ctx->gpr[0]);
+        }
+        ctx->gpr[0] = vm_read32(list + 0x18C);
+        break;
+    }
     case 0x00560904u:   /* mr r18, r3: the bloodstain count */
+        list_fit(ctx, 18, "bloodstain", (uint32_t)ctx->gpr[24], 0x140, 0x0);
         if (!stains && ctx->gpr[18]) {
             fprintf(stderr, "[des] bloodstains hidden (%u from the server)\n", (unsigned)ctx->gpr[18]);
             ctx->gpr[18] = 0;
@@ -1749,6 +1792,78 @@ extern "C" void des_net_show(ppu_context* ctx, uint32_t addr)
             ctx->gpr[0] = 0;
         }
         break;
+    }
+}
+
+/* Other players' ghost and bloodstain replays come from the server, and the
+ * game trusts their frame count. The reader 0x003957B8 (r3 the replay, r4
+ * the unpacked data) takes the count at the data's start, allocates
+ * count * 32 + 8 bytes and copies count * 32 from offset 12, then reads
+ * 0x50 + 0x22 bytes after the frames: 12 + count * 32 + 0x72 in all. Nothing
+ * checks that against the data's length (docs/69, "Replays"). These hooks
+ * drop a replay whose count does not fit, through the game's own path for
+ * one that did not unpack:
+ * - a bloodstain's: 0x00391818, the cmpwi of r3 after the unpack 0x005685E8,
+ *   which put the length at 0x74(r1). r3 = 0 and cr7 EQ, as if it had failed;
+ * - a wandering ghost's: 0x003A596C and 0x003A5EA0, the cmplwi of length - 1
+ *   against 0xFFF after each of its two unpacks (r3 the data, r5 the
+ *   length). cr7 GT, the game's own "length out of range";
+ * - any other: 0x003957B8, the reader's cmpwi of r4. Both unpacks write
+ *   0x1000-byte buffers, so a count past that is dropped there: r4 = 0 and
+ *   cr7 EQ, the reader's own "no data".
+ * DES_NET_REPLAY_CHECK=0 turns the checks off. Main thread. */
+constexpr uint32_t kReplayAround = 12 + 0x50 + 0x22;   /* the bytes before and after the frames */
+constexpr uint32_t kReplayMax = 0x1000;                 /* the unpack buffers */
+
+static bool replay_fits(uint32_t data, uint32_t len)
+{
+    if (!guest_ptr_ok(data) || len > kReplayMax) return false;
+    const int32_t n = (int32_t)vm_read32(data);
+    return n > 0 && (uint64_t)n * 32 + kReplayAround <= len;
+}
+
+static void replay_dropped(const char* what, uint32_t data, uint32_t len)
+{
+    static int said = 0;
+    if (said >= 8) return;
+    said++;
+    fprintf(stderr, "[des] a %s replay from the server was dropped: %d frames do not fit its %u bytes\n", what,
+            guest_ptr_ok(data) ? (int)vm_read32(data) : 0, len);
+}
+
+extern "C" void des_net_replay(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_NET_REPLAY_CHECK", 1) != 0);
+    if (!on) return;
+    switch (addr) {
+    case 0x00391818u: {   /* cmpwi cr7, r3, 0: the bloodstain's unpacked data */
+        const uint32_t data = (uint32_t)ctx->gpr[3];
+        const uint32_t len = vm_read32((uint32_t)ctx->gpr[1] + 0x74);
+        if (!data || replay_fits(data, len)) break;
+        replay_dropped("bloodstain", data, len);
+        ctx->gpr[3] = 0;
+        ppu_cr_set(ctx, 7, 2u);   /* EQ: the beq takes the no-data exit */
+        break;
+    }
+    case 0x003A596Cu:
+    case 0x003A5EA0u: {   /* cmplwi cr7, r0, 0xFFF: the ghost's length - 1 */
+        const uint32_t data = (uint32_t)ctx->gpr[3], len = (uint32_t)ctx->gpr[5];
+        if (len - 1u > 0xFFFu || replay_fits(data, len)) break;   /* (out of range: the game refuses it itself) */
+        replay_dropped("ghost", data, len);
+        ppu_cr_set(ctx, 7, 4u);   /* GT: the bgt takes the out-of-range path */
+        break;
+    }
+    case 0x003957B8u: {   /* cmpwi cr7, r4, 0: the reader's entry */
+        const uint32_t data = (uint32_t)ctx->gpr[4];
+        if (!data || !guest_ptr_ok(data)) break;
+        const int32_t n = (int32_t)vm_read32(data);
+        if (n >= 0 && (uint64_t)n * 32 + kReplayAround <= kReplayMax) break;
+        replay_dropped("", data, kReplayMax);
+        ctx->gpr[4] = 0;
+        ppu_cr_set(ctx, 7, 2u);   /* EQ: the beq takes the reader's no-data exit */
+        break;
+    }
     }
 }
 

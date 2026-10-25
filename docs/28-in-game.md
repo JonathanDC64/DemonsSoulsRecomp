@@ -1194,6 +1194,49 @@ So with the fix, 240 fps matches 30 fps at both speeds. `DES_SLIDEFIX=2` is kind
 - Wrapper `+0x184` is not Havok's supported state. It is the ground's material id (2 for the Tutorial floor); `+0x32` is on-ground, `+0x33` too-steep, `+0x220` the slope angle in degrees, `+0x150` the ground normal, `+0x160` the time in the air.
 - Other per-frame accumulators may hide in the same class (`0x001FE778`'s neighbours `0x001FF160`, `0x001FF8F0` also write `+0x33`). They were not on this path.
 
+## Locked-on direction changes above 30 fps (port `des_twist_rate`, 2026-10-25)
+
+**Symptom:** moving while locked on, above 30 fps (reported unlocked), the character's change from one direction to another looked jumpy, and so did holding the stick on a diagonal. Rolls felt odd too. At 30 fps it all looked right.
+
+**How locked-on movement is animated:** the locomotion controller (vtable `0x0185C338`, update `0x003259F8`) plays one of four direction clips: forward 710, back 711, left 712, right 713 (`+0x138`). Each clip change asks for a 0.2 s blend (the anim request's slot `+0x18`); the blend and the clips' playback run on the update's dt. For any other direction it turns three bones by the angle between the move and the clip's direction: `Master` gets it all, `Upper_Root` and `Neck` turn back by a share of it, so the legs point along the move and the chest stays toward the target. The bone objects are at `+0x144`, `+0x140` and `+0x148`; each has its target angle at `+0x10`. On a diagonal the clip changes when that angle passes about 55-62°, and then the target jumps by about 85° the other way. The jump comes at the same game time at 30 fps and unlocked.
+
+**Cause:** the bone turner (`0x003D3BC0`, called from `0x00322A60` for the three bones) does not set the bone to its target. It eases toward it by a fixed share an update (`0x003D42B0`):
+
+    cur (+0x14) += (target (+0x10) - cur) * k (+0x20)
+
+k is the controller's `+0x154`, 0.35 (set by the constructors `0x00322428` and `0x00322DD0`, stored to each bone at `0x00322AB0`). With k = 0.35 the gap is 10% after 5.3 updates: 178 ms at 30 fps, alongside the clips' 0.2 s blend. At 240 fps it closes in 22 ms, and unlocked (about 500 fps) in 11 ms. So above 30 fps the body snapped round to the new angle while the legs were still blending between clips.
+
+**Fix:** one line in [`port/insn_hooks.txt`](../port/insn_hooks.txt) calls `des_twist_rate` (port/des_options.cpp) after `lfs f12, 0x20(r31)` at `0x003D42BC`. k becomes `1 - (1 - k)^(dt * 30)`, with dt the game's frame time (`0x018C8DB4`). That leaves the same gap per second as at 30 fps.
+- It does nothing at 30 fps or without DES_FPS. A bone with k = 1 (the turner's default) stays at 1.
+- The turner's other user, a two-bone controller (`0x0031B56C`, k from its `+0x60` or `+0x64`), gets the same correction. It eases the same way.
+- `DES_TWISTFIX=0` turns it off live.
+
+**Result:** a scripted session in the Tutorial, locked on: holds at 45° and 135°, the same with noise on the stick, a full sweep, and swings between directions. "Settles" is the time from a jump of the `Master` target (more than 0.5 rad, with a clip playing) until the drawn angle (`+0x14`) is within 10% of the jump:
+
+| Run | Frame | Jumps | Settles (median) | Range |
+|---|---|---|---|---|
+| 30 fps | 33.3 ms | 18 | 167 ms | 133-200 ms |
+| Unlocked (532 fps), `DES_TWISTFIX=0` | 1.9 ms | 31 | 12 ms | 10-14 ms |
+| Unlocked (515 fps), fix on | 1.9 ms | 26 | 162 ms | 101-229 ms |
+
+The drawn angle after a jump of 0.82-0.84 rad, at 30 fps and unlocked with the fix:
+
+| After | 25-33 ms | 67-73 ms | 97-100 ms | 122-133 ms | 167-171 ms | 196-200 ms |
+|---|---|---|---|---|---|---|
+| 30 fps | 0.28 | 0.47 | 0.59 | 0.67 | 0.73 | 0.77 |
+| Unlocked, fix on | 0.23 | 0.52 | 0.60 | 0.67 | 0.76 | 0.79 |
+
+Rolls were not measured. When the clip stops, the target goes to 0 and the same ease turns the body back, so a roll from a diagonal probably snapped in the same way above 30 fps.
+
+**How it was found:**
+- A scratch frame-log probe (`DES_LOCOADDR`) recorded the controller, its bones and the anim request slots every frame during scripted locked-on holds, noisy diagonals, a sweep and direction swings, at 30 fps and unlocked. The clip changes, the blend times, the slot clocks and the target angle all matched in game time, so the controller itself was not the cause.
+- Frame dumps (`CELLMARK_DUMP_NOW`) did not help: at the test spot the camera was pushed against a wall and the legs were off screen.
+- The bone names (`Master`, `Upper_Root`, `Neck`) led to the setup (`0x003228B0`) and the bone class (`0x003D35B8`). Its only read of `+0x10` is the ease, and the controller method that stores `+0x154` into each bone's `+0x20` (`0x00322AB0`).
+
+**Watch out:**
+- The probe's bone angle at `+0x10` is the target, not what is drawn. The drawn angle is `+0x14`.
+- `0x003259F8` and `0x003D3BC0` stop Ghidra at a VMX instruction. Read them with `ps3recomp/tools/ppu_disasm.py --va`.
+
 ## Still open
 
 - **Graphics in the level**: HUD, half frames and particles fixed (`dc3bb6f`, `c01c7f7`, `3f094e1`). Holes in the level geometry fixed (`5a78630`), black characters (`9db1a5f`), sun flare through walls (`df9d0f9`, not yet checked live with the sun in view). Lit, textured, culled and depth-tested correctly, with shadows (`3470cbd`, `4e229b7`, `fb24382`). Depth read as colour works (`b4821e0`: light shafts, haze, motion blur). Frame rate about 28 (cap 30) since `ba6305d`; see Frame rate. Heaviest Palace view: 13-14% skip frames since `099343f` (was 29%). Still: no side-by-side check against RPCS3 at the same spot yet.

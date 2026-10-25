@@ -1,34 +1,47 @@
-"""Make setup's compiler download from LLVM's own Windows archive, and test it (docs/86).
+"""Make setup's compiler download from LLVM's own Windows or Linux archive, and test it (docs/86, docs/87).
 
-Goes in the port as .github/scripts/llvm_pack.py. llvm-archive.yml runs it on a Windows runner:
+Goes in the port as .github/scripts/llvm_pack.py. llvm-archive.yml runs it on a Windows or a Linux runner:
 
-  python -I llvm_pack.py pack --archive clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz \
+  python -I llvm_pack.py pack --system windows --archive clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz \
       --source-sha256 <sum> --llvm-version 22.1.8 --name llvm-win64 --version 22.1.8-1 \
       --licenses <dir> --url <release asset url> --checked <text> --out <dir>
-  python -I llvm_pack.py smoke --tools <unpacked zip> --work <dir> --llvm-version 22.1.8
+  python -I llvm_pack.py smoke --tools <unpacked download> --work <dir> --llvm-version 22.1.8
 
-pack keeps only what compiling and linking the game part needs: bin/clang.exe, bin/lld-link.exe and
-clang's own headers (lib/clang/<major>/include), plus the licence files. It writes <name>-<version>.zip
-(sorted entries, one date, fixed modes: the same archive gives the same zip) and <name>-<version>.json,
-which holds the toolchain.json entry.
+pack keeps only what compiling and linking the game part needs, plus the licence files:
+  - Windows: bin/clang.exe, bin/lld-link.exe and clang's own headers (lib/clang/<major>/include). It writes
+    <name>-<version>.zip (sorted entries, one date, fixed modes: the same archive gives the same zip).
+  - Linux (--system linux, from LLVM-<version>-Linux-X64.tar.xz): bin/clang, bin/ld.lld and the same headers.
+    The install tree's clang and ld.lld are links (to clang-<major> and lld); the real files go in under the
+    names setup runs, so the download holds no links. It writes <name>-<version>.tar.xz (sorted entries, one
+    date, owner 0, fixed modes, xz in one thread: the same archive gives the same tar.xz). A tar, because a zip
+    unpacked by Python loses the execute bit.
+Both also write <name>-<version>.json, which holds the toolchain.json entry.
 
-smoke compiles and links a tiny freestanding DLL with only the unpacked files (no Windows SDK, no MSVC,
-no C runtime), checks it has no imports, loads it and calls it. It also lists the DLLs clang.exe and
-lld-link.exe import, and fails if one is not part of Windows.
+smoke builds a tiny freestanding library with only the unpacked files, checks it, loads it and calls it:
+  - Windows: a DLL (no Windows SDK, no MSVC, no C runtime) with no imports. It also lists the DLLs clang.exe
+    and lld-link.exe import, and fails if one is not part of Windows.
+  - Linux: a .so built with the game part's own flags (docs/87), with no NEEDED entries, only its own
+    exports and an initial-exec thread-local. It also lists the libraries clang and ld.lld need, and fails on
+    one a desktop Linux may not have, or on a glibc symbol newer than GLIBC_FLOOR.
 
 Standard library only.
 """
 import argparse
+import calendar
 import ctypes
 import hashlib
 import json
+import lzma
 import os
+import posixpath
+import re
 import shutil
 import stat
 import struct
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -37,6 +50,17 @@ CHUNK = 1 << 20
 TOOLS = {"bin/clang.exe": 0o755, "bin/lld-link.exe": 0o755}   # path in the archive -> mode in the zip
 METHODS = {"deflate": zipfile.ZIP_DEFLATED, "lzma": zipfile.ZIP_LZMA}
 MIN_HEADERS = ("stddef.h", "stdint.h", "stdatomic.h", "intrin.h", "smmintrin.h")
+
+# Linux: the names setup runs (compile.py) -> mode in the tar, and the bin/ files those names can lead to.
+LINUX_TOOLS = {"bin/clang": 0o755, "bin/ld.lld": 0o755}
+LINUX_BIN = re.compile(r"clang|clang-\d+|lld|ld\.lld")
+LLVM_CONFIG = "lib/cmake/llvm/LLVMConfig.cmake"     # read for the report: which libraries LLVM was built with
+# The oldest glibc the Linux build supports (docs/87): the ubuntu-22.04 runner's.
+GLIBC_FLOOR = (2, 35)
+GLIBC_LIBS = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "librt.so.1", "libresolv.so.2",
+              "libutil.so.1", "ld-linux-x86-64.so.2"}
+# What every desktop Linux has besides glibc: GCC's runtime, zlib and zstd. The tools may need nothing else.
+SYSTEM_LIBS = GLIBC_LIBS | {"libstdc++.so.6", "libgcc_s.so.1", "libz.so.1", "libzstd.so.1"}
 
 
 class Error(RuntimeError):
@@ -116,6 +140,8 @@ def write_zip(path, files, method, when):
 
 
 def cmd_pack(a):
+    if a.system == "linux":
+        return cmd_pack_linux(a)
     archive = Path(a.archive)
     got = sha256_file(archive)
     if got != a.source_sha256:
@@ -195,6 +221,167 @@ def cmd_pack(a):
         f"| From | `{archive.name}`, {archive.stat().st_size:,} bytes, {seen['members']:,} entries |",
         f"| Licence files inside LLVM's archive | {', '.join(sorted(seen['licences'])) or 'none'} |",
         f"| DLLs in LLVM's bin/ | {', '.join(sorted(seen['bin_dlls'])) or 'none'} |",
+        "", "toolchain.json entry:", "", "```json", json.dumps(record["entry"], indent=1), "```", ""]))
+
+
+def select_linux(archive, header_dir, stage):
+    """Stream LLVM's Linux tar.xz once. Saves under stage/ the headers, LLVMConfig.cmake and the bin/ files that
+    bin/clang and bin/ld.lld can lead to, and records bin/'s links on the way (clang is a link to clang-<major>).
+    Returns what it saw and {path in the archive: saved file}."""
+    seen = {"tops": set(), "members": 0, "licences": [], "links": {}}
+    files = {}
+    with tarfile.open(archive, "r|xz") as tf:
+        for m in tf:
+            seen["members"] += 1
+            name = m.name.replace("\\", "/")
+            while name.startswith("./"):
+                name = name[2:]
+            parts = PurePosixPath(name).parts
+            if not parts:
+                continue
+            if name.startswith("/") or ".." in parts:
+                raise Error(f"{m.name!r}: an entry outside the archive's folder; refusing the archive")
+            seen["tops"].add(parts[0])
+            rel = "/".join(parts[1:])
+            if not rel or m.isdir():
+                continue
+            base = PurePosixPath(rel).name
+            if m.isreg() and base.lower().startswith(("license", "copying", "notice")):
+                seen["licences"].append(rel)
+            in_bin = rel.startswith("bin/") and "/" not in rel[4:]
+            if in_bin and (m.issym() or m.islnk()):
+                # A symlink's target is from its own folder, a hard link's from the archive's top.
+                target = (posixpath.join("bin", m.linkname) if m.issym()
+                          else "/".join(PurePosixPath(m.linkname.replace("\\", "/")).parts[1:]))
+                seen["links"][rel] = posixpath.normpath(target)
+                continue
+            if not ((in_bin and LINUX_BIN.fullmatch(base)) or rel.startswith(header_dir) or rel == LLVM_CONFIG):
+                continue
+            if not m.isreg():
+                raise Error(f"{m.name!r} is not a regular file (tar type {m.type!r}); refusing it")
+            dest = stage / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with tf.extractfile(m) as f, open(dest, "wb") as o:
+                shutil.copyfileobj(f, o, CHUNK)
+            files[rel] = dest
+    return seen, files
+
+
+def resolve_link(rel, links, files):
+    """The kept file a bin/ name leads to, through the archive's links."""
+    path = [rel]
+    while path[-1] in links:
+        if len(path) > 8 or links[path[-1]] in path:
+            raise Error(f"{rel}: the links loop ({' -> '.join(path)})")
+        path.append(links[path[-1]])
+    if path[-1] not in files:
+        raise Error(f"{' -> '.join(path)}: no such file in the archive's bin/")
+    return path[-1]
+
+
+def write_tar_xz(path, files, when):
+    """files: sorted list of (name in the tar, mode, source path). Plain ustar entries with one date, owner 0 and
+    fixed modes, and xz preset 9 in one thread, so the same files give the same bytes."""
+    mtime = calendar.timegm(time.strptime(when, "%Y-%m-%d"))
+    with lzma.open(path, "wb", format=lzma.FORMAT_XZ, check=lzma.CHECK_CRC64, preset=9) as xz:
+        with tarfile.open(fileobj=xz, mode="w", format=tarfile.USTAR_FORMAT) as tf:
+            for name, mode, src in files:
+                ti = tarfile.TarInfo(name)
+                ti.size = src.stat().st_size
+                ti.mode = mode
+                ti.mtime = mtime
+                ti.uid = ti.gid = 0
+                ti.uname = ti.gname = ""
+                with open(src, "rb") as f:
+                    tf.addfile(ti, f)
+
+
+def cmd_pack_linux(a):
+    archive = Path(a.archive)
+    got = sha256_file(archive)
+    if got != a.source_sha256:
+        raise Error(f"{archive.name}: SHA-256 {got}, expected {a.source_sha256}; not packing an unchecked archive")
+    major = a.llvm_version.split(".")[0]
+    header_dir = f"lib/clang/{major}/include/"
+    out = Path(a.out)
+    stage = out / "stage"
+    if stage.exists():
+        shutil.rmtree(stage)
+    stage.mkdir(parents=True)
+
+    seen, files = select_linux(archive, header_dir, stage / "archive")
+    if len(seen["tops"]) != 1:
+        raise Error(f"expected one top folder in the archive, found {sorted(seen['tops'])}")
+    chosen = {}                                     # name in the tar -> (mode, file, path in LLVM's archive)
+    for name, mode in LINUX_TOOLS.items():
+        real = resolve_link(name, seen["links"], files)
+        chosen[name] = (mode, files[real], real)
+    for rel, p in files.items():
+        if rel.startswith(header_dir):
+            chosen[rel] = (0o644, p, rel)
+    missing = [header_dir + h for h in MIN_HEADERS if header_dir + h not in chosen]
+    if missing:
+        raise Error(f"not in the archive: {', '.join(missing)}")
+
+    lic = Path(a.licenses)
+    for p in sorted(lic.rglob("*")):
+        if p.is_file():
+            chosen["licenses/" + p.relative_to(lic).as_posix()] = (0o644, p, None)
+    if not any(r.startswith("licenses/llvm/") for r in chosen):
+        raise Error("no licenses/llvm/ file: LLVM's licence must ship with the download")
+    readme = stage / "README.txt"
+    readme.write_text(
+        f"clang, ld.lld and clang's headers from LLVM {a.llvm_version}, for Demon's Souls setup (docs/86, docs/87).\n"
+        f"\nTaken unchanged from LLVM's own archive:\n  {a.source_url}\n  SHA-256 {a.source_sha256}\n"
+        f"\nOnly these files were kept: bin/clang (LLVM's {chosen['bin/clang'][2]}), bin/ld.lld (LLVM's "
+        f"{chosen['bin/ld.lld'][2]}) and lib/clang/{major}/include.\nLLVM is under the Apache License v2.0 with "
+        "LLVM Exceptions: licenses/llvm/LICENSE.TXT.\n",
+        encoding="utf-8", newline="\n")
+    chosen["README.txt"] = (0o644, readme, None)
+
+    # Which libraries LLVM was built with, for the report: a library built in may bring a licence to ship.
+    config = []
+    if LLVM_CONFIG in files:
+        config = [ln.strip() for ln in files[LLVM_CONFIG].read_text(encoding="utf-8", errors="replace").splitlines()
+                  if re.match(r"\s*set\((LLVM_ENABLE_(ZLIB|ZSTD|LIBXML2|LIBEDIT|TERMINFO|LIBCXX|FFI|CURL|HTTPLIB)|"
+                              r"LLVM_USE_STATIC_ZSTD|LLVM_LINK_LLVM_DYLIB|LLVM_BUILD_LLVM_DYLIB)\b", ln)]
+
+    tar = sorted((rel, mode, p) for rel, (mode, p, _) in chosen.items())
+    name = f"{a.name}-{a.version}"
+    tpath = out / f"{name}.tar.xz"
+    write_tar_xz(tpath, tar, a.date)
+    size, digest = tpath.stat().st_size, sha256_file(tpath)
+    raw = sum(p.stat().st_size for _, _, p in tar)
+
+    record = {
+        "entry": {
+            "name": a.name, "version": a.version, "url": a.url, "size": size, "sha256": digest,
+            "why": f"Compiles and links the game part on Linux: clang, ld.lld and clang's headers from LLVM "
+                   f"{a.llvm_version} (docs/86).",
+            "checked": a.checked,
+        },
+        "source": {"url": a.source_url, "size": archive.stat().st_size, "sha256": a.source_sha256,
+                   "top_folder": sorted(seen["tops"])[0], "members": seen["members"],
+                   "licence_files_inside": sorted(seen["licences"]),
+                   "tools_from": {n: chosen[n][2] for n in LINUX_TOOLS},
+                   "links_in_bin": dict(sorted(seen["links"].items())), "llvm_config": config},
+        "compression": "xz", "date": a.date, "unpacked_bytes": raw,
+        "files": [{"path": rel, "size": p.stat().st_size, "sha256": sha256_file(p)} for rel, _, p in tar],
+    }
+    jpath = out / f"{name}.json"
+    jpath.write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8", newline="\n")
+
+    hdrs = sum(1 for r in chosen if r.startswith(header_dir))
+    summary(a.summary, "\n".join([
+        f"### {tpath.name}", "",
+        "| | |", "|---|---|",
+        f"| Size | {size:,} bytes (xz) |",
+        f"| SHA-256 | `{digest}` |",
+        f"| Unpacked | {raw:,} bytes, {len(tar)} files ({hdrs} headers) |",
+        f"| From | `{archive.name}`, {archive.stat().st_size:,} bytes, {seen['members']:,} entries |",
+        f"| Tools | bin/clang from {chosen['bin/clang'][2]}, bin/ld.lld from {chosen['bin/ld.lld'][2]} |",
+        f"| Licence files inside LLVM's archive | {', '.join(sorted(seen['licences'])) or 'none'} |",
+        f"| LLVMConfig.cmake | {'; '.join(config) or 'not in the archive'} |",
         "", "toolchain.json entry:", "", "```json", json.dumps(record["entry"], indent=1), "```", ""]))
 
 
@@ -292,7 +479,7 @@ def run(cmd, env, cwd):
 
 def cmd_smoke(a):
     if os.name != "nt":
-        raise Error("the smoke test is for Windows only (docs/87 has the Linux plan)")
+        return smoke_linux(a)
     tools = Path(a.tools).resolve()
     clang, lld = tools / "bin" / "clang.exe", tools / "bin" / "lld-link.exe"
     work = Path(a.work).resolve()
@@ -392,10 +579,259 @@ def cmd_smoke(a):
     summary(a.summary, "\n".join(["### Smoke test", "", "| | |", "|---|---|", *lines, ""]))
 
 
+SMOKE_LINUX_C = r"""
+#include <stddef.h>
+#include <stdint.h>
+#include <stdatomic.h>
+#include <smmintrin.h>
+
+#define EXPORT __attribute__((visibility("default")))
+static _Atomic int counter;
+static __thread int per_thread;          /* initial-exec (-ftls-model), as the game part's thread-locals */
+struct pair { char c; int64_t x; };
+
+EXPORT int smoke_add(int a, int b) { return a + b; }
+EXPORT double smoke_mul(double a, double b) { return a * b; }
+EXPORT int smoke_sse41(int a, int b)
+{
+    __m128i v = _mm_mullo_epi32(_mm_set1_epi32(a), _mm_set1_epi32(b));    /* SSE4.1 */
+    return _mm_extract_epi32(v, 2);
+}
+EXPORT int smoke_ctz(uint64_t v) { return v ? __builtin_ctzll(v) : -1; }
+EXPORT int smoke_atomic(void) { return atomic_fetch_add(&counter, 1) + 1; }
+EXPORT int smoke_offset(void) { return (int)offsetof(struct pair, x); }
+EXPORT int smoke_tls(void) { return ++per_thread; }
+int smoke_hidden(void) { return 7; }     /* hidden by -fvisibility=hidden: must not be exported */
+"""
+
+SMOKE_LINUX_CPP = r"""
+#include <stdint.h>
+
+template <typename T> constexpr T twice(T v) { return v + v; }
+struct shape { virtual int sides() const { return 0; } };
+struct square : shape { int sides() const override { return 4; } };
+static int sides_of(const shape &s) { return s.sides(); }
+
+extern "C" __attribute__((visibility("default"))) int smoke_cpp(int v)
+{
+    square sq;
+    auto add = [v](int x) { return x + v; };
+    return add(twice<int>(sides_of(sq)));      /* 8 + v */
+}
+"""
+
+# The game part compiles hosted with its own small C headers (ps3recomp's game_libc/), and so does the smoke test:
+# clang's <mm_malloc.h>, which <smmintrin.h> reaches, wants malloc and free from <stdlib.h>.
+SMOKE_LINUX_STDLIB = r"""
+#include <stddef.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+void *malloc(size_t size);
+void free(void *block);
+#ifdef __cplusplus
+}
+#endif
+"""
+
+# The game part's flags on Linux (game_build_linux.json, docs/87), without its -D, -I and -include.
+LINUX_CFLAGS = ["-fPIC", "-O2", "-fwrapv", "-msse4.1", "-fno-strict-aliasing", "-ffp-contract=off", "-nostdlibinc",
+                "-fvisibility=hidden", "-ftls-model=initial-exec", "-fno-stack-protector", "-Wall"]
+LINUX_LDFLAGS = ["-fPIC", "-nostdlib", "-fuse-ld=lld", "-Wl,-z,defs", "-Wl,-z,now", "-Wl,--build-id=sha1", "-shared"]
+SMOKE_EXPORTS = {"smoke_add", "smoke_mul", "smoke_sse41", "smoke_ctz", "smoke_atomic", "smoke_offset", "smoke_tls",
+                 "smoke_cpp"}
+
+
+def elf_info(path):
+    """An x86-64 ELF file's type, its dynamic section (NEEDED, SONAME, RUNPATH, RPATH and the flags), the symbol
+    versions it needs from each library, the symbols it exports and whether it has thread-locals."""
+    d = Path(path).read_bytes()
+    if d[:4] != b"\x7fELF" or d[4] != 2 or d[5] != 1:
+        raise Error(f"{path}: not a 64-bit little-endian ELF file")
+    etype, machine = struct.unpack_from("<HH", d, 16)
+    phoff, shoff = struct.unpack_from("<QQ", d, 32)
+    phentsize, phnum, shentsize, shnum = struct.unpack_from("<HHHH", d, 54)
+    phdrs = [struct.unpack_from("<IIQQQQQQ", d, phoff + i * phentsize) for i in range(phnum)]
+    # (name, type, flags, addr, offset, size, link, info, align, entsize)
+    secs = [struct.unpack_from("<IIQQQQIIQQ", d, shoff + i * shentsize) for i in range(shnum)]
+
+    def cstr(sec, off):
+        o = secs[sec][4] + off
+        return d[o:d.index(b"\0", o)].decode("utf-8", "replace")
+
+    info = {"type": etype, "machine": machine, "needed": [], "soname": None, "runpath": None, "rpath": None,
+            "flags": 0, "flags_1": 0, "versions": {}, "exports": [], "tls": any(p[0] == 7 for p in phdrs)}
+    for s in secs:
+        stype, off, size, link, count = s[1], s[4], s[5], s[6], s[7]
+        if stype == 6:                                   # SHT_DYNAMIC
+            for o in range(off, off + size, 16):
+                tag, val = struct.unpack_from("<qQ", d, o)
+                if tag == 0:
+                    break
+                if tag == 1:
+                    info["needed"].append(cstr(link, val))
+                elif tag in (14, 15, 29):
+                    info[{14: "soname", 15: "rpath", 29: "runpath"}[tag]] = cstr(link, val)
+                elif tag == 30:
+                    info["flags"] = val
+                elif tag == 0x6FFFFFFB:
+                    info["flags_1"] = val
+        elif stype == 0x6FFFFFFE:                        # SHT_GNU_verneed: the versions needed, per library
+            o = off
+            for _ in range(count):
+                _, cnt, file_, aux, nxt = struct.unpack_from("<HHIII", d, o)
+                names, a = [], o + aux
+                for _ in range(cnt):
+                    _, _, _, vname, anext = struct.unpack_from("<IHHII", d, a)
+                    names.append(cstr(link, vname))
+                    a += anext
+                info["versions"].setdefault(cstr(link, file_), []).extend(names)
+                if not nxt:
+                    break
+                o += nxt
+        elif stype == 11:                                # SHT_DYNSYM: defined global or weak, default visibility
+            for o in range(off + 24, off + size, 24):
+                name, st_info, other, shndx = struct.unpack_from("<IBBH", d, o)
+                if shndx != 0 and (st_info >> 4) in (1, 2) and (other & 3) in (0, 3) and (st_info & 0xF) in (0, 1, 2, 6):
+                    info["exports"].append(cstr(link, name))
+    return info
+
+
+def glibc_newest(info):
+    """The newest GLIBC_x.y the file needs, as (x, y)."""
+    vs = [tuple(int(n) for n in v[6:].split(".")) for lib, names in info["versions"].items() if lib in GLIBC_LIBS
+          for v in names if re.fullmatch(r"GLIBC_\d+(\.\d+)*", v)]
+    return max(vs, default=(0,))
+
+
+def newest_others(info):
+    """The newest version the file needs of each family outside glibc (GLIBCXX_, CXXABI_, GCC_ ...)."""
+    best = {}
+    for lib, names in info["versions"].items():
+        for v in names:
+            m = re.fullmatch(r"([A-Za-z_]+?)_?(\d+(?:\.\d+)*)", v)
+            if lib not in GLIBC_LIBS and m:
+                key = tuple(int(n) for n in m.group(2).split("."))
+                if key > best.get(m.group(1), ((), ""))[0]:
+                    best[m.group(1)] = (key, v)
+    return sorted(v for _, v in best.values())
+
+
+def smoke_linux(a):
+    tools = Path(a.tools).resolve()
+    clang, lld = tools / "bin" / "clang", tools / "bin" / "ld.lld"
+    work = Path(a.work).resolve()
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    # Only the system's own folders on PATH, and no compiler, include or library variables.
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(work), "TMPDIR": str(work), "LC_ALL": "C"}
+    lines, ldd = [], []
+
+    for exe in (clang, lld):
+        info = elf_info(exe)
+        if info["machine"] != 62 or info["type"] not in (2, 3):
+            raise Error(f"{exe.name} is not an x86-64 program: {info['type']}, {info['machine']}")
+        newest = glibc_newest(info)
+        other = newest_others(info)
+        lines.append(f"| {exe.name} needs | {', '.join(info['needed']) or 'nothing'}; newest GLIBC_"
+                     f"{'.'.join(map(str, newest))}{'; ' + ', '.join(other) if other else ''}"
+                     f"{'; RUNPATH ' + info['runpath'] if info['runpath'] else ''}"
+                     f"{'; RPATH ' + info['rpath'] if info['rpath'] else ''} |")
+        bad = [n for n in info["needed"] if n not in SYSTEM_LIBS]
+        if bad:
+            raise Error(f"{exe.name} needs libraries a desktop Linux may not have: {', '.join(bad)}")
+        if newest > GLIBC_FLOOR:
+            raise Error(f"{exe.name} needs GLIBC_{'.'.join(map(str, newest))}, newer than the floor "
+                        f"{'.'.join(map(str, GLIBC_FLOOR))} (docs/87)")
+        r = subprocess.run(["ldd", str(exe)], capture_output=True, text=True, errors="replace")
+        ldd += [f"$ ldd bin/{exe.name}", (r.stdout + r.stderr).rstrip()]
+
+    v = run([str(clang), "--version"], env, work).splitlines()[0]
+    if f"clang version {a.llvm_version}" not in v:
+        raise Error(f"clang says {v!r}, expected version {a.llvm_version}")
+    lv = run([str(lld), "--version"], env, work).strip()
+    if f"LLD {a.llvm_version}" not in lv:
+        raise Error(f"ld.lld says {lv!r}, expected LLD {a.llvm_version}")
+    lines += [f"| clang --version | {v} |", f"| ld.lld --version | {lv} |"]
+
+    major = a.llvm_version.split(".")[0]
+    rdir = Path(run([str(clang), "-print-resource-dir"], env, work).strip()).resolve()
+    if rdir != (tools / "lib" / "clang" / major):
+        raise Error(f"clang's resource folder is {rdir}, not the one in the download")
+
+    inc = work / "inc"
+    inc.mkdir()
+    (inc / "stdlib.h").write_text(SMOKE_LINUX_STDLIB, encoding="utf-8")
+    objs = []
+    for src_name, text, lang in (("smoke.c", SMOKE_LINUX_C, ["-std=gnu17"]),
+                                 ("smoke.cpp", SMOKE_LINUX_CPP, ["-std=gnu++20", "-fno-rtti"])):
+        src = work / src_name
+        src.write_text(text, encoding="utf-8")
+        flags = [str(clang), *lang, *LINUX_CFLAGS, f"-I{inc}"]
+        # Every header must come from the download or the smoke test's own folder: read clang's search list.
+        out = run(flags + ["-v", "-E", str(src), "-o", str(work / (src_name + ".i"))], env, work).splitlines()
+        try:
+            search = out[out.index("#include <...> search starts here:") + 1:out.index("End of search list.")]
+        except ValueError:
+            raise Error("clang -v printed no include search list:\n" + "\n".join(out))
+        search = [Path(s.strip()).resolve() for s in search]
+        outside = [str(s) for s in search if s != inc and not s.is_relative_to(tools)]
+        if outside or tools / "lib" / "clang" / major / "include" not in search:
+            raise Error(f"clang searches headers outside the download for {src_name}: {outside or 'not its own'}")
+        objs.append(str(work / (src_name + ".o")))
+        run(flags + ["-c", str(src), "-o", objs[-1]], env, work)
+
+    link = [str(clang), *LINUX_LDFLAGS, "-Wl,-soname,smoke.so", "-o", str(work / "smoke.so"), *objs]
+    # The link must run the download's ld.lld, not one on PATH: clang -### prints the command it would run.
+    jobs = [ln for ln in run(link + ["-###"], env, work).splitlines() if ln.startswith(' "')]
+    linker = Path(jobs[-1].split('"')[1]).resolve() if jobs else None
+    if linker != lld.resolve():
+        raise Error(f"clang links with {linker}, not the download's ld.lld")
+    run(link, env, work)
+
+    info = elf_info(work / "smoke.so")
+    if info["type"] != 3 or info["machine"] != 62:
+        raise Error(f"smoke.so is not an x86-64 shared object: {info['type']}, {info['machine']}")
+    if info["needed"]:
+        raise Error(f"smoke.so needs {info['needed']}; it must need nothing")
+    if set(info["exports"]) != SMOKE_EXPORTS:
+        raise Error(f"smoke.so exports {sorted(info['exports'])}, expected {sorted(SMOKE_EXPORTS)}")
+    if not info["tls"] or not info["flags"] & 0x10:              # PT_TLS, DF_STATIC_TLS
+        raise Error("smoke.so has no initial-exec thread-locals (PT_TLS and DF_STATIC_TLS)")
+    lib = ctypes.CDLL(str(work / "smoke.so"))
+    lib.smoke_mul.restype = ctypes.c_double
+    lib.smoke_mul.argtypes = (ctypes.c_double, ctypes.c_double)
+    lib.smoke_ctz.argtypes = (ctypes.c_uint64,)
+    other_thread = []
+    t = threading.Thread(target=lambda: other_thread.append(lib.smoke_tls()))
+    checks = {"smoke_add(2, 3)": (lib.smoke_add(2, 3), 5),
+              "smoke_mul(1.5, 4.0)": (lib.smoke_mul(1.5, 4.0), 6.0),
+              "smoke_sse41(7, 6)": (lib.smoke_sse41(7, 6), 42),
+              "smoke_ctz(0x100)": (lib.smoke_ctz(0x100), 8),
+              "smoke_atomic() twice": ((lib.smoke_atomic(), lib.smoke_atomic()), (1, 2)),
+              "smoke_offset()": (lib.smoke_offset(), 8),
+              "smoke_tls() twice": ((lib.smoke_tls(), lib.smoke_tls()), (1, 2)),
+              "smoke_cpp(5)": (lib.smoke_cpp(5), 13)}
+    t.start()
+    t.join()
+    checks["smoke_tls() on another thread"] = (other_thread, [1])
+    wrong = {k: v for k, v in checks.items() if v[0] != v[1]}
+    if wrong:
+        raise Error(f"smoke.so gave wrong answers: {wrong}")
+    lines.append(f"| smoke.so | {(work / 'smoke.so').stat().st_size:,} bytes, C and C++ with the game part's flags, "
+                 f"no NEEDED, {len(SMOKE_EXPORTS)} exports only, initial-exec TLS, {len(checks)} calls right; "
+                 "headers only from the download, linked by its ld.lld |")
+    summary(a.summary, "\n".join(["### Smoke test", "", "| | |", "|---|---|", *lines, "",
+                                  "```", *ldd, "```", ""]))
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     k = sub.add_parser("pack")
+    k.add_argument("--system", choices=("windows", "linux"), default="windows",
+                   help="which LLVM archive: windows makes a zip, linux a tar.xz (--compression is for the zip)")
     k.add_argument("--archive", required=True)
     k.add_argument("--source-url", required=True)
     k.add_argument("--source-sha256", required=True)

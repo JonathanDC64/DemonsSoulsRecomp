@@ -1,0 +1,35 @@
+# Keeps the newest game release (vX.Y.Z) marked "Latest" on the releases page. Publishing any other release, such
+# as the compiler downloads (llvm-*), would otherwise take the label. The update check never reads it (it picks the
+# highest vX.Y.Z itself), but players landing on the page do.
+name: Latest release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write   # to move the Latest label
+
+concurrency:
+  group: release-latest
+  cancel-in-progress: false
+
+jobs:
+  latest:
+    name: Mark the newest game release Latest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          tag=$(gh release list --repo "$REPO" --exclude-drafts --exclude-pre-releases --limit 200 \
+            --json tagName --jq '[.[].tagName | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))]
+              | sort_by(ltrimstr("v") | split(".") | map(tonumber)) | last // empty')
+          if [ -z "$tag" ]; then
+            echo "No published game release yet; nothing to mark."
+            exit 0
+          fi
+          gh release edit "$tag" --repo "$REPO" --latest
+          echo "Latest: $tag"

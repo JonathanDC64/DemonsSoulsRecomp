@@ -50,6 +50,11 @@ jobs:
           tar -tvJf dist/DemonsSoulsRecomp-*-linux.tar.xz | grep -E '^-rwxr-xr-x .* DemonsSoulsRecomp-[^/]+/des_host$'
           tar -tvJf dist/DemonsSoulsRecomp-*-linux.tar.xz | grep -E ' DemonsSoulsRecomp-[^/]+/licenses/SDL2/LICENSE\.txt$'
 
+      - name: Third-party sources
+        run: |
+          python tools/release/third_party_sources.py --out dist/third-party
+          ls -l dist/third-party
+
       - name: No game-derived files in the package
         run: |
           if [ -f .github/scripts/check_game_files.py ]; then

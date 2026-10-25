@@ -52,6 +52,7 @@ Tab-separated, in hex:
 | cube, d2c | The texture kinds of the units the program samples: cube and shadow units, depth read as colour. |
 | clamp | 1: the sprite-edge clamp form, for draws without a depth test on a scaled target (RSX_SCALE). |
 | blend, nrt, rtfmt, cmask, cull, depth | The draw state `vp_get_fp_pso` makes the pipeline with. |
+| hdrv | Optional, only in rows recorded with HDR on (docs/104): the program's HDR variant. The scene composite's raised clamp limit (float bits), or `8xxxxxxx`: the units whose samples are clamped to 1. A row without it is the plain program. |
 
 - A fingerprint is a hash of a program's code. It finds the program in the player's own game files, and it
   cannot be turned back into the program. So nothing in the file is the game's. It is a small text file of
@@ -130,6 +131,11 @@ A seen file of another game version is left out, and so is a malformed row.
 Record at a render scale above 100 as well (`RSX_SCALE=200`). There, draws without a depth test on a scaled
 target use the clamp form, and its rows differ from the same draws' rows at 100. Most of them are the HUD,
 menus and full-screen passes.
+
+Record with HDR on as well (`RSX_HDR=1`, on a display with HDR on in Windows). The scene target and its copy
+become FP16, so draws into them have other rows, and four programs have an HDR variant (the `hdrv` field). A
+runtime before the field recorded the variants' rows without it; those rows build the plain program, so leave
+out seen files from such runs.
 
 ## Measured
 

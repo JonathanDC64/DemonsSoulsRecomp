@@ -7,30 +7,32 @@
       one under it, oldest first: a test package's shader_cache and the ones its play.sh moved to backups/).
       A SEEN file of another game version (its first line) is left out. INDEX is made if it is not there.
   pso_index.py check INDEX...
-      Each row has its 14 fields in hex and is there once, and the first line names the game version the
-      file is named for. Exit status 1 when one does not hold.
+      Each row has its 14 fields in hex (15 with hdrv) and is there once, and the first line names the game
+      version the file is named for. Exit status 1 when one does not hold.
   pso_index.py stats INDEX...
       Rows, programs, and the rows in each form.
 
-A row, tab-separated, in hex: vp vstart vfetch fp exp32 cube d2c clamp blend nrt rtfmt cmask cull depth. vp and
-fp are fingerprints of the game's two shader programs (64-bit hashes of their code), the rest the draw state
-the pipeline is made with; ps3recomp's libs/video/rsx_d3d12_backend.c ("The pipeline index") says what each
-is. Nothing in a row is the game's. Standard library only.
+A row, tab-separated, in hex: vp vstart vfetch fp exp32 cube d2c clamp blend nrt rtfmt cmask cull depth [hdrv].
+vp and fp are fingerprints of the game's two shader programs (64-bit hashes of their code), the rest the draw
+state the pipeline is made with; hdrv, only in rows recorded with HDR on, the program's HDR variant.
+ps3recomp's libs/video/rsx_d3d12_backend.c ("The pipeline index") says what each is. Nothing in a row is the
+game's. Standard library only.
 """
 import os
 import re
 import sys
 
 FIELDS = "vp vstart vfetch fp exp32 cube d2c clamp blend nrt rtfmt cmask cull depth".split()
+ALL = FIELDS + ["hdrv"]   # hdrv: optional, 0 when a row has no 15th field
 HEADER = re.compile(r"^# pso_index 1 game=(\S+)\s*$")
 HEX = re.compile(r"^[0-9a-f]+$")
 SEEN_NAME = "pso_index_seen.tsv"
 NOTE = [
     "# Pipelines the game asks for, found in play, and built ahead at a start (docs/97). Kept with",
     "# tools/des/pso_index.py; new rows go at the end. A row, tab-separated, in hex:",
-    "#   " + " ".join(FIELDS),
-    "# vp and fp are fingerprints of the game's two shader programs, the rest is draw state: nothing in a row",
-    "# is the game's.",
+    "#   " + " ".join(FIELDS) + " [hdrv]",
+    "# vp and fp are fingerprints of the game's two shader programs, the rest is draw state (hdrv: the HDR",
+    "# variant, only in rows recorded with HDR on): nothing in a row is the game's.",
 ]
 
 
@@ -41,13 +43,15 @@ class Bad(Exception):
 def parse_row(line, where):
     """The row's fields as numbers; Bad if it is not a row."""
     parts = line.split("\t")
-    if len(parts) != len(FIELDS):
-        raise Bad(f"{where}: {len(parts)} fields, not {len(FIELDS)}")
-    for name, p in zip(FIELDS, parts):
+    if len(parts) not in (len(FIELDS), len(ALL)):
+        raise Bad(f"{where}: {len(parts)} fields, not {len(FIELDS)} or {len(ALL)}")
+    for name, p in zip(ALL, parts):
         if not HEX.match(p) or len(p) > (16 if name in ("vp", "fp") else 8):
             raise Bad(f"{where}: {name} is {p!r}, not hex")
-    v = tuple(int(p, 16) for p in parts)
-    row = dict(zip(FIELDS, v))
+    v = tuple(int(p, 16) for p in parts) + (0,) * (len(ALL) - len(parts))
+    row = dict(zip(ALL, v))
+    if len(parts) == len(ALL) and not row["hdrv"]:
+        raise Bad(f"{where}: hdrv is 0 (the game leaves it out then)")
     for flag in ("vfetch", "exp32", "clamp"):
         if row[flag] > 1:
             raise Bad(f"{where}: {flag} is {row[flag]}")
@@ -57,8 +61,9 @@ def parse_row(line, where):
 
 
 def format_row(v):
-    """As the game writes it (rsx_d3d12_backend.c, pso_index_note)."""
-    return "\t".join(f"{x:016x}" if name in ("vp", "fp") else f"{x:x}" for name, x in zip(FIELDS, v))
+    """As the game writes it (rsx_d3d12_backend.c, pso_index_note): hdrv only when it is not 0."""
+    names = ALL if v[len(FIELDS)] else FIELDS
+    return "\t".join(f"{x:016x}" if name in ("vp", "fp") else f"{x:x}" for name, x in zip(names, v))
 
 
 def read(path):
@@ -160,13 +165,14 @@ def check(paths):
 def stats(paths):
     for path in paths:
         game, rows, _bad = read(path)
-        col = {name: [r[i] for r in rows] for i, name in enumerate(FIELDS)}
+        col = {name: [r[i] for r in rows] for i, name in enumerate(ALL)}
         print(f"{path} ({game}): {len(rows)} rows")
         print(f"  programs: {len(set(col['vp']))} vertex, {len(set(col['fp']))} fragment, "
               f"{len(set(zip(col['vp'], col['fp'])))} pairs")
         print(f"  forms: {sum(col['vfetch'])} fetch, {sum(col['clamp'])} clamp, "
               f"{sum(1 for c, d in zip(col['cube'], col['d2c']) if c or d)} with cube, shadow or d2c units, "
-              f"{sum(1 for x in col['exp32'] if not x)} half-precision exports")
+              f"{sum(1 for x in col['exp32'] if not x)} half-precision exports, "
+              f"{sum(1 for x in col['hdrv'] if x)} HDR variants")
         print(f"  draw states: {len(set(r[8:] for r in rows))}")
 
 

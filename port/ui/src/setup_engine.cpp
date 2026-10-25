@@ -1,5 +1,5 @@
-// The host's side of the setup engine (see setup_engine.hpp). Two facts differ by platform, each a small function:
-// where the local data folder is, and which Python runs the engine.
+// The host's side of the setup engine (see setup_engine.hpp). One fact differs by platform, in a small function:
+// where the local data folder is.
 #include "setup_engine.hpp"
 
 #include "report.hpp"
@@ -51,12 +51,6 @@ std::filesystem::path local_data_base() {
     return out;
 }
 
-// The embeddable Python, once it is unpacked where des_setup's fetch.ensure puts it, with the stamp that names the
-// archive's SHA-256 (setup_python.hpp; fetch.unpacked checks the same stamp); empty before that.
-std::filesystem::path platform_python() {
-    return python_unpacked() ? python_folder() / "python.exe" : std::filesystem::path{};
-}
-
 #else
 
 std::filesystem::path local_data_base() {
@@ -65,14 +59,16 @@ std::filesystem::path local_data_base() {
     return home.empty() ? std::filesystem::path{} : std::filesystem::path(home) / ".local" / "share";
 }
 
-// The system's Python 3: python.org's embeddable package is for Windows only.
-std::filesystem::path platform_python() {
-    return "python3";
-}
-
 #endif
 
 // ---- The same everywhere ----
+
+// The pinned Python (setup_engine.hpp's kPython*), once it is unpacked where des_setup's fetch.ensure puts it, with
+// the stamp that names the archive's SHA-256 (setup_python.hpp; fetch.unpacked checks the same stamp); empty before
+// that.
+std::filesystem::path pinned_python() {
+    return python_unpacked() ? python_folder() / kPythonProgram : std::filesystem::path{};
+}
 
 // key=value lines (ready.txt); '#' starts a comment line.
 std::map<std::string, std::string> read_key_values(const std::filesystem::path& path) {
@@ -154,7 +150,7 @@ Launch launch_state() {
 
 std::filesystem::path python() {
     if (const std::string given = env("DES_SETUP_PYTHON"); !given.empty()) return from_utf8(given);
-    return platform_python();
+    return pinned_python();
 }
 
 std::filesystem::path engine_script() {
@@ -195,7 +191,7 @@ bool Engine::start(const Request& request, bool check_only, bool unlock_only) {
     mFetching = python().empty();
     if (!mFetching) return start_engine(run);
 
-    // No Python yet (Windows, before the first run): the host's download of it first; poll() starts the engine after.
+    // No Python yet (before the first run): the host's download of it first; poll() starts the engine after.
     // (each callback is for its own run, as below)
     mFromEngine = false;
     mProcess.stop();

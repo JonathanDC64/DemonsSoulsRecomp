@@ -19,7 +19,7 @@ extern "C" int ps3_net_signin_banner(char* out, size_t cap);  // 1 and a new ban
 namespace ui::net_notices {
 namespace {
 
-constexpr auto kToastDuration = std::chrono::seconds(10);  // (longer than a trophy's: there is more to read)
+constexpr auto kToastDuration = std::chrono::seconds(10);  // a refusal's (longer than a trophy's: more to read)
 constexpr unsigned kPollFrames = 15;                         // the runtime is asked every this many frames
 constexpr std::size_t kMaxWaiting = 8;                       // (more than that waiting: the newest are dropped)
 
@@ -61,13 +61,18 @@ void drain() {
         sPending.store(false, std::memory_order_relaxed);
     }
     for (const Message& m : waiting) {
-        // The server's words, so as text, never as markup.
-        push_toast({
-            .type = m.warning ? "warning" : "banner",
-            .title = "Online",
-            .content = "<toast-message-text>" + escape(m.text) + "</toast-message-text>",
-            .duration = kToastDuration,
-        });
+        // The server's words, so as text, never as markup. A banner goes in the thin bar at the top (it does not
+        // cover the game); a refusal in a toast.
+        if (m.warning) {
+            push_toast({
+                .type = "warning",
+                .title = "Online",
+                .content = "<toast-message-text>" + escape(m.text) + "</toast-message-text>",
+                .duration = kToastDuration,
+            });
+        } else {
+            push_ticker(m.text);
+        }
         std::fprintf(stderr, "[ui] online %s shown: %s\n", m.warning ? "notice" : "banner", m.text.c_str());
     }
 }

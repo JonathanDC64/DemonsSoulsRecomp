@@ -31,6 +31,15 @@ constexpr auto kMenuNotificationDuration = std::chrono::milliseconds(2500);
 // one is up the UI stays awake (Overlay::busy), so a transition that never ends must not keep it so.
 constexpr auto kCloseTimeout = std::chrono::milliseconds(1000);
 
+// The bar at the top. A text that fits holds still for kTickerStillSeconds. A longer one holds at its start, scrolls
+// to its end and holds there, twice (once if one pass is long), and stays at least kTickerStillSeconds.
+constexpr float kTickerStillSeconds = 12.0f;
+constexpr float kTickerHoldStart = 2.0f;
+constexpr float kTickerHoldEnd = 2.5f;
+constexpr float kTickerSpeed = 110.0f;     // dp a second: slow enough to read while playing
+constexpr float kTickerLongPass = 30.0f;   // (seconds) a pass this long is shown once
+constexpr float kTickerLayoutWait = 2.0f;  // (seconds) never laid out by then: dropped
+
 Rml::Element* create_toast(Rml::Element* parent, const Toast& toast) {
     auto* elem = append(parent, "toast");
     if (!toast.type.empty()) {
@@ -67,6 +76,14 @@ Rml::Element* create_toast(Rml::Element* parent, const Toast& toast) {
         auto* progress = append(elem, "progress");
         progress->SetAttribute("value", 1.f);
     }
+    return elem;
+}
+
+// The bar at the top: ticker > (ticker-label, ticker-track > ticker-text). The server's words, as text.
+Rml::Element* create_ticker(Rml::Element* parent, const Rml::String& text) {
+    auto* elem = append(parent, "ticker");
+    append_text(append(elem, "ticker-label"), "Notice");
+    append_text(append(append(elem, "ticker-track"), "ticker-text"), text);
     return elem;
 }
 
@@ -115,6 +132,8 @@ Overlay::Overlay() : Document(kDocumentSource, true, DocumentScope::Overlay) {
                    !mMenuNotification->HasAttribute("open"))
         {
             mMenuNotification->SetPseudoClass("done", true);
+        } else if (mTicker != nullptr && event.GetTargetElement() == mTicker && !mTicker->HasAttribute("open")) {
+            mTicker->SetPseudoClass("done", true);
         }
     });
 }
@@ -189,11 +208,86 @@ void Overlay::update() {
             mCurrentToast->SetPseudoClass("opened", true);
         }
     }
+    update_ticker();
+}
+
+void Overlay::update_ticker() {
+    auto& tickers = get_tickers();
+    if (mTicker == nullptr) {
+        if (tickers.empty()) {
+            return;
+        }
+        mTicker = create_ticker(mDocument, tickers.front());
+        mTickerText = mTicker->QuerySelector("ticker-text");
+        mTickerStartTime = clock::now();
+        mTickerTrackWidth = -1.0f;
+        return;  // (its widths are known once it is laid out, at the next update)
+    }
+    const bool animated = host::animations_enabled();
+    const float elapsed = std::chrono::duration<float>(clock::now() - mTickerStartTime).count();
+    auto drop = [&] {
+        remove_element(mTicker);
+        mTickerText = nullptr;
+        if (!tickers.empty()) {
+            tickers.pop_front();
+        }
+    };
+
+    // The plan, made again whenever the track's width changes (the window's size, the UI's scale).
+    Rml::Element* track = mTickerText != nullptr ? mTickerText->GetParentNode() : nullptr;
+    const float trackWidth = track != nullptr ? track->GetClientWidth() : 0.0f;
+    if (trackWidth > 0.0f && trackWidth != mTickerTrackWidth && !tickers.empty()) {
+        mTickerTrackWidth = trackWidth;
+        Rml::Context* context = mTicker->GetContext();
+        const float dp = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0f;
+        const float textWidth = float(Rml::ElementUtilities::GetStringWidth(mTickerText, tickers.front()));
+        mTickerOverflow = std::max(0.0f, textWidth - trackWidth);
+        if (mTickerOverflow > 0.0f) {
+            mTickerPassSeconds = kTickerHoldStart + mTickerOverflow / (kTickerSpeed * dp) + kTickerHoldEnd;
+            mTickerPasses = mTickerPassSeconds > kTickerLongPass ? 1 : 2;
+            mTickerSeconds = std::max(kTickerStillSeconds, mTickerPassSeconds * float(mTickerPasses));
+        } else {
+            mTickerPasses = 0;
+            mTickerSeconds = kTickerStillSeconds;
+        }
+    }
+    if (mTickerTrackWidth < 0.0f) {
+        if (elapsed >= kTickerLayoutWait) {
+            drop();
+        }
+        return;
+    }
+
+    // Where the text is: at its start, then moving left until its end shows, each pass; at its end after the last.
+    float x = 0.0f;
+    if (mTickerOverflow > 0.0f) {
+        x = -mTickerOverflow;
+        if (elapsed < mTickerPassSeconds * float(mTickerPasses)) {
+            const float t = std::fmod(elapsed, mTickerPassSeconds);
+            const float scroll = mTickerPassSeconds - kTickerHoldStart - kTickerHoldEnd;
+            x = -mTickerOverflow * std::clamp((t - kTickerHoldStart) / scroll, 0.0f, 1.0f);
+        }
+    }
+    mTickerText->SetProperty("transform", "translateX(" + std::to_string(std::round(x)) + "px)");
+
+    if (elapsed >= mTickerSeconds) {
+        if (!animated || mTicker->IsPseudoClassSet("done") || !mTicker->IsPseudoClassSet("opened") ||
+            elapsed >= mTickerSeconds + std::chrono::duration<float>(kCloseTimeout).count())
+        {
+            drop();
+        } else {
+            mTicker->RemoveAttribute("open");
+        }
+    } else {
+        mTicker->SetAttribute("open", "");
+        mTicker->SetPseudoClass("opened", true);
+    }
 }
 
 // Something is on screen, or still animating away.
 bool Overlay::busy() const {
-    return mCurrentToast != nullptr || mMenuNotification != nullptr || !get_toasts().empty();
+    return mCurrentToast != nullptr || mMenuNotification != nullptr || !get_toasts().empty() || mTicker != nullptr ||
+           !get_tickers().empty();
 }
 
 bool Overlay::handle_nav_command(Rml::Event&, NavCommand) {

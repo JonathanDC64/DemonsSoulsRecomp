@@ -82,6 +82,11 @@ jobs:
           python .github/scripts/check_game_files.py --dir host-linux --allow .github/game-files-allow.txt \
             --allow .github/host-files-allow.txt
 
+      # The LGPL libraries in the Linux tarball (vkd3d) ask for their source to go with them: the exact archives
+      # host.yml built from, checked against the same pinned SHA-256.
+      - name: Third-party sources
+        run: python tools/release/third_party_sources.py --out dist/third-party
+
       - name: Draft the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -91,4 +96,4 @@ jobs:
           case "$TAG" in *-*) pre="--prerelease" ;; esac
           gh release create "$TAG" --draft --verify-tag $pre --title "DemonsSoulsRecomp ${TAG#v}" \
             --notes-file dist/notes.md dist/DemonsSoulsRecomp-*-source.zip dist/DemonsSoulsRecomp-*-windows.zip \
-            dist/DemonsSoulsRecomp-*-linux.tar.xz dist/SHA256SUMS
+            dist/DemonsSoulsRecomp-*-linux.tar.xz dist/SHA256SUMS dist/third-party/*

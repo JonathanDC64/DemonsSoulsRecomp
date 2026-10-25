@@ -89,11 +89,13 @@ def norm(p):
 
 
 class Roots:
-    """CMake's folders and the placeholders they become, longest first."""
+    """CMake's folders and the placeholders they become, longest first. A folder CMake names with '..' in it (the
+    default PS3RECOMP_DIR is port/../ps3recomp) is found in the commands both as CMake spells it and normalised."""
     def __init__(self, pairs):
         self.pairs = sorted(((os.path.normpath(r), ph) for r, ph in pairs), key=lambda x: -len(x[0]))
+        spellings = {(r, ph) for r, ph in self.pairs} | {(r.rstrip("\\/"), ph) for r, ph in pairs}
         self.rx = [(re.compile("".join(r"[\\/]" if ch in "\\/" else re.escape(ch) for ch in r) + r"(?=$|[\\/])",
-                               re.I), ph, r) for r, ph in self.pairs]
+                               re.I), ph, r) for r, ph in sorted(spellings, key=lambda x: (-len(x[0]), x))]
 
     def to_ph(self, tok):
         for rx, ph, _ in self.rx:

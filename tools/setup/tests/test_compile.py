@@ -218,6 +218,11 @@ class TestDescription(unittest.TestCase):
         self.assertEqual(r.to_ph("/t/portable/x.h"), "{src}/portable/x.h")       # not port's: a prefix only
         self.assertEqual(r.to_ph("/elsewhere/x.h"), "/elsewhere/x.h")
         self.assertEqual(r.from_ph("-I{src}/ps3recomp/include"), "-I/l/ps3r/include")
+        # ps3recomp beside port/, where CMake's default PS3RECOMP_DIR names it port/../ps3recomp.
+        r = self.g.Roots([("/t/port/..", "{src}"), ("/t/port", "{src}/port"), ("/t/port/../ps3recomp", "{src}/ps3recomp")])
+        self.assertEqual(r.to_ph("-I/t/port/../ps3recomp/include"), "-I{src}/ps3recomp/include")
+        self.assertEqual(r.to_ph("-I/t/ps3recomp/include"), "-I{src}/ps3recomp/include")
+        self.assertEqual(r.to_ph("/t/port/des_game_module.cpp"), "{src}/port/des_game_module.cpp")
 
     @unittest.skipUnless(os.name == "nt", "Windows paths")
     def test_roots(self):
@@ -231,6 +236,13 @@ class TestDescription(unittest.TestCase):
         self.assertEqual(r.to_ph(r"E:\elsewhere\x.h"), r"E:\elsewhere\x.h")
         self.assertEqual(r.to_ph(r"C:\t\scripts\a.json"), "{src}/scripts/a.json")
         self.assertEqual(os.path.normcase(r.from_ph("-I{src}/ps3recomp/include")), os.path.normcase(r"-ID:\l\ps3r/include"))
+        # ps3recomp beside port/, where CMake's default PS3RECOMP_DIR names it port/../ps3recomp.
+        r = self.g.Roots([("C:\\t\\port\\..", "{src}"), ("C:\\t\\port", "{src}/port"),
+                          ("C:/t/port/../ps3recomp", "{src}/ps3recomp")])
+        self.assertEqual(r.to_ph("-IC:/t/port/../ps3recomp/include"), "-I{src}/ps3recomp/include")
+        self.assertEqual(r.to_ph("/FIC:/t/port/../ps3recomp/include/x.h"), "/FI{src}/ps3recomp/include/x.h")
+        self.assertEqual(r.to_ph(r"-IC:\t\ps3recomp\include"), "-I{src}/ps3recomp/include")
+        self.assertEqual(r.to_ph(r"C:\t\port\des_game_module.cpp"), "{src}/port/des_game_module.cpp")
 
     def test_kinds(self):
         k = self.g.kind_of

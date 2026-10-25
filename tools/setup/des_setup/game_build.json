@@ -124,6 +124,7 @@
     "-DDS_NO_SHADOW_STACK",
     "-DPS3_GAME_FREESTANDING",
     "-D_CRT_SECURE_NO_WARNINGS",
+    "-I{src}/ps3recomp/runtime/prx",
     "-I{src}/ps3recomp/include/ps3emu/game_libc",
     "-I{src}/port/compat",
     "-I{work}/recomp",

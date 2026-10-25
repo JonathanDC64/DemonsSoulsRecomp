@@ -111,6 +111,10 @@ if(EXISTS "${LIBSRE_LIFTED}" AND EXISTS "${LIBSRE_GLUE}")
     # The lifter emits C++ (extern "C" blocks) regardless of the .c suffix, and
     # the game's own chunks are .cpp for the same reason -- compile it as C++.
     set_source_files_properties("${LIBSRE_LIFTED}" PROPERTIES LANGUAGE CXX)
+    # The glue includes "prx_loader.h" by name, so it builds wherever ps3recomp
+    # is (a copy, a link, setup's install).
+    set_source_files_properties("${LIBSRE_GLUE}" PROPERTIES
+        INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/prx")
     message(STATUS "des_boot: libsre LLE available (run with LIBSRE_LLE=1)")
 else()
     message(STATUS "des_boot: libsre LLE not built (HLE cellSpurs only)")

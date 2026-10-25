@@ -1,0 +1,6 @@
+# The project's release keys (docs/105 section 7). An update is installed only if its SHA256SUMS is signed with one
+# of these (ssh-keygen -Y sign -n demons-souls-recomp-release; tools/release/sign_release.py), so a release found on
+# GitHub that the maintainer did not sign is never offered. One OpenSSH public key line each, ssh-ed25519 only.
+#
+# The installed version's list is the one that counts: a release that changes this list must be signed with a key
+# the version before it lists. With no key here, this build installs no update.

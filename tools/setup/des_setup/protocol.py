@@ -52,7 +52,7 @@ KINDS = ("setup", "plan", "step", "progress", "overall", "check", "file", "rpcs3
 # download: a download stopped or did not match; memory: out of memory; step: a build step failed;
 # rpcs3: the player's RPCS3 could not unlock the files; import: bringing the save, trophies or settings across from
 # RPCS3 failed (the game is built); internal: an error of the engine's own.
-ERRORS = ("game", "busy", "disk", "download", "memory", "step", "rpcs3", "import", "internal")
+ERRORS = ("game", "busy", "disk", "download", "memory", "step", "rpcs3", "import", "signature", "internal")
 STEP_STATES = ("start", "done", "skip")
 RPCS3_STATES = ("own", "shared", "missing")
 LIBRARY_KINDS = ("folder", "iso", "store", "none")

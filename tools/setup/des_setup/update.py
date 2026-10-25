@@ -6,9 +6,12 @@ version before it kept to go back to. The host runs these at the start screen an
       download for this system: @release <version> <published> <page>, its notes as @note lines, then @done ok.
       Nothing newer: @done ok alone. No answer (offline, or GitHub's limit): @error download - <sentence> and
       @done failed. Only a plain X.Y.Z version is compared, so a developer's build (0.1.0-dev.5+g1234) finds none.
+      Only a release whose SHA256SUMS is signed with one of this build's release keys is offered (signing.py); one
+      that is not is passed over with a note line, and an older newer release that is signed may be offered.
   update-apply --app VERSION --to VERSION --install DIR [--data DIR]
-      download: the release's player download (a zip; a tar.xz on Linux) and its SHA256SUMS, the download checked
-      against them. install: the download unpacked beside the install (DIR/.update), the game build (the data
+      download: the release's SHA256SUMS, checked against its SHA256SUMS.sig and this build's release keys, then
+      its player download (a zip; a tar.xz on Linux), checked against SHA256SUMS. install: the download unpacked
+      beside the install (DIR/.update), the game build (the data
       folder's game/ and setup/ready.txt) copied into <data>/previous/<VERSION>, then the program files swapped:
       this version's into DIR/.previous/<VERSION>, the new one's in their place. The setup run that follows
       rebuilds the game.
@@ -38,7 +41,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import fetch, journal, pipeline, protocol
+from . import fetch, journal, pipeline, protocol, signing
 
 NAME = "DemonsSoulsRecomp"
 REPO = "JonathanDC64/DemonsSoulsRecomp"
@@ -46,6 +49,8 @@ FEED = f"https://api.github.com/repos/{REPO}/releases?per_page=20"
 STABLE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 MANIFEST = "release-files.txt"
 SUMS = "SHA256SUMS"
+SIG = SUMS + signing.SIG_SUFFIX    # SHA256SUMS.sig: the maintainer's signature of SUMS (signing.py)
+SIGNED_TRIES = 3                   # the check looks at most this many newer releases for one that is signed
 UPDATE, PREVIOUS = ".update", ".previous"
 SWAP = "swap.txt"                  # in UPDATE: the swap's journal (Swap)
 # Never moved by a swap, whatever a list says: the player's own files, and the swap's folders.
@@ -128,8 +133,8 @@ def read_feed(data=None, timeout=FEED_TIMEOUT) -> list:
 
 
 def stable_releases(feed) -> list:
-    """The feed's published stable releases that have this system's download and SHA256SUMS, newest first:
-    (version tuple, version text, release)."""
+    """The feed's published stable releases that have this system's download, SHA256SUMS and its signature, newest
+    first: (version tuple, version text, release)."""
     out = []
     for r in feed if isinstance(feed, list) else []:
         if not isinstance(r, dict) or r.get("draft") or r.get("prerelease"):
@@ -139,20 +144,24 @@ def stable_releases(feed) -> list:
             continue
         text = ".".join(map(str, v))
         names = {a.get("name") for a in r.get("assets") or [] if isinstance(a, dict)}
-        if player_asset(text) in names and SUMS in names:
+        if player_asset(text) in names and SUMS in names and SIG in names:
             out.append((v, text, r))
     return sorted(out, key=lambda x: x[0], reverse=True)
 
 
-def newer(feed, app):
-    """The newest stable release newer than `app` as (version text, release), or None (also for a version that is
-    not a plain X.Y.Z: a developer's build)."""
+def candidates(feed, app) -> list:
+    """The stable releases newer than `app`, newest first, as (version text, release); none for a version that is
+    not a plain X.Y.Z (a developer's build)."""
     mine = version_of(app)
     if mine is None:
-        return None
-    for v, text, r in stable_releases(feed):
-        return (text, r) if v > mine else None
-    return None
+        return []
+    return [(text, r) for v, text, r in stable_releases(feed) if v > mine]
+
+
+def newer(feed, app):
+    """The newest stable release newer than `app` as (version text, release), or None."""
+    found = candidates(feed, app)
+    return found[0] if found else None
 
 
 def published(release) -> int:
@@ -169,8 +178,20 @@ def check(data, app, emit) -> int:
         emit.text(f"note {app or 'this build'} is not a release, so it is not compared with the releases")
         emit.done("ok")
         return 0
+    # The newest newer release whose checksums are signed with this build's key. One that is not (a release the
+    # maintainer did not sign, or signed with a key this build does not know) is passed over, its notes unread.
+    found = None
     try:
-        found = newer(read_feed(data), app)
+        for text, r in candidates(read_feed(data), app)[:SIGNED_TRIES]:
+            try:
+                signed_sums(_assets(r), bool(_test_feed()), text)
+            except UpdateFailed as e:
+                if e.code != "signature":
+                    raise
+                emit.text(f"note version {text} is not offered: {e.message}")
+                continue
+            found = (text, r)
+            break
     except UpdateFailed as e:
         emit.error(e.code, e.step, e.message)
         emit.done("failed")
@@ -394,20 +415,38 @@ def _drop_others(folder: Path, keep: str):
 
 # ---- update-apply ----
 
-def _sums(url, allow_http, limit=1 << 16) -> dict:
+def _assets(release) -> dict:
+    return {a.get("name"): a for a in release.get("assets") or [] if isinstance(a, dict)}
+
+
+def _small(url, allow_http, what, limit=1 << 16) -> bytes:
+    """A small file of the release (its checksums or their signature), at most `limit` bytes, over https."""
     if not (url.startswith("https://") or (allow_http and url.startswith("http://127.0.0.1"))):
-        raise UpdateFailed("download", "download", "The release's checksums are not on an https:// address.")
+        raise UpdateFailed("download", "download", f"The release's {what} is not on an https:// address.")
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "des-setup"}),
                                     timeout=60) as r:
-            text = r.read(limit + 1)
+            body = r.read(limit + 1)
     except OSError as e:
         raise UpdateFailed("download", "download", "The download did not finish. Check the connection, then "
                                                    "try again.") from e
-    if len(text) > limit:
-        raise UpdateFailed("download", "download", "The release's checksums file is too large.")
+    if len(body) > limit:
+        raise UpdateFailed("download", "download", f"The release's {what} is too large.")
+    return body
+
+
+def signed_sums(assets, allow_http, version) -> dict:
+    """The release's SHA256SUMS as {file name: sha256}, once its SHA256SUMS.sig checks against this build's release
+    keys. Only the bytes that were checked are read."""
+    sums = _small((assets.get(SUMS) or {}).get("browser_download_url", ""), allow_http, "checksums file")
+    sig = _small((assets.get(SIG) or {}).get("browser_download_url", ""), allow_http, "signature", 1 << 14)
+    try:
+        signing.verify(sums, sig.decode("utf-8", "replace"))
+    except signing.BadSignature as e:
+        raise UpdateFailed("signature", "download", f"Version {version} is not signed with the project's release key "
+                                                    f"({e}), so it is not installed.") from e
     out = {}
-    for line in text.decode("utf-8", "replace").splitlines():
+    for line in sums.decode("utf-8", "replace").splitlines():
         w = line.split()
         if len(w) == 2 and re.fullmatch(r"[0-9a-f]{64}", w[0]):
             out[w[1].lstrip("*")] = w[0]
@@ -462,13 +501,13 @@ def _apply(install, data, app, to, emit, timeout) -> int:
     if not found:
         raise UpdateFailed("download", "-", f"Version {to} is not among the releases.")
     _v, text, rel = found[0]
-    assets = {a.get("name"): a for a in rel.get("assets") or [] if isinstance(a, dict)}
+    assets = _assets(rel)
     zip_asset = assets[player_asset(text)]
     allow_http = bool(_test_feed())
 
     emit.step("download", "start")
     emit.overall(0.0)
-    sums = _sums(assets[SUMS].get("browser_download_url", ""), allow_http)
+    sums = signed_sums(assets, allow_http, text)
     want = sums.get(zip_asset["name"])
     if not want:
         raise UpdateFailed("download", "download", "The release's checksums do not list its download.")

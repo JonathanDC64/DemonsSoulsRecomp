@@ -116,7 +116,7 @@ def main(argv=None):
     a("#include <stdlib.h>")
     a("#include <stdint.h>")
     a("#include <string.h>")
-    a('#include "../../ps3recomp/runtime/prx/prx_loader.h"')
+    a('#include "prx_loader.h"')
     a("")
     a("#define LIBSRE_BASE 0x%08Xu" % base)
     a("#define LIBSRE_TOC  0x%08Xu" % toc)

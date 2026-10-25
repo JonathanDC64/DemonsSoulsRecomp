@@ -114,6 +114,7 @@
     "-DPS3RECOMP_RSX_D3D12_VKD3D",
     "-DPS3_GAME_FREESTANDING",
     "-D_GNU_SOURCE",
+    "-I{src}/ps3recomp/runtime/prx",
     "-I{src}/ps3recomp/include/ps3emu/game_libc",
     "-I{work}/recomp",
     "-I{src}/ps3recomp/include",

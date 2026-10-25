@@ -60,6 +60,7 @@
 #include "ps3emu/ppu_lift.h"   /* ppu_context: the fixed part of the lift's header */
 #include "des_game_calls.h"     /* the lifted functions below (the game DLL's with DES_SPLIT) */
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
+#include "ps3emu/ps3_net.h"    /* ps3_net_lock_offline */
 #include "des_dev_marker.h"
 #include <atomic>
 #include <chrono>
@@ -172,11 +173,13 @@ bool online()
     return true;
 }
 
-/* The first cheat of the session: it stays offline from here on. */
+/* The first cheat of the session: it stays offline from here on. The knobs are cleared, and the runtime is locked
+ * offline too: every network module refuses from here, and a co-op session already open ends. */
 void mark_used(const char* what)
 {
     if (s_used.exchange(true)) return;
     clear_network();
+    ps3_net_lock_offline();
     fprintf(stderr, "[dev] cheat in use (%s): this session stays offline\n", what);
 }
 

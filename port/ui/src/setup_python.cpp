@@ -1,5 +1,6 @@
 // The first Python (see setup_python.hpp). One fact differs by platform, in one small function: where the system's
-// curl and tar are (only Windows downloads a Python). The steps, the checks and the stamp are the same code everywhere.
+// curl and tar are. The steps, the checks and the stamp are the same code everywhere; which archive it is (a zip on
+// Windows, a .tar.gz on Linux) is in the pins (setup_engine.hpp).
 //
 // The tools run in the data folder and are given names relative to it (downloads\python-embed-3.13.9.zip.part and so
 // on, all ASCII), so a data folder whose path has characters outside the system's code page still reaches them intact
@@ -12,11 +13,14 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <string_view>
 #include <system_error>
@@ -49,13 +53,27 @@ std::filesystem::path system_tool(const char* name) {
     if (n == 0 || n >= MAX_PATH) return {};
     return std::filesystem::path(dir) / (std::string(name) + ".exe");
 }
+constexpr const char* kToolFrom = "in the System folder";
 
 #else
 
-// None: the engine runs on the system's python3 here (setup_engine.cpp), so nothing asks for these.
-std::filesystem::path system_tool(const char*) {
+// The system's curl and tar, the first on PATH: its absolute folders only (an empty or relative entry means the
+// working folder, which is the data folder here). Without PATH, /usr/bin and /bin.
+std::filesystem::path system_tool(const char* name) {
+    const char* path = std::getenv("PATH");
+    std::string_view rest = path ? path : "/usr/bin:/bin";
+    while (!rest.empty()) {
+        const size_t colon = std::min(rest.find(':'), rest.size());
+        const std::string_view dir = rest.substr(0, colon);
+        rest.remove_prefix(std::min(colon + 1, rest.size()));
+        if (dir.empty() || dir[0] != '/') continue;
+        const std::filesystem::path p = std::filesystem::path(std::string(dir)) / name;
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(p, ec) && access(p.c_str(), X_OK) == 0) return p;
+    }
     return {};
 }
+constexpr const char* kToolFrom = "on PATH";
 
 #endif
 
@@ -66,9 +84,14 @@ std::string base_name() {
     return std::string(kPythonName) + "-" + kPythonVersion;
 }
 
-// The archive, from the data folder: fetch.py's archive_path (the URL's suffix is .zip; the test checks it).
+// The archive, from the data folder: fetch.py's archive_path (the URL's suffix; the test checks it).
 std::filesystem::path relative_archive() {
-    return std::filesystem::path(kDownloadsFolder) / (base_name() + ".zip");
+    return std::filesystem::path(kDownloadsFolder) / (base_name() + kPythonSuffix);
+}
+
+// For a line: the archive's name.
+std::string archive_name() {
+    return base_name() + kPythonSuffix;
 }
 
 unsigned long long size_of(const std::filesystem::path& p) {
@@ -277,13 +300,13 @@ PythonFetch::Result PythonFetch::unpack() {
     Ran ran = run_tool("tar", {"-tf", archive}, &names, {});
     if (stopping()) return Result::Stopped;
     if (!ran.started || ran.status != 0 || names.empty()) {
-        say("FIX  " + base_name() + ".zip: " +
+        say("FIX  " + archive_name() + ": " +
             (ran.started ? "tar -tf ended with exit " + std::to_string(ran.status) : mToolWhy));
         return fail("internal", kUnpackFailed);
     }
     for (const std::string& name : names) {
         if (safe_entry(name)) continue;
-        say("FIX  " + base_name() + ".zip: refusing the entry '" + name + "'");
+        say("FIX  " + archive_name() + ": refusing the entry '" + name + "'");
         return fail("download", kDownloadFailed);
     }
 
@@ -292,12 +315,12 @@ PythonFetch::Result PythonFetch::unpack() {
     const bool made = std::filesystem::create_directories(tmp, ec) && !ec;
     ran = made ? run_tool("tar", {"-xf", archive, "-C", tmpRelative}, nullptr, {}) : Ran{};
     if (stopping()) return Result::Stopped;
-    if (!made || !ran.started || ran.status != 0 || !std::filesystem::is_regular_file(tmp / "python.exe", ec)) {
-        say("FIX  " + base_name() + ".zip: " +
+    if (!made || !ran.started || ran.status != 0 || !std::filesystem::is_regular_file(tmp / kPythonProgram, ec)) {
+        say("FIX  " + archive_name() + ": " +
             (!made          ? std::string("no folder to unpack it in")
              : !ran.started ? mToolWhy
              : ran.status   ? "tar -xf ended with exit " + std::to_string(ran.status)
-                            : std::string("no python.exe in it")));
+                            : std::string("no ") + kPythonProgram + " in it"));
         std::filesystem::remove_all(tmp, ec);
         return fail("internal", kUnpackFailed);
     }
@@ -331,7 +354,7 @@ PythonFetch::Ran PythonFetch::run_tool(const char* name, const std::vector<std::
     std::error_code ec;
     const std::filesystem::path exe = system_tool(name);
     if (exe.empty() || !std::filesystem::is_regular_file(exe, ec)) {
-        mToolWhy = std::string("no ") + name + ".exe in the System folder";
+        mToolWhy = std::string("no ") + name + " " + kToolFrom;
         return out;
     }
     {
@@ -363,7 +386,7 @@ PythonFetch::Ran PythonFetch::run_tool(const char* name, const std::vector<std::
         },
         data_dir());
     if (!out.started) {
-        mToolWhy = std::string(name) + ".exe did not start (" + mTool.why() + ")";
+        mToolWhy = utf8(exe.filename()) + " did not start (" + mTool.why() + ")";
         return out;
     }
     if (stopping()) mTool.stop();  // (a stop() that came while it started)

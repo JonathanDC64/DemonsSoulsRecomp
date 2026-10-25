@@ -18,7 +18,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # des_host.exe for the player's zip, built from the tag by host.yml itself (its checks included).
+  # des_host.exe for the player's zip and the Linux host folder for the Linux tarball, built from the tag by host.yml
+  # itself (its checks included).
   host:
     name: The host exe
     uses: ./.github/workflows/host.yml
@@ -58,8 +59,16 @@ jobs:
           name: des_host-${{ github.sha }}
           path: host
 
+      # The Linux host folder (des_host, the SDL2 and vkd3d libraries beside it, their licences), for the Linux tarball.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: des_host-linux-${{ github.sha }}
+          path: host-linux
+
       - name: Package
-        run: python tools/release/package.py build --rev "$GITHUB_REF_NAME" --host host/des_host.exe --out dist
+        run: >
+          python tools/release/package.py build --rev "$GITHUB_REF_NAME" --host host/des_host.exe
+          --linux-host host-linux --out dist
 
       - name: No game-derived files in the package
         run: |
@@ -69,6 +78,8 @@ jobs:
           fi
           python .github/scripts/check_game_files.py --dir dist/stage
           python .github/scripts/check_game_files.py --dir host --allow .github/game-files-allow.txt \
+            --allow .github/host-files-allow.txt
+          python .github/scripts/check_game_files.py --dir host-linux --allow .github/game-files-allow.txt \
             --allow .github/host-files-allow.txt
 
       - name: Draft the release
@@ -80,4 +91,4 @@ jobs:
           case "$TAG" in *-*) pre="--prerelease" ;; esac
           gh release create "$TAG" --draft --verify-tag $pre --title "DemonsSoulsRecomp ${TAG#v}" \
             --notes-file dist/notes.md dist/DemonsSoulsRecomp-*-source.zip dist/DemonsSoulsRecomp-*-windows.zip \
-            dist/SHA256SUMS
+            dist/DemonsSoulsRecomp-*-linux.tar.xz dist/SHA256SUMS

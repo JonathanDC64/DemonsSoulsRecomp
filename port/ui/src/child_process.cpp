@@ -187,10 +187,6 @@ namespace {
 
 bool os_start(ChildProcess::Os& os, const std::filesystem::path& program, const std::vector<std::string>& args,
               const std::filesystem::path& folder, std::string& why) {
-    if (!folder.empty()) {  // (posix_spawn has no standard way to start in another folder, and nothing here needs one)
-        why = "no working folder here";
-        return false;
-    }
     int fds[2];
     if (pipe(fds) != 0) {
         why = std::string("no pipe: ") + std::strerror(errno);
@@ -203,6 +199,9 @@ bool os_start(ChildProcess::Os& os, const std::filesystem::path& program, const 
     posix_spawn_file_actions_adddup2(&actions, fds[1], 1);
     posix_spawn_file_actions_adddup2(&actions, fds[1], 2);
     posix_spawn_file_actions_addclose(&actions, fds[1]);
+    // The working folder, in the child before its exec: glibc 2.29 and later (the floor is 2.35, docs/87). A relative
+    // program name would then be looked up from there; the callers give full paths.
+    if (!folder.empty()) posix_spawn_file_actions_addchdir_np(&actions, folder.c_str());
     posix_spawnattr_t attributes;
     posix_spawnattr_init(&attributes);
     sigset_t defaults;

@@ -18,6 +18,39 @@
 # The C library functions the sources still call are jump thunks into the host's C runtime
 # (PS3_GAME_HOST_CRT_FUNCS, ps3emu/game_module.h). Build it in its own build directory: the same targets
 # are milestone 1's in another.
+#
+# On Linux (docs/87) the module is des_game.so, built the same way with clang and ld.lld:
+#   Compile  -nostdlibinc: clang's own headers and game_libc/ only, so the player's PC needs no libc headers.
+#            The forced include also hides every name (game_module.h says why); -fvisibility=hidden does the
+#            same for anything it does not reach. -ftls-model=initial-exec: the trampolines are read %fs-relative,
+#            with no call into glibc (game_module.c). -fno-stack-protector: the stack guard is glibc's.
+#            -fno-rtti, as /GR-.
+#   Sources  game_libc.c (memcpy and friends).
+#   Link     the clang driver with -nostdlib and -fuse-ld=lld (it finds ld.lld beside itself): no C library,
+#            start files or libgcc. -z defs: a name nothing defines fails the link, not the dlopen. -z now: every
+#            relocation at the load.
+
+if(NOT WIN32)
+    if(NOT DES_PPU_OPT OR NOT DES_SPU_OPT)
+        message(FATAL_ERROR "DES_SPLIT_FREESTANDING needs DES_PPU_OPT=ON and DES_SPU_OPT=ON (SSE4.1 rounding)")
+    endif()
+    set(DES_GAME_LIBC "${PS3RECOMP_DIR}/include/ps3emu/game_libc")
+    foreach(_f "${DES_GAME_LIBC}/stdio.h" "${PS3RECOMP_DIR}/include/ps3emu/game_freestanding.h"
+               "${PS3RECOMP_DIR}/runtime/ppu/game_libc.c")
+        if(NOT EXISTS "${_f}")
+            message(FATAL_ERROR "DES_SPLIT_FREESTANDING: ${_f} is missing (ps3recomp too old for docs/84)")
+        endif()
+    endforeach()
+    target_sources(des_game PRIVATE "${PS3RECOMP_DIR}/runtime/ppu/game_libc.c")
+    target_include_directories(des_game BEFORE PRIVATE "${DES_GAME_LIBC}")
+    target_compile_definitions(des_game PRIVATE PS3_GAME_FREESTANDING)
+    target_compile_options(des_game PRIVATE -nostdlibinc -fvisibility=hidden -ftls-model=initial-exec
+        -fno-stack-protector $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
+        "-include${PS3RECOMP_DIR}/include/ps3emu/game_freestanding.h")
+    target_link_options(des_game PRIVATE -nostdlib -fuse-ld=lld -Wl,-z,defs -Wl,-z,now -Wl,--build-id=sha1)
+    message(STATUS "des_boot: des_game.so freestanding: no C library; C library calls go to the host (docs/87)")
+    return()
+endif()
 
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
     message(FATAL_ERROR "DES_SPLIT_FREESTANDING needs clang-cl for C and C++")

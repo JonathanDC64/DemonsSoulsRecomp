@@ -18,6 +18,24 @@
    "sha256": "019c8dd5b7e5194bdb07b7a609c55032c0888083cff30076e4038c36d99c295a",
    "why": "Compiles and links the game part: clang, lld-link and clang's headers from LLVM 22.1.8 (docs/86).",
    "checked": "made by the LLVM archive workflow (run 39870384825) from LLVM's own clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz after its size, SHA-256, attestation and GPG signature passed; the asset's size and SHA-256 read back from the release, 2026-10-22"
+  },
+  {
+   "name": "python-linux",
+   "version": "3.13.17",
+   "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.13.17%2B20261021-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+   "size": 35356674,
+   "sha256": "f829adc9d888e76c8801b4799ed444188d35239fcae3a9808a99ec5cb0d8d92c",
+   "why": "Runs the lifters and this setup on Linux, where python.org has no embeddable package (docs/87).",
+   "checked": "size and SHA-256 from the release's asset list (its digest field), matched by a download, 2026-10-24"
+  },
+  {
+   "name": "llvm-linux-x64",
+   "version": "22.1.8-2",
+   "url": "https://github.com/JonathanDC64/DemonsSoulsRecomp/releases/download/llvm-linux-22.1.8-2/llvm-linux-x64-22.1.8-2.tar.xz",
+   "size": 97274644,
+   "sha256": "ab7f31065867f984573064315266664fca6bd2521c9209b071803829fd713996",
+   "why": "Compiles and links the game part on Linux: clang, ld.lld and clang's headers from LLVM 22.1.8 (docs/86).",
+   "checked": "made by LLVM archive run https://github.com/JonathanDC64/DemonsSoulsRecomp/actions/runs/40160368044 from LLVM-22.1.8-Linux-X64.tar.xz (size, SHA-256, attestation and GPG signature checked), 2026-10-25"
   }
  ]
 }

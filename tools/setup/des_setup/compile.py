@@ -2,15 +2,22 @@
 
   gen          des_game_title_funcs.h (from scripts/lift_ppu.json and port/insn_hooks.txt) and
                the SPU workload table without its static constructor  -> build/gen
-  cc:<name>    one per object, in parallel                            -> build/obj/<name>.obj
+  cc:<name>    one per object, in parallel                            -> build/obj/<name>.obj (.o)
   lib:<name>   the import libraries the link reads (lld-link /lib)    -> build/gen/<name>.lib
-  link         the linker                                             -> game/des_game.dll
+  link         the linker                                             -> game/des_game.dll (.so)
 
 The commands are CMake's own for des_game (DES_SPLIT=ON DES_SPLIT_FREESTANDING=ON:
 no Visual C++ headers, Windows SDK or C runtime, docs/84), read from
 game_build.json, which scripts/game_build_desc.py writes from such a build. The
 placeholders in it: {src} the source tree (the install mirrors it), {work} the
 lift, {gen} build/gen.
+
+On Linux (docs/87) the module is des_game.so and the description is
+game_build_linux.json, written the same way from a Linux build: clang's commands,
+and a link by the clang driver itself (-fuse-ld=lld), so the compiler and the
+linker are the same program and there are no import libraries. The description's
+"system" says which, and so how an object is named (-o, -MF) and what it is
+called (.o).
 
 An object's fingerprint covers its command, the compiler, its source's sum and
 the sums of the headers it read the last time (clang's dependency file), so a
@@ -37,6 +44,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -45,7 +53,7 @@ from pathlib import Path
 from . import fetch, journal
 
 SRC = Path(__file__).resolve().parents[3]          # the source tree: tools/setup/des_setup/compile.py
-DESC = Path(__file__).resolve().parent / "game_build.json"
+DESC = Path(__file__).resolve().parent / ("game_build.json" if os.name == "nt" else "game_build_linux.json")
 GB = 1 << 30
 KEEP = 2 * GB                                      # left free for the rest of the PC (docs/52 4.4)
 # A job's peak memory before it has been measured, by its kind: a lifted PPU chunk up to 2.4 GB of commit, an SPU
@@ -65,7 +73,8 @@ ROOM = 1.1                                         # a measured peak, with 10% r
 SHORT_AFTER = 5.0                                  # seconds held back by memory before it counts as short
 OOM = re.compile(r"out of memory|not enough memory|bad_alloc|std::bad_alloc", re.I)
 OOM_CODES = {0xC0000017, 0xC000012D}               # STATUS_NO_MEMORY, STATUS_COMMITMENT_LIMIT
-LLVM_ENTRY = "llvm-win64"                          # toolchain.json's compiler (docs/86)
+# toolchain.json's compiler (docs/86, docs/87)
+LLVM_ENTRY = "llvm-win64" if os.name == "nt" else "llvm-linux-x64"
 
 
 def sha_file(p) -> str:
@@ -201,17 +210,19 @@ def split_workloads(text: bytes, ps3recomp: Path) -> bytes:
 
 
 def local_toolchain(cc=None, ld=None):
-    """A developer's compiler, (clang-cl, lld-link): cc and ld when given, else
-    DES_SETUP_CC and DES_SETUP_LD from the environment; (None, None) for the
-    pinned download. The fetch phase skips the download when there is one."""
+    """A developer's compiler, (clang-cl, lld-link) on Windows, (clang, clang) on
+    Linux: cc and ld when given, else DES_SETUP_CC and DES_SETUP_LD from the
+    environment; (None, None) for the pinned download. The fetch phase skips the
+    download when there is one."""
     return (cc or os.environ.get("DES_SETUP_CC") or None), (ld or os.environ.get("DES_SETUP_LD") or None)
 
 
 def toolchain(data: Path, cc=None, ld=None):
-    """(clang-cl command, lld-link): a developer's (local_toolchain, both or
+    """(compiler command, linker): a developer's (local_toolchain, both or
     neither), else the pinned LLVM download unpacked under data/tools (fetched
-    first if it is not). The download has clang.exe only, which is clang-cl with
-    --driver-mode=cl."""
+    first if it is not). On Windows the download has clang.exe only, which is
+    clang-cl with --driver-mode=cl, and lld-link.exe. On Linux the clang driver
+    links as well (it finds ld.lld beside itself), so both are bin/clang."""
     cc, ld = local_toolchain(cc, ld)
     if cc or ld:
         if not (cc and ld):
@@ -221,6 +232,8 @@ def toolchain(data: Path, cc=None, ld=None):
     if e is None:
         raise fetch.FetchError("no compiler is pinned yet: pass --cc and --ld")
     root = fetch.ensure(e, Path(data) / "downloads", Path(data) / "tools")
+    if os.name != "nt":
+        return [str(root / "bin" / "clang")], root / "bin" / "clang"
     return [str(root / "bin" / "clang.exe"), "--driver-mode=cl"], root / "bin" / "lld-link.exe"
 
 
@@ -241,6 +254,8 @@ class Compile:
         self.cc = [str(cc)] if isinstance(cc, (str, Path)) else [str(c) for c in cc]
         self.ld = [str(ld)] if isinstance(ld, (str, Path)) else [str(c) for c in ld]
         self.desc = json.loads(Path(desc).read_text(encoding="utf-8"))
+        self.elf = self.desc.get("system", "windows") == "linux"   # clang's spellings and .o (the docstring)
+        self.objext = ".o" if self.elf else ".obj"
         self.work = self.data / "work"
         self.gen = self.data / "build" / "gen"
         self.objdir = self.data / "build" / "obj"
@@ -375,7 +390,7 @@ class Compile:
         for o in objs:
             prev = self.jr.state(o.step).get("results", {}).get("deps", [])
             fp = self._obj_fp(o, cc_id, prev)
-            if not self.jr.is_done(o.step, fp, [self.objdir / f"{o.name}.obj"]):
+            if not self.jr.is_done(o.step, fp, [self.objdir / f"{o.name}{self.objext}"]):
                 todo.append((o, fp))
         # The progress counts source bytes (docs/52 4.3), not objects: the 14 PPU chunks are most of the time, and the
         # SPU programs and small files, which finish first, nearly half the objects.
@@ -394,7 +409,7 @@ class Compile:
         def one(o, fp):
             try:
                 self.jr.run(o.step, fp, lambda: self._cc(o, run),
-                            outputs=[self.objdir / f"{o.name}.obj"], log=self._log(o.step),
+                            outputs=[self.objdir / f"{o.name}{self.objext}"], log=self._log(o.step),
                             refingerprint=lambda res: self._obj_fp(o, cc_id, res["deps"]))
             except journal.StepFailed as e:
                 with run.cond:
@@ -470,10 +485,14 @@ class Compile:
         return self.logs / (step.replace(":", "_") + ".log")
 
     def _cc(self, o, run):
-        obj = self.objdir / f"{o.name}.obj"
-        dep = self.objdir / f"{o.name}.obj.d"
-        cmd = self.cc + o.args + [f"/Fo{obj}", "-clang:-MD", f"-clang:-MF{dep}", "-clang:-fno-caret-diagnostics",
-                                  "-c", "--", str(o.src)]
+        obj = self.objdir / f"{o.name}{self.objext}"
+        dep = self.objdir / f"{o.name}{self.objext}.d"
+        if self.elf:
+            cmd = self.cc + o.args + ["-o", str(obj), "-MD", "-MF", str(dep), "-fno-caret-diagnostics",
+                                      "-c", str(o.src)]
+        else:
+            cmd = self.cc + o.args + [f"/Fo{obj}", "-clang:-MD", f"-clang:-MF{dep}", "-clang:-fno-caret-diagnostics",
+                                      "-c", "--", str(o.src)]
         self._log(o.step).write_text("", encoding="utf-8")
         for attempt in (0, 1):
             if attempt == 1:
@@ -489,7 +508,8 @@ class Compile:
                     run.done_alone()
             if rc == 0:
                 break
-            oom = bool(OOM.search(out)) or (rc & 0xFFFFFFFF) in OOM_CODES
+            # (Linux: the kernel's out-of-memory killer ends the compiler with SIGKILL.)
+            oom = bool(OOM.search(out)) or (rc & 0xFFFFFFFF) in OOM_CODES or (os.name != "nt" and rc == -signal.SIGKILL)
             if attempt == 0 and oom:
                 continue
             tail = " | ".join(out.strip().splitlines()[-5:])
@@ -534,7 +554,7 @@ class Compile:
         args = []
         for a in self.desc["link"]:
             if a == "{objects}":
-                args += [str(self.objdir / f"{o.name}.obj") for o in objs]
+                args += [str(self.objdir / f"{o.name}{self.objext}") for o in objs]
             else:
                 args.append(self.expand(a))
         fps = [(o.name, self.jr.state(o.step).get("inputs")) for o in objs] + self._lib_fps()

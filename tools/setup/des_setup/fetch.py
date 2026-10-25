@@ -4,15 +4,18 @@ toolchain.json names each tool at one exact version: its URL, size and
 SHA-256. An entry without a SHA-256 is not pinned yet and is refused, so
 nothing unchecked is ever used. Downloads resume from where they stopped
 (HTTP Range), go to a .part file and are renamed only once they match.
-Archives are unpacked into a folder of their own, refusing any entry that
-would land outside it.
+Archives (.zip, and on Linux .tar.xz and .tar.gz, docs/87) are unpacked into a
+folder of their own, refusing any entry that would land outside it and any
+link.
 
 Nothing is installed: everything stays in setup's data folder.
 """
 import hashlib
 import json
 import os
+import posixpath
 import shutil
+import tarfile
 import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -48,8 +51,18 @@ def _check_entry(e: dict, allow_http: bool):
         raise FetchError(f"{e['name']}: only https:// downloads are allowed")
 
 
+TARS = (".tar.xz", ".tar.gz")
+
+
+def suffix(url: str) -> str:
+    """The archive's suffix from its URL: .tar.xz and .tar.gz whole, else the last one (.zip)."""
+    p = PurePosixPath(url)
+    two = "".join(p.suffixes[-2:]).lower()
+    return two if two in TARS else (p.suffix or ".bin")
+
+
 def archive_path(e: dict, cache: Path) -> Path:
-    return Path(cache) / f"{e['name']}-{e['version']}{PurePosixPath(e['url']).suffix or '.bin'}"
+    return Path(cache) / f"{e['name']}-{e['version']}{suffix(e['url'])}"
 
 
 def fetch(e: dict, cache, progress=None, allow_http=False, timeout=60) -> Path:
@@ -99,19 +112,67 @@ def fetch(e: dict, cache, progress=None, allow_http=False, timeout=60) -> Path:
     return final
 
 
+def _bad_name(name: str) -> bool:
+    name = name.replace("\\", "/")
+    parts = PurePosixPath(name).parts
+    return name.startswith("/") or (parts and ":" in parts[0]) or ".." in parts
+
+
+def _link_leaves(m: tarfile.TarInfo) -> bool:
+    """A link whose target is not inside the archive's folder: an absolute one, or one that '..' takes out. A
+    symlink's target is from the link's own folder, a hard link's from the top."""
+    target = m.linkname.replace("\\", "/")
+    if target.startswith("/") or (target[1:2] == ":"):
+        return True
+    base = posixpath.dirname(m.name) if m.issym() else ""
+    return posixpath.normpath(posixpath.join(base, target)).split("/")[0] == ".."
+
+
+def _unpack_tar(archive: Path, tmp: Path):
+    """A .tar.xz or .tar.gz, by tarfile's "data" filter (Python 3.12 and later): it refuses absolute paths, paths
+    that leave the folder and device files, and keeps the owner's execute bit, which a zip cannot carry (the
+    compiler must run). A link is kept only if it stays inside the folder (Linux's Python has 1,048 of them, such
+    as bin/python3 -> python3.13); where links cannot be made, tarfile puts a copy of the target there."""
+    if not hasattr(tarfile, "data_filter"):
+        raise FetchError(f"{archive.name}: unpacking it needs Python 3.12 or later")
+    with tarfile.open(archive, "r:*") as t:
+        for m in t.getmembers():
+            if _bad_name(m.name):
+                raise FetchError(f"{archive.name}: refusing the entry {m.name!r}")
+            if (m.issym() or m.islnk()) and _link_leaves(m):
+                raise FetchError(f"{archive.name}: refusing the link {m.name!r} -> {m.linkname!r}")
+            if not (m.isfile() or m.isdir() or m.issym() or m.islnk()):
+                raise FetchError(f"{archive.name}: refusing the special file {m.name!r}")
+        try:
+            t.extractall(tmp, filter="data")
+        except tarfile.FilterError as err:
+            raise FetchError(f"{archive.name}: refusing an entry ({err})") from err
+
+
 def unpack(archive: Path, dest) -> Path:
-    """Unpack a .zip into dest (replacing what is there) and return dest. Entries
-    with absolute paths, drive letters or '..' are refused."""
+    """Unpack a .zip, .tar.xz or .tar.gz into dest (replacing what is there) and
+    return dest. Entries with absolute paths, drive letters or '..' are refused,
+    and so are a zip's links and a tar's links that leave the folder."""
     dest = Path(dest)
     tmp = dest.with_name(dest.name + ".tmp")
     if tmp.exists():
         shutil.rmtree(tmp)
     tmp.mkdir(parents=True)
+    if Path(archive).name.lower().endswith(TARS):
+        try:
+            _unpack_tar(Path(archive), tmp)
+        except (FetchError, OSError, tarfile.TarError) as err:
+            shutil.rmtree(tmp, ignore_errors=True)
+            if isinstance(err, FetchError):
+                raise
+            raise FetchError(f"{Path(archive).name}: it cannot be unpacked ({err})") from err
+        if dest.exists():
+            shutil.rmtree(dest)
+        os.replace(tmp, dest)
+        return dest
     with zipfile.ZipFile(archive) as z:
         for info in z.infolist():
-            name = info.filename.replace("\\", "/")
-            parts = PurePosixPath(name).parts
-            if name.startswith("/") or (parts and ":" in parts[0]) or ".." in parts:
+            if _bad_name(info.filename):
                 shutil.rmtree(tmp)
                 raise FetchError(f"{archive.name}: refusing the entry {info.filename!r}")
             # Unix symlinks have S_IFLNK in the high attribute bits.
@@ -140,8 +201,8 @@ def ensure(e: dict, cache, tools, progress=None, allow_http=False) -> Path:
     if unpacked(e, tools):
         return dest
     a = fetch(e, cache, progress, allow_http)
-    if a.suffix.lower() != ".zip":
-        raise FetchError(f"{e['name']}: only .zip archives can be unpacked")
+    if not a.name.lower().endswith((".zip",) + TARS):
+        raise FetchError(f"{e['name']}: only .zip, .tar.xz and .tar.gz archives can be unpacked")
     unpack(a, dest)
     stamp.write_text(e["sha256"] + "\n")
     return dest

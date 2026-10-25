@@ -15,13 +15,16 @@ from des_setup import journal, lift  # noqa: E402
 
 REAL = Path(__file__).resolve().parents[3]          # this source tree
 
-# Every fake tool logs its name and arguments to <src>/calls.txt, and fails
-# when <src>/fail.txt names it.
-PRELUDE = '''import os, sys, json
+# Every fake tool logs when it started, its name and its arguments in a file of
+# its own in <src>/calls (appends from processes running side by side can lose
+# lines on Windows), and fails when <src>/fail.txt names it.
+PRELUDE = '''import os, sys, json, tempfile, time
 SRC = os.path.dirname(os.path.abspath(__file__))
 while not os.path.isdir(os.path.join(SRC, "scripts")): SRC = os.path.dirname(SRC)
 NAME = os.path.basename(__file__)
-open(os.path.join(SRC, "calls.txt"), "a").write(NAME + " " + " ".join(sys.argv[1:]) + "\\n")
+os.makedirs(os.path.join(SRC, "calls"), exist_ok=True)
+fd, _ = tempfile.mkstemp(dir=os.path.join(SRC, "calls"), suffix=".txt")
+os.write(fd, " ".join([str(time.time_ns()), NAME] + sys.argv[1:]).encode()); os.close(fd)
 fail = os.path.join(SRC, "fail.txt")
 if os.path.exists(fail) and open(fail).read().strip() == NAME: print("broken"); sys.exit(3)
 def arg(k): return sys.argv[sys.argv.index(k) + 1]
@@ -81,12 +84,17 @@ class FakeTree:
         return lift.Lift(self.data, jr, src=self.src, workers=2,
                          progress=lambda s, d, t: self.seen.append((s, d, t)))
 
+    def call_lines(self):
+        """Each call's tool name and arguments, in the order they started."""
+        rows = [p.read_text().split(" ", 1) for p in (self.src / "calls").glob("*.txt")]
+        return [line for _, line in sorted((int(t), line) for t, line in rows)]
+
     def calls(self):
-        p = self.src / "calls.txt"
-        return [line.split(" ", 1)[0] for line in p.read_text().splitlines()] if p.exists() else []
+        return [line.split(" ", 1)[0] for line in self.call_lines()]
 
     def reset_calls(self):
-        (self.src / "calls.txt").unlink(missing_ok=True)
+        for p in (self.src / "calls").glob("*.txt"):
+            p.unlink()
 
     def close(self):
         self.tmp.cleanup()
@@ -130,8 +138,7 @@ class LiftTest(unittest.TestCase):
     def test_libsre_image_from_the_module(self):
         # The glue gets the image's path from the game module's folder (<data>/game), not a folder of this PC.
         self.t.lift().run_all("e" * 64, "f" * 64)
-        calls = (self.t.src / "calls.txt").read_text().splitlines()
-        args = next(c for c in calls if c.startswith("build_libsre.py ")).split(" ")
+        args = next(c for c in self.t.call_lines() if c.startswith("build_libsre.py ")).split(" ")
         self.assertEqual(args[args.index("--runtime-image") + 1], "@module/../work/libsre/libsre_image.bin")
 
     def test_new_eboot_redoes_the_lift(self):

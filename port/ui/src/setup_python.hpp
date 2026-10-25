@@ -1,10 +1,10 @@
-// Written for Demon's Souls. The first Python (docs/88 section 5). On Windows the setup engine runs on python.org's
-// embeddable Python, which no PC has at first, and there is no Python yet to run the engine's own download with. So the
-// host fetches it itself before the engine's first run: Windows' own curl.exe and tar.exe (System32, run by full path
+// Written for Demon's Souls. The first Python (docs/88 section 5). The setup engine runs on a pinned Python
+// (setup_engine.hpp: python.org's embeddable one on Windows, a python-build-standalone one on Linux), which no PC has at
+// first, and there is no Python yet to run the engine's own download with. So the host fetches it itself before the
+// engine's first run: the system's own curl and tar (on Windows from System32, on Linux from PATH; run by full path
 // through the process runner, so Cancel ends them and they get no window), checked with the host's own SHA-256
 // (sha256.hpp). It lands where des_setup's fetch.py puts it, with the same stamp, so from then on the host's lookup
-// (setup_engine.hpp python()) and the engine's fetch both see it as unpacked. Elsewhere the engine runs on the system's
-// python3: no first download.
+// (setup_engine.hpp python()) and the engine's fetch both see it as unpacked.
 #pragma once
 
 #include "child_process.hpp"
@@ -35,9 +35,9 @@ inline constexpr const char* kDownloadsFolder = "downloads";
 inline constexpr const char* kToolsFolder = "tools";
 inline constexpr const char* kStampName = ".des-setup-sha256";
 
-// <data>/downloads/python-embed-3.13.9.zip
+// <data>/downloads/python-embed-3.13.9.zip (Linux: python-linux-3.13.17.tar.gz)
 std::filesystem::path python_archive();
-// <data>/tools/python-embed-3.13.9
+// <data>/tools/python-embed-3.13.9 (Linux: python-linux-3.13.17)
 std::filesystem::path python_folder();
 // Its stamp names the pinned SHA-256 (fetch.unpacked's test).
 bool python_unpacked();

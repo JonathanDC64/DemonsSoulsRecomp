@@ -10,6 +10,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from des_setup.__main__ import main  # noqa: E402
+from des_setup.pipeline import die_with_parent  # noqa: E402
 
 if __name__ == "__main__":
+    die_with_parent()   # (POSIX: ends with the host that started it)
     sys.exit(main())

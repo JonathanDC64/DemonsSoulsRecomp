@@ -1,3 +1,8 @@
-# host.yml's artifact folder only (docs/85)
+# host.yml's artifact folders only (docs/85, docs/87)
 des_host.exe   # the host exe
 des_host.map   # its linker map
+des_host       # the Linux host
+libSDL2-2.0.so.0       # SDL2, built from its pinned source, beside the Linux host
+libvkd3d.so.1          # vkd3d, built from its pinned source, beside the Linux host
+libvkd3d-shader.so.1   # vkd3d's shader compiler, likewise
+libvkd3d-utils.so.1    # vkd3d's helpers, likewise

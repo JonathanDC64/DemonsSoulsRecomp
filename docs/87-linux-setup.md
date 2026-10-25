@@ -2,6 +2,8 @@
 
 Date: 2026-10-22. Status: design only. Nothing was built or run for it. It uses the docs, our source, LLVM's release pages and the GitHub API.
 
+Update 2026-10-25: built. docs/106 says what was built and where it differs from this note.
+
 Labels, as in the other notes:
 - **Read**: seen in a doc, our source, a web page or the GitHub API.
 - **Measured**: checked on this PC.

@@ -30,7 +30,13 @@ extern "C" void des_spu_register_all(void);   /* spu_workloads.cpp, without its 
 extern "C" void ps3_load_prx_modules(void);   /* port/gen/libsre_glue.c */
 #endif
 
-extern "C" __declspec(dllexport) int des_game_init(const ps3_host_api* host, ps3_game_api* game)
+#ifdef _WIN32
+#define DES_GAME_EXPORT __declspec(dllexport)
+#else
+#define DES_GAME_EXPORT __attribute__((visibility("default")))   /* the .so's one dynamic symbol (game_module.h) */
+#endif
+
+extern "C" DES_GAME_EXPORT int des_game_init(const ps3_host_api* host, ps3_game_api* game)
 {
     const int rc = ps3_game_module_init(host, game);
     if (rc != 0) return rc;

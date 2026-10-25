@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from des_setup import compile as compile_step, fetch, journal, lift, pipeline, protocol  # noqa: E402
-from test_lift import REAL, FakeTree  # noqa: E402
+from test_lift import PPU_STEPS, REAL, FakeTree  # noqa: E402
 from test_setup import GameTree  # noqa: E402
 
 PHASES = ["check", "fetch", "stage", "lift"]
@@ -128,7 +128,8 @@ class RunTest(unittest.TestCase):
         self.s.tree.reset_calls()
         rc, lines = self.s.run()
         self.assertEqual(rc, 0, lines)
-        self.assertEqual(self.s.tree.calls()[0], "ppu_lifter.py")
+        # The PPU side starts again at the step that failed (the SPU side runs beside it).
+        self.assertEqual([c for c in self.s.tree.calls() if c in PPU_STEPS][0], "ppu_lifter.py")
 
     def test_busy(self):
         held = pipeline.lock(self.s.data / "setup" / "run.lock")
@@ -274,7 +275,7 @@ class ShadersTest(unittest.TestCase):
 
 class LocalCompilerTest(unittest.TestCase):
     """A developer's compiler (--cc and --ld, or DES_SETUP_CC and DES_SETUP_LD) replaces the LLVM download."""
-    LLVM = {"tools": [{"name": "llvm-win64", "version": "0", "url": "https://example.invalid/llvm.zip",
+    LLVM = {"tools": [{"name": compile_step.LLVM_ENTRY, "version": "0", "url": "https://example.invalid/llvm.zip",
                        "size": None, "sha256": None}]}
 
     def setUp(self):
@@ -390,25 +391,23 @@ class HostAgreesTest(unittest.TestCase):
         self.assertIn('"--host"', (UI / "setup_engine.cpp").read_text(encoding="utf-8"))
 
     def test_python_pin(self):
-        hpp = (UI / "setup_engine.hpp").read_text(encoding="utf-8")
-        e = next(t for t in fetch.load_manifest()["tools"] if t["name"] == "python-embed")
-
-        def const(name, text=hpp):
-            m = re.search(name + r'\s*=\s*"?([^";]+)"?;', text)
-            self.assertIsNotNone(m, name)
-            return m.group(1).rstrip("ull")
-
-        self.assertEqual(const("kPythonName"), e["name"])
-        self.assertEqual(const("kPythonVersion"), e["version"])
-        self.assertEqual(const("kPythonUrl"), e["url"])
-        self.assertEqual(int(const("kPythonSize")), e["size"])
-        self.assertEqual(const("kPythonSha256"), e["sha256"])
+        """The host's pins of the first Python (setup_engine.hpp), one set per platform, against toolchain.json."""
+        tools = {t["name"]: t for t in fetch.load_manifest()["tools"]}
+        for platform, pins in _python_pins().items():
+            with self.subTest(platform):
+                e = tools[pins["kPythonName"]]
+                self.assertEqual(pins["kPythonName"], {"windows": "python-embed", "linux": "python-linux"}[platform])
+                self.assertEqual(pins["kPythonVersion"], e["version"])
+                self.assertEqual(pins["kPythonUrl"], e["url"])
+                self.assertEqual(int(pins["kPythonSize"]), e["size"])
+                self.assertEqual(pins["kPythonSha256"], e["sha256"])
+                self.assertEqual(pins["kPythonProgram"], {"windows": "python.exe", "linux": "python/bin/python3"}[platform])
 
     def test_first_python_lands_where_fetch_looks(self):
         """The host's own first download (setup_python.hpp): fetch.py's archive name and folders, the stamp that
         fetch.unpacked accepts, and the fetch phase's free-space figure."""
         hpp = (UI / "setup_python.hpp").read_text(encoding="utf-8")
-        e = next(t for t in fetch.load_manifest()["tools"] if t["name"] == "python-embed")
+        tools_by_name = {t["name"]: t for t in fetch.load_manifest()["tools"]}
 
         def const(name):
             m = re.search(name + r'\s*=\s*"?([^";]+)"?;', hpp)
@@ -417,9 +416,13 @@ class HostAgreesTest(unittest.TestCase):
 
         downloads, tools = const("kDownloadsFolder"), const("kToolsFolder")
         self.assertEqual((downloads, tools), pipeline.OUTPUTS["fetch"])
-        # The host names the archive <name>-<version>.zip (setup_python.cpp relative_archive).
-        self.assertEqual(fetch.archive_path(e, Path(downloads)), Path(downloads) / f"{e['name']}-{e['version']}.zip")
         self.assertEqual(int(const("kFetchBytes")), pipeline.NEED["fetch"])
+        for platform, pins in _python_pins().items():
+            e = tools_by_name[pins["kPythonName"]]
+            # The host names the archive <name>-<version><suffix> (setup_python.cpp relative_archive).
+            self.assertEqual(fetch.archive_path(e, Path(downloads)),
+                             Path(downloads) / f"{e['name']}-{e['version']}{pins['kPythonSuffix']}", platform)
+        e = tools_by_name["python-embed"]
         # The host writes the SHA-256 and "\n" in text mode: "\r\n" on Windows, "\n" elsewhere.
         for end in ("\r\n", "\n"):
             with tempfile.TemporaryDirectory() as tmp:
@@ -443,6 +446,54 @@ class HostAgreesTest(unittest.TestCase):
         self.assertLessEqual(rule(6.7), job_bytes)
         self.assertLessEqual(job_bytes, rule(10.7))
         self.assertEqual(int(kept.group(1)) * compile_step.GB, compile_step.KEEP)
+
+
+class DieWithParentTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith("linux") and hasattr(os, "pidfd_open"), "Linux's pidfd")
+    def test_engine_ends_its_group_when_the_host_dies(self):
+        """The host starts the engine as the leader of a group of its own (child_process.cpp). If the host dies, the
+        engine's watch (pipeline.die_with_parent) ends the group: the engine and what it started (here a stand-in for
+        a compiler)."""
+        import select
+        import subprocess
+        engine = ("import subprocess, sys, time\n"
+                  "sys.path.insert(0, sys.argv[1])\n"
+                  "from des_setup import pipeline\n"
+                  "pipeline.die_with_parent()\n"
+                  "print(subprocess.Popen(['sleep', '60']).pid, flush=True)\n"
+                  "time.sleep(60)\n")
+        host = ("import os, subprocess, sys\n"
+                "e = subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2]], process_group=0,\n"
+                "                     stdout=subprocess.PIPE, text=True)\n"
+                "print(e.pid, e.stdout.readline().strip(), flush=True)\n"
+                "os._exit(0)\n")
+        out = subprocess.run([sys.executable, "-c", host, engine, str(Path(__file__).resolve().parents[1])],
+                             capture_output=True, text=True, timeout=30)
+        pids = [int(p) for p in out.stdout.split()]
+        self.assertEqual(len(pids), 2, out.stdout + out.stderr)
+        for pid in pids:
+            try:
+                fd = os.pidfd_open(pid)
+            except ProcessLookupError:
+                continue  # ended and reaped already
+            try:
+                ready, _, _ = select.select([fd], [], [], 10)
+                self.assertTrue(ready, f"{pid} still runs 10 s after the host ended")
+            finally:
+                os.close(fd)
+
+
+def _python_pins() -> dict:
+    """setup_engine.hpp's kPython* constants, per platform: the #ifdef _WIN32 block they are in, and its #else."""
+    hpp = (UI / "setup_engine.hpp").read_text(encoding="utf-8")
+    start = hpp.rindex("#ifdef _WIN32", 0, hpp.index("kPythonName"))
+    middle = hpp.index("#else", start)
+    end = hpp.index("#endif", middle)
+    out = {}
+    for platform, block in (("windows", hpp[start:middle]), ("linux", hpp[middle:end])):
+        out[platform] = {m.group(1): m.group(2).removesuffix("ull")
+                         for m in re.finditer(r'(kPython\w+)\s*=\s*"?([^";]+)"?;', block)}
+    return out
 
 
 if __name__ == "__main__":

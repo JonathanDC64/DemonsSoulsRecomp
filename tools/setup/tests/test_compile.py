@@ -16,28 +16,40 @@ from des_setup import compile as cc, fetch, journal  # noqa: E402
 
 REAL = Path(__file__).resolve().parents[3]          # this source tree
 
-# The fake compiler: /Fo<obj> -clang:-MF<dep> ... -- <src>. It reads the
+# The fake compiler: /Fo<obj> -clang:-MF<dep> ... -- <src>, or as clang on
+# Linux, -o <obj> -MF <dep> ... -c <src>. It reads the
 # source's quoted includes (beside it, then the -I folders), writes them as the
 # dependency file and the object as the sum of what it read. A source with FAIL
 # in it fails; one with OOM_ONCE runs out of memory the first time; one with
 # OOM_EXIT ends with Windows' out-of-memory status and prints nothing about it.
-# SLEEP=<s> makes it take that long; each call's start and end go to a file
-# of its own in cc_times.
-FAKECC = r'''import hashlib, os, re, sys, time
+# SLEEP=<s> makes it take that long. Each call is noted in a file of its own in
+# cc_calls (ld_calls for the linker), and its start and end in cc_times:
+# appends from processes running side by side can lose lines on Windows.
+NOTE = r'''
+def note(folder, text):
+    os.makedirs(folder, exist_ok=True)
+    fd, _ = tempfile.mkstemp(dir=folder, suffix=".txt")
+    os.write(fd, text.encode()); os.close(fd)
+'''
+FAKECC = r'''import hashlib, os, re, sys, tempfile, time
+''' + NOTE + r'''
 t0 = time.time()
+t0_ns = time.time_ns()
 a = sys.argv[1:]
-src = a[a.index("--") + 1]
-obj = next(x[3:] for x in a if x.startswith("/Fo"))
-dep = next(x[len("-clang:-MF"):] for x in a if x.startswith("-clang:-MF"))
+if "--" in a:
+    src = a[a.index("--") + 1]
+    obj = next(x[3:] for x in a if x.startswith("/Fo"))
+    dep = next(x[len("-clang:-MF"):] for x in a if x.startswith("-clang:-MF"))
+else:
+    src, obj, dep = a[a.index("-c") + 1], a[a.index("-o") + 1], a[a.index("-MF") + 1]
 inc = [x[2:] for x in a if x.startswith("-I")]
 here = os.path.dirname(os.path.abspath(__file__))
-open(os.path.join(here, "cc_calls.txt"), "a").write(os.path.basename(obj) + "\n")
+note(os.path.join(here, "cc_calls"), f"{t0_ns} {os.path.basename(obj)}")
 text = open(src, encoding="utf-8").read()
 m = re.search(r"SLEEP=([0-9.]+)", text)
 if m:
     time.sleep(float(m.group(1)))
-os.makedirs(os.path.join(here, "cc_times"), exist_ok=True)
-open(os.path.join(here, "cc_times", f"{os.getpid()}.txt"), "w").write(f"{os.path.basename(obj)} {t0} {time.time()}\n")
+note(os.path.join(here, "cc_times"), f"{os.path.basename(obj)} {t0} {time.time()}\n")
 if "FAIL" in text:
     print("error: made to fail"); sys.exit(1)
 if "OOM_EXIT" in text:
@@ -56,17 +68,24 @@ for name in re.findall(r'#include "([^"]+)"', text):
 open(obj, "w").write(h.hexdigest())
 open(dep, "w").write(obj.replace(" ", "\\ ") + ": " + " \\\n  ".join(x.replace(" ", "\\ ") for x in [src] + deps) + "\n")
 '''
-FAKELD = r'''import os, sys
+FAKELD = r'''import os, sys, tempfile, time
+''' + NOTE + r'''
+t0_ns = time.time_ns()
 a = sys.argv[1:]
 here = os.path.dirname(os.path.abspath(__file__))
+if "-o" in a:   # the clang driver linking des_game.so (Linux)
+    note(os.path.join(here, "ld_calls"), f"{t0_ns} link")
+    objs = [x for x in a if x.endswith(".o")]
+    open(a[a.index("-o") + 1], "w").write("\n".join(os.path.basename(o) + " " + open(o).read() for o in objs))
+    sys.exit(0)
 out = next(x[5:] for x in a if x.lower().startswith("/out:"))
 if a[0] == "/lib":   # an import library from a .def file; one with FAIL in it fails
-    open(os.path.join(here, "ld_calls.txt"), "a").write("lib\n")
+    note(os.path.join(here, "ld_calls"), f"{t0_ns} lib")
     text = open(next(x[5:] for x in a if x.lower().startswith("/def:"))).read()
     if "FAIL" in text:
         print("error: made to fail"); sys.exit(1)
     open(out, "w").write(text); sys.exit(0)
-open(os.path.join(here, "ld_calls.txt"), "a").write("link\n")
+note(os.path.join(here, "ld_calls"), f"{t0_ns} link")
 objs = [x for x in a if x.endswith(".obj") or x.endswith(".lib")]
 open(out, "w").write("\n".join(os.path.basename(o) + " " + open(o).read() for o in objs))
 '''
@@ -143,12 +162,13 @@ class Tree:
         return out
 
     def calls(self, name):
-        p = self.tools / f"{name}_calls.txt"
-        if not p.exists():
-            return []
-        out = p.read_text().split()
-        p.unlink()
-        return out
+        """The tool's calls in the order they started, then forgotten (a file each, as cc_times)."""
+        rows = []
+        for p in (self.tools / f"{name}_calls").glob("*.txt"):
+            t, text = p.read_text().split(" ", 1)
+            rows.append((int(t), text))
+            p.unlink()
+        return [text for _, text in sorted(rows)]
 
 
 class TestPieces(unittest.TestCase):
@@ -199,6 +219,23 @@ class TestDescription(unittest.TestCase):
         self.assertEqual(s(r'a  "b c" d\e "f\"g" h\\"i j"'), ["a", "b c", r"d\e", 'f"g', r"h\i j"])
         self.assertEqual(s('x ""'), ["x", ""])
 
+    @unittest.skipIf(os.name == "nt", "POSIX paths")
+    def test_roots_posix(self):
+        r = self.g.Roots([("/t/port/..", "{src}"), ("/t/port", "{src}/port"), ("/l/ps3r", "{src}/ps3recomp"),
+                          ("/l/ps3r/work_spu", "{work}/spu"), ("/t/port/gen", "{work}/gen")])
+        self.assertEqual(r.to_ph("-I/l/ps3r/include"), "-I{src}/ps3recomp/include")
+        self.assertEqual(r.to_ph("/l/ps3r/work_spu/spu_0000/spu_recomp.c"), "{work}/spu/spu_0000/spu_recomp.c")
+        self.assertEqual(r.to_ph("/t/port/gen/libsre_glue.c"), "{work}/gen/libsre_glue.c")
+        self.assertEqual(r.to_ph("/t/portable/x.h"), "{src}/portable/x.h")       # not port's: a prefix only
+        self.assertEqual(r.to_ph("/elsewhere/x.h"), "/elsewhere/x.h")
+        self.assertEqual(r.from_ph("-I{src}/ps3recomp/include"), "-I/l/ps3r/include")
+        # ps3recomp beside port/, where CMake's default PS3RECOMP_DIR names it port/../ps3recomp.
+        r = self.g.Roots([("/t/port/..", "{src}"), ("/t/port", "{src}/port"), ("/t/port/../ps3recomp", "{src}/ps3recomp")])
+        self.assertEqual(r.to_ph("-I/t/port/../ps3recomp/include"), "-I{src}/ps3recomp/include")
+        self.assertEqual(r.to_ph("-I/t/ps3recomp/include"), "-I{src}/ps3recomp/include")
+        self.assertEqual(r.to_ph("/t/port/des_game_module.cpp"), "{src}/port/des_game_module.cpp")
+
+    @unittest.skipUnless(os.name == "nt", "Windows paths")
     def test_roots(self):
         r = self.g.Roots([("C:\\t\\port\\..", "{src}"), ("C:\\t\\port", "{src}/port"), ("D:\\l\\ps3r", "{src}/ps3recomp"),
                           ("D:\\l\\ps3r\\work_spu", "{work}/spu"), ("C:\\t\\port\\gen", "{work}/gen")])
@@ -210,6 +247,13 @@ class TestDescription(unittest.TestCase):
         self.assertEqual(r.to_ph(r"E:\elsewhere\x.h"), r"E:\elsewhere\x.h")
         self.assertEqual(r.to_ph(r"C:\t\scripts\a.json"), "{src}/scripts/a.json")
         self.assertEqual(os.path.normcase(r.from_ph("-I{src}/ps3recomp/include")), os.path.normcase(r"-ID:\l\ps3r/include"))
+        # ps3recomp beside port/, where CMake's default PS3RECOMP_DIR names it port/../ps3recomp.
+        r = self.g.Roots([("C:\\t\\port\\..", "{src}"), ("C:\\t\\port", "{src}/port"),
+                          ("C:/t/port/../ps3recomp", "{src}/ps3recomp")])
+        self.assertEqual(r.to_ph("-IC:/t/port/../ps3recomp/include"), "-I{src}/ps3recomp/include")
+        self.assertEqual(r.to_ph("/FIC:/t/port/../ps3recomp/include/x.h"), "/FI{src}/ps3recomp/include/x.h")
+        self.assertEqual(r.to_ph(r"-IC:\t\ps3recomp\include"), "-I{src}/ps3recomp/include")
+        self.assertEqual(r.to_ph(r"C:\t\port\des_game_module.cpp"), "{src}/port/des_game_module.cpp")
 
     def test_kinds(self):
         k = self.g.kind_of
@@ -230,6 +274,38 @@ class TestDescription(unittest.TestCase):
         self.assertIsNone(t(r'C:\PROGRA~1\LLVM\bin\lld-link.exe /nologo a.obj /out:des_game.dll /dll'))
         self.assertIsNone(t(r'C:\PROGRA~1\LLVM\bin\clang-cl.exe /nologo /lib -c -- x.c'))
 
+    def test_linux_compile_command(self):
+        """A Linux compile line as ninja writes it (docs/87): the object, dependency and source words go."""
+        r = self.g.Roots([("/l/port/port/..", "{src}"), ("/l/port/port", "{src}/port"), ("/l/ps3r", "{src}/ps3recomp"),
+                          ("/l/port/work/recomp", "{work}/recomp")])
+        line = ("/usr/bin/clang++ -DPS3_GAME_FREESTANDING -I/l/port/work/recomp -I/l/ps3r/include -O2 -fwrapv "
+                "-nostdlibinc -include/l/ps3r/include/ps3emu/game_freestanding.h -fPIC -MD -MT "
+                "CMakeFiles/des_game.dir/l/port/work/recomp/ppu_recomp_000.cpp.o -MF "
+                "CMakeFiles/des_game.dir/l/port/work/recomp/ppu_recomp_000.cpp.o.d -o "
+                "CMakeFiles/des_game.dir/l/port/work/recomp/ppu_recomp_000.cpp.o -c /l/port/work/recomp/ppu_recomp_000.cpp")
+        args, src, want = self.g.template_elf(line, r)
+        self.assertEqual(src, "{work}/recomp/ppu_recomp_000.cpp")
+        self.assertEqual(args, ["-DPS3_GAME_FREESTANDING", "-I{work}/recomp", "-I{src}/ps3recomp/include", "-O2",
+                                "-fwrapv", "-nostdlibinc", "-include{src}/ps3recomp/include/ps3emu/game_freestanding.h",
+                                "-fPIC"])
+        self.assertEqual(want[-1], "/l/port/work/recomp/ppu_recomp_000.cpp")
+        self.assertTrue(self.g.ABS_ELF.search("-I/usr/include"))
+        self.assertTrue(self.g.ABS_ELF.search("/usr/include/stdio.h"))
+        self.assertFalse(self.g.ABS_ELF.search("-I{src}/ps3recomp/include"))
+        self.assertFalse(self.g.ABS_ELF.search("-Wl,-z,defs"))
+        self.assertEqual(self.g.system_of({"CMAKE_C_COMPILER": "/usr/bin/clang"}), "linux")
+        self.assertEqual(self.g.system_of({"CMAKE_C_COMPILER": "C:/LLVM/bin/clang-cl.exe"}), "windows")
+
+    def test_linux_link_command(self):
+        r = self.g.Roots([("/l/port/port/..", "{src}"), ("/l/port/port", "{src}/port")])
+        line = (": && /usr/bin/clang++ -fPIC -nostdlib -fuse-ld=lld -Wl,-z,defs -Wl,-Map=des_game.map -shared "
+                "-Wl,-soname,des_game.so -o des_game.so CMakeFiles/des_game.dir/a.cpp.o CMakeFiles/des_game.dir/b.c.o "
+                "&& :")
+        largs, out = self.g.link_elf(line, "/b", r)
+        self.assertEqual(out, "des_game.so")
+        self.assertEqual(largs, ["-fPIC", "-nostdlib", "-fuse-ld=lld", "-Wl,-z,defs", "-Wl,-Map=des_game.map", "-shared",
+                                 "-Wl,-soname,des_game.so", "-o", "des_game.so", "{objects}"])
+
 
 class TestCompile(unittest.TestCase):
     def setUp(self):
@@ -245,6 +321,22 @@ class TestCompile(unittest.TestCase):
         o = c.plan()[0]
         self.assertEqual(o.args, ["/O2", "-I" + (self.t.data / "work/recomp").as_posix(),
                                   "-I" + (self.t.src / "inc").as_posix()])
+
+    def test_linux_description(self):
+        """game_build_linux.json's shape (docs/87): clang's spellings, .o objects, the clang driver linking
+        des_game.so with -o, no import libraries."""
+        desc = dict(DESC, system="linux", libs=[], link=["-shared", "-nostdlib", "-fuse-ld=lld", "-o", "des_game.so",
+                                                         "{objects}"], dll="des_game.so")
+        desc["objects"] = [dict(o, args=[a.replace("/O2", "-O2") for a in o["args"]]) for o in DESC["objects"]]
+        so = self.t.make(desc=desc).run_all()
+        self.assertEqual(so, self.t.data / "game" / "des_game.so")
+        self.assertTrue((self.t.data / "build/obj/ppu_recomp_000.o").is_file())
+        self.assertTrue((self.t.data / "build/obj/ppu_recomp_000.o.d").is_file())
+        self.assertEqual(len(so.read_text().splitlines()), 6)
+        self.assertEqual(self.t.calls("ld"), ["link"])
+        log = (self.t.data / "setup/logs/cc_ppu_recomp_000.log").read_text()
+        self.assertIn(" -MF ", log)
+        self.assertNotIn("/Fo", log)
 
     def test_build_then_nothing_to_do(self):
         dll = self.t.make().run_all()
@@ -390,10 +482,33 @@ class TestCompile(unittest.TestCase):
             c.plan()
         self.assertIn("run the lift first", e.exception.message)
 
+    def test_real_linux_description(self):
+        """The checked-in Linux description (docs/87): every path is a placeholder, it names the objects CMake's split
+        build has, each built freestanding, and the link has no system library."""
+        d = json.loads(cc.DESC.with_name("game_build_linux.json").read_text(encoding="utf-8"))
+        self.assertEqual(d["system"], "linux")
+        names = [o["name"] for o in d["objects"]]
+        for n in ("ppu", "spu", "libsre", "libsre_glue", "spu_workloads", "game_module", "des_game_module",
+                  "game_libc"):
+            self.assertIn(n, names)
+        absolute = re.compile(r"(?:^|^-[A-Za-z][A-Za-z-]*|[=:,])/")
+        for o in d["objects"]:
+            for a in o["args"] + [o.get("src", ""), o.get("glob", "")]:
+                self.assertNotRegex(a, absolute, a)
+            for a in ("-nostdlibinc", "-fvisibility=hidden", "-ftls-model=initial-exec", "-fno-stack-protector",
+                      "-fPIC", "-DPS3_GAME_FREESTANDING"):
+                self.assertIn(a, o["args"], o["name"])
+        for a in ("-nostdlib", "-fuse-ld=lld", "-Wl,-z,defs", "-shared", "{objects}"):
+            self.assertIn(a, d["link"])
+        self.assertFalse([a for a in d["link"] if a.startswith("-l")], "a system library by name")
+        self.assertEqual(d["dll"], "des_game.so")
+        self.assertEqual(d["libs"], [])
+        self.assertTrue(all(h.startswith("{src}/") for h in d["headers"]))
+
     def test_real_description(self):
-        """The checked-in description: every path is a placeholder, and it names
+        """The checked-in Windows description: every path is a placeholder, and it names
         the objects CMake's split build has."""
-        d = json.loads(cc.DESC.read_text(encoding="utf-8"))
+        d = json.loads(cc.DESC.with_name("game_build.json").read_text(encoding="utf-8"))
         names = [o["name"] for o in d["objects"]]
         for n in ("ppu", "spu", "libsre", "libsre_glue", "spu_workloads", "game_module", "des_game_module",
                   "game_libc"):

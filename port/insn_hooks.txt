@@ -161,6 +161,14 @@
 0x003A5CA8=des_net_show  # li r29, 1: the wandering ghost tick starts the next ghost
 0x0054E8C0=des_net_show  # ld r0, 0xc8(r31): scheduler, the bloodstain list's last time
 0x0054E8F8=des_net_show  # ld r0, 0xd0(r31): scheduler, the message list's last time
+0x00558884=des_net_show  # lwz r0, 0x18c(r31): the ghost reply's first count (both counts held to their arrays)
+
+# des_net_replay (port/des_options.cpp): a ghost or bloodstain replay from the server whose frame count
+# does not fit its data is dropped, through the game's own paths (docs/69, "Replays").
+0x00391818=des_net_replay  # cmpwi cr7, r3, 0: a bloodstain's replay after its unpack (length at 0x74(r1))
+0x003A596C=des_net_replay  # cmplwi cr7, r0, 0xfff: a ghost's replay length after its first unpack
+0x003A5EA0=des_net_replay  # cmplwi cr7, r0, 0xfff: the same after its second unpack
+0x003957B8=des_net_replay  # cmpwi cr7, r4, 0: the replay reader's entry (r4 = the data)
 
 # des_fx_state (port/des_options.cpp): particle effect (FFX) nodes' state
 # machine in the scene update 0x013B74B8. An emitter repeats by re-entering its

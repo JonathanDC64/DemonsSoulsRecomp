@@ -3,8 +3,10 @@
 Date: 2026-10-26. Status: researched without the reporter's logs, which were asked for.
 - Two ways the D3D12 backend can stop presenting for good while the game keeps flipping were found in the code.
   One of them reproduces the issue's symptom on demand.
-- Fixes for both are in JonathanDC64/ps3recomp#132. This port's `ps3recomp.pin` moves to it in a later pull
-  request.
+- Fixes for both are in JonathanDC64/ps3recomp#132, and the SPU table fixes of section 7 are in #133 and #134.
+  This port's `ps3recomp.pin` has all three since fork master eee1ad38.
+- A 10-minute play at the Palace on a build with all three: no freeze, and none of the fixes' warnings in the
+  log. The fallback never ran, as on every run here: this PC's flips stay in the command stream.
 - Which way, if either, hit the reporter waits for their `des.log`.
 
 ## Short answer

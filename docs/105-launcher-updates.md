@@ -13,6 +13,9 @@ or the docs), **inferred**.
 - **The update window** has the release's notes and three buttons: **Update**, **Later** and **Skip this version**.
   Update downloads the release, checks it against the release's SHA256SUMS, puts it in place, then starts the new
   version straight into setup's rebuild. Saves, settings, the shader cache and the game files are kept.
+- **Only signed releases.** A release is offered and installed only if its SHA256SUMS carries the maintainer's
+  signature, made offline with the project's release key and checked against the keys the installed version lists
+  (section 7). A release that is not signed is never shown, so its notes are never read either.
 - **One version is kept to go back to.** Settings, About, Updates has "Go back to 0.1.0": the program files and the
   game build of that version come back, so the game starts at once, with no rebuild.
 - **Settings, About, Check for updates** turns the check at the start off. "Check now" looks once.
@@ -63,9 +66,12 @@ screen does not offer it straight back.
   and its ETag are kept in `<data>/setup/update/feed.json`. An unchanged list then answers 304, which does not count
   against GitHub's limit of 60 requests an hour without a token (read: GitHub's REST docs).
 - **What counts:** published releases only (not drafts or pre-releases), with a `vX.Y.Z` tag, a player's download for
-  this system (`DemonsSoulsRecomp-X.Y.Z-windows.zip`, or on Linux `DemonsSoulsRecomp-X.Y.Z-linux.tar.xz`) and
-  `SHA256SUMS`. So `llvm-22.1.8-1`, setup's compiler release,
+  this system (`DemonsSoulsRecomp-X.Y.Z-windows.zip`, or on Linux `DemonsSoulsRecomp-X.Y.Z-linux.tar.xz`),
+  `SHA256SUMS` and `SHA256SUMS.sig`. So `llvm-22.1.8-1`, setup's compiler release,
   never counts, though GitHub marks it Latest today.
+- **Signed:** for the newest newer release the check downloads `SHA256SUMS` and `SHA256SUMS.sig` (a few hundred
+  bytes) and checks the signature (section 7). One that fails is passed over with a `note version X is not offered:
+  <why>` line, and the next newer one is tried, at most 3.
 - **Compared as numbers:** 0.2.10 is newer than 0.2.9. Only a plain X.Y.Z build compares, so a developer's build
   (0.1.0-dev.5+g1234) finds nothing.
 - **Lines for the host:** `@release <version> <time> <page>`, the notes as `@note` lines (at most 300, each at most
@@ -81,7 +87,8 @@ screen does not offer it straight back.
 
 1. **Lock:** setup's `run.lock`, so no setup run and no other update runs at the same time.
 2. **Checks:** DIR is a player's install (`release-info.txt` and the exe at its top, no `.git`) and can be written to.
-3. **Download:** `SHA256SUMS` (at most 64 KB), then the zip, by fetch.py: resumed with HTTP Range, its size and
+3. **Download:** `SHA256SUMS` (at most 64 KB) and `SHA256SUMS.sig` (at most 16 KB), the signature checked
+   (section 7; a failure is `@error signature download`, and nothing is downloaded further), then the zip, by fetch.py: resumed with HTTP Range, its size and
    SHA-256 checked before it is used. A zip that does not match is deleted. Free space first: three times the zip, plus
    the game build's size, on both the install's drive and the data folder's.
 4. **Unpack** into `DIR/.update/NEW`, with fetch.py's checks (no absolute paths, no `..`, no links). The zip's
@@ -90,10 +97,11 @@ screen does not offer it straight back.
    A copy, not a move: the rebuild starts from the module there, and a version whose game code did not change keeps
    it (its journal steps are all skipped).
 6. **The swap.** The program files are the names at the top of the install that `release-files.txt` lists (the
-   player's zip has it, written by `package.py`). An install from before that file: the names the new release has.
-   Each of them moves into `DIR/.previous/OLD`, then the new release's names move in. The exe moves out last and in
-   first, so the install has none for the shortest time. The old `.previous` is renamed to `.previous.old` first and
-   deleted only once the swap is done.
+   player's zip has it, written by `package.py`). Only plain names count: a line with `..`, a separator (`/` or `\`),
+   a drive colon or a control character names nothing. An install from before that file: the names the new release
+   has. Each of them moves into `DIR/.previous/OLD`, then the new release's names move in. The exe moves out last and
+   in first, so the install has none for the shortest time. The old `.previous` is renamed to `.previous.old` first
+   and deleted only once the swap is done.
 7. **Clean up:** `.update/NEW`, the zip, and the version kept before go. One version is kept.
 
 Renames on the same drive are quick; Windows lets a running exe be renamed (measured in the end-to-end run, section
@@ -126,6 +134,8 @@ swap is undone and the page says "A file in the game's folder is in use".
   fields, `made <folder>` and `move <from> <to>`. A swap that fails is undone from the last line up at once.
 - **A swap cut short** (a power cut) is undone at the program's next start, by the host itself
   (`updates::recover_swap`, read in `des_ui_launch` before anything else), since the engine may be half swapped too.
+  Both sides undo a journal only if every path in it is inside the install; one that names anything else is left
+  as it is (the engine says so and stops the update).
   The host then starts the program that is in place and ends. The next update-apply or update-back would undo it as
   well.
 - **The close button does nothing while the files go in place** (the install step: the unpack, the copy of the game
@@ -133,12 +143,53 @@ swap is undone and the page says "A file in the game's folder is in use".
   des_ui.cpp's WM_CLOSE).
 - **Still possible:** a power cut in the two renames between the old exe out and the new exe in leaves no exe at the
   top. Extract the zip again over the folder; nothing of the player's is lost.
-- **Downloads** are https only (fetch.py), checked by SHA-256 against the release's SHA256SUMS. The SHA256SUMS comes
-  from the same release over https. Signing the releases is later (docs/45 section 5).
+- **Downloads** are https only (fetch.py), checked by SHA-256 against the release's SHA256SUMS, and SHA256SUMS is
+  checked against its signature first (below). So an account or a token that can change a release cannot ship code
+  to players: it would need the release key, which never goes online.
+
+### 7.1 Signed releases
+
+- **The key:** an Ed25519 key in OpenSSH's format, made and kept by the maintainer, offline, with a passphrase. Its
+  public half is a line in `tools/setup/des_setup/release-keys.txt`, which ships in every release. With no key there
+  the build installs no update.
+- **The signature:** `ssh-keygen -Y sign -n demons-souls-recomp-release` over `SHA256SUMS`, uploaded beside it as
+  `SHA256SUMS.sig` (OpenSSH's SSHSIG format; the namespace keeps a signature made for anything else from counting).
+  `tools/release/sign_release.py` does it: it downloads the draft, checks each file against SHA256SUMS and against
+  its build attestation (release.yml attests each file SHA256SUMS lists), signs, checks the signature with the
+  engine's own code against the key lists at the tag and at the release before it, and uploads it.
+- **The check:** `tools/setup/des_setup/signing.py`, in plain Python (setup's Python has no Ed25519): the signature's
+  key must be one of the installed version's keys, the namespace and hash must be the expected ones, and Ed25519's
+  check (RFC 8032) must pass. Measured: about 10 ms. Its tests check RFC 8032's vectors, a signature made by
+  Windows' own `ssh-keygen` (OpenSSH 9.5), and signatures `ssh-keygen -Y verify` accepts.
+- **The installed version decides:** a release cannot vouch for itself. To change keys, add the new key's line in
+  one release (signed with the old key), then sign later ones with the new key. A lost key means players update by
+  hand once, to a release that lists a new one.
+
+The maintainer's steps, once:
+
+1. Make the key, on a PC you trust, with a passphrase you keep somewhere safe:
+   `ssh-keygen -t ed25519 -C "DemonsSoulsRecomp releases" -f <folder>\dss-release`
+   This writes `dss-release` (private: never share it, never commit it) and `dss-release.pub`.
+2. Keep a copy of the private file offline (for example on a USB stick in a drawer). Without it no later release
+   can be signed for the players who have this key.
+3. Put the one line of `dss-release.pub` in `tools/setup/des_setup/release-keys.txt`, in a PR, before the first
+   release. The public line is fine to share and to commit.
+4. In the repository's settings, Environments, add `release` and make it require your review, so a tag pushed by
+   anyone else drafts nothing until you approve it. In Settings, General, turn on immutable releases if offered.
+
+For each release: after release.yml has drafted it, run
+`python tools/release/sign_release.py vX.Y.Z --key <folder>\dss-release`, type the passphrase when ssh-keygen asks,
+then read the draft and publish it (docs/54 section 8.4).
 
 ## 8. Tests
 
-- **Unit tests** (`tools/setup/tests/test_update.py`, 11 tests, measured: all pass): the release filter (drafts,
+- **Signatures** (`tests/test_signing.py`, `tests/test_sign_release.py`, measured: all pass): RFC 8032's vectors,
+  an OpenSSH-made signature, refusals (another key, another namespace, a changed file, broken armour, no key), the
+  key list; the signing script with gh, git and ssh-keygen stood in for (a file that does not match, no
+  attestation, a published release, a key the version before does not list).
+- **Unit tests** (`tools/setup/tests/test_update.py`, 16 tests, measured: all pass): releases signed with a key the
+  build does not list are neither offered nor installed, a build with no key installs nothing, release-files.txt
+  names that would leave the install and a journal path outside it are refused, and the release filter (drafts,
   pre-releases, the llvm release, a release without SHA256SUMS, 0.2.10 over 0.2.9, developer builds), the check's
   lines, an update and then going back on a made-up install served from 127.0.0.1 (player files kept, the build kept
   and restored, the journal's link forgotten), a bad checksum (nothing changed), a file in use half way (the swap
@@ -183,6 +234,8 @@ version:
   `des_host.exe` and `release-files.txt` at its top, beside `SHA256SUMS` in the same release. On Linux it is
   `DemonsSoulsRecomp-X.Y.Z-linux.tar.xz` (`package.py --linux-host`), the same layout with `des_host` (a tar keeps
   its execute bit; `fetch.unpack` takes both).
+- `SHA256SUMS.sig` beside `SHA256SUMS`, an SSHSIG in the namespace `demons-souls-recomp-release`, by a key the
+  previous version's `release-keys.txt` lists.
 - `update-back` reads `.previous/<version>` and `<data>/previous/<version>`, as written here.
 
 ## 11. Later
@@ -194,7 +247,8 @@ version:
   job), so Linux updates start with the first release that has both. Once both are in, the Linux tarball should
   carry `release-files.txt` too, as the zip does (one line in `cmd_build`); until then an update swaps the names
   the new release has.
-- **Signing** the exe and the releases (docs/45 section 5).
+- **Signing the exe** (Authenticode, docs/45 section 5): Windows' own trust in the program, apart from the
+  update's.
 - **Smaller downloads:** today an update is the whole zip (11.6 MB for this branch's package, 1,076 files, measured).
   docs/45 has the component plan.
 - **A beta channel** (pre-releases) behind a setting.

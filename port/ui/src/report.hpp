@@ -65,7 +65,10 @@ std::string issue_url(const std::string& title, const std::string& body);
 // Opens the issue form in the browser and shows `zip` in Explorer. With DES_REPORT_NO_OPEN=1 (tests) neither is
 // opened: the link is written to <zip>.url.txt instead.
 void open_issue(const std::string& url, const std::filesystem::path& zip);
+// A web page in the browser: https:// links only (anything else is not opened, and logged).
 void open_url(const std::string& url);
+// A folder, or a .log or .txt file, with the system's viewer; anything else (a program) is not opened.
+void open_local(const std::filesystem::path& path);
 void reveal(const std::filesystem::path& path);
 
 std::wstring widen(const std::string& s);

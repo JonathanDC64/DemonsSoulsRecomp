@@ -135,7 +135,10 @@ menus and full-screen passes.
 Record with HDR on as well (`RSX_HDR=1`, on a display with HDR on in Windows). The scene target and its copy
 become FP16, so draws into them have other rows, and four programs have an HDR variant (the `hdrv` field). A
 runtime before the field recorded the variants' rows without it; those rows build the plain program, so leave
-out seen files from such runs.
+out seen files from such runs. A seen file that such a run and later ones both wrote to (a shader cache kept
+across builds) can be merged without its rows of the scene programs `RSX_HDR_SCENE_FP` names drawing into an
+FP16 target (`rtfmt` `a`) with no `hdrv`. Those are the only rows of such a run that differ: a draw that gets the
+other variant (`8xxxxxxx`) draws into an 8-bit target, and its row without `hdrv` is that draw's row with HDR off.
 
 ## Measured
 
@@ -195,6 +198,18 @@ was made on, played by hand in Boletarian Palace 1-1 (two loads), then in the Tu
 their pipeline from the library and 2 compiled one, both in the Palace (a couple of stutters were seen). With
 them and 7 rows from the scripted break replay (Palace 1-1, render scale 100), the index holds 658 rows: 42
 vertex and 207 fragment programs in 260 pairs.
+
+**HDR play** (2026-10-24 to 10-26): the developer's play sessions and test runs with HDR on (a display with HDR
+on in Windows), which share one shader cache. Merged into the 749-row index (the HDR Tutorial's 91 rows, docs/104):
+
+- 652 new rows, 1401 in all: 44 vertex and 248 fragment programs in 307 pairs.
+- 595 draw into the FP16 scene target or its copy. One of them is the composite in the clamp form, with its
+  `hdrv`. 7 more are HDR variants into 8-bit targets. 16 of the 652 use the clamp form.
+- Left out: 2 rows of the composite's program into the FP16 target without `hdrv`, from a runtime before the
+  field (the rule above).
+- 693 of the 1401 rows are drawn only with HDR on. A start with HDR off builds them too. On a PC whose driver
+  has not seen them, that is 1.2-3.5 s more of the background build (7-20 ms each, on 4 threads), while the
+  game is in its menus.
 
 ## Limits
 

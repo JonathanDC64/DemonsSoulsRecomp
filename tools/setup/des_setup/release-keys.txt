@@ -4,3 +4,6 @@
 #
 # The installed version's list is the one that counts: a release that changes this list must be signed with a key
 # the version before it lists. With no key here, this build installs no update.
+#
+# The maintainer's key, made 2026-10-26. Fingerprint: SHA256:tQV2sW13lxTvWohtsXh8sS3/bazB/SwEqUZ/AMELGLc
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKSHkc3mrzPPV+avmN3BKTmWSJd3Kz4rNvsB47fiXETS DemonsSoulsRecomp releases

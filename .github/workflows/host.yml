@@ -22,9 +22,116 @@ concurrency:
   group: host-${{ github.ref }}
   cancel-in-progress: true
 
+# FFmpeg's release tarball of tag n8.1.3 (commit 1041abdc962f4cc4f394aa8de9dc5236c0c3b9e7, a signed tag): the tag's
+# files plus VERSION. Both hosts' FFmpeg is built from it (host-linux, ffmpeg-windows), and
+# tools/release/third_party_sources.py attaches the same archive to releases.
+env:
+  FFMPEG_VERSION: 8.1.3
+  FFMPEG_SIZE: '11732036'
+  FFMPEG_SHA256: 7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3
+
 jobs:
+  # FFmpeg for the Windows host's movies: libavcodec with only the MPEG-2 video decoder and its parser, and
+  # libavutil, as DLLs beside des_host.exe (avcodec-62.dll, avutil-60.dll); the runtime opens them when a movie
+  # starts (PS3RECOMP_FFMPEG_RUNTIME), else Windows' own decoder, which needs the Microsoft Store's MPEG-2 Video
+  # Extension. Built here, on Linux, with mingw-w64's cross compiler, from the same release as host-linux's: LGPL
+  # 2.1 or later, nothing from the system, Windows' own threads (no winpthread DLL) and GCC's runtime linked in. The
+  # DLLs import only Windows' own DLLs (the check below); their C runtime is msvcrt.dll, which every Windows has.
+  # Only FFmpeg's own functions cross between them and the host, never a C runtime object.
+  ffmpeg-windows:
+    name: FFmpeg DLLs for des_host.exe (mingw-w64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      FFMPEG_DIR: ${{ github.workspace }}/ffmpeg-windows   # no checkout in this job: the workspace is empty
+    steps:
+      - name: Restore FFmpeg
+        id: ffmpeg-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.FFMPEG_DIR }}
+          key: ffmpeg-windows-${{ env.FFMPEG_SHA256 }}-mingw-ubuntu-24.04-v1
+
+      - name: Install the cross compiler
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 nasm
+          x86_64-w64-mingw32-gcc-win32 --version | head -n 1
+
+      # The Linux host's options (--disable-everything, then the decoder and the parser), for mingw32, with the win32
+      # thread model's compiler.
+      - name: Build FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 5 --retry-all-errors -o ffmpeg.tar.xz \
+            "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
+          [ "$(stat -c %s ffmpeg.tar.xz)" = "$FFMPEG_SIZE" ] || { echo "::error::ffmpeg.tar.xz has the wrong size"; exit 1; }
+          echo "$FFMPEG_SHA256  ffmpeg.tar.xz" | sha256sum -c -
+          tar xf ffmpeg.tar.xz
+          cd "ffmpeg-$FFMPEG_VERSION"
+          opts=(--enable-shared --disable-static --disable-programs --disable-doc --disable-autodetect
+                --disable-network --disable-everything --disable-avdevice --disable-avformat --disable-avfilter
+                --disable-swscale --disable-swresample --enable-decoder=mpeg2video --enable-parser=mpegvideo)
+          cross=(--enable-cross-compile --target-os=mingw32 --arch=x86_64 --cross-prefix=x86_64-w64-mingw32-
+                 --cc=x86_64-w64-mingw32-gcc-win32 --enable-w32threads --extra-ldflags=-static-libgcc)
+          ./configure --prefix="$FFMPEG_DIR" "${opts[@]}" "${cross[@]}" | tee configure.txt
+          grep -qx 'License: LGPL version 2.1 or later' configure.txt \
+            || { echo "::error::FFmpeg is not configured as LGPL 2.1 or later"; exit 1; }
+          make -s -j"$(nproc)"
+          make -s install
+          mkdir -p "$FFMPEG_DIR/share/licenses/ffmpeg"
+          cp COPYING.LGPLv2.1 LICENSE.md CREDITS "$FFMPEG_DIR/share/licenses/ffmpeg/"
+          {
+            echo "FFmpeg $FFMPEG_VERSION, unchanged: libavcodec and libavutil, LGPL 2.1 or later."
+            echo "Source: ffmpeg-$FFMPEG_VERSION.tar.xz on this release's page, the same archive as"
+            echo "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz (SHA-256 $FFMPEG_SHA256)."
+            echo "Configured with: ./configure ${opts[*]} ${cross[*]}"
+            echo "You may replace these DLLs with your own build of the same major versions."
+          } > "$FFMPEG_DIR/share/licenses/ffmpeg/README.txt"
+
+      - name: Save FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.FFMPEG_DIR }}
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
+
+      # What players' PCs must have for the DLLs to load: Windows' own DLLs and avutil, nothing else (a
+      # libwinpthread-1.dll or libgcc_s_*.dll here would be missing on every player's PC). objdump comes from the
+      # cross binutils; a cache hit skipped installing them, so install them for the check.
+      - name: What the DLLs import
+        run: |
+          command -v x86_64-w64-mingw32-objdump >/dev/null || {
+            sudo apt-get update; sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64; }
+          ls -la "$FFMPEG_DIR/bin"
+          bad=0
+          for dll in "$FFMPEG_DIR"/bin/avcodec-*.dll "$FFMPEG_DIR"/bin/avutil-*.dll; do
+            [ -f "$dll" ] || { echo "::error::no $(basename "$dll")"; bad=1; continue; }
+            echo "$(basename "$dll"):"
+            for imp in $(x86_64-w64-mingw32-objdump -p "$dll" | sed -n 's/^[[:space:]]*DLL Name: //p'); do
+              case "${imp,,}" in
+                kernel32.dll|msvcrt.dll|bcrypt.dll|advapi32.dll|user32.dll|avutil-*.dll) echo "  $imp" ;;
+                *) echo "::error::$(basename "$dll") imports $imp, which players do not have"; bad=1 ;;
+              esac
+            done
+          done
+          exit $bad
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ffmpeg-windows-${{ github.sha }}
+          path: |
+            ${{ env.FFMPEG_DIR }}/bin/*.dll
+            ${{ env.FFMPEG_DIR }}/include/
+            ${{ env.FFMPEG_DIR }}/share/licenses/
+          if-no-files-found: error
+          retention-days: 14
+
   host:
     name: des_host.exe (Windows, clang-cl, hybrid CRT)
+    needs: ffmpeg-windows
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -93,8 +200,15 @@ jobs:
             echo "::warning::clang-cl $v, not the 22.1.8 of the player builds (docs/54 5.4, docs/85)"
           fi
 
-      # The runtime library des_host links: PS3RECOMP_GAME_SPLIT=ON (docs/57), and the static Visual C++
-      # runtime (/MT), because a /MT exe cannot link C++ objects built /MD.
+      # The ffmpeg-windows job's DLLs, headers and licence files.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ffmpeg-windows-${{ github.sha }}
+          path: ${{ runner.temp }}/ffmpeg
+
+      # The runtime library des_host links: PS3RECOMP_GAME_SPLIT=ON (docs/57), the static Visual C++ runtime
+      # (/MT), because a /MT exe cannot link C++ objects built /MD, and FFmpeg opened at run time for the movies
+      # (its headers only: nothing links the DLLs).
       - name: Configure the runtime library
         run: >
           cmake -S ps3recomp -B ps3recomp/build_split -G Ninja
@@ -103,6 +217,8 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DPS3RECOMP_GAME_SPLIT=ON
           -DPS3RECOMP_STATIC_CRT=ON
+          -DPS3RECOMP_FFMPEG_RUNTIME=ON
+          "-DPS3RECOMP_FFMPEG_INCLUDE_DIR=${{ runner.temp }}/ffmpeg/include"
 
       - name: Build the runtime library
         run: cmake --build ps3recomp/build_split --target ps3recomp_runtime
@@ -152,13 +268,28 @@ jobs:
         run: python tools/ci/check_release_no_dev.py build/host/des_host.exe
 
       # The map symbolizes crash addresses in the exe (des_game.map is the DLL's, made on the player's PC).
+      # FFmpeg's DLLs go beside the exe, under the names the runtime opens (the majors its headers name), and
+      # their licence in licenses/ffmpeg (package.py takes both into the player's zip).
       - name: Stage the artifact
         shell: bash
         run: |
-          mkdir -p dist/host
+          mkdir -p dist/host/licenses
           cp build/host/des_host.exe build/host/des_host.map dist/host/
-          ls -la dist/host
-          sha256sum dist/host/*
+          ff="$RUNNER_TEMP/ffmpeg"
+          for lib in avcodec avutil; do
+            maj=$(cat "$ff/include/lib$lib/"version*.h | tr -d '\r' \
+              | sed -n "s/^#define LIB${lib^^}_VERSION_MAJOR *\([0-9]*\)$/\1/p")
+            [ -n "$maj" ] || { echo "::error::no major version for lib$lib"; exit 1; }
+            cp "$ff/bin/$lib-$maj.dll" dist/host/
+          done
+          [ -d "$ff/share/licenses/ffmpeg" ] || { echo "::error::no licence files for ffmpeg"; exit 1; }
+          cp -r "$ff/share/licenses/ffmpeg" dist/host/licenses/
+          ls -laR dist/host
+          find dist/host -type f -exec sha256sum {} +
+
+      - name: No Visual C++ runtime DLL among FFmpeg's imports
+        shell: bash
+        run: python tools/ci/check_host_imports.py dist/host/av*.dll
 
       # The check treats every .exe and .map as holding the compiled game. These two are built from no lift,
       # so a list of their own lets them through (.github/host-files-allow.txt, docs/85 3.3); anything else
@@ -206,11 +337,6 @@ jobs:
       VULKAN_HEADERS_VERSION: 1.3.275
       VULKAN_HEADERS_COMMIT: 217e93c664ec6704ec2d8c36fa116c1a4a1e2d40
       DEPS_DIR: ${{ github.workspace }}/../deps
-      # FFmpeg's release tarball of tag n8.1.3 (commit 1041abdc962f4cc4f394aa8de9dc5236c0c3b9e7, a signed tag): the
-      # tag's files plus VERSION. tools/release/third_party_sources.py attaches the same archive to releases.
-      FFMPEG_VERSION: 8.1.3
-      FFMPEG_SIZE: '11732036'
-      FFMPEG_SHA256: 7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3
       FFMPEG_DIR: ${{ github.workspace }}/../ffmpeg
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

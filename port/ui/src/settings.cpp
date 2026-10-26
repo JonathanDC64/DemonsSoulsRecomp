@@ -350,7 +350,8 @@ std::string net_options_header() {
 //   online: PS3_NET_ONLINE=1, PS3_NET_HOSTS=<the six names>=<server>, PS3_NP_ONLINE_ID=<name>,
 //           PS3_NET_P2P_PORT=<port>; online needs a valid online name (this row's, or PS3_NP_ONLINE_ID's);
 //           for a server with the sign-in (NetServer::signin): PS3_NET_SIGNIN=<server>:18000, PS3_NET_KEY_FILE,
-//           PS3_NET_CLIENT_VERSION, PS3_NET_NETWORK_VERSION; for one with psnr: PSNR_SERVER=<server>:36100;
+//           PS3_NET_CLIENT_VERSION, PS3_NET_NETWORK_VERSION, and PS3_NET_TLS=1 for one with TLS (NetServer::tls:
+//           the runtime then checks its certificate for that host name); for one with psnr: PSNR_SERVER=<server>:36100;
 //   offline: none of them is set. Not even to "0": the runtime counts any value as on.
 // Fails closed: with no valid server address and no PS3_NET_HOSTS from the environment, the game stays offline rather
 // than reach whoever owns the original names now. So it does with a Custom
@@ -424,6 +425,7 @@ void apply_network() {
         set_net_knob("PS3_NET_KEY_FILE", key_file);
         set_net_knob("PS3_NET_CLIENT_VERSION", kVersion);
         set_net_knob("PS3_NET_NETWORK_VERSION", std::to_string(kNetNetworkVersion));
+        if (chosen->tls) set_net_knob("PS3_NET_TLS", "1");
     }
     if (chosen && chosen->psnr && !address.empty())
         set_net_knob("PSNR_SERVER", address + ":" + std::to_string(kNetPsnrPort));

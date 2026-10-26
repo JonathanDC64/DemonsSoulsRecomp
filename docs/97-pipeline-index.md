@@ -211,6 +211,14 @@ on in Windows), which share one shader cache. Merged into the 749-row index (the
   has not seen them, that is 1.2-3.5 s more of the background build (7-20 ms each, on 4 threads), while the
   game is in its menus.
 
+**Issue #205 runs** (2026-10-26): test runs at the Palace (the deep save) and in the Tutorial, and a 10-minute
+play at the Palace, on the same shader cache with HDR on:
+
+- 25 new rows, 1426 in all. They are the same 44 vertex and 248 fragment programs (307 pairs) in draw states the
+  index lacked: 11 into the FP16 scene target, 14 into 8-bit targets, none in the clamp form.
+- Left out again: the 2 rows without `hdrv` above.
+- The 10-minute play asked for no row the seen file lacked.
+
 ## Limits
 
 - A fragment program with more inline constants than the constant buffer holds has them baked into its text.

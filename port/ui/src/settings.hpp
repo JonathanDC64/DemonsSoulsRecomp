@@ -86,7 +86,7 @@ inline constexpr const char* kNetProjectHost = "";
 
 // The game servers the Server row offers; edit this table to add, change or drop one. The key is what settings.ini
 // stores (DES_NET_SERVER); the first entry, the project's server, is the default. A stored key that is not in the
-// table (The Archstones' in a release build) reads as the default. Custom uses DES_NET_CUSTOM.
+// table (The Archstones' or Custom's in a release build) reads as the default. Custom uses DES_NET_CUSTOM.
 struct NetServer {
     const char* key;
     const char* name;
@@ -104,7 +104,12 @@ inline constexpr NetServer kNetServers[] = {
      "The community server RPCS3 players use, run by a volunteer. Developer builds only.", false, false},
 #endif
     {"local", "Local test server", "127.0.0.1", "A server on this PC, for testing.", true, false},
-    {"custom", "Custom", "", "The address in Custom server, below.", true, false},
+#if DES_DEV
+    // Developer builds only, for now (0.1.0): with no Custom choice, a settings.ini that names a server of its own
+    // (a repacked portable download) cannot send players there. Bringing it back to players needs a question at
+    // start that custom_chosen_here's mark answers.
+    {"custom", "Custom", "", "The address in Custom server, below. Developer builds only.", true, false},
+#endif
 };
 inline constexpr const char* kNetCustomKey = "custom";
 

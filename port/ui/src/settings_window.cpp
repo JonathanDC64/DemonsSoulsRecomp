@@ -208,6 +208,7 @@ std::string trim_spaces(const std::string& s) {
     return s.substr(a, s.find_last_not_of(" \t") - a + 1);
 }
 
+#if DES_DEV  // (Custom is in developer builds only for now: settings.hpp's kNetServers)
 // Custom's address, chosen on this PC (settings::choose_custom_here): says so, since the row looks the same as before.
 void choose_custom_here() {
     if (!settings::choose_custom_here()) return;
@@ -241,6 +242,7 @@ public:
 private:
     std::function<bool()> mVisible;
 };
+#endif
 
 // The Online name row never stores an empty or invalid name: online play needs one, and a player who cleared it would
 // stay offline without knowing why. It keeps the last good name (with none, a suggested one) and says so here.
@@ -615,6 +617,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                           (*s.address ? " (" + escape(s.address) + ")" : custom ? "" : " (not available yet)") + ": " +
                           escape(s.note);
         }
+#if DES_DEV
         choice_row(leftPane, rightPane, "Server", "DES_NET_SERVER", std::move(serverValues), std::move(serverLabels),
             serverHelp + "<br/><br/>(DES_NET_SERVER)",
             [] {
@@ -628,6 +631,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                     custom_held);
             });
 
+        // (Custom and its address: developer builds only for now, settings.hpp's kNetServers)
         auto& customServer = leftPane.add_child<StringButton>(StringButton::Props{
             .key = "Custom server",
             .getValue = [] { return Rml::String(net_value("DES_NET_CUSTOM")); },
@@ -664,6 +668,10 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                 "A server not in the list: an IP address or a host name. Typing one picks Custom.<br/><br/>"
                 "(DES_NET_CUSTOM)"));
         });
+#else
+        choice_row(leftPane, rightPane, "Server", "DES_NET_SERVER", std::move(serverValues), std::move(serverLabels),
+            serverHelp + "<br/><br/>(DES_NET_SERVER)");
+#endif
 
         auto& name = leftPane.add_child<StringButton>(StringButton::Props{
             .key = "Online name",

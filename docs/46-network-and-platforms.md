@@ -265,17 +265,21 @@ Built (the Network tab, between Controls and Interface). You decided Online is o
 |---|---|---|
 | Online | `DES_ONLINE` (`1`) | `PS3_NET_ONLINE=1`. Offline sets none of the knobs, not even to `0`, since the runtime counts any value as on. |
 | Server | `DES_NET_SERVER` (`archstones`) | `PS3_NET_HOSTS`: each of the six names `=` the server's address, joined with `&&` |
-| Custom server | `DES_NET_CUSTOM` (empty) | The address for Server's Custom choice: IPv4 or a host name. With no valid address the game stays offline (fails closed). It also stays offline with an address that was not chosen on this PC (see below). |
+| Custom server | `DES_NET_CUSTOM` (empty) | Developer builds only, for now. The address for Server's Custom choice: IPv4 or a host name. With no valid address the game stays offline (fails closed). It also stays offline with an address that was not chosen on this PC (see below). |
 | Online name | `DES_NET_NAME` (empty) | `PS3_NP_ONLINE_ID`, when it is 3-16 letters, digits, `-` or `_`. Online needs one: empty or invalid keeps the game offline, and the row says so (without an NP sign-in the game asks for the network again and again after Continue). |
 | P2P port | `DES_NET_P2P_PORT` (`3658`) | `PS3_NET_P2P_PORT` (1024-65535; anything else means 3658) |
 
 - **The servers** are one table in `settings.hpp` (`kNetServers`: key, name, address, note):
   - The Archstones = `206.189.232.242`, the RPCS3 address its setup page publishes. It is run by a community volunteer.
   - Local test server = `127.0.0.1`.
-  - Custom.
+  - Custom, in developer builds only for now (0.1.0).
 - **No psnr row yet.** `PSNR_SERVER` is never set from settings.
-- **A custom server must be chosen on this PC.** A portable download repacked with a `settings.ini` that names a server
-  of its own would otherwise send everyone who plays it there. So a Custom address counts only once the player presses
+- **No Custom in release builds, for now.** A portable download repacked with a `settings.ini` that names a server of
+  its own would otherwise send everyone who plays it there. With no Custom choice, a `settings.ini` that picks Custom
+  reads as the default server, as The Archstones' does, and the Custom server row is not shown. Bringing Custom back
+  to players needs a question at start ("This copy is set to play online on <address>. Play there?"), answered by
+  the mark below. The runtime sets up its sockets at boot, before the menu can ask, so the question has to come first.
+- **A custom server must be chosen on this PC** (developer builds). A Custom address counts only once the player presses
   Custom in Server (even though the copied file already shows it picked), or types the address in Custom server, on
   this PC. A toast then says to restart. That stores `net_custom_here` in `settings.ini`:
   a hash of the address and this PC's id (Windows' `MachineGuid`, Linux's `/etc/machine-id`; `report::this_pc`). A

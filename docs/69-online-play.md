@@ -337,6 +337,32 @@ takes their counts as they are. The port checks them before the game uses them (
   PvP Watchdog's player tools for now; its packet filter is still to come.
 - **Cheats.** docs/55's offline rule now has the ps3recomp lock it was missing: once cheats are used, the network
   stays off for the session in every module.
+- **Privacy note** (2026-10-26). `PRIVACY.md` at the top of the repository says what the project's server keeps,
+  for how long, and what other players see. Demon's Souls has no privacy screen of its own (its text has no such
+  words), so the port asks as the later Souls games do. When the game goes online with a server marked
+  `NetServer::privacy` (the project's own) and settings.ini's `privacy_accepted` is below the note's version
+  ("Version N" in it), `apply_network` marks the question due (`port/ui/src/privacy.hpp`), and the start waits for
+  the answer in `ps3_title_prework` before any game code runs (`des_ui_privacy_wait`). The banners are not fetched
+  until then, so nothing reaches the server first. The page (`privacy_window.cpp`, on the setup pages' shell) shows
+  the note embedded from `PRIVACY.md`, with Accept and Decline; Circle asks "Play offline?" first.
+  - Accept: the version goes in `privacy_accepted`, and the start goes on. A note with a higher version asks again.
+  - Decline: the run is locked offline (`ps3_net_lock_offline`, then the network knobs cleared) before the start
+    goes on, a toast says so, and the next start asks again. Turning Online off stops the question.
+  - With no way to show it (`RSX_PRESENT=0`, or the UI could not start) the answer is Decline at once.
+  - Settings > Network > Your data > Privacy note shows the note again (`DES_UI_OPEN=privacy`).
+  Other servers are not asked about: their owners decide what they keep. `DES_PRIVACY_ASK=1` asks with any server,
+  for tests. Checked 2026-10-26 with a developer build against a local copy of the server (TLS, sessions required):
+  the start held at the question; Accept saved `privacy_accepted = 1`, then the game signed in; Decline locked the
+  run offline before the start went on, and the copy reached the world with no sign-in and no request to the server.
+- **Delete my data** (2026-10-26; the server's docs/social.md, ps3recomp's `ps3_net_player_erase`). Settings >
+  Network > Your data > Delete my data asks first, then the runtime sends `POST /dss/v1/players/erase` with the
+  session. The server deletes the player's characters, messages, bloodstains, world tendency, IP addresses,
+  meetings, blocks and reports, then the name and key (a player with a restriction keeps the name and key with
+  it). The runtime locks the run offline before the call, so nothing signs in again and starts a new record; the
+  game then shows its own "signed out" message and goes back to its title screen. The outcome is an "Online"
+  toast, and Online is turned off in settings.ini. No contact address is needed, and only the install with the key
+  can ask. Checked 2026-10-26 the same way: the server deleted the player and its rows, and its log line named no
+  one.
 
 ## 7. Test tools made tonight
 

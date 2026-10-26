@@ -29,6 +29,8 @@
 #include "portable.hpp"
 #include "prelaunch.hpp"
 #include "prework_modal.hpp"
+#include "privacy.hpp"
+#include "privacy_window.hpp"
 #include "report.hpp"
 #include "settings.hpp"
 #include "settings_window.hpp"
@@ -514,8 +516,8 @@ void push_documents() {
     ui::push_document(std::make_unique<ui::MenuBar>(), false);
     if (sStartScreen) ui::push_document(std::make_unique<ui::Prelaunch>());
 
-    // DES_UI_OPEN=menu | settings | trophies | players | osk | setup | setup-run: open one at startup (for screenshots
-    // and tests).
+    // DES_UI_OPEN=menu | settings | trophies | players | privacy | osk | setup | setup-run: open one at startup (for
+    // screenshots and tests; privacy is the note as Settings > Network shows it).
     // setup is setup's start screen over the game (docs/88: its own window comes with the split host), with
     // DES_SETUP_GAME's folders to begin with; setup-run runs the setup engine at once, on those folders.
     if (const char* open = std::getenv("DES_UI_OPEN"); open && *open) {
@@ -523,6 +525,8 @@ void push_documents() {
         else if (!std::strcmp(open, "settings")) ui::push_document(std::make_unique<ui::SettingsWindow>());
         else if (!std::strcmp(open, "trophies")) ui::push_document(std::make_unique<ui::TrophiesWindow>());
         else if (!std::strcmp(open, "players")) ui::push_document(std::make_unique<ui::PlayersWindow>());
+        else if (!std::strcmp(open, "privacy"))
+            ui::push_document(std::make_unique<ui::PrivacyWindow>(ui::PrivacyWindow::Mode::Read));
         else if (!std::strcmp(open, "osk")) open_test_osk();
         else if (!std::strcmp(open, "setup") || !std::strcmp(open, "setup-run")) push_setup(open);
     }
@@ -847,11 +851,14 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     const bool chordDown = (g_pad0_buttons & mask) == mask;
     const bool chordEdge = chordDown && !sChordWasDown;
     sChordWasDown = chordDown;
-    // The startup work (des_prework.cpp) runs before the game, with its window over the blank frames.
+    // The startup work (des_prework.cpp) runs before the game, with its window over the blank frames. So does the
+    // privacy note's question (des_ui_privacy_wait), first.
     static bool sPreworkShown = false;
+    static bool sPrivacyShown = false;
     const bool prework = ui::prework_running();
+    const bool privacy = ui::privacy::asking() && !sPrivacyShown;
     if (!sActive && !sStartScreen && !chordEdge && !shot && !sQueued.load(std::memory_order_acquire) &&
-        !sOpenPending && !sReportCountdown && !(prework && !sPreworkShown) && !sCloseRequested.load() &&
+        !sOpenPending && !sReportCountdown && !(prework && !sPreworkShown) && !privacy && !sCloseRequested.load() &&
         !sOskPending.load(std::memory_order_acquire) && !ui::trophies::pending() && !ui::net_notices::pending() &&
         !sHangNotice.load(std::memory_order_relaxed) &&
         !sCustomServerNotice.load(std::memory_order_relaxed)) {
@@ -869,6 +876,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         ui::trophies::discard();  // (the unlocks are saved; only the pop-ups are lost)
         sHangNotice.store(false);
         sCustomServerNotice.store(false);
+        if (ui::privacy::asking()) ui::privacy::answer(false);  // (no way to ask: offline, and the start goes on)
         sActive = false;
         std::lock_guard<std::mutex> lock(sQueueLock);
         sQueue.clear();
@@ -889,6 +897,10 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     if (sHangNotice.exchange(false)) push_hang_notice();
     if (sCustomServerNotice.exchange(false)) push_custom_server_notice();
 
+    if (privacy) {
+        sPrivacyShown = true;
+        ui::push_document(std::make_unique<ui::PrivacyWindow>(ui::PrivacyWindow::Mode::Ask));
+    }
     if (prework && !sPreworkShown) {
         sPreworkShown = true;
         ui::push_document(std::make_unique<ui::PreworkModal>());
@@ -1025,6 +1037,21 @@ App& app() {
 
 // For des_options.cpp: the start screen is up (or about to be), so DES_AUTO_CONTINUE waits for Play.
 extern "C" int des_ui_start_screen_up(void) { return sStartUp.load() ? 1 : 0; }
+
+// des_ui.h. The game's main thread, before the game's code: the frame hook shows the note while this waits (and wakes
+// the overlay until it does: with no document up it sleeps). With RSX_PRESENT=0 nothing is drawn, so nothing can ask.
+extern "C" void des_ui_privacy_wait(void) {
+    if (!ui::privacy::unanswered()) return;
+    if (!std::getenv("PS3_NET_ONLINE") || !*std::getenv("PS3_NET_ONLINE")) return;  // (a cheat session cleared it)
+    if (const char* v = std::getenv("RSX_PRESENT"); v && !std::strcmp(v, "0")) {
+        std::fprintf(stderr, "[ui] the privacy note cannot be shown (RSX_PRESENT=0): this run is offline\n");
+        ui::privacy::answer(false);
+        return;
+    }
+    std::fprintf(stderr, "[ui] the privacy note (version %d) waits for an answer\n", ui::privacy::version());
+    ui::privacy::begin_asking();
+    ui::privacy::wait_answer([] { rsx_d3d12_overlay_wake(); });
+}
 
 namespace {
 

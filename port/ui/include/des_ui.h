@@ -21,6 +21,14 @@ void des_ui_early_init(void);
  * setup. DES_UI=0: the game, as before. */
 int des_ui_launch(int* argc, char*** argv);
 
+/* ps3_title_prework (des_prework.cpp), before the game's code runs: when the
+ * game goes online with a server the privacy note is about and the player has
+ * not accepted this version of it (port/ui/src/privacy.hpp), shows the note
+ * and returns once the player answers. Decline leaves this run offline. With
+ * no way to show it (no presenting, or the UI could not start) the answer is
+ * Decline at once. Otherwise returns at once. */
+void des_ui_privacy_wait(void);
+
 /* Setup's screens alone (ps3_title_window_only_init), in place of
  * des_ui_early_init: settings.ini, the overlay and setup's start screen, whose
  * Play starts the game in a new process of this program and closes this one. */

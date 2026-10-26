@@ -305,6 +305,8 @@ issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
 | `DES_CRASH_DIALOG_SHOT=<file.bmp>` | The crash dialog writes its picture (its frame 40). |
 | `DES_CRASH_DIALOG_EXIT_MS=<ms>` | The crash dialog closes itself after that long. |
 | `DES_UI_OPEN=menu` / `settings` / `trophies` / `osk` | Open the menu bar, the settings window, the Trophies window or a test of the on-screen keyboard at startup. |
+| `DES_UI_OPEN=privacy` | Open the privacy note at startup, as Settings > Network shows it (Close only; docs/69 section 6). |
+| `DES_PRIVACY_ASK=1` | Ask the privacy note's question at start with any server that goes online, not only the project's own, as long as this version was not accepted (tests; docs/69 section 6). |
 | `DES_UI_SHOT=<a.bmp>[,frame][;<b.bmp>,frame...]` | Write the back buffer, UI included, at that presented frame (default 300). |
 | `DES_UI_KEYS=<frame>:<KEY>[,...]` | Press keys at presented frames: F1 ESC UP DOWN LEFT RIGHT ENTER PGUP PGDN TAB SPACE. OSK opens the on-screen keyboard as the game would, and a digit (0-9) is typed, for a number field. With DES_UI_SHOT, a test can walk the menus. |
 | `DES_UI_PICK=<folder>[;<folder>...]` | The setup screens' folder dialogs answer in turn with these folders, and none is shown; past the list's end, as if closed without a choice. With DES_UI_KEYS and DES_UI_SHOT, a test can walk the game folder pages. |

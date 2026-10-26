@@ -92,17 +92,19 @@ struct NetServer {
     const char* name;
     const char* address;  // IPv4 or host name; "" for Custom, or for a server with no address yet
     const char* note;     // the Server row's help text for it
+    bool signin;          // may run this project's server: the runtime signs in to it (a server without it: no harm)
+    bool psnr;            // runs its matchmaking (psnr) on kNetPsnrPort: co-op and invasions go through it
 };
 inline constexpr NetServer kNetServers[] = {
-    {"project", "Demon's Souls Recomp", kNetProjectHost, "This project's own server."},
+    {"project", "Demon's Souls Recomp", kNetProjectHost, "This project's own server.", true, true},
 #if DES_DEV
     // Developer builds only. The address is the one its setup page publishes for emulators (thearchstones.com,
-    // "serverinfo").
+    // "serverinfo"). Not this project's server: no sign-in (it would get the install's key and name for nothing).
     {"archstones", "The Archstones", "206.189.232.242",
-     "The community server RPCS3 players use, run by a volunteer. Developer builds only."},
+     "The community server RPCS3 players use, run by a volunteer. Developer builds only.", false, false},
 #endif
-    {"local", "Local test server", "127.0.0.1", "A server on this PC, for testing."},
-    {"custom", "Custom", "", "The address in Custom server, below."},
+    {"local", "Local test server", "127.0.0.1", "A server on this PC, for testing.", true, false},
+    {"custom", "Custom", "", "The address in Custom server, below.", true, false},
 };
 inline constexpr const char* kNetCustomKey = "custom";
 
@@ -112,6 +114,13 @@ inline constexpr const char* kNetHosts[] = {
     "ds-eu-c.scej-online.jp", "ds-eu-g.scej-online.jp", "c.demons-souls.com",
     "g.demons-souls.com",     "cmnap.scej-online.jp",   "demons-souls.scej-online.jp",
 };
+
+// This project's server (its docs/identity.md): the sign-in on the bootstrap port, psnr on its own.
+inline constexpr int kNetSigninPort = 18000;
+inline constexpr int kNetPsnrPort = 36100;
+// Which builds play together: a build only matches others with the same number. Raise it when a change means a
+// build can no longer play with older ones.
+inline constexpr int kNetNetworkVersion = 1;
 
 inline constexpr int kNetP2pPortDefault = 3658;  // the PS3's own P2P port
 inline constexpr int kNetP2pPortMin = 1024;
@@ -136,6 +145,9 @@ void choose_custom_here();
 bool net_custom_held();
 // PS3_NET_HOSTS for an address: each of kNetHosts mapped to it, joined with "&&" (RPCS3's IP/Host switch form).
 std::string net_hosts(const std::string& address);
+// Where the install's sign-in key is kept (PS3_NET_KEY_FILE): beside settings.ini, so updates keep it. "" when no
+// data folder is kept (a test run).
+std::string net_key_file();
 // What load_and_apply_env decided about the network at start, for the Network tab ("Online (Local test server)", "Off:
 // Online is off", ...). A developer build's cheat session clears the network after this (des_dev_boot); the tab
 // says so from DES_DEV_SESSION.

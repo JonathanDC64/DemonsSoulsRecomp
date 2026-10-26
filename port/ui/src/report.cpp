@@ -1223,9 +1223,41 @@ std::string issue_url(const std::string& title, const std::string& body) {
     return std::string(kRepositoryUrl) + "/issues/new?title=" + url_encode(title) + "&body=" + url_encode(text);
 }
 
+namespace {
+// A web page: https://, with no space, quote or control character (nothing the shell could read as more).
+bool web_link(const std::string& url) {
+    if (url.size() <= 8 || url.compare(0, 8, "https://") != 0) return false;
+    for (const unsigned char c : url)
+        if (c <= 0x20 || c == 0x7f || c == '"') return false;
+    return true;
+}
+
+// What open_local opens: a folder, or a log or text file. Never a program.
+bool viewable(const std::filesystem::path& p) {
+    std::error_code ec;
+    if (std::filesystem::is_directory(p, ec)) return true;
+    if (!std::filesystem::is_regular_file(p, ec)) return false;
+    std::string ext = p.extension().string();
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return ext == ".log" || ext == ".txt";
+}
+}  // namespace
+
 #ifdef _WIN32
 void open_url(const std::string& url) {
+    if (!web_link(url)) {
+        std::fprintf(stderr, "[report] a link that is not https:// was not opened\n");
+        return;
+    }
     ShellExecuteW(nullptr, L"open", widen(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+void open_local(const std::filesystem::path& path) {
+    if (!viewable(path)) {
+        std::fprintf(stderr, "[report] not opened: only a folder or a .log or .txt file opens\n");
+        return;
+    }
+    ShellExecuteW(nullptr, L"open", path.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 void reveal(const std::filesystem::path& path) {
@@ -1234,17 +1266,33 @@ void reveal(const std::filesystem::path& path) {
 }
 #else
 // xdg-open, the desktop's "open this" (a browser for a link, the file manager for a folder).
-void open_url(const std::string& url) {
+static void xdg_open(const std::string& what) {
     char prog[] = "xdg-open";
-    std::string arg = url;
+    std::string arg = what;
     char* argv[] = {prog, arg.data(), nullptr};
     pid_t pid = 0;
     if (posix_spawnp(&pid, prog, nullptr, nullptr, argv, environ) != 0)
-        std::fprintf(stderr, "[report] could not run xdg-open for %s\n", url.c_str());
+        std::fprintf(stderr, "[report] could not run xdg-open for %s\n", what.c_str());
+}
+
+void open_url(const std::string& url) {
+    if (!web_link(url)) {
+        std::fprintf(stderr, "[report] a link that is not https:// was not opened\n");
+        return;
+    }
+    xdg_open(url);
+}
+
+void open_local(const std::filesystem::path& path) {
+    if (!viewable(path)) {
+        std::fprintf(stderr, "[report] not opened: only a folder or a .log or .txt file opens\n");
+        return;
+    }
+    xdg_open(path.string());
 }
 
 void reveal(const std::filesystem::path& path) {
-    open_url(path.parent_path().string());  // (the folder: xdg-open cannot select a file in it)
+    open_local(path.parent_path());  // (the folder: xdg-open cannot select a file in it)
 }
 #endif
 

@@ -26,7 +26,7 @@ jobs:
           arch: x64
 
       - name: Install Ninja
-        run: choco install ninja -y --no-progress
+        run: choco install ninja --version=1.13.2 --allow-downgrade -y --no-progress
 
       - name: Show toolchain
         run: |
@@ -178,7 +178,7 @@ jobs:
           echo "$CMAKE_ZIP_SHA256  cmake.zip" | sha256sum -c -
           unzip -q cmake.zip
           echo "$RUNNER_TEMP/cmake-$CMAKE_VERSION-windows-x86_64/bin" >> "$GITHUB_PATH"
-          choco install ninja -y --no-progress
+          choco install ninja --version=1.13.2 --allow-downgrade -y --no-progress
 
       - name: Empty files where the lift goes
         run: python .github/scripts/placeholder_lift.py "$RUNNER_TEMP/lift" >> "$GITHUB_ENV"

@@ -579,7 +579,8 @@ Nothing is published. You read the draft and publish it. Only this workflow has 
 
 ### 8.4 First release checklist (for you; nothing done)
 
-1. Merge the PRs, in the order in section 12.
+1. Merge the PRs, in the order in section 12. Once, before the first release: make the release key and add its
+   public line to `tools/setup/des_setup/release-keys.txt` (docs/105 section 7.1).
 2. **Fork tag.**
    - Run `git -C ps3recomp fetch fork`.
    - Run `git -C ps3recomp tag -a des-0.14.0-1 -m "ps3recomp for DemonsSoulsRecomp 0.1.0" fork/master`.
@@ -590,7 +591,8 @@ Nothing is published. You read the draft and publish it. Only this workflow has 
    - Run `git fetch origin`.
    - Run `git tag -a v0.1.0 -m "DemonsSoulsRecomp 0.1.0" origin/master`.
    - Run `git push origin v0.1.0`.
-5. Read the draft release and publish it.
+5. **Sign it:** `python tools/release/sign_release.py v0.1.0 --key <your key file>` (it checks the draft's files and
+   their attestations first). Then read the draft release and publish it.
 6. In the next PR, move `VERSION` to 0.1.1 or 0.2.0.
 
 ## 9. Game-file check

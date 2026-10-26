@@ -77,7 +77,7 @@ jobs:
           arch: x64
 
       - name: Install Ninja
-        run: choco install ninja -y --no-progress
+        run: choco install ninja --version=1.13.2 --allow-downgrade -y --no-progress
 
       # docs/54 section 5.4 wants CI on the LLVM that players get (22.1.8), failing on any other. Not yet:
       # the runner's clang-cl is used, as in ci.yml, and another version is a warning (docs/85, open questions).

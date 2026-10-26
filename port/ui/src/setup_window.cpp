@@ -43,6 +43,7 @@ constexpr ErrorKind kErrors[] = {
     {"step", Fix::Report, "Try again. If it fails again, please report it."},
     {"rpcs3", Fix::TryAgain, "Try again. If it keeps failing, you can unlock the files yourself."},
     {"import", Fix::TryAgain, "The game is built, and nothing of yours was changed. Try again, or go on without it."},
+    {"signature", Fix::Report, "Nothing was changed, so you can go on playing this version. Please report it."},
     {"internal", Fix::Report, "Try again. If it fails again, please report it."},
 };
 
@@ -517,7 +518,7 @@ std::filesystem::path SetupWindow::log_file() const {
 void SetupWindow::open_log() {
     const auto path = log_file();
     std::fprintf(stderr, "[setup] the log: %s\n", path.empty() ? "none" : utf8(path).c_str());
-    if (!path.empty()) report::open_url(utf8(path));
+    if (!path.empty()) report::open_local(path);
 }
 
 // The engine's last plain lines, at most `lines` of them, each cut at 300 characters.

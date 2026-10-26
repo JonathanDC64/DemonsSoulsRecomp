@@ -15,10 +15,10 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 foreach(dep ZLIB BZIP2 PNG HARFBUZZ BROTLI)
   set(FT_DISABLE_${dep} ON CACHE BOOL "" FORCE)
 endforeach()
+# By commit (a tag can be moved; a commit cannot), so not shallow: a shallow clone works with tag names only.
 FetchContent_Declare(freetype
   GIT_REPOSITORY https://github.com/freetype/freetype.git
-  GIT_TAG VER-2-14-3
-  GIT_SHALLOW TRUE
+  GIT_TAG 0a0221a1347e2f1e07c395263540026e9a0aa7c7   # VER-2-14-3
   EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(freetype)
 if(NOT TARGET Freetype::Freetype)
@@ -31,8 +31,7 @@ set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
 set(RMLUI_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(RmlUi
   GIT_REPOSITORY https://github.com/mikke89/RmlUi.git
-  GIT_TAG 6.3
-  GIT_SHALLOW TRUE
+  GIT_TAG ba95ffe8bfb6370efb2cdcca927eaad4710c5413   # 6.3
   EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(RmlUi)
 

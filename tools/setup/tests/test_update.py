@@ -2,6 +2,7 @@
 
   cd tools/setup && python -m unittest discover -s tests
 """
+import base64
 import hashlib
 import http.server
 import io
@@ -18,16 +19,30 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools" / "release"))
-from des_setup import fetch, journal, protocol, update  # noqa: E402
+from des_setup import fetch, journal, protocol, signing, update  # noqa: E402
 import package  # noqa: E402
 
 EXE = update.EXE
 PLAYER = "windows" if os.name == "nt" else "linux"   # this system's player's download
+SEED, OTHER = bytes(range(32)), bytes(range(1, 33))   # the tests' release key, and a key the build does not list
+_keys = tempfile.TemporaryDirectory()
+_keys_patch = mock.patch.object(signing, "KEYS", Path(_keys.name) / "release-keys.txt")
 
 
-def release(tag, assets=(PLAYER, "sums"), draft=False, pre=False, body="", base="http://127.0.0.1:1"):
+def setUpModule():
+    pub = base64.b64encode(signing.key_blob(signing.ed25519_public(SEED))).decode()
+    (Path(_keys.name) / "release-keys.txt").write_text(f"# the tests' key\nssh-ed25519 {pub} tests\n")
+    _keys_patch.start()
+
+
+def tearDownModule():
+    _keys_patch.stop()
+    _keys.cleanup()
+
+
+def release(tag, assets=(PLAYER, "sums", "sig"), draft=False, pre=False, body="", base="http://127.0.0.1:1"):
     v = tag.lstrip("v")
-    names = {"windows": f"DemonsSoulsRecomp-{v}-windows.zip", "sums": "SHA256SUMS",
+    names = {"windows": f"DemonsSoulsRecomp-{v}-windows.zip", "sums": "SHA256SUMS", "sig": "SHA256SUMS.sig",
              "linux": f"DemonsSoulsRecomp-{v}-linux.tar.xz"}
     return {"tag_name": tag, "draft": draft, "prerelease": pre, "body": body,
             "html_url": f"https://github.com/{update.REPO}/releases/tag/{tag}", "published_at": "2026-10-25T10:00:00Z",
@@ -48,6 +63,7 @@ class FeedTest(unittest.TestCase):
     def test_newest_stable_only(self):
         feed = [release("v0.3.0", pre=True), release("v0.4.0", draft=True), release("llvm-22.1.8-1"),
                 release("v0.2.9", assets=(PLAYER,)),             # no SHA256SUMS: not offered
+                release("v0.2.11", assets=(PLAYER, "sums")),     # no signature: not offered
                 release("v0.2.10"), release("v0.2.2"), release("v0.1.0")]
         self.assertEqual(update.newer(feed, "0.1.0")[0], "0.2.10")   # (numbers, not text: 10 > 9)
         self.assertIsNone(update.newer(feed, "0.2.10"))
@@ -59,7 +75,8 @@ class FeedTest(unittest.TestCase):
             feed = Path(tmp) / "feed.json"
             feed.write_text(json.dumps([release("v0.2.0", body="## What's new\r\n\r\n- Faster\tloads\r\n  - more")]))
             out = io.StringIO()
-            with mock.patch.dict(os.environ, {"DES_UPDATE_FEED": str(feed)}):
+            with mock.patch.dict(os.environ, {"DES_UPDATE_FEED": str(feed)}), \
+                    mock.patch.object(update, "signed_sums", lambda *a: {}):   # (ApplyTest checks the signatures)
                 self.assertEqual(update.check(Path(tmp), "0.1.0", protocol.Emitter(out)), 0)
             got = lines(out)
             self.assertEqual(got[0], "@setup 2")
@@ -172,14 +189,20 @@ class ApplyTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def serve(self, version, files, sums_for=None):
-        z = make_package(version, files)
-        name = update.player_asset(version)
-        digest = hashlib.sha256(sums_for if sums_for is not None else z).hexdigest()
-        _Server.files = {name: z, "SHA256SUMS": f"{digest}  {name}\n".encode()}
-        rel = release(f"v{version}", base=self.base)
-        rel["assets"][0]["size"] = len(z)
-        self.feed.write_text(json.dumps([rel]))
+    def serve(self, version, files, sums_for=None, seed=SEED, more=()):
+        """The feed: `version`'s release, its SHA256SUMS signed with `seed`'s key, then `more`'s ((version, files,
+        seed) each), every release's files under <version>/ on the test server."""
+        _Server.files, feed = {}, []
+        for v, f, key, of in [(version, files, seed, sums_for)] + [(m[0], m[1], m[2], None) for m in more]:
+            z = make_package(v, f)
+            name = update.player_asset(v)
+            sums = f"{hashlib.sha256(of if of is not None else z).hexdigest()}  {name}\n".encode()
+            _Server.files.update({f"{v}/{name}": z, f"{v}/SHA256SUMS": sums,
+                                  f"{v}/SHA256SUMS.sig": signing.sign(key, sums).encode()})
+            rel = release(f"v{v}", base=f"{self.base}/{v}")
+            rel["assets"][0]["size"] = len(z)
+            feed.append(rel)
+        self.feed.write_text(json.dumps(feed))
 
     def run_cmd(self, fn, *args):
         out = io.StringIO()
@@ -244,6 +267,69 @@ class ApplyTest(unittest.TestCase):
         self.assertEqual((self.install / EXE).read_bytes(), b"exe 0.1.0")
         self.assertIsNone(update.kept_version(self.install))
         self.assertFalse((self.data / "previous").exists() and list((self.data / "previous").iterdir()))
+
+    def test_unsigned_release_is_not_installed(self):
+        self.serve("0.2.0", program("0.2.0"), seed=OTHER)
+        rc, out = self.run_cmd(update.apply, "0.1.0", "0.2.0")
+        self.assertEqual(rc, 1)
+        self.assertTrue(out[-2].startswith("@error signature download "), out)
+        self.assertIn("does not trust", out[-2])
+        self.assertEqual((self.install / EXE).read_bytes(), b"exe 0.1.0")
+        self.assertFalse(list((self.data / "downloads").glob("DemonsSoulsRecomp-*")))   # (not even downloaded)
+
+    def test_no_release_key_in_this_build(self):
+        empty = Path(self.tmp.name) / "no-keys.txt"
+        empty.write_text("# no key yet\n")
+        with mock.patch.object(signing, "KEYS", empty):
+            rc, out = self.run_cmd(update.apply, "0.1.0", "0.2.0")
+        self.assertEqual(rc, 1)
+        self.assertIn("no release key", out[-2])
+        self.assertEqual((self.install / EXE).read_bytes(), b"exe 0.1.0")
+
+    def check(self):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"DES_UPDATE_FEED": str(self.feed)}):
+            rc = update.check(self.data, "0.1.0", protocol.Emitter(out))
+        return rc, lines(out)
+
+    def test_check_offers_only_signed_releases(self):
+        # 0.3.0 signed with a key this build does not list: passed over, its notes unread; 0.2.0 is offered.
+        self.serve("0.3.0", program("0.3.0"), seed=OTHER, more=[("0.2.0", program("0.2.0"), SEED)])
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+        self.assertTrue([x for x in out if x.startswith("note version 0.3.0 is not offered: ")], out)
+        self.assertEqual([x.split()[1] for x in out if x.startswith("@release ")], ["0.2.0"])
+        self.assertEqual(out[-1], "@done ok")
+        # Neither signed: nothing offered, and the check still ends ok.
+        self.serve("0.3.0", program("0.3.0"), seed=OTHER, more=[("0.2.0", program("0.2.0"), OTHER)])
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+        self.assertFalse([x for x in out if x.startswith("@release ")], out)
+        self.assertEqual(out[-1], "@done ok")
+
+    def test_list_names_stay_inside(self):
+        m = self.install / "release-files.txt"
+        m.write_text(m.read_text() + "../outside.txt\n..\\outside.txt\nC:evil\n\x01x\n./x\n")
+        names = update.listed(self.install)
+        self.assertIn(EXE, names)
+        for bad in ("..", "..\\outside.txt", "C:evil", "\x01x", "."):
+            self.assertNotIn(bad, names)
+
+    def test_journal_outside_the_install_is_left(self):
+        # A journal that would move a file out of the install: not acted on, and an update stops on it.
+        (self.install / "moved.txt").write_bytes(b"x")
+        outside = Path(self.tmp.name) / "outside.txt"
+        sw = update.Swap(self.install / update.UPDATE / update.SWAP)
+        sw.steps.append(("move", str(outside), str(self.install / "moved.txt")))
+        sw._save()
+        with self.assertRaises(update.UpdateFailed):
+            update.recover(self.install)
+        self.assertTrue((self.install / "moved.txt").is_file())
+        self.assertFalse(outside.exists())
+        rc, out = self.run_cmd(update.apply, "0.1.0", "0.2.0")
+        self.assertEqual(rc, 1)
+        self.assertTrue(out[-2].startswith("@error internal install "), out)
+        self.assertEqual((self.install / EXE).read_bytes(), b"exe 0.1.0")
 
     def test_file_in_use_undoes_the_swap(self):
         real = update._rename

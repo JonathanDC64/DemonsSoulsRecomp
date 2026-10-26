@@ -182,6 +182,16 @@ std::string pc_name() {
     return env("COMPUTERNAME");
 }
 
+// Windows' id for this installation (a random GUID made when Windows was set up), or "".
+std::string machine_id() {
+    char id[64] = "";
+    DWORD size = sizeof id;
+    return RegGetValueA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Cryptography", "MachineGuid",
+                        RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY, nullptr, id, &size) == ERROR_SUCCESS
+               ? std::string(id)
+               : std::string();
+}
+
 #else
 // The program's path as it was started. /proc/self/exe follows the running file wherever it goes: once an update
 // has moved this version into .previous/ (updates.cpp), it names that copy, and a start from it would run the old
@@ -258,6 +268,19 @@ std::string user_name() {
 std::string pc_name() {
     char host[256] = {};
     return gethostname(host, sizeof host - 1) == 0 ? std::string(host) : std::string();
+}
+
+// The system's id for this installation (systemd's /etc/machine-id, or D-Bus's copy of it), or "".
+std::string machine_id() {
+    for (const char* path : {"/etc/machine-id", "/var/lib/dbus/machine-id"}) {
+        std::ifstream f(path);
+        std::string id;
+        if (f && std::getline(f, id)) {
+            while (!id.empty() && std::isspace((unsigned char)id.back())) id.pop_back();
+            if (!id.empty()) return id;
+        }
+    }
+    return {};
 }
 
 #endif
@@ -700,6 +723,11 @@ std::filesystem::path exe_dir() { return exe_path().parent_path(); }
 
 std::filesystem::path program_dir() { return exe_dir(); }
 std::filesystem::path program_path() { return exe_path(); }
+
+std::string this_pc() {
+    const std::string id = machine_id();
+    return !id.empty() ? id : pc_name() + "\n" + user_name() + "\n" + narrow(data_dir().wstring());
+}
 
 #ifdef _WIN32
 std::wstring widen(const std::string& s) {

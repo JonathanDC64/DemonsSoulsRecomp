@@ -135,6 +135,14 @@ std::string suggest_net_name();
 // The chosen server's address (DES_NET_SERVER, DES_NET_CUSTOM for Custom), or "" when there is none or it is not
 // a valid address.
 std::string net_server_address();
+// A Custom server address is used only once it was chosen on this PC: typed into Custom server or picked in Server
+// (choose_custom_here), or set in the environment. One that came in someone else's settings.ini (a portable download
+// repacked to name a server of its own) leaves online off until then. The mark (net_custom_here) is a hash of this
+// PC's id and the address, so a settings.ini copied to another PC does not carry it.
+bool custom_chosen_here();
+bool choose_custom_here();  // true when it marked an address that was not chosen here before
+// apply_network left online off at start because the Custom server was not chosen on this PC (des_ui.cpp says so).
+bool net_custom_held();
 // PS3_NET_HOSTS for an address: each of kNetHosts mapped to it, joined with "&&" (RPCS3's IP/Host switch form).
 std::string net_hosts(const std::string& address);
 // Where the install's sign-in key is kept (PS3_NET_KEY_FILE): beside settings.ini, so updates keep it. "" when no

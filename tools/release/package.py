@@ -8,7 +8,8 @@
       Writes <out>/DemonsSoulsRecomp-<version>-source.zip and <out>/SHA256SUMS, and leaves the zipped files in
       <out>/stage for the game-file check. REV is the release tag, or any commit for a dry run. --host: also
       <out>/DemonsSoulsRecomp-<version>-windows.zip, the player's download: the same files with EXE (host.yml's
-      des_host.exe) and the des_host.map beside it at the top, where the exe finds setup's engine (tools/setup),
+      des_host.exe) and what is beside it (des_host.map, FFmpeg's avcodec and avutil DLLs, their licence in
+      licenses/) at the top, where the exe finds setup's engine (tools/setup),
       and release-files.txt, the list of the zip's files, which tells the update which files are the program's
       (tools/setup/des_setup/update.py, docs/105).
 
@@ -212,16 +213,32 @@ def cmd_check_tag(args):
 
 
 def host_files(exe, top):
-    """The player's zip's extra entries: the host exe as des_host.exe, and its linker map (which symbolizes crash
-    addresses in it) when one is beside it, both at the top of the tree."""
+    """The player's zip's extra entries, at the top of the tree: the host exe as des_host.exe, its linker map (which
+    symbolizes crash addresses in it) when one is beside it, and what host.yml stages beside it for the movies:
+    FFmpeg's DLLs (avcodec-*.dll, avutil-*.dll) and licenses/ with their licence."""
     if not os.path.isfile(exe):
         raise Error(f"--host {exe}: no such file")
     entries = []
+    folder = os.path.dirname(os.path.abspath(exe))
     mapfile = os.path.splitext(exe)[0] + ".map"
     for path, name, mode in ((exe, "des_host.exe", 0o755), (mapfile, "des_host.map", 0o644)):
         if os.path.isfile(path):
             with open(path, "rb") as f:
                 entries.append((top + name, mode, f.read()))
+    for n in sorted(os.listdir(folder)):
+        if re.fullmatch(r"(avcodec|avutil)-\d+\.dll", n) and os.path.isfile(os.path.join(folder, n)):
+            with open(os.path.join(folder, n), "rb") as f:
+                entries.append((top + n, 0o644, f.read()))
+    licenses = os.path.join(folder, "licenses")
+    for base, dirs, names in os.walk(licenses):
+        dirs.sort()
+        for n in sorted(names):
+            path = os.path.join(base, n)
+            if os.path.islink(path) or not os.path.isfile(path):
+                raise Error(f"--host: {path} is not a regular file")
+            rel = os.path.relpath(path, folder).replace(os.sep, "/")
+            with open(path, "rb") as f:
+                entries.append((top + rel, 0o644, f.read()))
     return entries
 
 
@@ -279,6 +296,9 @@ def cmd_build(args):
     zips = [(f"{NAME}-{version}-source.zip", files)]
     if args.host:
         player = files + host_files(args.host, top)
+        names = [f[0] for f in player]
+        if len(names) != len(set(names)):
+            raise Error("--host: a file beside the exe has the path of a packaged file")
         zips.append((f"{NAME}-{version}-windows.zip", player + [manifest(player, top)]))
     sums = []
     for zip_name, zipped in zips:

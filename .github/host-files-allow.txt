@@ -8,3 +8,5 @@ libvkd3d-shader.so.1   # vkd3d's shader compiler, likewise
 libvkd3d-utils.so.1    # vkd3d's helpers, likewise
 libavcodec.so.62       # FFmpeg's codec library (MPEG-2 video only), built from its pinned release, beside the Linux host
 libavutil.so.60        # FFmpeg's utility library, likewise
+avcodec-62.dll         # FFmpeg's codec library (MPEG-2 video only), built from its pinned release, beside the Windows host
+avutil-60.dll          # FFmpeg's utility library, likewise

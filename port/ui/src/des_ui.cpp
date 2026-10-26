@@ -170,6 +170,11 @@ struct Shot {
     unsigned long long frame;
 };
 std::vector<Shot> sShots;
+// DES_UI_SHOT_NOW=path (a test, with the debug console's setenv): the next frame, likewise, then the variable is
+// cleared. For a test that clicks first and looks after, and at the lock screen, where a capture of the window comes out
+// blank. The watch thread takes it; the frame writes it.
+std::mutex sShotNowLock;
+std::string sShotNow;
 
 // DES_UI_KEYS=frame:KEY[,frame:KEY...]: press a key at a presented frame (a test drives the menus with it). The key
 // OSK opens the keyboard as the game would, and a digit types it (a number field).
@@ -739,6 +744,11 @@ void watch_thread() {
                 if (is_menu_key(WPARAM(vk)) && !sCapturing.load()) wake_overlay();
             }
         }
+        if (const char* v = std::getenv("DES_UI_SHOT_NOW"); v && *v) {
+            std::lock_guard<std::mutex> lock(sShotNowLock);
+            sShotNow = v;
+            ps3_setenv("DES_UI_SHOT_NOW", "");
+        }
         // DES_UI_MOUSE=x,y[,down|up][;x,y[,down|up]...] (a test, likewise): the mouse moves to each point (back
         // buffer pixels) in turn, the left button going down or up there; one setenv is one drag.
         if (const char* v = std::getenv("DES_UI_MOUSE"); v && *v) {
@@ -820,7 +830,12 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     ui::mouse::on_frame();  // (mouse look: is the game's camera taking the mouse?)
     if (ui::report::frame_hook(sFrame)) sReportCountdown = 4;  // DES_REPORT_AT_FRAME (and the crash test knobs)
     const bool script = !sScriptKeys.empty();
-    const char* shot = sShots.empty() ? nullptr : shot_for_frame(sFrame);
+    std::string shotNow;  // DES_UI_SHOT_NOW's, for this frame
+    {
+        std::lock_guard<std::mutex> lock(sShotNowLock);
+        shotNow.swap(sShotNow);
+    }
+    const char* shot = !shotNow.empty() ? shotNow.c_str() : sShots.empty() ? nullptr : shot_for_frame(sFrame);
     if (script) script_keys_for_frame(sFrame);
     ui::trophies::poll_test_knob();  // DES_TROPHY_TEST
     ui::net_notices::poll();          // what the online sign-in has to tell the player

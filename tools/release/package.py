@@ -4,15 +4,25 @@
   package.py check-tag TAG
       TAG is v<VERSION> (VERSION as committed at the tag), on origin/master, and the ps3recomp.pin committed with it
       names one of the fork's release tags.
-  package.py build --rev REV [--ps3recomp DIR] [--out DIR] [--dry-run]
+  package.py build --rev REV [--ps3recomp DIR] [--host EXE] [--linux-host DIR] [--out DIR] [--dry-run]
       Writes <out>/DemonsSoulsRecomp-<version>-source.zip and <out>/SHA256SUMS, and leaves the zipped files in
-      <out>/stage for the game-file check. REV is the release tag, or any commit for a dry run.
+      <out>/stage for the game-file check. REV is the release tag, or any commit for a dry run. --host: also
+      <out>/DemonsSoulsRecomp-<version>-windows.zip, the player's download: the same files with EXE (host.yml's
+      des_host.exe) and what is beside it (des_host.map, FFmpeg's avcodec and avutil DLLs, their licence in
+      licenses/) at the top, where the exe finds setup's engine (tools/setup),
+      and release-files.txt, the list of the zip's files, which tells the update which files are the program's
+      (tools/setup/des_setup/update.py, docs/105).
 
 The zip, under DemonsSoulsRecomp-<version>/: the port's tracked files at REV (without .github/ and .claude/); in
 ps3recomp/, the fork's tracked files at the pinned commit (without .github/, scratch/, packaging/ and the runtime's
 lifted SPU test programs, none of which a build of the port uses) with a copy of the pin; and release-info.txt (the
 version and both commits; port/cmake/DesVersion.cmake reads it where there is no git). Nothing in either repository
 is made from the game (the game-file check), so nothing in the zip is.
+
+--linux-host DIR also writes <out>/DemonsSoulsRecomp-<version>-linux.tar.xz, the Linux player's download: the same
+files with DIR's at the top (host.yml's host-linux folder: des_host, its map, the SDL2, vkd3d and FFmpeg libraries
+it finds beside it, and their licences in licenses/) and its own release-files.txt. A tar, which keeps the execute bits that
+a zip unpacked by Python loses, with the same fixed dates, owner and modes.
 
 The same REV gives the same zip: entries sorted, dated with REV's commit time, fixed permissions, LF line endings as
 committed. (Deflate output can differ between zlib versions; the release workflow pins Python.) --ps3recomp takes the
@@ -22,6 +32,7 @@ Standard library only.
 import argparse
 import hashlib
 import io
+import lzma
 import os
 import re
 import shutil
@@ -138,6 +149,38 @@ def write_zip(path, files, when):
             zf.writestr(info, data, compresslevel=9)
 
 
+def write_tar_xz(path, files, when):
+    """A tar.xz that depends only on `files` and `when`: sorted, one date, owner 0, fixed modes (POSIX tar, which
+    takes long paths; GNU tar, bsdtar and Python read it)."""
+    with open(path, "wb") as raw:
+        with lzma.open(raw, "wb", format=lzma.FORMAT_XZ, check=lzma.CHECK_CRC64, preset=9) as xz:
+            with tarfile.open(fileobj=xz, mode="w", format=tarfile.PAX_FORMAT) as tar:
+                for name, mode, data in sorted(files):
+                    info = tarfile.TarInfo(name)
+                    info.size, info.mode, info.mtime = len(data), mode, max(when, 0)
+                    info.uid = info.gid = 0
+                    info.uname = info.gname = ""
+                    tar.addfile(info, io.BytesIO(data))
+
+
+def linux_host_files(folder, top):
+    """The Linux tarball's extra entries: every file in host.yml's host-linux folder, under the same relative path
+    at the top of the tree; des_host executable, the rest (libraries, map, licences) read-only data."""
+    if not os.path.isfile(os.path.join(folder, "des_host")):
+        raise Error(f"--linux-host {folder}: no des_host in it")
+    entries = []
+    for base, dirs, names in os.walk(folder):
+        dirs.sort()
+        for n in sorted(names):
+            path = os.path.join(base, n)
+            if os.path.islink(path) or not os.path.isfile(path):
+                raise Error(f"--linux-host: {path} is not a regular file")
+            rel = os.path.relpath(path, folder).replace(os.sep, "/")
+            with open(path, "rb") as f:
+                entries.append((top + rel, 0o755 if rel == "des_host" else 0o644, f.read()))
+    return entries
+
+
 def cmd_check_tag(args):
     m = TAG_RE.match(args.tag)
     if not m:
@@ -167,6 +210,48 @@ def cmd_check_tag(args):
     if not problems:
         print(f"{args.tag}: version {m.group(1)}, on origin/master, ps3recomp {pin['tag']} ({pin['commit'][:12]})")
     return 1 if problems else 0
+
+
+def host_files(exe, top):
+    """The player's zip's extra entries, at the top of the tree: the host exe as des_host.exe, its linker map (which
+    symbolizes crash addresses in it) when one is beside it, and what host.yml stages beside it for the movies:
+    FFmpeg's DLLs (avcodec-*.dll, avutil-*.dll) and licenses/ with their licence."""
+    if not os.path.isfile(exe):
+        raise Error(f"--host {exe}: no such file")
+    entries = []
+    folder = os.path.dirname(os.path.abspath(exe))
+    mapfile = os.path.splitext(exe)[0] + ".map"
+    for path, name, mode in ((exe, "des_host.exe", 0o755), (mapfile, "des_host.map", 0o644)):
+        if os.path.isfile(path):
+            with open(path, "rb") as f:
+                entries.append((top + name, mode, f.read()))
+    for n in sorted(os.listdir(folder)):
+        if re.fullmatch(r"(avcodec|avutil)-\d+\.dll", n) and os.path.isfile(os.path.join(folder, n)):
+            with open(os.path.join(folder, n), "rb") as f:
+                entries.append((top + n, 0o644, f.read()))
+    licenses = os.path.join(folder, "licenses")
+    for base, dirs, names in os.walk(licenses):
+        dirs.sort()
+        for n in sorted(names):
+            path = os.path.join(base, n)
+            if os.path.islink(path) or not os.path.isfile(path):
+                raise Error(f"--host: {path} is not a regular file")
+            rel = os.path.relpath(path, folder).replace(os.sep, "/")
+            with open(path, "rb") as f:
+                entries.append((top + rel, 0o644, f.read()))
+    return entries
+
+
+MANIFEST = "release-files.txt"
+
+
+def manifest(files, top):
+    """release-files.txt for a zip of `files` (itself listed too): the update swaps the names at the top of the
+    install that it lists, and leaves the player's own files alone (docs/105)."""
+    names = sorted({f[0][len(top):] for f in files} | {MANIFEST})
+    text = ("# Written by tools/release/package.py: the files of this release, which an update replaces (docs/105).\n"
+            + "".join(n + "\n" for n in names))
+    return (top + MANIFEST, 0o644, text.encode())
 
 
 def cmd_build(args):
@@ -208,14 +293,37 @@ def cmd_build(args):
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         with open(dest, "wb") as f:
             f.write(data)
-    zip_name = f"{NAME}-{version}-source.zip"
-    write_zip(os.path.join(out, zip_name), files, when)
-    with open(os.path.join(out, zip_name), "rb") as f:
-        digest = hashlib.sha256(f.read()).hexdigest()
+    zips = [(f"{NAME}-{version}-source.zip", files)]
+    if args.host:
+        player = files + host_files(args.host, top)
+        names = [f[0] for f in player]
+        if len(names) != len(set(names)):
+            raise Error("--host: a file beside the exe has the path of a packaged file")
+        zips.append((f"{NAME}-{version}-windows.zip", player + [manifest(player, top)]))
+    sums = []
+    for zip_name, zipped in zips:
+        write_zip(os.path.join(out, zip_name), zipped, when)
+        with open(os.path.join(out, zip_name), "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        sums.append(f"{digest}  {zip_name}\n")
+        size = os.path.getsize(os.path.join(out, zip_name))
+        print(f"package: {zip_name}: {len(zipped)} files, {size / 1e6:.1f} MB, sha256 {digest}")
+
+    if args.linux_host:
+        tar_name = f"{NAME}-{version}-linux.tar.xz"
+        tarred = files + linux_host_files(args.linux_host, top)
+        names = [f[0] for f in tarred]
+        if len(names) != len(set(names)):
+            raise Error("--linux-host: a file of the host folder has the path of a packaged file")
+        tarred.append(manifest(tarred, top))   # the update's list of program files, as in the Windows zip
+        write_tar_xz(os.path.join(out, tar_name), tarred, when)
+        with open(os.path.join(out, tar_name), "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        sums.append(f"{digest}  {tar_name}\n")
+        size = os.path.getsize(os.path.join(out, tar_name))
+        print(f"package: {tar_name}: {len(tarred)} files, {size / 1e6:.1f} MB, sha256 {digest}")
     with open(os.path.join(out, "SHA256SUMS"), "w", encoding="ascii", newline="\n") as f:
-        f.write(f"{digest}  {zip_name}\n")
-    size = os.path.getsize(os.path.join(out, zip_name))
-    print(f"package: {zip_name}: {len(files)} files, {size / 1e6:.1f} MB, sha256 {digest}")
+        f.writelines(sums)
     print(f"package: version {version}" + (f", ps3recomp {pin.get('tag')} ({pin['commit'][:12]})" if pin else ""))
     return 0
 
@@ -229,6 +337,8 @@ def main(argv=None):
     b = sub.add_parser("build", help="write the zip, SHA256SUMS and the staged files")
     b.add_argument("--rev", default="HEAD", help="the release tag, or any commit for a dry run (default HEAD)")
     b.add_argument("--ps3recomp", help="a checkout of the fork that has the pinned commit (default: fetch it)")
+    b.add_argument("--host", help="des_host.exe (host.yml's): also write the Windows zip with it")
+    b.add_argument("--linux-host", help="host.yml's host-linux folder: also write the Linux tar.xz with it")
     b.add_argument("--out", default=os.path.join(ROOT, "dist"), help="output folder (default dist/)")
     b.add_argument("--dry-run", action="store_true", help="allow a revision without ps3recomp.pin")
     args = ap.parse_args(argv)

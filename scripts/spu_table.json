@@ -1,0 +1,71 @@
+{
+ "about": [
+  "Demon's Souls (BLUS30443, version 1.00): the SPU programs inside the decrypted EBOOT.ELF, for",
+  "scripts/build_spu.py --eboot. Images: each embedded SPU ELF by its name (index and file offset), its",
+  "size and its FNV-1a-64 fingerprint (build_spu.py img_size and fnv, the runtime's workload key). Jobs:",
+  "the SPURS job binaries, raw blobs cut at a virtual address, with size and fingerprint.",
+  "Addresses, sizes and hashes only; no bytes of the game."
+ ],
+ "images": {
+  "spu_0000_at_01760280": {
+   "size": 45448,
+   "fnv": "0x4F421747C0F7966A"
+  },
+  "spu_0001_at_0176C200": {
+   "size": 68796,
+   "fnv": "0x4FBCAB40231BF72B"
+  },
+  "spu_0002_at_0177CF00": {
+   "size": 32404,
+   "fnv": "0x9522A1820DE43EDD"
+  },
+  "spu_0003_at_01784E00": {
+   "size": 32148,
+   "fnv": "0xFFD0F5182FABB119"
+  },
+  "spu_0004_at_0178CC00": {
+   "size": 65724,
+   "fnv": "0x24F8EA84D9063298"
+  },
+  "spu_0005_at_0179CD00": {
+   "size": 70892,
+   "fnv": "0xB1059005100BDA7F"
+  },
+  "spu_0006_at_017AE200": {
+   "size": 95996,
+   "fnv": "0xD27E3E22C3977ACB"
+  },
+  "spu_0007_at_017C5900": {
+   "size": 147628,
+   "fnv": "0xF4176505865CFC9E"
+  },
+  "spu_0008_at_017E9A00": {
+   "size": 142292,
+   "fnv": "0xBB0E3E356C9D7FE2"
+  },
+  "spu_0009_at_0180C600": {
+   "size": 47628,
+   "fnv": "0xE10FA13DF02EB687"
+  },
+  "spu_0010_at_01818080": {
+   "size": 42476,
+   "fnv": "0x7185893D626B4EFE"
+  },
+  "spu_0011_at_01822680": {
+   "size": 67140,
+   "fnv": "0x3845C2350F6DD071"
+  }
+ },
+ "jobs": {
+  "spujob_0177B480": {
+   "vaddr": "0x0177B480",
+   "size": 384,
+   "fnv": "0xB1463A6F2DF960AC"
+  },
+  "spujob_0177B600": {
+   "vaddr": "0x0177B600",
+   "size": 2064,
+   "fnv": "0xBD46853E5ADE5098"
+  }
+ }
+}

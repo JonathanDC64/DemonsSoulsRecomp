@@ -90,6 +90,12 @@
 0x007B61D4=des_hud_onscreen   # lfs f13,0(r3): TargettingSite's update, the same test
 0x008AEB68=des_hud_onscreen   # lfs f13,0(r31): FloatingPCGauge's on-screen test, x
 0x007A6264=des_hud_onscreen   # lfs f13,0(r26): 0x007A61D8's on-screen test (the +0xBA0 slot), x
+# DES_ASPECT and DES_HUD changed while playing (port/des_aspect.cpp, "Live"):
+# the cameras built so far, and the render context that holds the HUD's matrix.
+0x0012F074=des_cam_ctor       # stfs f12,0x54(r29): a camera constructor's default aspect; lists the camera
+0x0012F0DC=des_cam_ctor       # stfs f12,0x54(r29): the other camera constructor, the same
+0x000D5B24=des_cam_own        # stfs f0,0x54(r19): 0x000D5980 gives its camera its target's shape; off the list
+0x00CD4854=des_hud_ctx        # rldicl r5,r9,0,32: the 0x3A handler, r5 = the command's first word, r3 = the context
 
 # ChrFollowCam update (0x00122C40).
 0x00123100=des_cam_rate   # k = +0x114
@@ -103,6 +109,15 @@
 # and the decay applied once a frame, tuned for 30 fps.
 0x001FEAF4=des_slide_rate   # decay 0.65 (0x019D9C40), slide *= decay
 0x001FED50=des_slide_rate   # gain 1.0 (0x019D9C3C), slide += gravity along the slope * gain
+
+# des_phys_rate (port/des_options.cpp): DES_PHYS_HZ caps Havok steps a second
+# (default 30); des_phys_kf gives the pose passes the same step.
+0x001D1E64=des_phys_rate  # lbz r28, 0x14(r31): the physics update's skip byte, dt in f31
+0x001EF6D0=des_phys_kf    # fdivs f31, f0, f1: 1/dt for driving bodies to the pose
+0x001DF83C=des_phys_kf    # fdivs f31, f0, f1: the same, second caller
+0x012D86C4=des_rag_pose_a  # ld r2 after a ragdoll pose reader's transform-to-pose call: bone pose between steps
+0x012D9354=des_rag_pose_b  # the same, second pose reader
+0x0109F2C4=des_body_xform  # last stvx of the hkTransform-to-matrix copy: a moving body's matrix between steps
 
 # des_viewer_rate (port/des_options.cpp): the character creation previews'
 # stick steps add the right stick to the yaw and pitch once a frame, tuned
@@ -123,6 +138,38 @@
 0x00265C88=des_fade_rate   # lfs f13, 1/30 (0x018D691C): type 14 fading in
 0x0026558C=des_fade_rate   # lfs f13, 1/30: type 14 fading out
 
+# des_net_sync (port/des_options.cpp): remote players (docs/69, "Remote
+# players"). The send counter's reload sets how often this player's position
+# goes out; the move-times-30 product picks a remote's walk or run.
+0x00313B24=des_net_sync   # li r0, 5: PadManipulator's type-1 send counter (+0x198) reload, one packet per 6 frames
+0x0030C330=des_net_sync   # fmuls f0, f12, f0: OnPacket's 1.2 * the gap since the last packet, the chase speed's divisor
+0x0030C378=des_net_sync   # addi r5, r1, -0xC0: NetworkManipulator SetMoveVector's entry, v2 = the frame's move
+0x0030C46C=des_net_sync   # fmuls f12, f0, f12: |move| * 30 in NetworkManipulator's SetMoveVector, tested against 0.01/2/6
+
+# des_qwc_local (port/des_options.cpp): DES_NET_TENDENCY=own, the server's world tendency
+# replaced with the player's own (docs/69, "World tendency").
+0x00567E9C=des_qwc_local  # mflr r0: the getQWCData reply's per-area reader (r4 = out, r5 = area), before r4 is tested
+
+# des_net_grade_poll (port/des_options.cpp): DES_NET_RATING_POLL, how often the game asks
+# whether the player's messages were rated (300 s; docs/69, "Message ratings").
+0x0054E934=des_net_grade_poll  # subf r0, r0, r29: seconds since the last getBloodMessageGrade, tested against 300
+
+# des_net_show (port/des_options.cpp): DES_NET_MESSAGES, DES_NET_BLOODSTAINS, DES_NET_GHOSTS = 0 hide
+# other players' messages, bloodstains and ghosts (docs/69, "Showing messages, bloodstains and ghosts").
+0x00562BC4=des_net_show  # mr r21, r3: getBloodMessage parser's entry count
+0x00560904=des_net_show  # mr r18, r3: getReplayList parser's entry count (bloodstains)
+0x003A5CA8=des_net_show  # li r29, 1: the wandering ghost tick starts the next ghost
+0x0054E8C0=des_net_show  # ld r0, 0xc8(r31): scheduler, the bloodstain list's last time
+0x0054E8F8=des_net_show  # ld r0, 0xd0(r31): scheduler, the message list's last time
+0x00558884=des_net_show  # lwz r0, 0x18c(r31): the ghost reply's first count (both counts held to their arrays)
+
+# des_net_replay (port/des_options.cpp): a ghost or bloodstain replay from the server whose frame count
+# does not fit its data is dropped, through the game's own paths (docs/69, "Replays").
+0x00391818=des_net_replay  # cmpwi cr7, r3, 0: a bloodstain's replay after its unpack (length at 0x74(r1))
+0x003A596C=des_net_replay  # cmplwi cr7, r0, 0xfff: a ghost's replay length after its first unpack
+0x003A5EA0=des_net_replay  # cmplwi cr7, r0, 0xfff: the same after its second unpack
+0x003957B8=des_net_replay  # cmpwi cr7, r4, 0: the replay reader's entry (r4 = the data)
+
 # des_fx_state (port/des_options.cpp): particle effect (FFX) nodes' state
 # machine in the scene update 0x013B74B8. An emitter repeats by re-entering its
 # own state, at most once an update: 30 times a second at 30 fps, 240 at 240.
@@ -133,3 +180,34 @@
 0x013B7CA4=des_fx_state   # mr r0, r3: the next state (2) on template 0x7E7's path
 0x013B7CCC=des_fx_state   # mr r0, r3: the next state (4) on the paths of templates 0x7E4 and 0x7E7
 0x013B75D4=des_fx_state   # stfs f0, 0x94(r31): the new state's time set to 0; takes the part of a frame past 1/30 s
+
+# des_ghost_rate (port/des_options.cpp): wandering ghosts' playback
+# (ReplayManipulator) steps a sample per 10 frames, so above 30 fps ghosts ran;
+# the hooks use 1/(3 dt) frames a sample (docs/69, "Wandering ghosts").
+0x00315030=des_ghost_rate  # li r9, 10: Update's frames to the next sample (+0x1E4)
+0x003147EC=des_ghost_rate  # lfs f12: 10.0, the next sample's move and turn split into per-frame steps
+0x00314ABC=des_ghost_rate  # lfs f12: 30.0, SetMoveVector's step-to-speed factor (walk or run)
+
+# des_twist_rate (port/des_options.cpp): moving locked on, the bone turner
+# (0x003D3BC0) eases the lower body's turn against the upper body by a fixed
+# share an update, so above 30 fps a change of direction snapped round; the
+# hook makes it ease as at 30 fps (docs/28, "Locked-on direction changes").
+0x003D42BC=des_twist_rate   # lfs f12, 0x20(r31): the bone's ease share (0.35, the locomotion controller's +0x154)
+
+# des_ik_rate (port/des_options.cpp): the foot IK (issue #140, docs/92). The
+# driver 0x002F5B08 and Havok's foot placement solver (0x00FF4DC0) smooth by
+# a fixed amount an update, so above 30 fps the hips and feet settle faster
+# and follow every bump; the hooks make each ease and keep last as at 30 fps.
+0x002F5B14=des_ik_rate   # fmr f30, f1: the driver's dt, kept for the solver's sites in the same call
+0x002F5DB8=des_ik_rate   # lfs f13: 0.2, the pelvis offset's share of the lower foot's error (ease)
+0x002F5CCC=des_ik_rate   # lfs f0, 0x220(r31): 0.6, the pelvis offset kept with neither foot hitting (keep)
+0x00FF5680=des_ik_rate   # lfs f11, 0x68(r12): onOffGain 0.8, the solver's weight eased up (ease)
+0x00FF58CC=des_ik_rate   # lfs f11, 0x68(r12): onOffGain 0.8, the solver's weight eased down (ease)
+0x00FF54D4=des_ik_rate   # fmuls f13: the foot height's step, its two gains' product (0.64; ease)
+
+# des_roll_dir (port/des_options.cpp): DES_ROLLDIR, a roll while locked on goes
+# where the stick points. The roll's start turns the player's facing, and the
+# locked facing update aims at the turned facing for the roll's first 0.3 s.
+0x002FF8F0=des_roll_dir   # extsw r4, r4: script function 110 before bl 0x002EB3E8; r3 = the controller, r4 = k
+0x00301C24=des_roll_dir   # li r4, 0: the same call's other path (k = 0)
+0x0030F734=des_roll_dir   # fadds f1, f1, f0: the locked facing update's yaw to the target; r26 = the controller

@@ -26,7 +26,7 @@ jobs:
           arch: x64
 
       - name: Install Ninja
-        run: choco install ninja -y --no-progress
+        run: choco install ninja --version=1.13.2 --allow-downgrade -y --no-progress
 
       - name: Show toolchain
         run: |
@@ -54,6 +54,218 @@ jobs:
         run: |
           ls -la build/ui/des_ui/des_ui.lib
           test -s build/ui/des_ui/des_ui.lib
+
+  # The same library on Linux, where it draws through D3D12 on vkd3d and takes SDL's mouse and the POSIX crash
+  # reports (docs/76): files the Windows job never compiles. vkd3d comes from its release tarball (Ubuntu's 1.2 has
+  # no HLSL compiler) and is cached on its version.
+  ui-linux:
+    name: Wrapper UI (Linux, clang, vkd3d)
+    runs-on: ubuntu-24.04
+    env:
+      VKD3D_VERSION: "2.1"
+      VKD3D_SHA256: 7510146aff2adfb4ae07ab890701a607e5ff7c66e57100cfc9f630ec92eeda6a
+      VKD3D_PREFIX: ${{ github.workspace }}/../vkd3d
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # vkd3d's build needs flex, bison, Perl's JSON module and the SPIR-V headers.
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config clang libsdl2-dev libvulkan-dev \
+            flex bison libjson-perl spirv-headers
+
+      - name: Cache vkd3d
+        id: vkd3d-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.VKD3D_PREFIX }}
+          key: vkd3d-${{ env.VKD3D_VERSION }}-${{ runner.os }}-ubuntu-24.04-v1
+
+      - name: Build vkd3d
+        if: steps.vkd3d-cache.outputs.cache-hit != 'true'
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -sSfLO "https://dl.winehq.org/vkd3d/source/vkd3d-$VKD3D_VERSION.tar.xz"
+          echo "$VKD3D_SHA256  vkd3d-$VKD3D_VERSION.tar.xz" | sha256sum -c -
+          tar xf "vkd3d-$VKD3D_VERSION.tar.xz"
+          cd "vkd3d-$VKD3D_VERSION"
+          ./configure -q --prefix="$VKD3D_PREFIX" --disable-doxygen-doc
+          make -s -j"$(nproc)"
+          make -s install
+
+      - name: Configure
+        run: |
+          PKG_CONFIG_PATH="$VKD3D_PREFIX/lib/pkgconfig" CC=clang CXX=clang++ \
+            cmake -S .github/ci/des_ui -B build/ui -G Ninja -DCMAKE_BUILD_TYPE=
+
+      - name: Build
+        run: cmake --build build/ui
+
+      - name: Verify the library exists
+        run: |
+          ls -la build/ui/des_ui/libdes_ui.a
+          test -s build/ui/des_ui/libdes_ui.a
+
+  # Setup's engine (tools/setup) on the systems players run it on: Windows, and Linux at the glibc floor (docs/87).
+  # Python 3.13, setup's own line (the 3.13.9 embeddable package on Windows, a 3.13 standalone build on Linux).
+  setup-tests:
+    name: Setup engine tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, ubuntu-22.04]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13.9'
+
+      - name: Tests
+        working-directory: tools/setup
+        run: python -m unittest discover -s tests
+
+  # Setup compiles the game part from game_build.json (Windows) and game_build_linux.json (Linux): CMake's commands
+  # for des_game (DES_SPLIT=ON DES_SPLIT_FREESTANDING=ON) with the paths as placeholders (scripts/game_build_desc.py).
+  # These jobs configure the port with empty files where the lift goes (CI never has it) and check that each
+  # description still matches CMake's commands. The headers list needs a real build, so it is left out
+  # (--commands-only). CMake is the version each description was written with, so a CMake update cannot fail the
+  # check: 4.3.3 (Kitware's) on Windows, Ubuntu 24.04's 3.28.3 on Linux. After a change to the game part's flags,
+  # write the description again with game_build_desc.py (docs/86, docs/87).
+  build-desc-windows:
+    name: Game build description (Windows)
+    runs-on: windows-2025
+    env:
+      CMAKE_VERSION: 4.3.3
+      CMAKE_ZIP_SIZE: '52967828'
+      CMAKE_ZIP_SHA256: 935ade9e5e8723583c07f44c5592cea2a1c8f65c56ca7e07b34c025c880e0bd6
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13.9'
+
+      # As in host.yml: the pinned commit of the fork, beside port/.
+      - name: Read the ps3recomp pin
+        id: pin
+        run: python .github/scripts/read_pin.py >> "$GITHUB_OUTPUT"
+
+      - name: Check out the pinned ps3recomp
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.commit }}
+          path: ps3recomp
+          persist-credentials: false
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+
+      - name: CMake ${{ env.CMAKE_VERSION }} and Ninja
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 5 --retry-all-errors -o cmake.zip \
+            "https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-windows-x86_64.zip"
+          [ "$(stat -c %s cmake.zip)" = "$CMAKE_ZIP_SIZE" ] || { echo "::error::cmake.zip has the wrong size"; exit 1; }
+          echo "$CMAKE_ZIP_SHA256  cmake.zip" | sha256sum -c -
+          unzip -q cmake.zip
+          echo "$RUNNER_TEMP/cmake-$CMAKE_VERSION-windows-x86_64/bin" >> "$GITHUB_PATH"
+          choco install ninja --version=1.13.2 --allow-downgrade -y --no-progress
+
+      - name: Empty files where the lift goes
+        run: python .github/scripts/placeholder_lift.py "$RUNNER_TEMP/lift" >> "$GITHUB_ENV"
+
+      # As the description was written (docs/86): no build type, no developer code.
+      - name: Configure
+        run: >
+          cmake -S port -B build/desc -G Ninja
+          -DCMAKE_C_COMPILER=clang-cl
+          -DCMAKE_CXX_COMPILER=clang-cl
+          -DCMAKE_BUILD_TYPE=
+          -DCMAKE_CXX_FLAGS_DEBUG=
+          -DCMAKE_C_FLAGS_DEBUG=
+          "-DRECOMP_DIR=$DES_LIFT"
+          -DDES_SPLIT=ON
+          -DDES_SPLIT_FREESTANDING=ON
+          -DDES_DEV=OFF
+
+      - name: game_build.json matches CMake's commands
+        run: python scripts/game_build_desc.py build/desc --check --commands-only
+
+  build-desc-linux:
+    name: Game build description (Linux)
+    runs-on: ubuntu-24.04
+    env:
+      VKD3D_VERSION: "2.1"
+      VKD3D_SHA256: 7510146aff2adfb4ae07ab890701a607e5ff7c66e57100cfc9f630ec92eeda6a
+      VKD3D_PREFIX: ${{ github.workspace }}/../vkd3d
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13.9'
+
+      - name: Read the ps3recomp pin
+        id: pin
+        run: python .github/scripts/read_pin.py >> "$GITHUB_OUTPUT"
+
+      - name: Check out the pinned ps3recomp
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.commit }}
+          path: ps3recomp
+          persist-credentials: false
+
+      # Ubuntu's own cmake (3.28.3), at /usr/bin: the runner's newer one comes first on PATH.
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config clang libsdl2-dev libvulkan-dev \
+            flex bison libjson-perl spirv-headers
+          /usr/bin/cmake --version
+
+      # The same vkd3d as the ui-linux job, from the same cache.
+      - name: Cache vkd3d
+        id: vkd3d-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.VKD3D_PREFIX }}
+          key: vkd3d-${{ env.VKD3D_VERSION }}-${{ runner.os }}-ubuntu-24.04-v1
+
+      - name: Build vkd3d
+        if: steps.vkd3d-cache.outputs.cache-hit != 'true'
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -sSfLO "https://dl.winehq.org/vkd3d/source/vkd3d-$VKD3D_VERSION.tar.xz"
+          echo "$VKD3D_SHA256  vkd3d-$VKD3D_VERSION.tar.xz" | sha256sum -c -
+          tar xf "vkd3d-$VKD3D_VERSION.tar.xz"
+          cd "vkd3d-$VKD3D_VERSION"
+          ./configure -q --prefix="$VKD3D_PREFIX" --disable-doxygen-doc
+          make -s -j"$(nproc)"
+          make -s install
+
+      - name: Empty files where the lift goes
+        run: python .github/scripts/placeholder_lift.py "$RUNNER_TEMP/lift" >> "$GITHUB_ENV"
+
+      # As the description was written (docs/87): clang, no build type.
+      - name: Configure
+        run: |
+          PKG_CONFIG_PATH="$VKD3D_PREFIX/lib/pkgconfig" CC=clang CXX=clang++ \
+            /usr/bin/cmake -S port -B build/desc -G Ninja -DCMAKE_BUILD_TYPE= "-DRECOMP_DIR=$DES_LIFT" \
+            -DDES_VKD3D=ON -DDES_SPLIT=ON -DDES_SPLIT_FREESTANDING=ON
+
+      - name: game_build_linux.json matches CMake's commands
+        run: python scripts/game_build_desc.py build/desc --check --commands-only
 
   scripts:
     name: Scripts (syntax, icon step)

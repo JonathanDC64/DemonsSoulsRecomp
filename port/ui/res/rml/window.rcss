@@ -443,24 +443,3 @@ osk-pill {
     font-size: var(--font-size-sm);
     opacity: 0.8;
 }
-
-/* The pad's face buttons, in their PlayStation colours, from the icon font. */
-icon.pad-cross {
-    decorator: text("&#xe5cd;" center center);
-    color: #7fb2e5;
-}
-
-icon.pad-circle {
-    decorator: text("&#xe836;" center center);
-    color: #e86a6a;
-}
-
-icon.pad-square {
-    decorator: text("&#xe3c6;" center center);
-    color: #d995c9;
-}
-
-icon.pad-triangle {
-    decorator: text("&#xe86b;" center center);
-    color: #4fc9a4;
-}

@@ -1,7 +1,8 @@
 # Drafts a GitHub release when a version tag is pushed (docs/54): v0.1.0, or a pre-release such as v0.1.0-rc.1.
 # Nothing else starts it: no manual run, no branch push. The release stays a draft, unpublished, until the
-# maintainer reads it and publishes it by hand. tools/release/package.py and changelog.py do the work, and
-# release-check.yml runs them on pull requests that change them.
+# maintainer reads it, signs its SHA256SUMS on their own PC (tools/release/sign_release.py, docs/105 section 7) and
+# publishes it by hand. tools/release/package.py and changelog.py do the work, and release-check.yml runs them on
+# pull requests that change them.
 name: Release
 
 on:
@@ -18,9 +19,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # des_host.exe for the player's zip and the Linux host folder for the Linux tarball, built from the tag by host.yml
+  # itself (its checks included).
+  host:
+    name: The host exe
+    uses: ./.github/workflows/host.yml
+    permissions:
+      contents: read
+
   draft:
     name: Draft the release
+    needs: host
     runs-on: ubuntu-latest
+    # The "release" environment: in the repository's settings it can require the maintainer's approval before this
+    # job runs (docs/105 section 7).
+    environment: release
+    permissions:
+      contents: write       # to create the draft release
+      id-token: write       # the attestations' signing certificate (Sigstore)
+      attestations: write   # to store them
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -45,8 +62,22 @@ jobs:
       - name: Release notes
         run: python tools/release/changelog.py --to "$GITHUB_REF_NAME" --out dist/notes.md
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: des_host-${{ github.sha }}
+          path: host
+
+      # The Linux host folder (des_host, the SDL2, vkd3d and FFmpeg libraries beside it, their licences), for the Linux
+      # tarball.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: des_host-linux-${{ github.sha }}
+          path: host-linux
+
       - name: Package
-        run: python tools/release/package.py build --rev "$GITHUB_REF_NAME" --out dist
+        run: >
+          python tools/release/package.py build --rev "$GITHUB_REF_NAME" --host host/des_host.exe
+          --linux-host host-linux --out dist
 
       - name: No game-derived files in the package
         run: |
@@ -55,6 +86,21 @@ jobs:
             exit 1
           fi
           python .github/scripts/check_game_files.py --dir dist/stage
+          python .github/scripts/check_game_files.py --dir host --allow .github/game-files-allow.txt \
+            --allow .github/host-files-allow.txt
+          python .github/scripts/check_game_files.py --dir host-linux --allow .github/game-files-allow.txt \
+            --allow .github/host-files-allow.txt
+
+      # The LGPL libraries in the Linux tarball (vkd3d, FFmpeg) ask for their source to go with them: the exact archives
+      # host.yml built from, checked against the same pinned SHA-256.
+      - name: Third-party sources
+        run: python tools/release/third_party_sources.py --out dist/third-party
+
+      # Build provenance for each file SHA256SUMS lists: made by this workflow from this tag. sign_release.py checks it
+      # before the maintainer signs (gh attestation verify).
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
 
       - name: Draft the release
         env:
@@ -64,4 +110,5 @@ jobs:
           pre=""
           case "$TAG" in *-*) pre="--prerelease" ;; esac
           gh release create "$TAG" --draft --verify-tag $pre --title "DemonsSoulsRecomp ${TAG#v}" \
-            --notes-file dist/notes.md dist/DemonsSoulsRecomp-*-source.zip dist/SHA256SUMS
+            --notes-file dist/notes.md dist/DemonsSoulsRecomp-*-source.zip dist/DemonsSoulsRecomp-*-windows.zip \
+            dist/DemonsSoulsRecomp-*-linux.tar.xz dist/SHA256SUMS dist/third-party/*

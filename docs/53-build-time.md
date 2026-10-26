@@ -48,6 +48,13 @@ code, a log or a doc. **[inferred]** means my conclusion, not tested.
 - No gain: precompiled headers (at most 0.3%), a real `-O1` (none), `/O1`
   (49% slower, it is `-Os`), and so hot and cold optimization levels.
   [measured]
+- 10-23, the first-time setup build (section 16): 845 to 1,046 s from a fresh
+  data folder on this PC, 90 to 93% of it the compile. Memory, not cores,
+  sets the pace: with 7 to 8 GB free, at most two PPU chunks compile at
+  once, and the run time moves by 10% or more with what the PC's other
+  programs use. The order of the jobs is worth 0 to 3.7%. The large lever is
+  more jobs on the same memory: smaller chunks, with the expected peak taken
+  from the chunk's size. [measured, simulated]
 
 ## Setup and method
 
@@ -311,6 +318,8 @@ times]
 - The exe links. Its code differs from the 14-chunk build only in what
   clang could inline across functions, which is what R3 measures.
   [measured, inferred]
+- R3 (section 14, 10-23) found no difference in frame rate: +0.10% for
+  53 chunks, inside the noise. [measured]
 
 ### 7.3 Memory: the bigger win on small PCs
 
@@ -557,6 +566,25 @@ These run the game. The exes are in the lane folder under `exe_nozi14/` and
   inliner fewer callees to see, which could cost a little or nothing.
   Needed before the recipe switches to `--chunk-lines 150000`.
 
+  **Result (2026-10-23): no loss.** Measured with the game DLLs of two
+  real setups instead of these exes: run B's (14 chunks) against run C's
+  (53 chunks), both made by setup from the same EBOOT, ps3recomp and
+  clang-cl 22.1.8 with the same flags, and both started by the same host
+  exe. Deep Palace save, plain windows, `RSX_VSYNC=0 DES_VSYNC=0
+  DES_FPS=unlocked` with a 960 Hz vblank, 8 rounds in ABBA order, on a
+  quiet PC (background CPU 1.5-7.4%). [measured]
+
+  | | 14 chunks | 53 chunks |
+  |---|---|---|
+  | Median of the 8 boots | 167.4 fps | 167.4 fps |
+  | Lowest boot | 158.2 fps | 163.6 fps |
+  | Median of the round deltas | | +0.10% |
+  | Rounds faster | 2 of 8 | 6 of 8 |
+
+  - The paired t test gives p = 0.38: no difference either way.
+  - The 14-chunk side's lowest boot comes from one window at 150.8 fps
+    (round 2). Without that round the median delta is +0.19%.
+
 ## 15. Decisions for you
 
 1. Merge `build/no-debug-info` after R2.
@@ -567,3 +595,186 @@ These run the game. The exes are in the lane folder under `exe_nozi14/` and
 5. Object cache: home-grown launcher, or install sccache or ccache?
 6. A faster clang build would need a download. Want it measured?
 7. Delete the stale `port/build/des_boot.pdb` (June, 251 MB)?
+
+## 16. The first-time setup build (10-23)
+
+Setup (docs/81, docs/88) builds the game on the player's PC: it checks the
+game files, stages them, lifts, compiles `des_game.dll`, then prepares the
+shaders. This section measures that build from a fresh data folder, phase by
+phase and object by object. It is the base for the build-time work asked for
+on 10-23. [measured]
+
+### 16.1 Method
+
+Four real setups through the setup screens, each into a new, empty data
+folder, from the US disc. [measured]
+
+| Run | Built from | Compiler |
+|---|---|---|
+| A2 | #148 (the compile follows the free memory) | the local clang-cl 22.1.8 |
+| B | #148 and #149 (the shaders phase) | the same |
+| C | B, with the PPU lift cut every 150,000 lines: 53 chunks | the same |
+| D | #148, #149 and #150 (the freestanding DLL) | the pinned LLVM zip, 22.1.8 |
+
+- The PC: Ryzen 7 9800X3D, 8 cores and 16 threads, 31 GB, with its owner's
+  usual programs open. 7.3 to 8.9 GB was free at the start. No game, build
+  or other timing ran beside a run. [measured]
+- Times, and each object's peak commit, come from the engine's journal. A
+  sampler read the PC's free memory and every process's private bytes every
+  2 s. The memory figures below count only the processes the run started.
+  [measured]
+- The setup screens' own process held 1.64 GB for the whole run, in every
+  run. [measured]
+- For comparison, two runs with master's rule (the job count fixed at the
+  start from the memory free then): 1,602 s on 10-22, with about 5 GB free
+  (one job), and 1,559 s on 10-23 (run E, for #151). [measured]
+
+### 16.2 Phases
+
+Run D, with the range over A2, B and D where they differ. [measured]
+
+| Phase | Wall time | Peak memory of the run's processes | Notes |
+|---|---|---|---|
+| check | under 2 s | small | the files the table names |
+| fetch | 0 s | | the pinned zip was already in `downloads/`; a real download adds its own time |
+| stage | 0.3 s | | |
+| lift: loader | 2.4 s | 0.2 GB | |
+| lift: PPU | 35.5 s (35.2 to 35.6) | 3.7 to 3.8 GB | the lifter 3.4 GB, and 15 workers of about 50 MB each for 6 s |
+| lift: boot patch, NID table, SPU cut | 1.5 s (1.1 to 1.5) | 0.2 GB | |
+| lift: SPU | 17.9 s (17.9 to 18.2) | 0.1 GB | 12 images and 2 jobs, one at a time |
+| lift: libsre | 7.0 s (6.9 to 7.2) | 0.3 GB | |
+| compile | 771 s (771 to 976) | 4.8 to 5.0 GB | 34 objects (33 before #150) |
+| link | 0.5 s (0.5 to 1.3) | up to 2.2 GB | one sample in B caught it |
+| shaders | 20 s | 0.85 GB | B: 3,603 shaders on 15 threads |
+| whole run | 845 s (845 to 1,046) | | |
+
+- The compile is 90 to 93% of the run. The lifts are about 64 s, the
+  shaders 20 s. [measured]
+- The PPU lift is the largest single memory user: 3.8 GB for 35 s. On a PC
+  with less free memory than that it pages. [measured, inferred]
+
+### 16.3 Objects
+
+Compile time and peak commit of each object, run D, with A2's and B's times.
+Seven more objects take under 1 s each (1.0 s in all). "Start" is seconds
+after the compile began. [measured]
+
+| Object | Source | D | A2 | B | Peak in D | Start in D |
+|---|---|---|---|---|---|---|
+| ppu_recomp_008 | 34.2 MB | 171.8 s | 158.4 s | 157.5 s | 2.59 GB | 287 |
+| ppu_recomp_009 | 37.2 MB | 144.4 s | 143.1 s | 144.7 s | 2.29 GB | 28 |
+| ppu_recomp_010 | 34.4 MB | 123.3 s | 123.5 s | 123.0 s | 2.29 GB | 215 |
+| ppu_recomp_002 | 33.0 MB | 121.5 s | 115.0 s | 113.8 s | 2.29 GB | 448 |
+| ppu_recomp_001 | 35.1 MB | 118.6 s | 119.6 s | 119.7 s | 2.25 GB | 96 |
+| ppu_recomp_000 | 34.5 MB | 114.8 s | 116.0 s | 115.3 s | 2.27 GB | 172 |
+| ppu_recomp_005 | 33.7 MB | 109.9 s | 110.7 s | 110.0 s | 2.17 GB | 338 |
+| ppu_recomp_003 | 32.8 MB | 105.5 s | 105.0 s | 104.9 s | 2.18 GB | 460 |
+| ppu_recomp_007 | 32.0 MB | 103.4 s | 103.7 s | 105.7 s | 2.16 GB | 571 |
+| ppu_recomp_004 | 32.0 MB | 100.7 s | 101.4 s | 103.5 s | 2.13 GB | 565 |
+| ppu_recomp_006 | 31.8 MB | 98.7 s | 100.9 s | 100.7 s | 2.09 GB | 672 |
+| ppu_recomp_011 | 38.0 MB | 95.9 s | 95.0 s | 95.1 s | 1.83 GB | 0 |
+| libsre | 51.9 MB | 16.3 s | 15.9 s | 15.6 s | 1.77 GB | 5 |
+| spu_0007 | | 11.3 s | 11.1 s | 11.1 s | 0.26 GB | 5 |
+| spu_0008 | | 10.9 s | 10.9 s | 10.8 s | 0.25 GB | 6 |
+| spu_0006 | | 7.7 s | 7.5 s | 7.4 s | 0.19 GB | 16 |
+| the other 10 SPU objects | | 2.2 to 5.9 s | | | 0.08 to 0.20 GB | 17 to 26 |
+| ppu_recomp_012 | 38.7 MB | 5.1 s | 4.6 s | 4.6 s | 0.85 GB | 0 |
+| ppu_recomp_013 | 5.7 MB | 1.7 s | 1.7 s | 1.7 s | 0.50 GB | 701 |
+| all 34 | | 1,500 s | 1,483 s | 1,480 s | | |
+
+- An object takes the same time from run to run. The 12 large chunks took
+  1,392, 1,394 and 1,409 s in all. Only 008 (+9%) and 002 (+6%) were slower
+  in D. [measured]
+- Source size predicts neither time nor memory. Chunk 012 is the largest
+  source and compiles in 5 s; it is the tail-entry wrappers, almost all dead
+  code (section 7.1). Chunk 011 is nearly as large and takes 96 s. Chunk
+  008, the slowest, is mid-sized. [measured]
+- The two chunks with the largest sources start first, as the rule says.
+  The slowest chunk, 008, starts at 287 to 351 s. [measured]
+
+### 16.4 What sets the time
+
+- **Memory, not cores.** With 7 to 8 GB free, the rule ran at most two PPU
+  chunks at once on 16 threads. It counts 2.6 GB for a chunk it has not
+  built before and keeps 2 GB free for the rest of the PC. On average 1.5
+  to 1.95 jobs ran at once. [measured, read]
+- **The free memory moves during a run.** The three 14-chunk runs did the
+  same CPU work, within 1%, and took 771, 891 and 976 s in the compile. The
+  difference is how often a second chunk fitted, which follows what the
+  PC's other programs use. In run C, for example, the free memory fell to
+  0.69 GB while one 0.6 GB chunk compiled and our processes held 2.3 GB in
+  all. So two single runs can differ by 10% or more for no reason in the
+  build. Comparisons in the next sections hold the job count fixed, or use
+  the CPU sums and a simulation, besides the wall times. [measured,
+  inferred]
+- **The order matters little.** List scheduling of D's own 34 times, with
+  a fixed number of jobs at once: [simulated]
+
+  | Jobs at once | Largest source first (today) | Slowest first | Gain |
+  |---|---|---|---|
+  | 1 | 1,500 s | 1,500 s | 0 |
+  | 2 | 753 s | 750 s | 0.3% |
+  | 3 | 520 s | 501 s | 3.7% |
+  | 4 | 389 s | 375 s | 3.6% |
+  | 8 | 218 s | 215 s | 1.7% |
+  | 16 | 172 s | 172 s | 0 (chunk 008 alone) |
+
+  The small objects fill the gaps the order leaves. Run D's compile, 771 s,
+  is within 3% of the two-job figure. Runs A2 and B were slower because a
+  second chunk did not always fit. [simulated, measured]
+- **53 chunks (run C)** compiled in 819 s, but still at most two PPU chunks
+  at once: the rule counted 2.6 GB for each, and each took 0.28 to 1.17 GB.
+  [measured]
+
+### 16.5 The ideas against these numbers
+
+The 10-23 request listed these. Each gets its own measurement and its own PR
+when it gains. [inferred unless marked]
+
+| Idea | What these numbers say |
+|---|---|
+| Chunks balanced by measured compile time, not size | The 12 large chunks cost 96 to 172 s for 32 to 38 MB of source; 012 is nearly free. Changes which functions share a translation unit, so it needs the frame-rate A/B (R3) first. |
+| Slowest objects first | 0 to 3.7% by the jobs at once [simulated], and it needs each object's cost before its first build. Too small to measure against the 10% between runs. |
+| The expected peak by chunk size | With 53 chunks, the rule's 2.6 GB is two to nine times the real peak, so it ran two chunks where five to seven fit. This and smaller chunks are the large lever: more jobs at once on the same memory. |
+| Lift steps side by side | The SPU lift (18 s, one image at a time) and the libsre lift (7 s) wait for the PPU lift (35 s), though none reads another's output. |
+| Smaller or precompiled headers | At most 0.3% (section 6). Dropped. |
+| Flags that leave the code alone | libsre writes 3 MB of warnings; the PPU chunks a few kB each. To measure. |
+| A faster lift | The lifts are 64 s of 845 (8%). The PPU lift's one-thread analysis is about 18 s (section 10). |
+| The screens' process | 1.64 GB held through the compile. About 1 GB of it is the RSX vertex and constant buffers (768 MB and 264 MB, from its log), which the screens never use. |
+
+### 16.6 After the changes (10-23)
+
+Each change has its own PR with its before and after. Together, measured as
+in section 16.1: real setups from a fresh data folder, through the screens,
+8.3 to 9.0 GB free at the start. [measured]
+
+| Run | Engine | Host | Compile | Jobs at once, average | Whole setup |
+|---|---|---|---|---|---|
+| A2 | #148 | makes the RSX buffers | 976 s | 1.52 | 1,046 s |
+| B | #148, #149 | makes the RSX buffers | 891 s | 1.66 | 986 s, with a 20 s shader pass |
+| C | #148, 53 chunks | makes the RSX buffers | 819 s | 1.83 | 886 s |
+| F | #148 with the size rule, #149, 53 chunks (#158) | makes the RSX buffers | 450 s | 3.36 | 524 s |
+| G | as F | makes none (#159, with ps3recomp #108) | 371 s | 4.12 | 443 s |
+
+- F and G ran no shader pass: F's exe had its shaders from run B, and G's
+  host predates #149's flag. A first setup adds about 20 s. [measured]
+- F and G still lifted one step after another: their engine predates the
+  lift side by side (#157), which takes the lift alone from 63.9 s to
+  39.8 s. With it, a setup like G's would take about 420 s. [inferred]
+- The 53 chunks cost no frame rate (R3, section 14). The other changes do
+  not touch the game's code.
+- Against 10-22's single job at master's rule (1,602 s), G is about 3.6
+  times faster on the same PC. [measured]
+- **On smaller PCs.** List scheduling under #148's rule, with each object's
+  measured time and peak (run D's objects for 14 chunks, run C's for 53),
+  at a given memory over the 2 GB kept free: [simulated]
+
+  | Usable memory | 14 chunks, #148 | 53 chunks, the size rule |
+  |---|---|---|
+  | 3 GB | 1,438 s | 732 s |
+  | 5.5 GB | 764 s | 395 s |
+  | 10 GB | 520 s | 215 s |
+
+  It is never slower at any size. 1.2 GB more usable (#159) gains 8 to 49%
+  more at 53 chunks; at 14 chunks it helps only where it lets one more
+  chunk in (4.3 to 5.5 GB: -47%). [simulated]

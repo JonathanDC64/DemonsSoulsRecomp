@@ -326,6 +326,12 @@ quad carry the quad's bounds, so the diagonal is not clamped, and interiors
 are unchanged. 3D draws (depth-tested) and 1x targets do not get it.
 `RSX_SCALE_UVCLAMP=0` turns it off.
 
+Since 10-23 the pixel shader reads half the scale from the draw's constants
+(`rsx_alphatest.w`) instead of having it in its text. One shader and one
+pipeline then serve every scale, so setup's shader pass can build them ahead
+(`RSX_PRECOMPILE_2D`), and changing the scale compiles nothing. Before, a
+first start at 200% compiled 16 of these shaders in play (docs/93).
+
 Checked on the System menu at 200%, downscaled and compared with 100%: the
 seam columns at the button joints and in the footer are gone. At DES_FPS=240
 uncapped it costs nothing measurable (240 fps either way).

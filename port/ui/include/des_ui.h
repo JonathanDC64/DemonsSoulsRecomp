@@ -12,6 +12,28 @@ extern "C" {
  * settings) on the D3D12 backend. DES_UI=0 skips all of it. */
 void des_ui_early_init(void);
 
+/* ps3recomp's launch hook (ps3_title_launch, des_options.cpp), first thing in
+ * main, before it reads its arguments (docs/88 section 3): -1 boots the game,
+ * -2 shows setup's screens alone, with no game (ps3recomp's PS3_LAUNCH_WINDOW).
+ * Setup alone with DES_UI_OPEN=setup or setup-run. The game with an ELF on the
+ * command line (a developer's run), or once setup has built it (setup's
+ * ready.txt: the ELF, PS3_GAME_MODULE and PS3_VFS_ROOT are filled in); else
+ * setup. DES_UI=0: the game, as before. */
+int des_ui_launch(int* argc, char*** argv);
+
+/* ps3_title_prework (des_prework.cpp), before the game's code runs: when the
+ * game goes online with a server the privacy note is about and the player has
+ * not accepted this version of it (port/ui/src/privacy.hpp), shows the note
+ * and returns once the player answers. Decline leaves this run offline. With
+ * no way to show it (no presenting, or the UI could not start) the answer is
+ * Decline at once. Otherwise returns at once. */
+void des_ui_privacy_wait(void);
+
+/* Setup's screens alone (ps3_title_window_only_init), in place of
+ * des_ui_early_init: settings.ini, the overlay and setup's start screen, whose
+ * Play starts the game in a new process of this program and closes this one. */
+void des_ui_setup_only_init(void);
+
 /* Mouse look (docs/41; port/ui/src/mouse.cpp): the mouse's counts (x right,
  * y down) gathered on the window's thread since the last call, while the game
  * has the mouse (DES_MOUSE_LOOK on, the window in front, no document of the
@@ -24,6 +46,10 @@ void des_mouse_take(int* dx, int* dy);
 /* Mouse look's settings changed: the window's thread takes or lets go of the
  * mouse to match, soon after. Any thread. */
 void des_mouse_refresh(void);
+
+/* At each of the game's flip requests (des_options.cpp, the game's thread):
+ * the report test knob DES_HANG_AT_FRAME (port/ui/src/report.hpp). */
+void des_report_flip_hook(void);
 
 /* The UI's sounds, by id (ui::Sound in port/ui/src/sound.hpp, in this order). */
 enum {

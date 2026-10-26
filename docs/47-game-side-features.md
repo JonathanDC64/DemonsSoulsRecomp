@@ -7,6 +7,8 @@ Two labels are used below:
 - **(inferred)**: my conclusion, not yet checked in a run. Section 6 is one batched run request that checks the open points.
 
 > **Run r4 (2026-10-19) did section 6's steps 2 to 4** (section 3.6). Section 3.2's stick-to-slot reading is right. Its slot-to-move columns are wrong for all five slots. chr+0x310's bit 0x800 is not the lock flag. The sprint timer runs while locked on.
+>
+> **Built (2026-10-25): rolls toward the stick while locked on**, `DES_ROLLDIR`, on by default (section 3.7).
 
 ## Summary
 
@@ -14,7 +16,7 @@ Two labels are used below:
 |---|---|---|
 | Stat respec | **Cheap.** The game already has a "reset stats to the class" function, and the level cost is one game function. | 2-2.5 days for a wrapper button that works while the level-up screen is open. 4-6 days to lower stats inside the game's own level-up screen instead. |
 | Use several souls at once | **Cheap.** Each soul item adds a fixed number of souls through one function. | 2-2.5 days for "use all" on the eight soul items. |
-| 8-direction rolls while locked on | **Medium.** There are only four roll animations. Play the nearest one and turn the character 45 degrees at the start of the roll. | 4-5 days, after one run settles which stick input picks which roll. True diagonal roll animations: not feasible (new animation content). |
+| 8-direction rolls while locked on | **Built** (section 3.7): `DES_ROLLDIR` plays the roll the game picks and turns the character toward the stick, so a roll goes where the stick points. | Done. True diagonal roll animations: not feasible (new animation content). |
 | 8-direction walking while locked on | **Probably nothing to do.** The walk already twists the legs toward the movement (inferred). | 0, unless the run shows otherwise. |
 | PvP arena | **Not feasible as a new mode.** The game has no arena. Online duels and invasions come with docs/46 stage 2. | 8-16 days through docs/46, after its stages 0 and 1. A new arena mode: weeks, high risk. |
 
@@ -22,7 +24,7 @@ Two labels are used below:
 - **Several souls.** The eight "<rank> Soldier's/Hero's Soul" items (ids 1025-1032) are worth 200 to 10,000 souls each. One use plays the crush animation, then AddSoul 0x0091B888 adds the amount (read). "Use all" can sum the stacks, remove them and call AddSoul once. Boss souls stay one at a time: they also trade for spells and weapons.
 - **8-way rolls.** The stick is quantized to four directions in one place, the player's pad manipulator 0x0030E750. The script then maps five input slots to four roll states and the backstep (read). My reading of which stick direction lands in which slot contradicts the known neutral-tap backstep, so one link is misread (section 3.3). The run settles it. Run r4 did (section 3.6): the stick-to-slot reading is right and the slot-to-move link is the misread one. A diagonal starts the forward or back roll. The plan does not depend on it: let the game pick its roll, then turn the character toward the diagonal for that roll.
 - **PvP.** Local split screen is impossible (one local player). An offline duel against an AI phantom is content modding, weeks of work. Online PvP is docs/46 stage 2.
-- **All of it opt-in.** Each feature is a knob that is off by default, so the default stays the original game (`DES_RESPEC`, `DES_SOULS_ALL`, `DES_ROLL8` are suggested names).
+- **All of it opt-in.** Each feature is a knob that is off by default, so the default stays the original game (`DES_RESPEC`, `DES_SOULS_ALL`, `DES_ROLL8` are suggested names). The rolls are the exception: they were built as `DES_ROLLDIR`, on by default by the user's choice (section 3.7).
 - **No RPCS3 patch covers any of this.** RPCS3's patch file for BLUS30443 has no lock-on, roll, stat or soul patches (read).
 
 ## 1. Stat respec
@@ -374,6 +376,45 @@ What this settles:
 
 For the 8-way plan (section 3.4 (a)): a diagonal starts the forward or back roll today, so that roll is the one to turn 45 degrees. Step 1 of section 3.5 is done.
 
+### 3.7 Built: `DES_ROLLDIR` (2026-10-25)
+
+Approach (a) of section 3.4, on by default: the user chose that, and it is the one game-side change here that is on by default. Settings > Controls > Roll toward the stick turns it off (`DES_ROLLDIR=0`, the original 4-way rolls). It applies live.
+
+**How it works** (`des_roll_dir` in `port/des_options.cpp`, three lines in `port/insn_hooks.txt`, so it needs a re-lift; only `ppu_recomp_006.cpp` changes):
+
+- Script function 110 asks 0x002EB3E8 for the roll's animation once a roll. `DES_ROLLLOG=1` prints each call. Its k, measured: up 0, down 1, left 2, right 3, neutral 4 (the backstep). That is section 3.2 step 6's reading (escape F, B, L, R, stepMove), so the misread link of section 3.6 is in the script's transitions (step 5). On an exact diagonal the game picks right at 45 degrees, back at 135 and -135, and forward at -45.
+- The hook after `extsw r4, r4` at 0x002FF8F0 runs just before that call. For the player (M = *(chr+0x20)), locked on (M+0x139 = 0), with a target (*(M+4)+0x100), the stick pushed (over 0.2) and a roll (k 0 to 3), it turns the facing to the target's bearing plus the stick's angle from k's direction. The turn is at most 90 degrees, and none when the stick is along the roll. The facing is the yaw at P+0x04 (P = *(M+0x10)), the bearing + pi; the target's position is at *(M+4)+0x110. The same hook follows `li r4, 0` at 0x00301C24, the call's path for an argument that is not a number; the runs never took it.
+- That turn alone is undone (run rd4, below): the locked facing update 0x0030F3C0 aims the character at the target every frame, before the roll moves. So for 0.3 s of game time, the hook after `fadds f1, f1, f0` at 0x0030F734 (that update's yaw toward the target; r26 = M) adds the same angle. If the facing jumps away from the turned one in that time (the lock was dropped and taken again), it stops at once.
+- The roll keeps its facing to its end (section 3.6 saw the same). Then the lock turns the character back, as after any roll.
+- Unchanged: a stick along a roll's direction, the backstep, rolls when not locked on, and other characters.
+
+**Runs** rd1 and rd3 to rd5: pinned save, scripted pad (`PAD_STICK`, Circle through `PAD_FILE`), the branch's developer build, the player about 7.8 m from the enemy and locked on. The test spot is a corridor with walls about 1.3 m to the right and 2 m to the left, so side rolls end at a wall. The direction below is the median of the roll's 50 ms steps faster than 3.5 m/s in its first 0.8 s; the walk before the press and a slide along a wall are slower. Degrees from the target, + = right; the user's save was unchanged after each run.
+
+Run rd5:
+
+| Stick | `DES_ROLLDIR=0`, 30 / 138 fps | `DES_ROLLDIR=1`, 30 / 138 fps |
+|---|---|---|
+| 0 | +0.7 / -0.0 | +1.2 / +2.6 |
+| 22.5 | +1.0 / -0.4 | +19.5 / +21.3 |
+| 45 | +92.4 / +89.5 | +48.5 / +44.9 |
+| 67.5 | +81.2 / +87.0 | +63.1 / +66.2 |
+| 112.5 | +90.9 / +87.5 | +115.5 / +107.9 |
+| 135 | +179.2 / +178.2 | +132.5 / +132.8 |
+| 157.5 | -179.1 / +179.6 | +157.2 / +156.3 |
+| -157.5 | -179.2 / -177.4 | -155.9 / -153.5 |
+| -135 | -175.5 / -178.3 | -129.8 / -130.6 |
+| -112.5 | -88.2 / -83.2 | -109.7 / -108.3 |
+| -67.5 | -86.4 / -86.3 | -61.7 / -63.4 |
+| -45 | +1.3 / +1.6 | -38.3 / -37.7 |
+| -22.5 | +3.7 / +4.3 | -19.8 / -20.8 |
+| neutral | backstep, -179.1 / +179.4 | backstep, -178.5 / -178.1 |
+
+With `DES_ROLLDIR=1` every diagonal rolls within 7.3 degrees of the stick at both rates (mean 3.2); off, they snap to the four directions as before. 3.2 s after the press the character faced the target within 3 degrees in 43 of the 56 rolls. The rest are mostly forward rolls, in both modes, which end about 4 m closer to the target and were still turning. One of them turned on past the target 1 s after its roll had ended, 2.4 s after the hook's window, which looks like the lock taking another enemy.
+
+Run rd4, the turn without the 0.3 s hold, 30 / 138 fps: 22.5 gave +1.9 / +0.9, 45 gave +92.1 / +88.9, 157.5 gave -178.8 / +178.6, -157.5 gave -179.5 / -176.8 and -45 gave +2.0 / +4.1. Those are the original rolls. With the hold the same session gave +21.9 / +20.5, +46.3 / +47.0, +158.4 / +155.8, -154.7 / -153.7 and -37.1 / -40.6.
+
+Not tested: the heavy and overweight move sets (rows 1 to 5 use the same k), rolls out of an attack's input window, and a remote player's view online.
+
 ## 4. PvP arena
 
 ### 4.1 What the game has
@@ -495,6 +536,11 @@ All are read in code unless marked.
 | 0x0030EC44-0x0030F2C0 | stick transform (not decoded) |
 | 0x0030EC08, 0x0030F2CC, 0x0030F304, 0x0030F38C, 0x0030F39C | stores of slots 17, 18, 15, 10, 16 |
 | 0x0030F3C0 | facing update (locked branch aims at the target) |
+| 0x0030F734 | `fadds f1, f1, f0` in it: the locked branch's yaw toward the target (r26 = M); `des_roll_dir` hook |
+| 0x002FF8F0, 0x00301C24 | in function 110, just before its two calls of 0x002EB3E8 (r3 = M, r4 = k); `des_roll_dir` hooks |
+| M+0x04 | X: +0x100 has a target (byte), +0x110 the target's position |
+| M+0x10 | P, the transform: +0x00 pitch, +0x04 yaw (the facing's bearing + pi), +0x10 position |
+| M+0x139 | 00 locked on, 01 not |
 | 0x001C3000 | stick vector from two analog ids |
 | 0x001B6960, 0x001B6998 | left-stick getters |
 | 0x001B9A10, 0x001B9D68 | button word +0x122 bit 6 and bit 5 (inferred: Circle released, Circle held) |

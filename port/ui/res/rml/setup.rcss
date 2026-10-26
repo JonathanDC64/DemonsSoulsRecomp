@@ -1,0 +1,1205 @@
+/* Written for Demon's Souls. The setup screens (setup_page.cpp, docs/89): the whole window, as the setup design. A
+   dark backdrop; the rail on the left with the name, the steps (Your game, Build, Options, Play) and the version; the
+   page on the right with a heading, a line under it, panels, buttons and the pad's buttons at the bottom; a question
+   over it all. Colours and fonts from theme.rcss. RmlUi draws no element it has no display for, and no bare text in a
+   flex row, so every tag here has one and every text sits in its own element. */
+body.setup-page {
+    --setup-muted: rgba(var(--color-text-rgb), 62%);
+    --setup-faint: rgba(var(--color-text-rgb), 38%);
+    --setup-line: rgba(var(--color-border-rgb), 14%);
+    --setup-line-soft: rgba(var(--color-border-rgb), 35%);
+    --setup-err-text: #D4574F;
+
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    font-family: var(--font-family-body);
+    font-weight: normal;
+    font-style: normal;
+    font-size: var(--font-size-md);
+    line-height: 1.4;
+    color: var(--color-text);
+    background-color: #050506;
+}
+
+/* The backdrop: near black, lighter to the right, a faint glow and darker edges. */
+setup-backdrop,
+setup-vignette,
+setup-glow {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+setup-backdrop {
+    decorator: linear-gradient(to right, #030303 0%, #070708 45%, #121417 100%);
+}
+
+setup-vignette {
+    decorator: radial-gradient(farthest-corner at 50% 45%, rgba(0, 0, 0, 0%) 40%, rgba(0, 0, 0, 80%) 100%);
+}
+
+setup-glow {
+    decorator: radial-gradient(farthest-corner at 72% 40%, rgba(70, 78, 86, 35%) 0%, rgba(0, 0, 0, 0%) 55%);
+}
+
+/* The rail and the page. They fade in when the page opens and out when it closes. */
+setup-shell {
+    display: flex;
+    flex-direction: row;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    filter: opacity(0);
+    transition: filter 0.2s linear-in-out;
+}
+
+setup-shell[open] {
+    filter: opacity(1);
+}
+
+setup-rail {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 220dp;
+    width: 220dp;
+    box-sizing: border-box;
+    padding: var(--space-xl) var(--space-lg);
+    gap: var(--space-xl);
+    border-right: 1dp var(--setup-line);
+    background-color: rgba(0, 0, 0, 35%);
+}
+
+setup-brand {
+    display: block;
+}
+
+setup-brand-name {
+    display: block;
+    font-family: var(--font-family-display);
+    font-size: var(--font-size-4xl);
+    letter-spacing: 2dp;
+    line-height: 1.1;
+    text-transform: uppercase;
+    color: var(--color-accent);
+}
+
+setup-brand-rule {
+    display: block;
+    height: 1dp;
+    width: 100%;
+    margin-top: var(--space-md);
+    decorator: linear-gradient(to right, rgb(var(--color-border-rgb)), rgba(var(--color-border-rgb), 0%));
+}
+
+setup-rail-steps {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+}
+
+setup-rail-step {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: 5dp var(--space-sm);
+    border-left: 2dp rgba(0, 0, 0, 0%);
+    font-size: var(--font-size-base);
+    color: var(--setup-faint);
+}
+
+setup-rail-mark {
+    display: block;
+    flex: 0 0 auto;
+    width: 16dp;
+    height: 16dp;
+    border: 1dp var(--setup-faint);
+    border-radius: 9dp;
+    font-size: 10dp;
+    line-height: 16dp;
+    text-align: center;
+}
+
+setup-rail-mark icon {
+    display: block;
+    width: 16dp;
+    height: 16dp;
+    font-size: 12dp;
+}
+
+setup-rail-text,
+setup-rail-name,
+setup-rail-sub {
+    display: block;
+}
+
+setup-rail-sub {
+    font-size: var(--font-size-2xs);
+    color: var(--setup-faint);
+}
+
+setup-rail-step.done {
+    color: var(--setup-muted);
+}
+
+setup-rail-step.done setup-rail-mark {
+    border-color: var(--color-success);
+    color: var(--color-success);
+}
+
+setup-rail-step.busy setup-rail-mark {
+    border-color: rgba(var(--color-accent-rgb), 60%);
+    color: var(--color-accent);
+}
+
+setup-rail-step.now {
+    color: var(--color-accent);
+    border-left-color: rgb(var(--color-interactive-rgb));
+    decorator: linear-gradient(to right, rgba(var(--color-interactive-rgb), 12%), rgba(var(--color-interactive-rgb), 0%));
+}
+
+setup-rail-step.now setup-rail-mark {
+    border-color: var(--color-accent);
+}
+
+setup-rail-space {
+    display: block;
+    flex: 1 1 auto;
+}
+
+setup-rail-foot {
+    display: block;
+    font-size: var(--font-size-2xs);
+    color: var(--setup-faint);
+    word-break: break-all;
+}
+
+setup-main {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: var(--space-xl) var(--space-xl) var(--space-md) var(--space-xl);
+}
+
+/* The parts are as tall as they are, and shrink (and scroll) only when the page is short of room. The buttons
+   under them never scroll: on a short page they follow the parts, on a long one they sit above the pad's buttons.
+   A button's frame is a box shadow, drawn just outside it, and the scrolling clips at the padding's edge: the 6 dp
+   of padding on the left (taken back by the margin, so nothing moves) keep a button at the left edge whole. */
+setup-content {
+    display: block;
+    flex: 0 1 auto;
+    min-height: 0;
+    margin-left: -6dp;
+    padding-left: 6dp;
+    padding-right: var(--space-lg);
+    overflow: hidden auto;
+}
+
+setup-footer {
+    display: flex;
+    flex-flow: row wrap;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--space-md);
+    max-width: 960dp;
+    margin-top: var(--space-md);
+    padding-right: var(--space-lg);
+}
+
+setup-footer.first {
+    margin-top: 0;
+}
+
+/* The parts scroll behind the buttons: a line between them */
+setup-footer.edge {
+    margin-top: 0;
+    padding-top: var(--space-md);
+    border-top: 1dp var(--setup-line);
+}
+
+setup-footer setup-actions {
+    margin-top: 0;
+}
+
+setup-footer #actions-end {
+    margin-left: auto;
+}
+
+setup-main-space {
+    display: block;
+    flex: 1 1 auto;
+}
+
+/* The page's parts */
+setup-body {
+    display: block;
+}
+
+setup-title {
+    display: block;
+    margin-bottom: var(--space-xs);
+    font-family: var(--font-family-display);
+    font-size: 26dp;
+    letter-spacing: 1.5dp;
+    line-height: 1.15;
+    color: var(--color-accent);
+}
+
+setup-lede {
+    display: block;
+    max-width: 760dp;
+    margin-bottom: var(--space-lg);
+    font-size: var(--font-size-md);
+    color: var(--setup-muted);
+}
+
+setup-heading {
+    display: block;
+    margin: var(--space-lg) 0 var(--space-sm);
+    font-family: var(--font-family-display);
+    font-size: var(--font-size-sm);
+    letter-spacing: 2.5dp;
+    text-transform: uppercase;
+    color: var(--setup-muted);
+}
+
+setup-text {
+    display: block;
+    max-width: 680dp;
+    margin-bottom: var(--space-md);
+}
+
+setup-note {
+    display: block;
+    font-size: var(--font-size-sm);
+    color: var(--setup-muted);
+}
+
+setup-note.after {
+    margin-top: 18dp;
+}
+
+setup-panel {
+    display: block;
+    max-width: 960dp;
+    padding: var(--space-sm) var(--space-lg);
+    border: 1dp var(--setup-line-soft);
+    border-radius: var(--radius-panel);
+    background-color: rgba(var(--color-surface-rgb), 92%);
+}
+
+setup-panel.stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+setup-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+}
+
+/* A found row: a mark, what it is and its value, and a tag or a link on the right. */
+setup-found {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: var(--space-md);
+    padding: var(--space-sm) 0;
+    border-bottom: 1dp var(--setup-line);
+}
+
+setup-found:last-child {
+    border-bottom-width: 0;
+}
+
+setup-found > icon {
+    flex: 0 0 auto;
+    width: 18dp;
+    height: 18dp;
+    margin-top: 3dp;
+    font-size: 18dp;
+}
+
+setup-found-text,
+setup-found-key,
+setup-found-value {
+    display: block;
+}
+
+setup-found-text {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+setup-found-value {
+    font-size: var(--font-size-sm);
+    color: var(--setup-muted);
+    word-break: break-all;
+}
+
+setup-tag {
+    display: block;
+    flex: 0 0 auto;
+    padding: 2dp var(--space-sm);
+    border: 1dp;
+    border-radius: var(--radius-small);
+    font-size: var(--font-size-2xs);
+    letter-spacing: 1dp;
+    text-transform: uppercase;
+}
+
+setup-tag.ok { color: var(--color-success); border-color: var(--color-success); }
+setup-tag.info { color: var(--color-info); border-color: var(--color-info); }
+setup-tag.warn { color: var(--color-warning); border-color: var(--color-warning); }
+setup-tag.err { color: var(--setup-err-text); border-color: var(--setup-err-text); }
+setup-tag.muted { color: var(--setup-faint); border-color: var(--setup-faint); }
+
+/* A callout: a framed note with a mark, a title and a line, in the colour of what it says. */
+setup-callout {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: var(--space-md);
+    max-width: 960dp;
+    padding: var(--space-sm) var(--space-md);
+    border: 1dp;
+    border-radius: var(--radius-small);
+}
+
+setup-callout.err {
+    border-color: rgba(var(--color-error-rgb), 70%);
+    background-color: rgba(var(--color-error-rgb), 8%);
+}
+
+setup-callout.warn {
+    border-color: rgba(var(--color-warning-rgb), 50%);
+    background-color: rgba(var(--color-warning-rgb), 6%);
+}
+
+setup-callout.info {
+    border-color: rgba(var(--color-info-rgb), 40%);
+    background-color: rgba(var(--color-info-rgb), 5%);
+}
+
+setup-callout > icon {
+    flex: 0 0 auto;
+    width: 18dp;
+    height: 18dp;
+    margin-top: 3dp;
+    font-size: 18dp;
+}
+
+setup-callout-body,
+setup-callout-title,
+setup-callout-text {
+    display: block;
+}
+
+setup-callout-body {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+setup-callout-title {
+    margin-bottom: var(--space-2xs);
+}
+
+setup-callout-text {
+    font-size: var(--font-size-sm);
+    color: var(--setup-muted);
+}
+
+/* The engine's last lines. (The UI has no fixed-width font: the body font, smaller.) */
+setup-log {
+    display: block;
+    max-width: 960dp;
+    max-height: 150dp;
+    margin-top: var(--space-md);
+    padding: var(--space-md);
+    border: 1dp rgba(var(--color-border-rgb), 20%);
+    background-color: #000000;
+    font-size: var(--font-size-xs);
+    line-height: 1.4;
+    color: var(--setup-muted);
+    word-break: break-all;
+    overflow: hidden auto;
+}
+
+setup-field {
+    display: block;
+    margin-top: 10dp;
+    padding: var(--space-sm) var(--space-md);
+    border: 1dp var(--setup-line-soft);
+    background-color: rgba(0, 0, 0, 50%);
+    font-size: var(--font-size-xs);
+    word-break: break-all;
+}
+
+/* Marks */
+icon.setup-ok { decorator: text("&#xe86c;" center center); color: var(--color-success); }    /* check_circle */
+icon.setup-err { decorator: text("&#xe5c9;" center center); color: var(--setup-err-text); }  /* cancel */
+icon.setup-warn { decorator: text("&#xe002;" center center); color: var(--color-warning); }  /* warning */
+icon.setup-info { decorator: text("&#xe88e;" center center); color: var(--color-info); }     /* info */
+icon.setup-wait { decorator: text("&#xe836;" center center); color: var(--setup-faint); }    /* radio_button_unchecked */
+icon.setup-tick { decorator: text("&#xe5ca;" center center); }                               /* check */
+
+/* The spinner: the progress_activity glyph, turning. Not a ring of border: RmlUi draws borders without smoothing,
+   so a small round one comes out uneven; a glyph is smoothed. */
+setup-spin {
+    display: block;
+    width: 18dp;
+    height: 18dp;
+    font-family: var(--font-family-icons);
+    font-weight: normal;
+    font-size: 18dp;
+    line-height: 1;
+    color: var(--color-accent);
+    decorator: text("&#xe9d0;" center center);  /* progress_activity */
+    animation: 1s linear-in-out infinite setup-spin;
+}
+
+@keyframes setup-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* The build's bar and its list of tasks */
+setup-percent,
+setup-eta {
+    display: block;
+}
+
+setup-eta {
+    font-size: var(--font-size-sm);
+    color: var(--setup-muted);
+}
+
+progress.setup-meter {
+    height: 8dp;
+    border-radius: 1dp;
+    background-color: rgba(var(--color-border-rgb), 18%);
+}
+
+progress.setup-meter fill {
+    border-radius: 1dp;
+    background-color: rgba(0, 0, 0, 0%);
+    decorator: linear-gradient(to right, rgba(var(--color-interactive-rgb), 55%), rgb(var(--color-accent-rgb)));
+}
+
+progress.setup-meter.fail fill {
+    decorator: none;
+    background-color: var(--color-error);
+}
+
+setup-tasks {
+    display: flex;
+    flex-direction: column;
+}
+
+setup-task {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-md);
+    padding: 5dp 0;
+    border-bottom: 1dp rgba(var(--color-border-rgb), 12%);
+    color: var(--setup-faint);
+}
+
+setup-task:last-child {
+    border-bottom-width: 0;
+}
+
+setup-task.run { color: var(--color-accent); }
+setup-task.done { color: var(--setup-muted); }
+setup-task.fail { color: var(--setup-err-text); }
+
+setup-task-mark {
+    display: block;
+    flex: 0 0 22dp;
+    width: 22dp;
+}
+
+setup-task-mark icon {
+    display: block;
+    width: 18dp;
+    height: 18dp;
+    font-size: 18dp;
+}
+
+setup-task-text,
+setup-task-name,
+setup-task-sub,
+setup-task-num {
+    display: block;
+}
+
+setup-task-text {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: baseline;
+    gap: 0 var(--space-md);
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+setup-task-sub {
+    font-size: var(--font-size-xs);
+    color: var(--setup-faint);
+}
+
+setup-task-num {
+    flex: 0 0 auto;
+    font-size: var(--font-size-sm);
+    color: var(--setup-muted);
+}
+
+/* Buttons: in Cinzel capitals, framed in silver. Primary is the one thing to do, Danger what cannot be undone,
+   Quiet a way out. The pad's focus lights a button as the mouse does. */
+setup-actions {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: center;
+    gap: var(--space-md);
+    margin-top: var(--space-md);
+}
+
+setup-actions.first {
+    margin-top: 0;
+}
+
+setup-actions setup-note {
+    flex: 1 1 200dp;
+}
+
+button.setup-btn {
+    display: block;
+    padding: 7dp 18dp;
+    border-radius: var(--radius-small);
+    font-family: var(--font-family-display);
+    font-size: var(--font-size-base);
+    letter-spacing: 1.5dp;
+    text-transform: uppercase;
+    color: var(--color-text);
+    background-color: rgba(var(--color-control-rgb), 60%);
+    box-shadow: rgb(var(--color-border-rgb)) 0 0 0 1dp;
+    opacity: 1;
+    transition: background-color 0.12s linear-in-out;
+}
+
+button.setup-btn:not(:disabled):hover,
+button.setup-btn:not(:disabled):focus-visible {
+    color: #FFFFFF;
+    background-color: rgba(var(--color-interactive-rgb), 12%);
+    box-shadow: rgb(var(--color-interactive-rgb)) 0 0 0 1dp, rgba(var(--color-interactive-rgb), 30%) 0 0 12dp 0;
+}
+
+button.setup-btn.primary {
+    color: var(--color-accent);
+    background-color: rgba(var(--color-interactive-rgb), 10%);
+    box-shadow: rgb(var(--color-accent-rgb)) 0 0 0 1dp, rgba(var(--color-interactive-rgb), 8%) 0 0 18dp 0;
+}
+
+button.setup-btn.primary:not(:disabled):hover,
+button.setup-btn.primary:not(:disabled):focus-visible {
+    color: #FFFFFF;
+    background-color: rgba(var(--color-interactive-rgb), 20%);
+    box-shadow: rgb(var(--color-accent-rgb)) 0 0 0 1dp, rgba(var(--color-interactive-rgb), 35%) 0 0 16dp 0;
+}
+
+button.setup-btn.danger {
+    color: var(--setup-err-text);
+    box-shadow: var(--color-danger-border) 0 0 0 1dp;
+}
+
+button.setup-btn.danger:not(:disabled):hover,
+button.setup-btn.danger:not(:disabled):focus-visible {
+    color: #E8837C;
+    background-color: rgba(var(--color-error-rgb), 18%);
+    box-shadow: rgb(var(--color-error-rgb)) 0 0 0 1dp, rgba(var(--color-error-rgb), 35%) 0 0 12dp 0;
+}
+
+button.setup-btn.quiet {
+    padding: 7dp var(--space-sm);
+    color: var(--setup-muted);
+    background-color: rgba(0, 0, 0, 0%);
+    box-shadow: none;
+}
+
+button.setup-btn.quiet:not(:disabled):hover,
+button.setup-btn.quiet:not(:disabled):focus-visible {
+    color: var(--color-accent);
+    background-color: rgba(var(--color-interactive-rgb), 6%);
+    box-shadow: rgba(var(--color-interactive-rgb), 45%) 0 0 0 1dp;
+}
+
+button.setup-btn:disabled {
+    opacity: 0.45;
+}
+
+/* The pad's buttons, small, at the bottom of the page */
+setup-hints {
+    display: flex;
+    flex-flow: row wrap;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--space-xs) var(--space-lg);
+    padding-top: var(--space-sm);
+    font-size: var(--font-size-xs);
+    color: var(--setup-faint);
+}
+
+setup-hint {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+setup-hint icon {
+    width: 1.3em;
+    height: 1.3em;
+    font-size: 1.3em;
+}
+
+setup-hint-label,
+setup-hint-action {
+    display: block;
+}
+
+setup-hint-label {
+    padding: 0 var(--space-xs);
+    border: 1dp var(--setup-line-soft);
+    border-radius: 3dp;
+}
+
+/* A question over the page (Stop the build?), with the page dimmed behind it */
+setup-layer {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 72%);
+}
+
+setup-layer[open] {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+setup-question {
+    display: block;
+    width: 560dp;
+    max-width: 90%;
+    box-sizing: border-box;
+    padding: var(--space-xl);
+    border: 1dp var(--color-border);
+    border-radius: var(--radius-panel);
+    background-color: rgb(var(--color-surface-rgb));
+    box-shadow: rgba(0, 0, 0, 70%) 0 10dp 40dp 0;
+}
+
+setup-question-title {
+    display: block;
+    margin-bottom: var(--space-md);
+    font-family: var(--font-family-display);
+    font-size: var(--font-size-2xl);
+    letter-spacing: 1dp;
+    color: var(--color-accent);
+}
+
+setup-question-text {
+    display: block;
+    font-size: var(--font-size-sm);
+    color: var(--setup-muted);
+}
+
+@media (max-width: 900dp) {
+    setup-rail {
+        flex: 0 0 190dp;
+        width: 190dp;
+        padding: var(--space-lg) var(--space-md);
+    }
+
+    setup-main {
+        padding: var(--space-lg) var(--space-md) var(--space-sm) var(--space-lg);
+    }
+
+    setup-title {
+        font-size: var(--font-size-4xl);
+    }
+}
+
+/* The screens before a run (setup_screens.cpp) */
+setup-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    max-width: 960dp;
+}
+
+setup-actions.near {
+    margin-top: var(--space-sm);
+}
+
+setup-callout-body setup-actions {
+    margin-top: var(--space-sm);
+}
+
+setup-row.start {
+    justify-content: flex-start;
+}
+
+setup-text.note {
+    font-size: var(--font-size-sm);
+    color: var(--setup-muted);
+}
+
+setup-row-end {
+    display: block;
+    flex: 0 0 auto;
+}
+
+icon.setup-folder { decorator: text("&#xe2c7;" center center); color: var(--color-info); }  /* folder */
+icon.setup-unlocked { decorator: text("&#xe898;" center center); color: var(--color-success); }  /* lock_open */
+
+/* The folder chosen */
+setup-field.folder {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-sm);
+    max-width: 960dp;
+    margin-top: 0;
+}
+
+setup-field.folder.second {
+    margin-top: var(--space-xs);
+}
+
+setup-field.folder icon {
+    flex: 0 0 auto;
+    width: 18dp;
+    height: 18dp;
+    font-size: 18dp;
+}
+
+setup-field-text {
+    display: block;
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: var(--font-size-sm);
+    word-break: break-all;
+}
+
+setup-field-text.none {
+    color: var(--setup-muted);
+}
+
+/* The ways to the game's files: a card each */
+setup-choices {
+    display: flex;
+    flex-flow: row wrap;
+    gap: var(--space-md);
+    max-width: 960dp;
+}
+
+button.setup-choice {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    flex: 1 1 230dp;
+    padding: var(--space-md) var(--space-md) var(--space-md) var(--space-lg);
+    border-left: 2dp rgba(0, 0, 0, 0%);
+    border-radius: var(--radius-small);
+    font-size: var(--font-size-base);
+    text-align: left;
+    color: var(--color-text);
+    background-color: rgba(0, 0, 0, 45%);
+    box-shadow: var(--setup-line-soft) 0 0 0 1dp;
+    opacity: 1;
+}
+
+button.setup-choice:not(:disabled):hover,
+button.setup-choice:not(:disabled):focus-visible {
+    border-left-color: rgb(var(--color-interactive-rgb));
+    background-color: rgba(0, 0, 0, 0%);
+    box-shadow: rgb(var(--color-border-rgb)) 0 0 0 1dp;
+    decorator: linear-gradient(to right, rgba(var(--color-interactive-rgb), 12%), rgba(var(--color-interactive-rgb), 3%));
+}
+
+setup-choice-title,
+setup-choice-text {
+    display: block;
+}
+
+setup-choice-title {
+    font-family: var(--font-family-display);
+    font-size: var(--font-size-lg);
+    letter-spacing: 1dp;
+    color: var(--color-accent);
+}
+
+setup-choice-text {
+    font-size: var(--font-size-sm);
+    color: var(--setup-muted);
+    word-break: break-word;  /* (a long folder breaks where it must, not out of the card) */
+}
+
+/* The dumps found in the usual places: a row each */
+setup-places {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    max-width: 960dp;
+    margin-bottom: var(--space-sm);
+}
+
+/* (A folder: in the body's font as it is written, not in the buttons' capitals.) */
+button.setup-place {
+    display: block;
+    padding: var(--space-sm) var(--space-md);
+    font-family: var(--font-family-body);
+    letter-spacing: 0;
+    text-transform: none;
+    border-left: 2dp rgba(0, 0, 0, 0%);
+    border-radius: var(--radius-small);
+    font-size: var(--font-size-sm);
+    text-align: left;
+    color: var(--color-text);
+    background-color: rgba(0, 0, 0, 45%);
+    box-shadow: var(--setup-line-soft) 0 0 0 1dp;
+    opacity: 1;
+    word-break: break-all;
+}
+
+button.setup-place:not(:disabled):hover,
+button.setup-place:not(:disabled):focus-visible {
+    background-color: rgba(var(--color-interactive-rgb), 6%);
+    box-shadow: rgb(var(--color-border-rgb)) 0 0 0 1dp;
+}
+
+button.setup-place:selected {
+    border-left-color: rgb(var(--color-interactive-rgb));
+    color: var(--color-accent);
+}
+
+/* What to bring across from RPCS3: a box, what it is and its line; the whole row is the button
+   (setup_rpcs3_window.cpp). */
+button.setup-check {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: var(--space-md);
+    padding: var(--space-sm) var(--space-sm);
+    border-bottom: 1dp var(--setup-line);
+    border-radius: var(--radius-small);
+    font-size: var(--font-size-base);
+    text-align: left;
+    color: var(--color-text);
+    background-color: rgba(0, 0, 0, 0%);
+    box-shadow: rgba(0, 0, 0, 0%) 0 0 0 0dp;
+    opacity: 1;
+}
+
+button.setup-check:last-child {
+    border-bottom-width: 0;
+}
+
+button.setup-check:not(:disabled):hover,
+button.setup-check:not(:disabled):focus-visible {
+    background-color: rgba(var(--color-interactive-rgb), 6%);
+    box-shadow: rgb(var(--color-border-rgb)) 0 0 0 1dp;
+}
+
+button.setup-check:disabled {
+    opacity: 0.6;
+}
+
+button.setup-check > icon {
+    flex: 0 0 auto;
+    width: 18dp;
+    height: 18dp;
+    margin-top: 3dp;
+    font-size: 18dp;
+}
+
+icon.setup-box { decorator: text("&#xe835;" center center); color: var(--setup-muted); }           /* check_box_outline_blank */
+icon.setup-box.on { decorator: text("&#xe834;" center center); color: rgb(var(--color-interactive-rgb)); }  /* check_box */
+
+/* How to: numbered steps under a callout's line */
+setup-guide {
+    display: block;
+    margin-top: var(--space-sm);
+    padding: var(--space-2xs) var(--space-md);
+    border-left: 2dp var(--setup-line-soft);
+}
+
+setup-guide-item {
+    display: block;
+    margin-bottom: var(--space-xs);
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
+}
+
+/* ---- The options pages (setup_options_window.cpp) ---- */
+
+/* The presets: picking a card selects it and the page stays, so the soul-white bar marks the picked card and the
+   pad's focus lights only its frame. */
+setup-choices.pick button.setup-choice:not(:disabled):hover,
+setup-choices.pick button.setup-choice:not(:disabled):focus-visible {
+    border-left-color: rgba(0, 0, 0, 0%);
+    background-color: rgba(var(--color-interactive-rgb), 6%);
+    box-shadow: rgb(var(--color-interactive-rgb)) 0 0 0 1dp;
+    decorator: none;
+}
+
+setup-choices.pick button.setup-choice:not(:disabled):selected {
+    border-left-color: rgb(var(--color-interactive-rgb));
+    background-color: rgba(0, 0, 0, 0%);
+    box-shadow: rgb(var(--color-border-rgb)) 0 0 0 1dp;
+    decorator: linear-gradient(to right, rgba(var(--color-interactive-rgb), 12%), rgba(var(--color-interactive-rgb), 3%));
+}
+
+setup-choices.pick button.setup-choice:not(:disabled):selected:hover,
+setup-choices.pick button.setup-choice:not(:disabled):selected:focus-visible {
+    border-left-color: rgb(var(--color-interactive-rgb));
+    box-shadow: rgb(var(--color-interactive-rgb)) 0 0 0 1dp;
+    decorator: linear-gradient(to right, rgba(var(--color-interactive-rgb), 16%), rgba(var(--color-interactive-rgb), 5%));
+}
+
+/* A card's list: a dot and a line each. */
+setup-choice-list {
+    display: flex;
+    flex-direction: column;
+    align-self: stretch;  /* (the card's width: shrunk to fit, its lines broke after every word) */
+    gap: var(--space-2xs);
+    margin-top: var(--space-xs);
+}
+
+setup-choice-item {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    font-size: var(--font-size-sm);
+    color: var(--setup-muted);
+}
+
+setup-dot {
+    display: block;
+    flex: 0 0 auto;
+    width: 4dp;
+    height: 4dp;
+    margin-top: 9dp;
+    border-radius: 2dp;
+    background-color: var(--setup-muted);
+}
+
+setup-choice-item-text {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* What changes: a row a setting, rules between them, no lines down. */
+setup-cmp {
+    display: block;
+    max-width: 960dp;
+    font-size: var(--font-size-sm);
+}
+
+setup-cmp-row {
+    display: flex;
+    flex-direction: row;
+    border-bottom: 1dp var(--setup-line);
+}
+
+setup-cmp-cell {
+    display: block;
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 3dp 10dp;
+    color: var(--color-text);
+}
+
+setup-cmp-cell.name {
+    color: var(--setup-muted);
+}
+
+setup-cmp-cell.on {
+    color: var(--color-accent);
+}
+
+setup-cmp-row.head setup-cmp-cell {
+    font-family: var(--font-family-display);
+    font-size: var(--font-size-2xs);
+    letter-spacing: 1.5dp;
+    text-transform: uppercase;
+    color: var(--setup-muted);
+}
+
+/* A few choices: an option a block (its name, its choices, a line about it), three to a row. */
+setup-opts {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: flex-start;
+    gap: var(--space-md);
+    max-width: 960dp;
+}
+
+setup-opt {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    flex: 1 1 260dp;
+    min-width: 0;
+}
+
+setup-opt-label {
+    display: block;
+    font-family: var(--font-family-display);
+    font-size: var(--font-size-xs);
+    letter-spacing: 2dp;
+    text-transform: uppercase;
+    color: var(--setup-muted);
+}
+
+setup-opt-label.sub {
+    margin-top: var(--space-sm);
+}
+
+setup-opt-hint {
+    display: block;
+    font-size: var(--font-size-xs);
+    color: var(--setup-faint);
+}
+
+/* The choices of an option, side by side in one frame. */
+setup-seg {
+    display: flex;
+    flex-flow: row wrap;
+    max-width: 100%;
+    border: 1dp var(--setup-line-soft);
+}
+
+button.setup-seg-btn {
+    display: block;
+    padding: 7dp 14dp;
+    border-right: 1dp var(--setup-line-soft);
+    border-radius: 0;
+    font-size: var(--font-size-base);
+    text-align: center;
+    color: var(--setup-muted);
+    background-color: rgba(0, 0, 0, 0%);
+    box-shadow: none;
+    opacity: 1;
+    transition: none;
+}
+
+button.setup-seg-btn:last-child {
+    border-right-width: 0;
+}
+
+button.setup-seg-btn:not(:disabled):hover,
+button.setup-seg-btn:not(:disabled):focus-visible {
+    color: var(--color-text);
+    background-color: rgba(var(--color-interactive-rgb), 6%);
+}
+
+button.setup-seg-btn:not(:disabled):selected,
+button.setup-seg-btn:not(:disabled):selected:hover {
+    color: var(--color-accent);
+    background-color: rgba(var(--color-interactive-rgb), 20%);
+}
+
+button.setup-seg-btn:not(:disabled):focus-visible,
+button.setup-seg-btn:not(:disabled):selected:focus-visible {
+    box-shadow: rgb(var(--color-interactive-rgb)) 0 0 0 1dp inset;
+}
+
+/* The online name under Online play: the name in a field, and Change name. */
+setup-opt-more {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+}
+
+setup-name-button {
+    display: block;
+}
+
+setup-name {
+    display: flex;
+    flex-flow: row wrap;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+setup-name-text {
+    display: block;
+    min-width: 140dp;
+    padding: 7dp 12dp;
+    border: 1dp var(--setup-line-soft);
+    background-color: rgba(0, 0, 0, 50%);
+    color: var(--color-text);
+}
+
+button.setup-btn.small {
+    padding: 5dp 12dp;
+    font-size: var(--font-size-sm);
+}
+
+/* The update's release notes (update_window.cpp): headings, list items and lines, from the release's Markdown. */
+setup-panel.update-notes {
+    gap: var(--space-2xs);
+}
+
+update-note-head,
+update-note-item,
+update-note-text {
+    display: block;
+}
+
+update-note-head {
+    margin-top: var(--space-md);
+    font-size: var(--font-size-sm);
+    letter-spacing: 1dp;
+    text-transform: uppercase;
+    color: var(--setup-muted);
+}
+
+update-note-head:first-child {
+    margin-top: 0;
+}
+
+update-note-item {
+    padding-left: var(--space-md);
+}
+
+update-note-item.sub {
+    padding-left: 32dp;
+}
+
+update-note-text {
+    color: var(--setup-muted);
+}

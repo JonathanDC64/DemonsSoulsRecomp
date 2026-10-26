@@ -17,7 +17,7 @@
  * thread stacks (0xD0000000+). Metadata is host-side (no in-band headers), so
  * the game can never corrupt it and there's no header/alignment interference.
  */
-#include "ppu_recomp.h"      /* ppu_context */
+#include "ps3emu/ppu_lift.h"   /* ppu_context */
 #include <cstdint>
 #include <cstdio>
 #include <cstring>

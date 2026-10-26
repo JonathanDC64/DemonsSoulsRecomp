@@ -1,0 +1,316 @@
+# Makes setup's compiler download (docs/86, docs/87) from LLVM's own Windows or Linux archive and attaches it to a
+# draft release. Started by hand only: Actions > LLVM archive > Run workflow. It never publishes anything. The
+# release must already exist as a draft, and it stays a draft until the maintainer publishes it.
+#
+# On the runner (Windows for target windows, the ubuntu-22.04 floor for linux), the job:
+#   1. downloads LLVM's archive and checks it three ways: its size and SHA-256 (written below), LLVM's build
+#      attestation (gh attestation verify) and the release manager's GPG signature (pinned key fingerprint);
+#   2. keeps the compiler, the linker and clang's headers, adds the licence files, and packs them:
+#      windows: bin/clang.exe and bin/lld-link.exe in a zip (llvm-win64);
+#      linux: bin/clang and bin/ld.lld in a tar.xz, which keeps the execute bit (llvm-linux-x64);
+#   3. unpacks the download with setup's own fetch.py, then compiles and links a tiny freestanding library with
+#      only those files (no SDK, no other compiler, no C library) and calls it;
+#   4. uploads the download and its JSON (size, SHA-256 and the toolchain.json entry) to the draft release.
+# The job summary shows the size, the SHA-256 and the toolchain.json entry.
+#
+# The packing and the smoke test are .github/scripts/llvm_pack.py. Actions are pinned by commit SHA (docs/54).
+name: LLVM archive
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which download: windows (llvm-win64, a zip) or linux (llvm-linux-x64, a tar.xz)'
+        required: true
+        default: windows
+        type: choice
+        options: [windows, linux]
+      release_tag:
+        description: 'The draft release to attach to, by its tag name'
+        required: true
+        type: string
+      package_revision:
+        description: 'Our package revision for this LLVM version: the 1 in 22.1.8-1'
+        required: true
+        default: '1'
+        type: string
+      compression:
+        description: 'Windows zip compression: lzma (smaller, the default) or deflate (opens anywhere); setup''s Python reads both. Linux is always xz.'
+        required: true
+        default: lzma
+        type: choice
+        options: [lzma, deflate]
+      upload:
+        description: 'Upload to the draft release (off: build, check and report only)'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: llvm-archive-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+env:
+  LLVM_VERSION: 22.1.8
+  # From the GitHub API's asset list for llvmorg-22.1.8 (its "digest" field). The attestation's subject has the
+  # same SHA-256. Windows read 2026-10-22, Linux 2026-10-24.
+  WINDOWS_ARCHIVE: clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz
+  WINDOWS_URL: https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/clang%2Bllvm-22.1.8-x86_64-pc-windows-msvc.tar.xz
+  WINDOWS_SIZE: '862053924'
+  WINDOWS_SHA256: d96c2cc1736f4eb7fa43cb9bbdf56d93551a9ae0a9aadb9c99c3c3b2b712a234
+  LINUX_ARCHIVE: LLVM-22.1.8-Linux-X64.tar.xz
+  LINUX_URL: https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-X64.tar.xz
+  LINUX_SIZE: '1938859476'
+  LINUX_SHA256: df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384
+  # The attestation bundle (Sigstore, SLSA provenance v1) and the GPG signature beside each, pinned too.
+  WINDOWS_BUNDLE_SIZE: '11207'
+  WINDOWS_BUNDLE_SHA256: cf5e958a316021d1c1f66b9a9ac10367aa471adee01b3d6a3f8f27af0400d4be
+  WINDOWS_SIG_SIZE: '119'
+  WINDOWS_SIG_SHA256: 1fdf8cb3e730d7e2769b0301a24f059d6845e1023732e231092f7d00d502fc09
+  LINUX_BUNDLE_SIZE: '11109'
+  LINUX_BUNDLE_SHA256: 715503628897858c7740563f83930dab29494b4946e0213dce9191cad6401aed
+  LINUX_SIG_SIZE: '119'
+  LINUX_SIG_SHA256: 957277dbcae172168934e1398b7d8af561d6b86dfb38e9f96853c53483804826
+  # Who must have made it: LLVM's release workflow at the release tag ...
+  LLVM_SIGNER_WORKFLOW: llvm/llvm-project/.github/workflows/release-binaries.yml
+  LLVM_SOURCE_REF: refs/tags/llvmorg-22.1.8
+  # ... and the release manager key that signed it (ed25519; listed in LLVM's release-keys.asc).
+  LLVM_KEYS_URL: https://releases.llvm.org/release-keys.asc
+  LLVM_GPG_FPR: FFB3368980F3E6BB5737145A316C56D064CACBA5
+  # The licence files, from LLVM's source at the tag, and libxml2's notice (Windows only: lld-link.exe links
+  # libxml2 2.9.12 statically in LLVM's Windows build). Sums measured 2026-10-22.
+  LICENSE_LLVM_URL: https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-22.1.8/llvm/LICENSE.TXT
+  LICENSE_LLVM_SHA256: 8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee
+  LICENSE_CLANG_URL: https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-22.1.8/clang/LICENSE.TXT
+  LICENSE_CLANG_SHA256: ebcd9bbf783a73d05c53ba4d586b8d5813dcdf3bbec50265860ccc885e606f47
+  LICENSE_LLD_URL: https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-22.1.8/lld/LICENSE.TXT
+  LICENSE_LLD_SHA256: f7891568956e34643eb6a0db1462db30820d40d7266e2a78063f2fe233ece5a0
+  LICENSE_LIBXML2_URL: https://gitlab.gnome.org/GNOME/libxml2/-/raw/v2.9.12/Copyright
+  LICENSE_LIBXML2_SHA256: c5c63674f8a83c4d2e385d96d1c670a03cb871ba2927755467017317878574bd
+  # Linux only: LLVM's Linux build links zstd 1.4.8 into clang and lld (LLVM_USE_STATIC_ZSTD in its release
+  # cache; the version string inside them is 1.4.8). zstd's BSD licence at its v1.4.8 commit, measured 2026-10-25.
+  LICENSE_ZSTD_URL: https://raw.githubusercontent.com/facebook/zstd/97a3da1df009d4dc67251de0c4b1c9d7fe286fc1/LICENSE
+  LICENSE_ZSTD_SHA256: 2c1a7fa704df8f3a606f6fc010b8b5aaebf403f3aeec339a12048f1ba7331a0b
+  # Linux: LLVM's lld needs libxml2.so.2, which the download carries (the libxml2 step). GNOME's source tarball,
+  # size and SHA-256 from its .sha256sum file, read 2026-10-25.
+  LIBXML2_VERSION: 2.9.14
+  LIBXML2_URL: https://download.gnome.org/sources/libxml2/2.9/libxml2-2.9.14.tar.xz
+  LIBXML2_SIZE: '3129968'
+  LIBXML2_SHA256: 60d74a257d1ccec0475e749cba2f21559e48139efba6ff28224357c7c798dfee
+  # The entries' date: LLVM 22.1.8's release day, so the same archive always gives the same download.
+  PKG_DATE: '2026-06-16'
+
+jobs:
+  pack:
+    name: Pack and test the compiler download (${{ inputs.target }})
+    # Windows, because the smoke test runs clang.exe and lld-link.exe; Linux on ubuntu-22.04, the oldest glibc the
+    # Linux build supports (docs/87), so the smoke test shows the tools run there. Fixed images, so an image update
+    # does not change the run.
+    runs-on: ${{ inputs.target == 'linux' && 'ubuntu-22.04' || 'windows-2025' }}
+    timeout-minutes: 60
+    permissions:
+      contents: write   # to upload to the draft release
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The same Python as setup's embeddable one on Windows, so the zip writer and its zlib are the same.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13.9'
+
+      - name: Inputs
+        env:
+          TARGET: ${{ inputs.target }}
+          TAG: ${{ inputs.release_tag }}
+          REV: ${{ inputs.package_revision }}
+          METHOD: ${{ inputs.compression }}
+        run: |
+          [[ "$TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || { echo "::error::release_tag '$TAG' is not a plain tag name"; exit 1; }
+          [[ "$REV" =~ ^[1-9][0-9]*$ ]] || { echo "::error::package_revision '$REV' must be a whole number from 1"; exit 1; }
+          case "$TARGET" in
+            windows) p=WINDOWS; name=llvm-win64; ext=zip ;;
+            linux) p=LINUX; name=llvm-linux-x64; ext=tar.xz ;;
+            *) echo "::error::target '$TARGET' is neither windows nor linux"; exit 1 ;;
+          esac
+          version="$LLVM_VERSION-$REV"
+          asset="$name-$version.$ext"
+          {
+            for v in ARCHIVE URL SIZE SHA256 BUNDLE_SIZE BUNDLE_SHA256 SIG_SIZE SIG_SHA256; do
+              n="${p}_$v"
+              echo "LLVM_$v=${!n}"
+            done
+            echo "TARGET=$TARGET"
+            echo "TAG=$TAG"
+            echo "METHOD=$METHOD"
+            echo "PKG_NAME=$name"
+            echo "PKG_VERSION=$version"
+            echo "ASSET=$asset"
+            echo "ASSET_JSON=$name-$version.json"
+            echo "ASSET_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$asset"
+          } >> "$GITHUB_ENV"
+
+      # Checked before the long part, so a wrong tag fails in seconds. Never touches a published release.
+      - name: The release is a draft without this asset
+        if: inputs.upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # gh's own --jq, so the step needs no jq on the runner. $TAG passed the check in Inputs.
+          draft=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+                    --jq ".[] | select(.tag_name == \"$TAG\") | .draft")
+          if [ -z "$draft" ]; then
+            echo "::error::There is no release for $TAG. Make the draft first: gh release create $TAG --draft --title \"...\" --notes \"...\""
+            exit 1
+          fi
+          if [ "$draft" != "true" ]; then
+            echo "::error::The release for $TAG is published (or there are two). This job only adds to one draft."
+            exit 1
+          fi
+          names=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+                    --jq ".[] | select(.tag_name == \"$TAG\") | .assets[].name")
+          for a in "$ASSET" "$ASSET_JSON"; do
+            if printf '%s\n' "$names" | grep -Fxq -- "$a"; then
+              echo "::error::The draft for $TAG already has $a. A changed package needs a new package_revision."
+              exit 1
+            fi
+          done
+
+      - name: Download LLVM's archive, its attestation and its signature
+        run: |
+          mkdir -p _llvm/src && cd _llvm/src
+          curl -fsSL --retry 5 --retry-all-errors -o "$LLVM_ARCHIVE" "$LLVM_URL"
+          curl -fsSL --retry 5 --retry-all-errors -o "$LLVM_ARCHIVE.jsonl" "$LLVM_URL.jsonl"
+          curl -fsSL --retry 5 --retry-all-errors -o "$LLVM_ARCHIVE.sig" "$LLVM_URL.sig"
+          check() {
+            got=$(stat -c %s "$1")
+            [ "$got" = "$2" ] || { echo "::error::$1 is $got bytes, expected $2"; exit 1; }
+            echo "$3  $1" | sha256sum -c - || { echo "::error::$1 does not match its pinned SHA-256"; exit 1; }
+          }
+          check "$LLVM_ARCHIVE" "$LLVM_SIZE" "$LLVM_SHA256"
+          check "$LLVM_ARCHIVE.jsonl" "$LLVM_BUNDLE_SIZE" "$LLVM_BUNDLE_SHA256"
+          check "$LLVM_ARCHIVE.sig" "$LLVM_SIG_SIZE" "$LLVM_SIG_SHA256"
+
+      # The bundle says LLVM's release workflow, at the release tag, made a file with this SHA-256. The build
+      # itself ran on LLVM's own large runners; the job that signed the attestation ran on a GitHub-hosted one.
+      - name: LLVM's build attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify "_llvm/src/$LLVM_ARCHIVE" \
+            --bundle "_llvm/src/$LLVM_ARCHIVE.jsonl" \
+            --repo llvm/llvm-project \
+            --signer-workflow "$LLVM_SIGNER_WORKFLOW" \
+            --source-ref "$LLVM_SOURCE_REF" \
+            --deny-self-hosted-runners
+
+      # The keyring file is not pinned (it grows with each release manager); the fingerprint is.
+      - name: The release manager's GPG signature
+        run: |
+          mkdir -p _llvm/gnupg
+          curl -fsSL --retry 5 --retry-all-errors -o _llvm/release-keys.asc "$LLVM_KEYS_URL"
+          gpg --batch --homedir _llvm/gnupg --import _llvm/release-keys.asc
+          gpg --batch --homedir _llvm/gnupg --status-fd 1 \
+            --verify "_llvm/src/$LLVM_ARCHIVE.sig" "_llvm/src/$LLVM_ARCHIVE" > _llvm/gpg-status.txt || true
+          cat _llvm/gpg-status.txt
+          grep -q "^\[GNUPG:\] VALIDSIG $LLVM_GPG_FPR " _llvm/gpg-status.txt \
+            || { echo "::error::The signature is not a good signature by $LLVM_GPG_FPR"; exit 1; }
+
+      - name: Licence files
+        run: |
+          get() {
+            mkdir -p "_llvm/licenses/$1"
+            curl -fsSL --retry 5 --retry-all-errors -o "_llvm/licenses/$1/$2" "$3"
+            echo "$4  _llvm/licenses/$1/$2" | sha256sum -c - || { echo "::error::$1/$2 does not match its pinned SHA-256"; exit 1; }
+          }
+          get llvm LICENSE.TXT "$LICENSE_LLVM_URL" "$LICENSE_LLVM_SHA256"
+          get clang LICENSE.TXT "$LICENSE_CLANG_URL" "$LICENSE_CLANG_SHA256"
+          get lld LICENSE.TXT "$LICENSE_LLD_URL" "$LICENSE_LLD_SHA256"
+          if [ "$TARGET" = windows ]; then
+            get libxml2 Copyright "$LICENSE_LIBXML2_URL" "$LICENSE_LIBXML2_SHA256"
+          else
+            get zstd LICENSE "$LICENSE_ZSTD_URL" "$LICENSE_ZSTD_SHA256"
+          fi
+
+      # LLVM builds its Linux lld with libxml2 (for lld-link's Windows manifests; ld.lld never calls it), linked
+      # as libxml2.so.2, a name newer distros no longer have (libxml2 2.14 is libxml2.so.16). So the download
+      # carries one in lib/, where lld's RUNPATH ($ORIGIN/../lib) finds it: GNOME's pinned source with every
+      # option off, so it needs glibc alone. Built by the runner's compiler, it is the one file of the download
+      # that is not LLVM's own bytes.
+      - name: libxml2 for ld.lld
+        if: inputs.target == 'linux'
+        run: |
+          mkdir -p _llvm/libxml2 _llvm/extra/lib _llvm/licenses/libxml2
+          cd _llvm/libxml2
+          curl -fsSL --retry 5 --retry-all-errors -o libxml2.tar.xz "$LIBXML2_URL"
+          [ "$(stat -c %s libxml2.tar.xz)" = "$LIBXML2_SIZE" ] || { echo "::error::libxml2.tar.xz has the wrong size"; exit 1; }
+          echo "$LIBXML2_SHA256  libxml2.tar.xz" | sha256sum -c - || { echo "::error::libxml2.tar.xz does not match its pinned SHA-256"; exit 1; }
+          tar xf libxml2.tar.xz
+          cd "libxml2-$LIBXML2_VERSION"
+          ./configure -q --disable-static --without-python --without-icu --without-lzma --without-zlib \
+            --without-http --without-ftp --without-modules
+          make -s -j"$(nproc)"
+          cp ".libs/libxml2.so.$LIBXML2_VERSION" ../../extra/lib/libxml2.so.2
+          strip --strip-unneeded ../../extra/lib/libxml2.so.2
+          cp Copyright ../../licenses/libxml2/Copyright
+
+      - name: Pack
+        run: |
+          extra=()
+          if [ "$TARGET" = linux ]; then
+            extra=(--extra _llvm/extra --extra-note "lib/libxml2.so.2 is libxml2 $LIBXML2_VERSION, built from $LIBXML2_URL (SHA-256 $LIBXML2_SHA256) with every option off; LLVM's lld needs it for lld-link's Windows manifests, which ld.lld never uses. MIT licence: licenses/libxml2/Copyright.")
+          fi
+          python -I .github/scripts/llvm_pack.py pack --system "$TARGET" "${extra[@]}" \
+            --archive "_llvm/src/$LLVM_ARCHIVE" --source-url "$LLVM_URL" --source-sha256 "$LLVM_SHA256" \
+            --llvm-version "$LLVM_VERSION" --name "$PKG_NAME" --version "$PKG_VERSION" \
+            --licenses _llvm/licenses --compression "$METHOD" --date "$PKG_DATE" --url "$ASSET_URL" \
+            --checked "made by $GITHUB_WORKFLOW run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID from $LLVM_ARCHIVE (size, SHA-256, attestation and GPG signature checked), $(date -u +%Y-%m-%d)" \
+            --out _llvm/dist --summary "$GITHUB_STEP_SUMMARY"
+          # LLVM's archive is not needed past this point; the Linux one is 1.9 GB.
+          rm -rf _llvm/src _llvm/dist/stage
+
+      # The download as setup will see it: unpacked by setup's own code, then used with nothing else on PATH.
+      - name: Unpack with setup's fetch.py
+        run: |
+          python -I -c "import sys; from pathlib import Path; sys.path.insert(0, 'tools/setup'); from des_setup import fetch; fetch.unpack(Path(sys.argv[1]), Path(sys.argv[2]))" \
+            "_llvm/dist/$ASSET" _llvm/unpacked
+
+      - name: Smoke test (a freestanding library from the download alone)
+        run: |
+          python -I .github/scripts/llvm_pack.py smoke --tools _llvm/unpacked --work _llvm/smoke \
+            --llvm-version "$LLVM_VERSION" --summary "$GITHUB_STEP_SUMMARY"
+
+      # docs/45 left open whether LLVM signs its Windows exes. This only reports it.
+      - name: Authenticode signatures (report only)
+        if: inputs.target == 'windows'
+        shell: pwsh
+        run: |
+          $rows = foreach ($f in 'clang.exe', 'lld-link.exe') {
+            $s = Get-AuthenticodeSignature "_llvm/unpacked/bin/$f"
+            "| $f | $($s.Status) | $(if ($s.SignerCertificate) { $s.SignerCertificate.Subject } else { 'no signer' }) |"
+          }
+          $rows | ForEach-Object { Write-Output $_ }
+          @('### Authenticode', '', '| File | Status | Signer |', '|---|---|---|') + $rows + '' |
+            Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload to the draft release
+        if: inputs.upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$TAG" "_llvm/dist/$ASSET" "_llvm/dist/$ASSET_JSON" --repo "$GITHUB_REPOSITORY"
+          # GitHub computes each asset's SHA-256 on upload: it must be ours.
+          ours=$(sha256sum "_llvm/dist/$ASSET" | cut -d' ' -f1)
+          theirs=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+                     --jq ".[] | select(.tag_name == \"$TAG\") | .assets[] | select(.name == \"$ASSET\") | .digest")
+          echo "ours: sha256:$ours, GitHub: $theirs"
+          [ "$theirs" = "sha256:$ours" ] || { echo "::error::GitHub's digest of the upload differs from ours"; exit 1; }
+          {
+            echo "Uploaded to the draft release **$TAG**: \`$ASSET\` and \`$ASSET_JSON\`."
+            echo "Its URL works for players once the release is published: $ASSET_URL"
+          } >> "$GITHUB_STEP_SUMMARY"

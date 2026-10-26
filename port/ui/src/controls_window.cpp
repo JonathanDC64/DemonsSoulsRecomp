@@ -4,17 +4,18 @@
 // that presses it). The keyboard and mouse page is its PAD_KEYS, kept as changes to the Souls-style layout
 // (settings.cpp, kKeysLayout): two rows an action, each a key, a mouse button, a wheel notch or one of those with
 // Shift, Ctrl or Alt held (a chord). Both are kept in settings.ini. The pads are polled (input.hpp), so a button is
-// caught from the polled state; keys and mouse buttons are caught with GetAsyncKeyState, and wheel notches from the
-// UI's events.
+// caught from the polled state; keys and mouse buttons are caught from the key state (keys.hpp), and wheel notches from
+// the UI's events.
 #include "controls_window.hpp"
 
 #include "input.hpp"
+#include "keys.hpp"
 #include "modal.hpp"
 #include "pane.hpp"
 #include "settings.hpp"
+#include "platform.hpp"
+#include "portable.hpp"
 #include "ui.hpp"
-
-#include <windows.h>
 
 #include <array>
 #include <cctype>
@@ -41,7 +42,7 @@ using Map = std::array<int, kCount>;
 
 int name_index(const std::string& s) {
     for (int i = 0; i < kCount; i++) {
-        if (_stricmp(s.c_str(), kNames[i]) == 0) return i;
+        if (same_name(s.c_str(), kNames[i])) return i;
     }
     return -1;
 }
@@ -237,7 +238,7 @@ std::string bindings_text(const Bindings& bindings) {
 
 int target_index(const std::string& name) {
     for (int t = 0; t < kTargetCount; t++) {
-        if (_stricmp(name.c_str(), kTargets[t].name) == 0) return t;
+        if (same_name(name.c_str(), kTargets[t].name)) return t;
     }
     return -1;
 }
@@ -337,16 +338,7 @@ Rml::String key_label(int vk) {
     case kInWheelDown: return "Wheel down";
     default: break;
     }
-    LONG lp = LONG(MapVirtualKeyA(UINT(vk), MAPVK_VK_TO_VSC)) << 16;
-    switch (vk) {
-    case VK_INSERT: case VK_DELETE: case VK_HOME: case VK_END: case VK_PRIOR: case VK_NEXT: case VK_DIVIDE:
-    case VK_NUMLOCK:
-        lp |= 1 << 24;  // extended keys
-        break;
-    default: break;
-    }
-    char name[64];
-    if (GetKeyNameTextA(lp, name, sizeof name) > 0) return name;
+    if (Rml::String name = keys::key_name(vk); !name.empty()) return name;
     char code[16];
     std::snprintf(code, sizeof code, "Key 0x%02X", vk);
     return code;
@@ -374,7 +366,7 @@ bool input_neutral() {
     if (input::pad_buttons() != 0) return false;
     if (settings::no_user_input()) return true;  // PS3_NO_USER_INPUT: a key held is the user's
     for (int vk = 1; vk < 0xFF; vk++) {
-        if (GetAsyncKeyState(vk) & 0x8000) return false;
+        if (keys::key_down(vk)) return false;
     }
     return true;
 }
@@ -436,9 +428,7 @@ void ControlsWindow::build_tab(Rml::Element* content) {
         }),
         rightPane, [](Pane& pane) {
             pane.clear();
-            pane.add_text("Puts every gamepad button back to the game's own layout, and the keys and mouse buttons "
-                          "back to the Souls layout this port starts with (WASD to move, the mouse buttons to attack, "
-                          "Space to roll).");
+            pane.add_text("Puts all buttons and keys back to the defaults.");
         });
     render_page(rightPane, mPage);
 }
@@ -455,8 +445,7 @@ void ControlsWindow::render_page(Pane& pane, Page page) {
 void ControlsWindow::render_pad_page(Pane& pane) {
     if (settings::pinned("PAD_MAP")) {
         pane.add_rml("<status-badge class=\"warning\">Set to " + escape(settings::pinned_value("PAD_MAP")) +
-                     " in the environment when the game started (PAD_MAP): that value is used, and wins over "
-                     "these.</status-badge><br/>");
+                     " when the game started (PAD_MAP), so these can't change it.</status-badge><br/>");
     }
     for (const int i : kRows) {
         pane.add_select_button({
@@ -473,15 +462,13 @@ void ControlsWindow::render_pad_page(Pane& pane) {
                 start_capture(i, true, 0);
             });
     }
-    pane.add_rml("<br/>Press a row, then the gamepad button that should press it. The button it had moves to the row "
-                 "that had yours. Esc cancels.<br/><br/>(PAD_MAP)");
+    pane.add_rml("<br/>Choose a row, then press the button for it. Esc cancels.<br/><br/>(PAD_MAP)");
 }
 
 void ControlsWindow::render_key_page(Pane& pane) {
     if (settings::pinned("PAD_KEYS")) {
         pane.add_rml("<status-badge class=\"warning\">Set to " + escape(settings::pinned_value("PAD_KEYS")) +
-                     " in the environment when the game started (PAD_KEYS): those changes to the layout are used "
-                     "instead of these.</status-badge><br/>");
+                     " when the game started (PAD_KEYS), so these can't change it.</status-badge><br/>");
     }
     for (int t = 0; t < kTargetCount; t++) {
         if (kTargets[t].section) pane.add_section(kTargets[t].section);
@@ -511,11 +498,8 @@ void ControlsWindow::render_key_page(Pane& pane) {
                 });
         }
     }
-    pane.add_rml("<br/>Press a row, then the key, mouse button or wheel notch that should work it. Hold Shift, Ctrl or "
-                 "Alt with it for a chord: Shift and the left button is a strong attack, and not an attack as well. "
-                 "The input leaves any other row that had it. Delete clears the row; Esc cancels.<br/><br/>"
-                 "The mouse's buttons and wheel reach the game while mouse look holds the mouse (Settings, "
-                 "Controls, Mouse look). F1 always opens this menu; Esc is the game's Start.<br/><br/>(PAD_KEYS)");
+    pane.add_rml("<br/>Choose a row, then press a key, mouse button or wheel. Hold Shift, Ctrl or Alt for a "
+                 "combination. Delete clears the row; Esc cancels.<br/><br/>(PAD_KEYS)");
 }
 
 Rml::String ControlsWindow::pending_label() const {
@@ -529,7 +513,7 @@ void ControlsWindow::start_capture(int button, bool pad, int slot) {
     mPendingSlot = slot;
     mArmed = false;
     mModDown = 0;
-    mPendingStartedAt = GetTickCount64();
+    mPendingStartedAt = now_ms();
     input::set_binding_capture(true);
 }
 
@@ -547,7 +531,7 @@ void ControlsWindow::update() {
         } else {
             update_key_capture();
         }
-        if (capture_active() && GetTickCount64() - mPendingStartedAt > kCaptureTimeoutMs) cancel_capture();
+        if (capture_active() && now_ms() - mPendingStartedAt > kCaptureTimeoutMs) cancel_capture();
     }
     Window::update();
 }
@@ -570,7 +554,7 @@ void ControlsWindow::update_pad_capture() {
     }
 }
 
-// Keys and mouse buttons are read with GetAsyncKeyState (Alt and F10 never reach the UI as key presses), wheel notches
+// Keys and mouse buttons are read from the key state (Alt and F10 never reach the UI as key presses), wheel notches
 // from the UI's events. A Shift, Ctrl or Alt held when another input goes down makes a chord with it; let go with
 // nothing else pressed, it is the choice itself.
 void ControlsWindow::update_key_capture() {
@@ -587,7 +571,7 @@ void ControlsWindow::update_key_capture() {
     }
     std::array<bool, 256> now{};
     if (!settings::no_user_input()) {  // PS3_NO_USER_INPUT: a key held is the user's, so a capture sees none
-        for (int vk = 1; vk < 0xFF; vk++) now[vk] = (GetAsyncKeyState(vk) & 0x8000) != 0;
+        for (int vk = 1; vk < 0xFF; vk++) now[vk] = keys::key_down(vk);
     }
     // The modifier first, so one pressed in the same frame as the other input still makes the chord.
     for (const int vk : {VK_LSHIFT, VK_RSHIFT, VK_LCONTROL, VK_RCONTROL, VK_LMENU, VK_RMENU}) {

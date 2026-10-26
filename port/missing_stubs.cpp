@@ -13,7 +13,7 @@
  * build failing to link. (Lifter robustness fix candidate: route out-of-range
  * branch targets to ppu_unlifted_stub at generation time.)
  */
-#include "ppu_recomp.h"
+#include "ps3emu/ppu_lift.h"   /* ppu_context: the fixed part of the lift's header */
 #include <cstdint>
 
 extern "C" void ppu_unlifted_stub(uint64_t addr, ppu_context* ctx);
@@ -25,7 +25,7 @@ void func_FFFFFFE8(ppu_context* ctx) { ppu_unlifted_stub(0xFFFFFFE8ull, ctx); }
  *
  * The PPU lift is produced with `--shadow-stack`, so every lifted function emits
  * a DS_FRAME guard that pushes its guest address onto these thread-local arrays
- * (declared `extern DS_TLS` in work/recomp/ppu_recomp.h). That gives a reliable
+ * (declared `extern DS_TLS` in ps3emu/ppu_lift.h). That gives a reliable
  * guest backtrace where the host back-chain is useless -- which is how the
  * NULL-vtable use-before-construction bug was localized.
  *
@@ -34,6 +34,7 @@ void func_FFFFFFE8(ppu_context* ctx) { ppu_unlifted_stub(0xFFFFFFE8ull, ctx); }
  * definitions port-side means ps3recomp stays closer to upstream and this
  * survives the next merge.
  * -----------------------------------------------------------------------*/
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 
@@ -67,10 +68,10 @@ void ds_note_handlerB(unsigned r3, unsigned r4)
  * is racy but good enough for "where is every thread parked". */
 #define DS_REG_MAX 64
 static struct { unsigned long long tid; unsigned* sp; unsigned* stk; } s_ds_reg[DS_REG_MAX];
-static volatile long s_ds_reg_n;
+static std::atomic<long> s_ds_reg_n;
 extern "C" void ds_register_shadow(unsigned long long guest_tid)
 {
-    long i = _InterlockedIncrement(&s_ds_reg_n) - 1;
+    long i = s_ds_reg_n.fetch_add(1);
     if (i >= DS_REG_MAX) return;
     s_ds_reg[i].tid = guest_tid; s_ds_reg[i].stk = g_ds_stk; s_ds_reg[i].sp = &g_ds_sp;
 }

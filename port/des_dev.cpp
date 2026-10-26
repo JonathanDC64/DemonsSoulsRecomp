@@ -17,8 +17,17 @@
  *   LoadChrPos does. Each new value warps once. DES_WARP_CLEAR=<m> first
  *   sends the enemies within m metres of the target to the tutorial's start.
  *   Test scripts use it to reach a spot quickly.
+ * DES_GIVE=<items> — add items to the player's inventory through the game's
+ *   own add-item function, so weight, stacks and quick slots work as for a
+ *   pickup. A comma list of goods ids, each with an optional *count, or
+ *   "online": 10 Stones of Ephemeral Eyes, the Black, Red, Blue and White Eye
+ *   Stones, the Kick Item (9998) and the Friend's and Foe's Rings (a ring is
+ *   ring:<id>). Each new value gives once, when the player is loaded and no
+ *   cutscene runs, then asks the game to save (tools/des/online_save.sh).
  * DES_DEVLOG=1 — a line for each change a cheat makes, at most one a site
  *   every 250 ms (with the count of the ones in between).
+ * RSX_DEV_HOTKEYS — not a cheat: des_dev_boot sets it to 1 when it is unset,
+ *   so the developer keys work (F8 in a frame log, ps3recomp's F9 to F11).
  *
  * All live (the console's setenv and the Developer tab change them), all off
  * by default, none kept in settings.ini. Out-of-range values are clamped; a
@@ -48,8 +57,10 @@
  * code runs for every character, so each site first checks that it is the
  * player's. The sites and their registers are in docs/55 section 2.4; each
  * was checked against the instructions around it. */
-#include "ppu_recomp.h"
+#include "ps3emu/ppu_lift.h"   /* ppu_context: the fixed part of the lift's header */
+#include "des_game_calls.h"     /* the lifted functions below (the game DLL's with DES_SPLIT) */
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
+#include "ps3emu/ps3_net.h"    /* ps3_net_lock_offline */
 #include "des_dev_marker.h"
 #include <atomic>
 #include <chrono>
@@ -63,7 +74,9 @@
 #error "des_dev.cpp is only for developer builds (cmake -DDES_DEV=ON)"
 #endif
 
+#ifndef PS3_GAME_SPLIT   /* DES_SPLIT: the game DLL's (ps3emu/game_split.h) */
 extern "C" PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);
+#endif
 extern "C" const char* cellGame_get_title(void);   /* PARAM.SFO's TITLE (ps3recomp libs/system/cellGame.c) */
 
 namespace {
@@ -79,7 +92,10 @@ constexpr float    kAtkMax      = 1000.0f;
 constexpr float    kSpeedMin    = 0.25f, kSpeedMax = 10.0f;
 constexpr double   kDamageCap   = 10000000.0;
 
-bool guest_ptr_ok(uint32_t a) { return a >= 0x00010000u && a < 0x50000000u && !(a & 3u); }   /* as in des_options.cpp */
+bool guest_ptr_ok(uint32_t a)   /* as in des_options.cpp: the stack area too */
+{
+    return ((a >= 0x00010000u && a < 0x50000000u) || (a >= 0xD0000000u && a < 0xE0000000u)) && !(a & 3u);
+}
 
 float vm_readf(uint32_t ea)
 {
@@ -124,9 +140,9 @@ std::atomic<bool> s_used{false};
 const char* session_name(int s) { return s == kCheats ? "cheats" : s == kOnline ? "online" : "offline"; }
 
 /* ps3recomp goes online with the first two: PS3_NET_ONLINE (host sockets, cellNetCtl, NP) and PSNR_SERVER (NP's
- * server). Any value counts, as there (getenv(...) ? 1 : 0). PS3_NET_HOSTS (docs/46's planned host map) is only
- * cleared with them. */
-const char* const kNetKnobs[] = {"PS3_NET_ONLINE", "PSNR_SERVER", "PS3_NET_HOSTS"};
+ * server). Any value counts, as there (getenv(...) ? 1 : 0). PS3_NET_HOSTS (docs/46's planned host map) and
+ * PS3_NET_SIGNIN (a cheat session never signs in with the install's key) are only cleared with them. */
+const char* const kNetKnobs[] = {"PS3_NET_ONLINE", "PSNR_SERVER", "PS3_NET_HOSTS", "PS3_NET_SIGNIN"};
 constexpr int kNetKnobsOnline = 2;
 
 /* The first of the network knobs that is set, or null. getenv is boot_main's lock-free cache, cheap at a hook. */
@@ -157,11 +173,13 @@ bool online()
     return true;
 }
 
-/* The first cheat of the session: it stays offline from here on. */
+/* The first cheat of the session: it stays offline from here on. The knobs are cleared, and the runtime is locked
+ * offline too: every network module refuses from here, and a co-op session already open ends. */
 void mark_used(const char* what)
 {
     if (s_used.exchange(true)) return;
     clear_network();
+    ps3_net_lock_offline();
     fprintf(stderr, "[dev] cheat in use (%s): this session stays offline\n", what);
 }
 
@@ -331,8 +349,13 @@ extern "C" void des_dev_hook(ppu_context* ctx, uint32_t addr)
 extern "C" void des_dev_boot(void)
 {
     fprintf(stderr, "[dev] %s\n", DES_DEV_MARKER);
+    /* The developer keys in the game window (F8 here, F9 to F11 in ps3recomp) are on in a developer build;
+     * RSX_DEV_HOTKEYS=0 turns them off, to see what a player's build does. */
+    if (!getenv("RSX_DEV_HOTKEYS")) ps3_setenv("RSX_DEV_HOTKEYS", "1");
     const char* warp = getenv("DES_WARP");
-    const bool cheat = god_knob() || atk_knob() != 1.0f || speed_knob() != 1.0f || (warp && *warp);
+    const char* give = getenv("DES_GIVE");
+    const bool cheat = god_knob() || atk_knob() != 1.0f || speed_knob() != 1.0f || (warp && *warp) ||
+                       (give && *give);
     if (cheat) {
         s_session = kCheats;
         mark_used("set at start");
@@ -401,10 +424,93 @@ static bool chr_pos(uint32_t chr, float* p)
     return true;
 }
 
+/* Calls a game function with up to six arguments (r3-r8) and returns r3. Like warp_chr, on the main thread's own
+ * registers, which are put back after, with the EBOOT's TOC and a stack below the caller's 288-byte red zone. */
+static uint32_t call_game(ppu_context* ctx, void (*fn)(ppu_context*), const uint32_t* a, int na)
+{
+    uint64_t g[32]; double f[32]; uint8_t v[32][16];
+    memcpy(g, ctx->gpr, sizeof g); memcpy(f, ctx->fpr, sizeof f); memcpy(v, ctx->vr, sizeof v);
+    const uint64_t lr = ctx->lr, ctr = ctx->ctr;
+    const uint32_t cr = ppu_cr_pack(ctx), xer = ctx->xer;
+    ctx->gpr[1] -= 0x1000; ctx->gpr[2] = 0x019B5040u;
+    for (int i = 0; i < na && i < 6; i++) ctx->gpr[3 + i] = a[i];
+    ctx->lr = 0x00724E40u;
+    fn(ctx);
+    while (g_trampoline_fn) {
+        void (*tf)(void*) = g_trampoline_fn;
+        g_trampoline_fn = nullptr;
+        tf(ctx);
+    }
+    const uint32_t r3 = (uint32_t)ctx->gpr[3];
+    memcpy(ctx->gpr, g, sizeof g); memcpy(ctx->fpr, f, sizeof f); memcpy(ctx->vr, v, sizeof v);
+    ctx->lr = lr; ctx->ctr = ctr; ppu_cr_unpack(ctx, cr); ctx->xer = xer;
+    return r3;
+}
+
+/* DES_GIVE (see the top). Add-item is 0x008FB4F0 (inventory r3, category r4, id r5, count r6, 1, 1), the function
+ * the AddInventoryItem script binding calls; the inventory is the player's game data + 0x128. It returns the slot,
+ * or -1 with the reason at inventory + 0x1B0 (1 over the burden limit, 2 a stack past 99, 3 no sort entry, 4 no free
+ * slot). The save afterwards is the SaveRequest script binding (0x004418B8, no arguments). */
+static int32_t add_item(ppu_context* ctx, uint32_t inv, uint32_t cat, uint32_t id, uint32_t n)
+{
+    const uint32_t a[6] = { inv, cat, id, n, 1, 1 };
+    return (int32_t)call_game(ctx, func_008FB4F0, a, 6);
+}
+
+/* Gives the pending DES_GIVE list once the player is loaded; called every frame, so a value set at start waits for
+ * the level. */
+static void give_tick(ppu_context* ctx)
+{
+    static char done[256] = "";
+    const char* e = getenv("DES_GIVE");
+    if (!e || !*e || !strcmp(e, done)) return;
+    /* The player's game data, read the way the AddInventoryItem script binding (0x00447748) reads it:
+     * *(*(*(*(TOC - 0x7884) - 0x8000)) + 8). */
+    const uint32_t man = vm_read32(kChrMan), base = vm_read32(0x019B5040u - 0x7884u);
+    uint32_t slot_p = 0, gm = 0, pgd = 0;
+    if (!guest_ptr_ok(man) || !guest_ptr_ok(vm_read32(man + 0x1BC)) || !guest_ptr_ok(base) ||
+        !guest_ptr_ok(slot_p = vm_read32(base - 0x8000u)) || !guest_ptr_ok(gm = vm_read32(slot_p)) ||
+        !guest_ptr_ok(pgd = vm_read32(gm + 8)))
+        return;   /* not in a level yet */
+    /* AddItem checks the item burden, so wait for the character's stats (the burden limit AddItem reads,
+     * *(inv + 0x1A8) + 0x498) and for no cutscene (RemoMan 0x01B3A28C's slots), held for 90 frames. */
+    static int ready = 0;
+    const uint32_t stats = vm_read32(pgd + 0x128 + 0x1A8), remo = vm_read32(0x01B3A28Cu);
+    const bool cut = guest_ptr_ok(remo) && (vm_read32(remo + 0x28) || vm_read32(remo + 0x40) ||
+                                            vm_read32(remo + 0x58) || vm_read32(remo + 0x70));
+    if (!guest_ptr_ok(stats) || !(vm_readf(stats + 0x498) > 0.0f) || cut) { ready = 0; return; }
+    if (++ready < 90) return;
+    snprintf(done, sizeof done, "%s", e);
+    if (refused("DES_GIVE")) return;
+    mark_used("DES_GIVE");
+    char list[256];
+    snprintf(list, sizeof list, "%s", strcmp(e, "online") ? e
+             : "1021*10,9995,9996,9997,9998,9999,ring:114,ring:115");
+    int added = 0;
+    for (char* tok = strtok(list, ","); tok; tok = strtok(nullptr, ",")) {
+        uint32_t cat = 0x40000000u;   /* goods */
+        if (!strncmp(tok, "ring:", 5)) { cat = 0x20000000u; tok += 5; }
+        char* end;
+        const unsigned long id = strtoul(tok, &end, 10);
+        unsigned long n = *end == '*' ? strtoul(end + 1, nullptr, 10) : 1;
+        if (end == tok || n < 1 || n > 99) { fprintf(stderr, "[dev] DES_GIVE: skipped \"%s\"\n", tok); continue; }
+        const int32_t slot = add_item(ctx, pgd + 0x128, cat, (uint32_t)id, (uint32_t)n);
+        added += slot >= 0;
+        if (slot >= 0) fprintf(stderr, "[dev] DES_GIVE %s %lu x%lu: slot %d\n", cat == 0x40000000u ? "goods" : "ring", id, n, slot);
+        else fprintf(stderr, "[dev] DES_GIVE %s %lu x%lu: refused, reason %u\n", cat == 0x40000000u ? "goods" : "ring",
+                     id, n, vm_read32(pgd + 0x128 + 0x1B0));
+    }
+    if (added) {   /* the game saves when asked; adding an item does not ask */
+        call_game(ctx, func_004418B8, nullptr, 0);
+        fprintf(stderr, "[dev] DES_GIVE: %d item(s) added, save requested\n", added);
+    }
+}
+
 extern "C" void des_debug_tick(ppu_context* ctx)
 {
     static int gen = 0;
     static char last[96] = "";
+    give_tick(ctx);
     const int before = gen;
     PS3_KNOB(gen, gen + 1);
     if (gen == before) return;

@@ -8,21 +8,26 @@
 #include "app.hpp"
 #include "bool_button.hpp"
 #include "controls_window.hpp"
+#include "hud_editor.hpp"
 #include "input.hpp"
+#include "modal.hpp"
 #include "number_button.hpp"
 #include "pane.hpp"
+#include "players_window.hpp"
+#include "privacy_window.hpp"
 #include "report.hpp"
 #include "settings.hpp"
+#include "string_button.hpp"
 #include "ui.hpp"
+#include "updates.hpp"
+#include "update_window.hpp"
 #include "version.hpp"
 #if DES_DEV
 #include "../../des_dev_marker.h"
 #endif
 
-#include <windows.h>
-#include <shellapi.h>
-
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -34,7 +39,7 @@ namespace ui {
 namespace {
 
 void open_url(const char* url) {
-    ShellExecuteA(nullptr, "open", url, nullptr, nullptr, SW_SHOWNORMAL);
+    report::open_url(url);
 }
 
 // What heads a row's help: the option is set from outside, or it takes effect at the next start.
@@ -43,11 +48,10 @@ Rml::String with_note(const Rml::String& key, Rml::String help) {
     if (settings::pinned(key)) {
         const Rml::String value = settings::pinned_value(key);
         return "<status-badge class=\"warning\">Set to " + escape(value.empty() ? Rml::String("(empty)") : value) +
-               " in the environment when the game started (" + escape(key) +
-               "): that value is used, and wins over this setting.</status-badge><br/>" + help;
+               " when the game started (" + escape(key) + "), so this row can't change it.</status-badge><br/>" + help;
     }
     if (d && d->apply == settings::Apply::Restart) {
-        return "<status-badge class=\"info\">Takes effect the next time the game starts.</status-badge><br/>" + help;
+        return "<status-badge class=\"info\">Takes effect the next time you start the game.</status-badge><br/>" + help;
     }
     return help;
 }
@@ -178,6 +182,94 @@ int mouse_sens_percent() {
     return std::clamp(int(std::lround(sens / mouse_sens_default() * 100.0)), kMouseSensMin, kMouseSensMax);
 }
 
+// HUD size in percent (DES_HUD_SIZE; des_hud.cpp takes 25 to 200, this row offers 50 to 150).
+constexpr int kHudSizeMin = 50;
+constexpr int kHudSizeMax = 150;
+
+int hud_size_percent() {
+    const std::string v =
+        settings::pinned("DES_HUD_SIZE") ? settings::pinned_value("DES_HUD_SIZE") : settings::get("DES_HUD_SIZE");
+    const int pct = v.empty() ? 100 : std::atoi(v.c_str());
+    return std::clamp(pct > 0 ? pct : 100, kHudSizeMin, kHudSizeMax);
+}
+
+// The Network tab's rows (settings.hpp, "Online play"). A value in use: the environment's when set there.
+std::string net_value(const char* key) {
+    return settings::pinned(key) ? settings::pinned_value(key) : settings::get(key);
+}
+
+// A developer build's cheat session (des_dev_boot set a cheat at start and cleared the network knobs; docs/55 section
+// 6). Release builds never set DES_DEV_SESSION.
+bool net_cheat_session() {
+    const char* s = std::getenv("DES_DEV_SESSION");
+    return s && std::strcmp(s, "cheats") == 0;
+}
+
+std::string trim_spaces(const std::string& s) {
+    const size_t a = s.find_first_not_of(" \t");
+    if (a == std::string::npos) return {};
+    return s.substr(a, s.find_last_not_of(" \t") - a + 1);
+}
+
+#if DES_DEV  // (Custom is in developer builds only for now: settings.hpp's kNetServers)
+// Custom's address, chosen on this PC (settings::choose_custom_here): says so, since the row looks the same as before.
+void choose_custom_here() {
+    if (!settings::choose_custom_here()) return;
+    push_toast({
+        .content = "Custom server chosen. Restart the game to play on " + trim_spaces(net_value("DES_NET_CUSTOM")) + ".",
+        .duration = std::chrono::seconds(8),
+    });
+}
+
+// Custom is picked, but its address came in a copied settings file (settings::custom_chosen_here), so the game is
+// offline: the Server and Custom server rows say how to use it.
+bool custom_held() {
+    return net_value("DES_NET_SERVER") == settings::kNetCustomKey &&
+           settings::net_address_ok(trim_spaces(net_value("DES_NET_CUSTOM"))) && !settings::custom_chosen_here();
+}
+
+// RML in a pane that shows only while `visible` holds, checked at each update: a note that goes away as soon as what
+// it asks for is done (the Server row's, once Custom is pressed), without rebuilding the pane from inside the press.
+class LiveNote : public Component {
+public:
+    LiveNote(Rml::Element* parent, const Rml::String& rml, std::function<bool()> visible)
+        : Component(append(parent, "div")), mVisible(std::move(visible)) {
+        mRoot->SetInnerRML(rml);
+        update();
+    }
+    void update() override {
+        set_display(mRoot, mVisible() ? Rml::Style::Display::Block : Rml::Style::Display::None);
+        Component::update();
+    }
+
+private:
+    std::function<bool()> mVisible;
+};
+#endif
+
+// The Online name row never stores an empty or invalid name: online play needs one, and a player who cleared it would
+// stay offline without knowing why. It keeps the last good name (with none, a suggested one) and says so here.
+std::string sNameNote;
+
+void set_net_name(const std::string& typed) {
+    const std::string name = trim_spaces(typed);
+    if (settings::net_name_ok(name)) {
+        sNameNote.clear();
+        settings::set("DES_NET_NAME", name);
+        return;
+    }
+    const std::string old = settings::get("DES_NET_NAME");
+    const std::string kept = settings::net_name_ok(old) ? old : settings::suggest_net_name();
+    sNameNote = std::string(name.empty() ? "Online play needs a name" : "Names are 3 to 16 letters, digits, - or _") +
+                (kept == old ? ", so " + kept + " was kept." : ", so it is " + kept + " for now.");
+    settings::set("DES_NET_NAME", kept);
+}
+
+int net_p2p_port() {
+    const int port = std::atoi(net_value("DES_NET_P2P_PORT").c_str());
+    return port < settings::kNetP2pPortMin || port > settings::kNetP2pPortMax ? settings::kNetP2pPortDefault : port;
+}
+
 // The software this program is made of (mirrors port/ui/NOTICE.md).
 struct Credit {
     const char* name;
@@ -196,8 +288,83 @@ constexpr Credit kCredits[] = {
      "https://github.com/TwilitRealm/dusklight"},
     {"Cinzel and Alegreya Sans", "The fonts of the menus.", "SIL Open Font Licence 1.1", "https://fonts.google.com"},
     {"Material Symbols", "The icons of the menus.", "Apache-2.0", "https://fonts.google.com/icons"},
+    {"Mbed TLS", "The secure connection to the online server.", "Apache-2.0",
+     "https://www.trustedfirmware.org/projects/mbed-tls/"},
     {"RPCS3", "A behavioural reference for the PS3 system libraries. No RPCS3 code is copied.", "", "https://rpcs3.net"},
 };
+
+// ps3emu/ps3_net_signin.h (declared here: des_ui does not take ps3recomp's include paths). Its outcome comes back
+// through ps3_net_erase_result, which net_notices.cpp shows.
+extern "C" int ps3_net_player_erase(void);
+
+// Delete my data (the server's docs/social.md), asked first.
+void ask_erase() {
+    push_document(std::make_unique<Modal>(Modal::Props{
+        .title = "Delete your data on the server?",
+        .bodyText = "This deletes your name, your characters' online records, your messages and bloodstains, and the "
+                    "rest the online server keeps about you (Privacy note). Online play turns off, so the game goes "
+                    "back to its title screen. It cannot be undone.",
+        .actions =
+            {
+                ModalAction{.label = "Cancel",
+                    .onPressed =
+                        [](Modal& modal) {
+                            play_sound(kSoundWindowClose);
+                            modal.pop();
+                        }},
+                ModalAction{.label = "Delete",
+                    .onPressed =
+                        [](Modal& modal) {
+                            play_sound(kSoundClick);
+                            modal.pop();
+                            if (ps3_net_player_erase() != 0) {
+                                push_toast({
+                                    .type = "warning",
+                                    .title = "Online",
+                                    .content = "Not signed in to the online server, so nothing was deleted. Play "
+                                               "online, then try again.",
+                                    .duration = std::chrono::seconds(10),
+                                });
+                            }
+                        }},
+            },
+        .onDismiss = [](Modal& modal) { modal.pop(); },
+        .icon = "warning",
+    }));
+}
+
+// Go back to the version the last update kept (updates.hpp), asked first. Over the game, the program starts again with
+// setup's screens alone for it: a running game cannot replace its own files.
+void ask_go_back(const std::string& kept) {
+    push_document(std::make_unique<Modal>(Modal::Props{
+        .title = "Go back to " + kept + "?",
+        .bodyText = "The game starts again as version " + kept + ", with the game build it had. Your saves and settings "
+                    "stay. Version " + updates::this_version() + " is kept, so you can update to it again.",
+        .actions =
+            {
+                ModalAction{.label = "Cancel",
+                    .onPressed =
+                        [](Modal& modal) {
+                            play_sound(kSoundWindowClose);
+                            modal.pop();
+                        }},
+                ModalAction{.label = "Go back",
+                    .onPressed =
+                        [](Modal& modal) {
+                            play_sound(kSoundClick);
+                            modal.pop();
+                            if (updates::over_game()) {
+                                updates::restart_into("update-back", "");
+                            } else {
+                                push_document(std::make_unique<UpdateWindow>(
+                                    UpdateWindow::Props{.open = UpdateWindow::Open::Back}));
+                            }
+                        }},
+            },
+        .onDismiss = [](Modal& modal) { modal.pop(); },
+        .icon = "question-mark",
+    }));
+}
 
 }  // namespace
 
@@ -206,60 +373,53 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         auto& leftPane = add_child<Pane>(content, Pane::Type::Controlled);
         auto& rightPane = add_child<Pane>(content, Pane::Type::Uncontrolled);
 
+        choice_row(leftPane, rightPane, "Display mode", "DES_FULLSCREEN", {"0", "1"}, {"Window", "Fullscreen"},
+            "Fullscreen fills the display the window is on. Alt+Enter also switches between the two."
+            "<br/><br/>(DES_FULLSCREEN)");
+        bool_row(leftPane, rightPane, "Start maximized", "DES_MAXIMIZED",
+            "The window opens maximized, and comes back maximized from Fullscreen.<br/><br/>(DES_MAXIMIZED)");
         choice_row(leftPane, rightPane, "Aspect ratio", "DES_ASPECT",
             {"", "2560:1080", "3440:1440", "3840:1600", "32:9", "auto"},
             {"16:9 (original)", "21:9 (2560x1080)", "21:9 (3440x1440)", "21:9 (3840x1600)", "32:9", "Match the display"},
-            "The shape of the picture, for ultrawide displays. A wider shape shows more of the scene at the sides, "
-            "with the same height as at 16:9. The window opens in that shape, and fullscreen fills an ultrawide "
-            "display. The game still draws 1280 pixels across, stretched to the wider shape, so raise Render "
-            "resolution to keep it sharp. Match the display uses the main display's shape. Displays narrower than "
-            "16:9 (16:10, 4:3) keep 16:9 with bars. The HUD and menus stay 16:9 in the middle (see HUD below); "
-            "full-screen fades and the dim behind menus may still cover only that middle.<br/><br/>(DES_ASPECT)");
-        choice_row(leftPane, rightPane, "HUD", "DES_HUD", {"", "stretch"}, {"Centred 16:9", "Stretched"},
-            "Where the HUD and menus go when Aspect ratio is wider than 16:9. Centred keeps their size and shape in "
-            "a 16:9 area in the middle of the screen, and keeps the markers on things in the world (the lock-on "
-            "reticle, enemy health bars) on them. Stretched spreads everything across the full width, wider than "
-            "it is drawn. No effect at 16:9.<br/><br/>(DES_HUD)");
+            "The shape of the picture, for ultrawide displays. Wider shows more at the sides. Raise Render "
+            "resolution to keep a wide picture sharp.<br/><br/>(DES_ASPECT)");
         choice_row(leftPane, rightPane, "Render resolution", "RSX_SCALE", {"100", "150", "200", "300"},
             {"100% (original)", "150%", "200%", "300%"},
-            "Draws the game at a multiple of the PS3's 1280x720: 150% is 1920x1080, 200% 2560x1440, 300% "
-            "3840x2160. The picture is then fitted to the window, so a higher setting is sharper even in a smaller "
-            "window. The HUD and menus are drawn at the same size. Costs GPU time: about four times the pixels at "
-            "200%. Applies at once.<br/><br/>(RSX_SCALE)");
+            "Draws the game sharper: 150% is 1080p, 200% 1440p, 300% 4K. Higher costs more GPU time."
+            "<br/><br/>(RSX_SCALE)");
         choice_row(leftPane, rightPane, "Scaling filter", "RSX_OUTFILTER", {"0", "1"}, {"Bilinear", "Sharp"},
-            "How the finished picture is fitted to the window. Bilinear is the plain filter used so far. Sharp "
-            "averages all the pixels the picture has under each window pixel when it is bigger than the window "
-            "(a render resolution above the window's size), so fine detail does not shimmer, and uses a bicubic "
-            "filter when it is smaller, which is crisper than bilinear. Applies at once.<br/><br/>(RSX_OUTFILTER)");
+            "How the picture is fitted to the window. Sharp is cleaner, most of all with a high Render resolution."
+            "<br/><br/>(RSX_OUTFILTER)");
+        choice_row(leftPane, rightPane, "HDR", "RSX_HDR", {"0", "1"}, {"Off (original)", "On"},
+            "Brighter lights and sky on an HDR display. Turn on HDR in Windows first. Turn off RTX HDR and Auto HDR "
+            "for the game when this is on.<br/><br/>(RSX_HDR)");
+        choice_row(leftPane, rightPane, "HDR brightness", "RSX_HDR_WHITE",
+            {"0", "100", "150", "200", "250", "300", "400"},
+            {"Windows' setting", "100 nits", "150 nits", "200 nits", "250 nits", "300 nits", "400 nits"},
+            "How bright white is with HDR on. Lower leaves more room for the highlights.<br/><br/>(RSX_HDR_WHITE)");
+        choice_row(leftPane, rightPane, "HDR peak", "RSX_HDR_PEAK", {"0", "400", "600", "1000", "1500"},
+            {"The display's", "400 nits", "600 nits", "1000 nits", "1500 nits"},
+            "The brightest the highlights get with HDR on. The display's own figure suits most.<br/><br/>(RSX_HDR_PEAK)");
+        choice_row(leftPane, rightPane, "HDR shadows", "RSX_HDR_GAMMA", {"0", "1"},
+            {"Gamma 2.2 (darker)", "sRGB (lighter)"},
+            "How dark areas look with HDR on. Gamma 2.2 matches a TV.<br/><br/>(RSX_HDR_GAMMA)");
         choice_row(leftPane, rightPane, "Texture filtering", "RSX_TEXFILTER", {"0", "1", "2", "3"},
             {"Original", "Nearest", "Bilinear", "Trilinear"},
-            "How the game's surface textures are smoothed. Original uses the filter the game picks for each "
-            "texture. Nearest shows the texels as sharp squares, a pixelated look. Bilinear smooths within each "
-            "mipmap level; trilinear also blends between levels, so there are no visible bands where the detail "
-            "drops off. Textures the game reads as data (colour grading, the screen itself) always keep the game's "
-            "filter, because changing it breaks their colours. Applies at once.<br/><br/>(RSX_TEXFILTER)");
+            "How textures are smoothed. Original uses the game's choice. Nearest looks pixelated; Trilinear is the "
+            "smoothest.<br/><br/>(RSX_TEXFILTER)");
         choice_row(leftPane, rightPane, "Anisotropic filtering", "RSX_ANISO", {"0", "1", "2", "4", "8", "16"},
             {"Original (4x)", "Off", "2x", "4x", "8x", "16x"},
-            "Keeps textures sharp when they are seen at a steep angle, such as floors and walls into the distance. "
-            "Original uses the level the game asks for, which is 4x on most surfaces. Costs a little GPU time at "
-            "16x. Applies at once.<br/><br/>(RSX_ANISO)");
+            "Keeps floors and walls sharp into the distance. Original is the game's own, 4x on most surfaces."
+            "<br/><br/>(RSX_ANISO)");
         choice_row(leftPane, rightPane, "Anti-aliasing", "RSX_AA", {"0", "1"}, {"Off (original)", "FXAA"},
-            "Smooths the jagged edges of the 3D scene. FXAA is a filter over the finished scene, run before the "
-            "HUD is drawn, so text and the HUD stay sharp. It also softens fine texture detail a little. Costs a "
-            "little GPU time, more at a higher render resolution. Applies at once.<br/><br/>(RSX_AA)");
+            "Smooths jagged edges. FXAA keeps the HUD sharp but softens textures a little.<br/><br/>(RSX_AA)");
         bool_row(leftPane, rightPane, "Depth of field", "DES_DOF",
-            "The game's depth of field: distant scenery is blurred, more in some areas than others. Off draws it "
-            "sharp. Applies at once.<br/><br/>(DES_DOF)");
+            "The game's blur on distant scenery. Off keeps it sharp.<br/><br/>(DES_DOF)");
         choice_row(leftPane, rightPane, "Frame rate", "DES_FPS", kFpsValues,
             {"30 fps (original)", "30 fps, real frame time", "60 fps", "120 fps", "144 fps", "165 fps", "240 fps",
                 "Unlocked"},
-            "The game's own frame rate mode. The original 30 fps mode draws a near-empty frame when one runs late. "
-            "The others give the game the real time of each frame; 60 uses the game's 60 fps mode, and the other "
-            "rates set the frame cap to the number chosen. Unlocked has no cap: the game runs as fast as the "
-            "machine allows, and with V-sync on the display still shows at most its refresh rate. Custom is the "
-            "rate set in Custom frame rate, below. In-engine cutscenes play at 30 fps, as on the PS3, unless "
-            "Cutscene frame rate says otherwise. Above 60 fps the game is less tested. Applies at once."
-            "<br/><br/>(DES_FPS)",
+            "The game's frame rate. 30 fps (original) is the PS3's. \"Real frame time\" is also 30 but copes "
+            "better when a frame runs late. Unlocked has no cap. Above 60 fps is less tested.<br/><br/>(DES_FPS)",
             {}, [](Pane& pane) {
                 pane.add_button({
                                     .text = "Custom",
@@ -290,24 +450,22 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         });
         leftPane.register_control(customFps, rightPane,
             [helpText = with_note("DES_FPS",
-                 "A frame rate of your own, from 30 to 500 fps: Frame rate's Custom choice. Changing it here "
-                 "picks Custom. Left and right change it by one; confirm to type a number. Applies at once."
-                 "<br/><br/>(DES_FPS)")](Pane& pane) {
+                 "Your own frame rate, 30 to 500. Setting it picks Custom in Frame rate.<br/><br/>(DES_FPS)")](Pane& pane) {
                 pane.clear();
                 pane.add_rml(helpText);
             });
         choice_row(leftPane, rightPane, "Cutscene frame rate", "DES_CUTFPS", {"0", "1"},
             {"30 fps (original)", "Same as Frame rate"},
-            "The frame rate of the in-engine cutscenes. Their camera moves in steps of 1/30 s, so above 30 fps they "
-            "judder; 30 fps (original) plays them at 30, as on the PS3, and goes back to Frame rate when they end. "
-            "Same as Frame rate keeps them at the frame rate and moves the camera smoothly between its steps. "
-            "Movies are not affected, and at 30 fps this does nothing. Applies at once.<br/><br/>(DES_CUTFPS)");
-        bool_row(leftPane, rightPane, "V-sync", "DES_VSYNC",
-            "Presents wait for the display's refresh. Off shows each frame as soon as it is drawn, with tearing: "
-            "needed to see a frame rate above the display's refresh rate. Applies at once.<br/><br/>(DES_VSYNC)");
+            "Cutscenes judder above 30 fps, so by default they play at 30. Same as Frame rate keeps your frame "
+            "rate and smooths their camera.<br/><br/>(DES_CUTFPS)");
+        choice_row(leftPane, rightPane, "V-sync", "DES_VSYNC", {"1", "even", "vrr", "0"},
+            {"On", "Even frames", "G-Sync / FreeSync", "Off"},
+            "On waits for the display's refresh. Even frames keeps every frame on screen equally long, for smooth "
+            "motion, and moves the frame rate to one your display fits (60 becomes 72 at 144 Hz). G-Sync / FreeSync "
+            "needs a display with it, turned on in your graphics driver too. Off can tear, but shows more fps than "
+            "the refresh rate.<br/><br/>(DES_VSYNC)");
         bool_row(leftPane, rightPane, "Motion blur", "DES_MOTION_BLUR",
-            "The game's camera motion blur. Off draws the scene sharp while the camera moves. Applies at once."
-            "<br/><br/>(DES_MOTION_BLUR)");
+            "The game's blur when the camera moves.<br/><br/>(DES_MOTION_BLUR)");
     });
 
     add_tab("Game", [this](Rml::Element* content) {
@@ -317,22 +475,64 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         leftPane.add_section("Start");
         choice_row(leftPane, rightPane, "Boot logos", "DES_SKIP_INTRO", {"0", "1", "2"},
             {"Show (original)", "Skip", "Last logo only"},
-            "The company logos at boot. Skip goes straight past them, as RPCS3's Skip Intro patch does. Last logo "
-            "only shows the last one, about 2 s. Either way the game takes its own way to the title screen."
-            "<br/><br/>(DES_SKIP_INTRO)");
+            "The company logos at start. Skip goes straight to the title screen.<br/><br/>(DES_SKIP_INTRO)");
         bool_row(leftPane, rightPane, "Skip opening movie", "DES_SKIP_INTRO_MOVIE",
-            "Skips the opening movie after the logos (the title screen also replays it when left idle). The title "
-            "screen's own movie, the one after character creation and the endings still play. Applies from the "
-            "next movie.<br/><br/>(DES_SKIP_INTRO_MOVIE)");
+            "Skips the movie after the logos. Other movies still play.<br/><br/>(DES_SKIP_INTRO_MOVIE)");
         bool_row(leftPane, rightPane, "Continue automatically", "DES_AUTO_CONTINUE",
-            "After Play on the start screen, presses through the notices and the title screen into the last "
-            "save, without touching a button.<br/><br/>(DES_AUTO_CONTINUE)");
+            "After Play, goes straight into your last save.<br/><br/>(DES_AUTO_CONTINUE)");
 
         leftPane.add_section("Sound");
         bool_row(leftPane, rightPane, "Sound", "AUDIO_MUTE",
-            "The game's sound and music. Off mutes them (the game keeps its timing). Applies at once."
-            "<br/><br/>(AUDIO_MUTE)",
+            "The game's sound and music.<br/><br/>(AUDIO_MUTE)",
             true);
+
+        leftPane.add_section("HUD");
+        leftPane.register_control(
+            leftPane.add_group_button({.text = "Edit HUD"}).on_pressed([this] {
+                play_sound(kSoundClick);
+                push(std::make_unique<HudEditor>());
+            }),
+            rightPane, [](Pane& pane) {
+                pane.clear();
+                pane.add_text("Move, resize, hide or show each part of the HUD on the game screen.");
+            });
+        auto& hudSize = leftPane.add_child<NumberButton>(NumberButton::Props{
+            .key = "HUD size",
+            .getValue = hud_size_percent,
+            .setValue =
+                [](int value) {
+                    if (settings::pinned("DES_HUD_SIZE")) {
+                        return;
+                    }
+                    settings::set("DES_HUD_SIZE", std::to_string(value));
+                },
+            .isDisabled = [] { return settings::pinned("DES_HUD_SIZE"); },
+            .isModified = [] { return !settings::is_default("DES_HUD_SIZE"); },
+            .min = kHudSizeMin,
+            .max = kHudSizeMax,
+            .step = 5,
+            .suffix = "%",
+        });
+        leftPane.register_control(hudSize, rightPane,
+            [helpText = with_note("DES_HUD_SIZE",
+                 "The size of the bars, area name, equipment and souls. Each grows or shrinks from its corner of "
+                 "the screen.<br/><br/>(DES_HUD_SIZE)")](Pane& pane) {
+                pane.clear();
+                pane.add_rml(helpText);
+            });
+        choice_row(leftPane, rightPane, "HUD on wide screens", "DES_HUD", {"", "centre", "stretch"},
+            {"Corners", "Centred 16:9", "Stretched"},
+            "Where the HUD goes when Aspect ratio is wider than 16:9. Corners puts each part in its corner of the "
+            "screen. Centred keeps the HUD in a 16:9 area in the middle. Stretched spreads it across.<br/><br/>"
+            "(DES_HUD)");
+        bool_row(leftPane, rightPane, "Health, magic, stamina", "DES_HUD_BARS",
+            "The bars at the top left.<br/><br/>(DES_HUD_BARS)");
+        bool_row(leftPane, rightPane, "Area name", "DES_HUD_AREA",
+            "The name of the area at the top right.<br/><br/>(DES_HUD_AREA)");
+        bool_row(leftPane, rightPane, "Equipment", "DES_HUD_EQUIP",
+            "Your weapons, item and spell at the bottom left.<br/><br/>(DES_HUD_EQUIP)");
+        bool_row(leftPane, rightPane, "Souls", "DES_HUD_SOULS",
+            "Your souls at the bottom right.<br/><br/>(DES_HUD_SOULS)");
     });
 
     add_tab("Controls", [this](Rml::Element* content) {
@@ -342,14 +542,10 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         const Rml::String chord = input::chord_label(settings::get_int("pad_menu_chord"));
         leftPane.add_section("This menu");
         info_row(leftPane, rightPane, "Open the menu", "F1 / " + chord,
-            "Over the game, F1 on the keyboard, or " + escape(chord) +
-                " on a gamepad (Settings, Interface, changes the gamepad buttons). In play Esc is the game's own menu "
-                "(Start); in these menus it goes back. The game does not see the keys and buttons while a menu is "
-                "open.");
+            "F1, or " + escape(chord) + " on a gamepad (change it in Interface). Esc is the game's own menu.");
         info_row(leftPane, rightPane, "In the menus", "Arrows, Enter, Esc",
-            "Keyboard: the arrows move, Enter chooses, Esc goes back; Page Up and Page Down change tabs. The mouse "
-            "works too.<br/><br/>Gamepad: the D-pad or the left stick moves, Cross chooses, Circle goes back, L1 and "
-            "R1 change tabs, Start closes the menu.");
+            "Keyboard: arrows, Enter, Esc; Page Up and Page Down change tabs. The mouse works too.<br/><br/>"
+            "Gamepad: D-pad, Cross, Circle; L1 and R1 change tabs.");
 
         leftPane.add_section("The game");
         leftPane.register_control(
@@ -359,15 +555,17 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             }),
             rightPane, [](Pane& pane) {
                 pane.clear();
-                pane.add_text("Choose which gamepad button presses each of the PS3 pad's buttons in the game, and "
-                              "which keys, mouse buttons or wheel notches work each action (two each, with Shift, "
-                              "Ctrl or Alt for a chord).");
+                pane.add_text("Change which buttons and keys do what.");
             });
-        info_row(leftPane, rightPane, "Gamepads", "XInput, DualSense, DualShock 4",
-            "Xbox-style (XInput) controllers, and the DualSense, DualSense Edge and DualShock 4 over USB or "
-            "Bluetooth, are read directly. The game sees the first one as the PS3's pad.");
+        const input::PadSupport pads = input::pad_support();
+        info_row(leftPane, rightPane, "Gamepads", pads.value, pads.help);
+        bool_row(leftPane, rightPane, "Vibration", "PAD_RUMBLE",
+            "Lets the game make your gamepad vibrate.<br/><br/>(PAD_RUMBLE)");
+        bool_row(leftPane, rightPane, "Roll toward the stick", "DES_ROLLDIR",
+            "Locked on, a roll goes where the stick points. Off, it goes only forward, back, left or right, as in "
+            "the original.<br/><br/>(DES_ROLLDIR)");
         info_row(leftPane, rightPane, "Keyboard and mouse", "WASD, mouse, Space",
-            "The keyboard and mouse work as in the Souls games on PC, with a gamepad or without:<br/>"
+            "As in the Souls games on PC:<br/>"
             "<b>W A S D</b> move &nbsp; <b>Left Alt</b> (held) walk &nbsp; <b>Mouse</b> camera (Mouse look, "
             "below)<br/>"
             "<b>Left button</b> attack (R1) &nbsp; <b>Shift + left button</b> strong attack (R2)<br/>"
@@ -378,19 +576,11 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "<b>Arrows</b> D-pad &nbsp; <b>Wheel up / down</b> spell / item &nbsp; <b>Shift + wheel up / down</b> "
             "right / left hand<br/>"
             "<b>Esc</b> menu (Start) &nbsp; <b>G</b> or <b>Tab</b> Select<br/><br/>"
-            "A chord works alone: Shift and the left button is a strong attack, not an attack as well. The mouse's "
-            "buttons and wheel need Mouse look on. Change Buttons changes any of these.");
+            "The mouse buttons and wheel need Mouse look on. Change Buttons changes any of these.");
         leftPane.add_section("Mouse");
         bool_row(leftPane, rightPane, "Mouse look", "DES_MOUSE_LOOK",
-            "Turns the camera with the mouse, as well as with the right stick, and gives the game the mouse's "
-            "buttons and wheel (Keyboard and mouse, above). In play the cursor is hidden and held in the window; on "
-            "the title screen, in loading screens and in cutscenes it is free. Opening this menu (F1), switching to "
-            "another window or moving the window frees it too, and the game takes it again when you come back, once "
-            "the mouse buttons are up. While locked on, the camera "
-            "follows the target, and a move of the mouse to the left or right switches targets (Switch targets, "
-            "below). The camera turns once a game frame, so it is smoothest at 60 fps or more (Display, Frame "
-            "rate). Applies at once: the game takes the mouse when "
-            "this menu closes.<br/><br/>(DES_MOUSE_LOOK)");
+            "Turn the camera with the mouse, and use the mouse buttons and wheel in the game. Smoothest at 60 fps "
+            "or more.<br/><br/>(DES_MOUSE_LOOK)");
         auto& mouseSens = leftPane.add_child<NumberButton>(NumberButton::Props{
             .key = "Mouse sensitivity",
             .getValue = mouse_sens_percent,
@@ -410,24 +600,269 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         });
         leftPane.register_control(mouseSens, rightPane,
             [helpText = with_note("DES_MOUSE_SENS",
-                 "How far the camera turns for a move of the mouse. 100% is 0.09 degrees for each count the mouse "
-                 "reports: a full turn for 4000 counts, about 13 cm at 800 dpi. From 5% to 500%; left and right "
-                 "change it by 5%, confirm to type a number. Applies at once.<br/><br/>(DES_MOUSE_SENS, in degrees "
-                 "per count)")](Pane& pane) {
+                 "How far the camera turns when you move the mouse.<br/><br/>(DES_MOUSE_SENS)")](Pane& pane) {
                 pane.clear();
                 pane.add_rml(helpText);
             });
         bool_row(leftPane, rightPane, "Invert vertical", "DES_MOUSE_INVERT_Y",
-            "Off: moving the mouse forward looks up. On: forward looks down, like an aircraft's controls. Applies at "
-            "once.<br/><br/>(DES_MOUSE_INVERT_Y)");
+            "On: moving the mouse forward looks down.<br/><br/>(DES_MOUSE_INVERT_Y)");
         bool_row(leftPane, rightPane, "Invert horizontal", "DES_MOUSE_INVERT_X",
-            "Off: moving the mouse right turns the camera right. On: it turns left. Applies at once."
-            "<br/><br/>(DES_MOUSE_INVERT_X)");
+            "On: moving the mouse right turns the camera left.<br/><br/>(DES_MOUSE_INVERT_X)");
         choice_row(leftPane, rightPane, "Switch targets", "DES_MOUSE_FLICK", {"0", "8", "15", "30"},
             {"Off", "Short move", "Medium move", "Long move"},
-            "While locked on, a move of the mouse to the left or right switches to the next target that way, as a "
-            "flick of the right stick does. How far the mouse has to move: as far as would turn the camera 8, 15 or "
-            "30 degrees at the sensitivity above. Applies at once.<br/><br/>(DES_MOUSE_FLICK, in degrees)");
+            "While locked on, moving the mouse sideways switches targets. This sets how far you have to move it."
+            "<br/><br/>(DES_MOUSE_FLICK)");
+    });
+
+    // Online play (docs/46 A5; settings.cpp's apply_network turns the rows into the runtime's knobs at start).
+    add_tab("Network", [this](Rml::Element* content) {
+        auto& leftPane = add_child<Pane>(content, Pane::Type::Controlled);
+        auto& rightPane = add_child<Pane>(content, Pane::Type::Uncontrolled);
+
+        leftPane.add_section("Online play");
+        auto& online = leftPane.add_child<BoolButton>(BoolButton::Props{
+            .key = "Online",
+            .getValue =
+                [] {
+                    const std::string v = net_value("DES_ONLINE");
+                    return !v.empty() && v != "0";
+                },
+            .setValue =
+                [](bool value) {
+                    if (settings::pinned("DES_ONLINE") || net_cheat_session()) {
+                        return;
+                    }
+                    settings::set("DES_ONLINE", value ? "1" : "0");
+                },
+            .isDisabled = [] { return settings::pinned("DES_ONLINE") || net_cheat_session(); },
+            .isModified = [] { return !settings::is_default("DES_ONLINE"); },
+            .valueOverride = [] { return net_cheat_session() ? Rml::String("Off: cheats used") : Rml::String(); },
+        });
+        leftPane.register_control(online, rightPane, [](Pane& pane) {
+            pane.clear();
+            Rml::String help;
+            if (net_cheat_session()) {
+                help = "<status-badge class=\"warning\">Off this session: a developer cheat is on.</status-badge><br/>";
+            }
+            pane.add_rml(help + with_note("DES_ONLINE",
+                "Plays online on the server below: messages, bloodstains, ghosts, co-op and invasions. Off plays "
+                "offline.<br/><br/>(DES_ONLINE)"));
+        });
+
+        std::vector<Rml::String> serverValues, serverLabels;
+        Rml::String serverHelp = "The game server to connect to. ";
+        for (const settings::NetServer& s : settings::kNetServers) {
+            serverValues.push_back(s.key);
+            serverLabels.push_back(s.name);
+        }
+        serverHelp += "<br/>";
+        for (const settings::NetServer& s : settings::kNetServers) {
+            const bool custom = s.key == std::string_view(settings::kNetCustomKey);
+            serverHelp += "<br/><b>" + escape(s.name) + "</b>" +
+                          (*s.address ? " (" + escape(s.address) + ")" : custom ? "" : " (not available yet)") + ": " +
+                          escape(s.note);
+        }
+#if DES_DEV
+        choice_row(leftPane, rightPane, "Server", "DES_NET_SERVER", std::move(serverValues), std::move(serverLabels),
+            serverHelp + "<br/><br/>(DES_NET_SERVER)",
+            [] {
+                // (pressing Custom, even when it is already picked, chooses its address on this PC)
+                if (settings::get("DES_NET_SERVER") == settings::kNetCustomKey) choose_custom_here();
+            },
+            [](Pane& pane) {
+                pane.add_child<LiveNote>("<br/><status-badge class=\"warning\">Custom's address came in a copied "
+                                         "settings file, so you stay offline. Press Custom above to play on "
+                                         "it.</status-badge>",
+                    custom_held);
+            });
+
+        // (Custom and its address: developer builds only for now, settings.hpp's kNetServers)
+        auto& customServer = leftPane.add_child<StringButton>(StringButton::Props{
+            .key = "Custom server",
+            .getValue = [] { return Rml::String(net_value("DES_NET_CUSTOM")); },
+            .setValue =
+                [](Rml::String value) {
+                    if (settings::pinned("DES_NET_CUSTOM")) {
+                        return;
+                    }
+                    value = trim_spaces(value);
+                    settings::set("DES_NET_CUSTOM", value);
+                    // (as Custom frame rate picks Frame rate's Custom: an address typed here picks Custom)
+                    if (!value.empty() && !settings::pinned("DES_NET_SERVER")) {
+                        settings::set("DES_NET_SERVER", settings::kNetCustomKey);
+                    }
+                    choose_custom_here();
+                },
+            .isDisabled = [] { return settings::pinned("DES_NET_CUSTOM"); },
+            .isModified = [] { return !settings::is_default("DES_NET_CUSTOM"); },
+            .maxLength = 253,
+        });
+        leftPane.register_control(customServer, rightPane, [](Pane& pane) {
+            pane.clear();
+            Rml::String help;
+            const std::string v = trim_spaces(net_value("DES_NET_CUSTOM"));
+            if (net_value("DES_NET_SERVER") == settings::kNetCustomKey && !settings::net_address_ok(v)) {
+                help = "<status-badge class=\"warning\">" +
+                       Rml::String(v.empty() ? "No address yet" : "Not a valid address") +
+                       ", so you stay offline.</status-badge><br/>";
+            } else if (custom_held()) {
+                help = "<status-badge class=\"warning\">This address came in a copied settings file, so you stay "
+                       "offline. To play on it, press Custom in Server again.</status-badge><br/>";
+            }
+            pane.add_rml(help + with_note("DES_NET_CUSTOM",
+                "A server not in the list: an IP address or a host name. Typing one picks Custom.<br/><br/>"
+                "(DES_NET_CUSTOM)"));
+        });
+#else
+        choice_row(leftPane, rightPane, "Server", "DES_NET_SERVER", std::move(serverValues), std::move(serverLabels),
+            serverHelp + "<br/><br/>(DES_NET_SERVER)");
+#endif
+
+        auto& name = leftPane.add_child<StringButton>(StringButton::Props{
+            .key = "Online name",
+            .getValue = [] { return Rml::String(net_value("DES_NET_NAME")); },
+            .setValue =
+                [](Rml::String value) {
+                    if (settings::pinned("DES_NET_NAME")) {
+                        return;
+                    }
+                    set_net_name(value);
+                },
+            .isDisabled = [] { return settings::pinned("DES_NET_NAME"); },
+            .isModified = [] { return !settings::is_default("DES_NET_NAME"); },
+            .maxLength = 16,
+        });
+        leftPane.register_control(name, rightPane, [](Pane& pane) {
+            pane.clear();
+            Rml::String help;
+            const std::string v = net_value("DES_NET_NAME");
+            if (!sNameNote.empty() && !settings::pinned("DES_NET_NAME")) {
+                help = "<status-badge class=\"info\">" + Rml::String(sNameNote) + "</status-badge><br/>";
+            } else if (v.empty()) {
+                help = "<status-badge class=\"info\">No name yet, so you stay offline.</status-badge><br/>";
+            } else if (!settings::net_name_ok(v)) {
+                help = "<status-badge class=\"warning\">Not valid, so you stay offline.</status-badge><br/>";
+            }
+            pane.add_rml(help + with_note("DES_NET_NAME",
+                "Your name online: 3 to 16 letters, digits, - or _. Pick one nobody else uses. A new name makes you "
+                "a new player to the server: your old messages stay, but their ratings no longer reach you."
+                "<br/><br/>(DES_NET_NAME)"));
+        });
+
+        auto& password = leftPane.add_child<StringButton>(StringButton::Props{
+            .key = "Matchmaking password",
+            .getValue = [] { return Rml::String(net_value("DES_NET_PASSWORD")); },
+            .setValue =
+                [](Rml::String value) {
+                    if (settings::pinned("DES_NET_PASSWORD")) {
+                        return;
+                    }
+                    settings::set("DES_NET_PASSWORD", trim_spaces(value));
+                },
+            .isDisabled = [] { return settings::pinned("DES_NET_PASSWORD"); },
+            .isModified = [] { return !settings::is_default("DES_NET_PASSWORD"); },
+            .maxLength = 32,
+        });
+        leftPane.register_control(password, rightPane,
+            [helpText = with_note("DES_NET_PASSWORD",
+                 "Summon signs and invasions only between players with the same password. Messages, bloodstains "
+                 "and ghosts stay shared. Empty plays with everyone.<br/><br/>(DES_NET_PASSWORD)")](Pane& pane) {
+                pane.clear();
+                pane.add_rml(helpText);
+            });
+
+        choice_row(leftPane, rightPane, "World tendency", "DES_NET_TENDENCY", {"", "own"},
+            {"With the server's", "Yours only"},
+            "Online, the game mixes other players' world tendency into yours. Yours only changes it by what you "
+            "do alone. Applies from the next load.<br/><br/>(DES_NET_TENDENCY)");
+
+        choice_row(leftPane, rightPane, "Message ratings", "DES_NET_RATING_POLL", {"", "30"},
+            {"Every 5 minutes", "Every 30 seconds"},
+            "How often the game checks whether someone rated your messages. The PS3 checked every 5 minutes."
+            "<br/><br/>(DES_NET_RATING_POLL)");
+
+        auto& port = leftPane.add_child<NumberButton>(NumberButton::Props{
+            .key = "P2P port",
+            .getValue = net_p2p_port,
+            .setValue =
+                [](int value) {
+                    if (settings::pinned("DES_NET_P2P_PORT")) {
+                        return;
+                    }
+                    settings::set("DES_NET_P2P_PORT", std::to_string(value));
+                },
+            .isDisabled = [] { return settings::pinned("DES_NET_P2P_PORT"); },
+            .isModified = [] { return !settings::is_default("DES_NET_P2P_PORT"); },
+            .min = settings::kNetP2pPortMin,
+            .max = settings::kNetP2pPortMax,
+        });
+        leftPane.register_control(port, rightPane,
+            [helpText = with_note("DES_NET_P2P_PORT",
+                 "The port for co-op and invasions. Change it only if your router needs another one.<br/><br/>"
+                 "(DES_NET_P2P_PORT)")](Pane& pane) {
+                pane.clear();
+                pane.add_rml(helpText);
+            });
+
+        choice_row(leftPane, rightPane, "Your movement updates", "DES_NET_SYNC", {"", "15"},
+            {"Original (every 6th frame)", "Smoother (at least 15 a second)"},
+            "How often your position goes to other players. Smoother makes you look less laggy on their screens."
+            "<br/><br/>(DES_NET_SYNC)");
+
+        leftPane.add_section("In your world");
+        bool_row(leftPane, rightPane, "Messages", "DES_NET_MESSAGES",
+            "Messages from other players. Off hides all of them, yours too.<br/><br/>(DES_NET_MESSAGES)");
+        bool_row(leftPane, rightPane, "Bloodstains", "DES_NET_BLOODSTAINS",
+            "Other players' bloodstains. Your own bloodstain with your souls always shows.<br/><br/>"
+            "(DES_NET_BLOODSTAINS)");
+        bool_row(leftPane, rightPane, "Ghosts", "DES_NET_GHOSTS",
+            "Other players' ghosts walking through your world.<br/><br/>(DES_NET_GHOSTS)");
+
+        leftPane.add_section("Players");
+        leftPane.register_control(
+            leftPane.add_group_button({.text = "Players you met"}).on_pressed([this] {
+                play_sound(kSoundClick);
+                push(std::make_unique<PlayersWindow>());
+            }),
+            rightPane, [](Pane& pane) {
+                pane.clear();
+                pane.add_text("The players you met online lately: who helped you, who you helped, and who invaded. "
+                              "Block one so you never meet again, or report one to the server's admins.");
+            });
+
+        leftPane.add_section("Your data");
+        leftPane.register_control(
+            leftPane.add_group_button({.text = "Privacy note"}).on_pressed([this] {
+                play_sound(kSoundWindowOpen);
+                push(std::make_unique<PrivacyWindow>(PrivacyWindow::Mode::Read));
+            }),
+            rightPane, [](Pane& pane) {
+                pane.clear();
+                pane.add_text("What this project's online server keeps about you, and for how long. The game asks "
+                              "you to accept it before it first goes online with that server.");
+            });
+        leftPane.register_control(
+            leftPane.add_group_button({.text = "Delete my data"}).on_pressed([] {
+                play_sound(kSoundWindowOpen);
+                ask_erase();
+            }),
+            rightPane, [](Pane& pane) {
+                pane.clear();
+                pane.add_text("Deletes your name and what this project's online server keeps about you, at once. "
+                              "Online play then turns off. Works while you are signed in to that server.");
+            });
+
+        leftPane.add_section("This session");
+        info_row(leftPane, rightPane, "Network", net_cheat_session() ? Rml::String("Off: cheats used") : settings::net_status(),
+            net_cheat_session()
+                ? Rml::String("A developer cheat is on, so this session is offline.")
+                : "This session: " + escape(settings::net_status()) + ".");
+        info_row(leftPane, rightPane, "About online play", "Read first",
+            "Online play is new and less tested than offline.<br/><br/>"
+            "You play with everyone on the same server. Players on other servers, on RPCS3 or on a PS3 are not in "
+            "your world.<br/><br/>"
+            "Co-op and invasions connect you directly to the other player, so they can see your IP address, as on a "
+            "PS3.");
     });
 
     add_tab("Interface", [this](Rml::Element* content) {
@@ -436,23 +871,17 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
 
         choice_row(leftPane, rightPane, "UI scale", "ui_scale", {"0", "75", "100", "125", "150"},
             {"Auto", "75%", "100%", "125%", "150%"},
-            "The size of these menus. Auto follows the display's scale in Windows' display settings; the "
-            "percentages are of that. Has no effect on the game's own menus.",
+            "The size of these menus. Auto follows Windows' display scale.",
             [] { apply_scale(); });
         bool_row(leftPane, rightPane, "Start screen", "show_start_screen",
-            "Shows the start screen (Play, Settings, Quit) over the game as it boots. Off goes straight to the game; "
-            "the menu is still there with F1. Never shown when the game is started by a test script or with Continue "
-            "automatically.");
+            "Shows Play, Settings and Quit when the game starts. Off goes straight to the game.");
         bool_row(leftPane, rightPane, "Menu hint", "menu_hint",
-            "After Play, a note at the top of the screen says how to open this menu.");
+            "After Play, a note says how to open this menu.");
         bool_row(leftPane, rightPane, "Trophy pop-ups", "trophy_popups",
-            "When you earn a trophy, a note at the top right shows its icon, grade and name for a few seconds. Off "
-            "hides the note only: the trophy is still earned and kept.");
+            "Shows a note when you earn a trophy. Off only hides the note.");
         choice_row(leftPane, rightPane, "Gamepad menu buttons", "pad_menu_chord", {"0", "1"},
             {"L3 + R3", "Select + Start"},
-            "The buttons that open this menu over the game, pressed together. L3 + R3 (both sticks pressed in) is "
-            "least in the way: the game also sees R3, which locks on. Select + Start also opens the game's own "
-            "menu.");
+            "The gamepad buttons that open this menu, pressed together. Select + Start also opens the game's menu.");
     });
 
 #if DES_DEV
@@ -466,30 +895,22 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         const char* session = std::getenv("DES_DEV_SESSION");
         if (session && std::strcmp(session, "online") == 0) {
             info_row(leftPane, rightPane, "Cheats", "Off: online session",
-                "This session is online (PS3_NET_ONLINE or PSNR_SERVER is or was set), so the cheats are off "
-                "until the next start. Start the game without them to use the cheats.");
+                "Cheats are off because this session is online. Turn Online off and restart to use them.");
             return;
         }
         info_row(leftPane, rightPane, "Developer build", "Cheats compiled in",
-            "This is a developer build (" DES_DEV_MARKER "). The cheats below are for testing. Turning one on "
-            "keeps this session offline; if the network is turned on later, they stop until the next start. They "
-            "are not saved: each start begins with all of them off.");
+            "Cheats for testing (" DES_DEV_MARKER "). Any cheat keeps the session offline. They reset each start.");
         bool_row(leftPane, rightPane, "God mode", "DES_GOD",
-            "Your HP, MP and stamina never drop: hits, falls, poison, spells, attacks, rolls, guarding and dashing "
-            "cost nothing. Instant deaths still kill: falling out of the level, lethal grabs and scripted deaths."
-            "<br/><br/>(DES_GOD)");
+            "Your HP, MP and stamina never drop. Instant deaths still kill.<br/><br/>(DES_GOD)");
         choice_row(leftPane, rightPane, "Attack power", "DES_ATK", {"1", "2", "5", "10", "100", "0"},
             {"Normal", "2x", "5x", "10x", "100x", "No damage"},
-            "Multiplies the damage your hits do to others. Any other number can be set with DES_ATK."
-            "<br/><br/>(DES_ATK)");
+            "Multiplies your damage.<br/><br/>(DES_ATK)");
         choice_row(leftPane, rightPane, "Movement speed", "DES_SPEED", {"1", "1.5", "2", "3", "0.5"},
             {"Normal", "1.5x", "2x", "3x", "Half"},
-            "Multiplies how far you move: walking, running, dashing, rolling and attack lunges. Animations keep "
-            "their speed. Very high values may let you pass through thin walls.<br/><br/>(DES_SPEED)");
+            "Multiplies how fast you move. High values can pass through thin walls.<br/><br/>(DES_SPEED)");
         info_row(leftPane, rightPane, "Warp (scripts)", "DES_WARP=x,y,z",
-            "For test scripts and the debug console. DES_WARP=x,y,z puts you at x, y, z the way the level scripts "
-            "place characters; each new value warps once. DES_WARP_CLEAR=m first sends the enemies within m metres "
-            "of that spot to the tutorial's start. A warp counts as a cheat: the session stays offline.");
+            "For scripts: DES_WARP=x,y,z moves you there, and DES_WARP_CLEAR=m moves enemies within m metres away. "
+            "Counts as a cheat.");
     });
 #endif
 
@@ -500,10 +921,10 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         leftPane.add_section("This program");
 #if DES_DEV
         info_row(leftPane, rightPane, "Developer build", "Cheats compiled in",
-            "This build has the developer cheats (the Developer tab). Never share it as a release.");
+            "This build has cheats (the Developer tab). Never share it as a release.");
 #endif
         info_row(leftPane, rightPane, "Version", kVersion,
-            "Demon's Souls, PC port: a static recompilation of the PlayStation 3 game.<br/><br/>Version " +
+            "Demon's Souls PC port, a recompilation of the PS3 game.<br/><br/>Version " +
                 escape(kVersion) + ".",
             [](Pane& pane) {
                 pane.add_button("Open the project page").on_pressed([] {
@@ -511,33 +932,60 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                     open_url("https://github.com/JonathanDC64/DemonsSoulsRecomp");
                 });
             });
+        bool_row(leftPane, rightPane, "Check for updates", "update_check",
+            "Looks for a newer version each time the game starts. It asks before it changes anything.");
+        leftPane.register_control(
+            leftPane.add_select_button({
+                .key = "Updates",
+                .getValue = [] { return Rml::String(updates::status_line()); },
+            }),
+            rightPane, [](Pane& pane) {
+                pane.add_rml(escape(updates::status_line()) +
+                             "<br/><br/>An update keeps your saves and settings. The version before it is kept, so "
+                             "you can go back to it.");
+                pane.add_button({.text = "Check now",
+                                    .isDisabled = [] {
+                                        return !updates::possible() || updates::state() == updates::State::Checking;
+                                    }})
+                    .on_pressed([] {
+                        play_sound(kSoundClick);
+                        updates::start_check();
+                    });
+                if (updates::state() == updates::State::Found) {
+                    pane.add_button("What's new in " + updates::found().version).on_pressed([] {
+                        play_sound(kSoundWindowOpen);
+                        push_document(std::make_unique<UpdateWindow>(UpdateWindow::Props{
+                            .open = UpdateWindow::Open::Notes,
+                            .release = updates::found(),
+                            .overGame = updates::over_game()}));
+                    });
+                }
+                if (const std::string kept = updates::kept_version(); !kept.empty())
+                    pane.add_button("Go back to " + kept).on_pressed([kept] { ask_go_back(kept); });
+            });
         info_row(leftPane, rightPane, "ps3recomp", kPs3recompVersion,
-            "The recompiler and runtime this program was built with: ps3recomp, from this project's fork. A release "
-            "of the fork shows its tag (des-...), anything else its commit.<br/><br/>" + escape(kPs3recompVersion) +
-                ".");
+            "The recompiler this build uses.<br/><br/>" + escape(kPs3recompVersion) + ".");
         {
             const Rml::String sha = kDumpSha256;
             Rml::String grouped;  // (in fours of 16, so the help pane can wrap it)
             for (size_t i = 0; i < sha.size(); i += 16) grouped += (i ? " " : "") + sha.substr(i, 16);
             info_row(leftPane, rightPane, "Game dump", sha.empty() ? Rml::String("unknown") : sha.substr(0, 12),
-                "The game executable this program was built from: PS3_GAME/USRDIR/EBOOT.BIN, decrypted. Its SHA-256 "
-                "is the same for every copy of the same release of the game.<br/><br/>" +
+                "The SHA-256 of the game file this build was made from (EBOOT.BIN, decrypted).<br/><br/>" +
                     (sha.empty() ? Rml::String("Not known: the build did not find work/game/EBOOT.ELF.") : grouped));
         }
         info_row(leftPane, rightPane, "Licence", "MIT",
-            "This port's own code is under the MIT licence. The game itself is not: it needs your own copy of Demon's "
-            "Souls.<br/><br/>Demon's Souls is a trademark of Sony Interactive "
+            "The port's code is MIT. You need your own copy of Demon's Souls.<br/><br/>Demon's Souls is a trademark "
+            "of Sony Interactive "
             "Entertainment. This project is not affiliated with or endorsed by Sony Interactive Entertainment, "
             "FromSoftware or Atlus.");
         info_row(leftPane, rightPane, "Settings file", settings::path().empty() ? "(not kept)" : "settings.ini",
             settings::path().empty()
                 ? Rml::String("This run does not keep its settings (a test script started it).")
-                : "The settings are kept in<br/>" + escape(settings::path()) +
-                      "<br/><br/>An environment variable of the same name (DES_FPS=60 ...) wins over the file." +
+                : "Your settings are saved in<br/>" + escape(settings::path()) +
                       (report::data_dir().empty()
                            ? Rml::String()
-                           : "<br/><br/>The same folder holds the game's log (logs), crash reports (crashes) and "
-                             "issue reports (reports). Your saves are in the game's own folders, not here."));
+                           : "<br/><br/>Logs, crash reports and issue reports are in the same folder. Your saves are "
+                             "elsewhere."));
 
         leftPane.add_section("Made with");
         for (const Credit& credit : kCredits) {

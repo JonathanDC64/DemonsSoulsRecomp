@@ -2,9 +2,10 @@
 # perflib.sh -- shared helpers for the perf batch scripts (exeab.sh, knobab.sh,
 # regfps.sh). Source it; it sources deslib.sh. How to run the batches: PERF.md.
 #
-#   perf_refuse_if_game       exit 3 if any des_boot.exe runs (ours or the user's)
-#   perf_no_game [secs]       wait up to secs (default 0) until no des_boot.exe
-#                             runs; false if one still does (the user's game)
+#   perf_refuse_if_game       exit 3 if any des_boot.exe or des_host.exe runs
+#                             (ours or the user's)
+#   perf_no_game [secs]       wait up to secs (default 0) until neither runs;
+#                             false if one still does (the user's game)
 #   perf_quiet [secs]         one CPU check over secs (quiet.ps1); false if busy.
 #                             Sets PERF_BG (total CPU %) for the run log.
 #   perf_wait_quiet [secs]    perf_quiet until it passes, up to PERF_QUIET_WAIT s
@@ -39,16 +40,18 @@
 PERF_USER_SAVE="$DES_ROOT/gamedata/dev_hdd0/home/00000001/savedata"   # levelcap.sh's SAVE
 
 # The whole listing is read before it is tested: `| grep -q` under pipefail
-# reads false when tasklist is still writing as grep exits.
+# reads false when tasklist is still writing as grep exits. A test run's game
+# is always a staged des_boot.exe (des_stage); a player's start of a split
+# build is des_host.exe, and counts as the user's game too.
 perf_game_up() {
   local out
-  out=$(tasklist //FI "IMAGENAME eq des_boot.exe" //NH 2>/dev/null | tr '[:upper:]' '[:lower:]')
-  [[ "$out" == *des_boot* ]]
+  out=$(tasklist //NH 2>/dev/null | tr '[:upper:]' '[:lower:]')
+  [[ "$out" == *des_boot.exe* || "$out" == *des_host.exe* ]]
 }
 
 perf_refuse_if_game() {
   perf_game_up || return 0
-  echo "[perf] a des_boot.exe is running: $(des_games < /dev/null | tr -d '\r' | cut -d'|' -f1,2 | tr '\n' ' ')"
+  echo "[perf] a des_boot.exe or des_host.exe is running: $(des_games < /dev/null | tr -d '\r' | cut -d'|' -f1,2 | tr '\n' ' ')"
   echo "[perf] not starting (a batch never stops a game it did not start)"
   exit 3
 }
@@ -177,11 +180,13 @@ perf_run_valid() {   # perf_run_valid <run> [map] [vblank mHz]
      grep -aq 'RSX_VSYNC=0: tearing is not supported' "$r/run.txt"; then
     echo "presented with vsync (no tearing support): held at the display's refresh"; return
   fi
-  ls "$r"/prof_*_summary.txt > /dev/null 2>&1 || { echo "no profile windows"; return; }
+  # (compgen, not ls: with pipefail an ls over a glob that matches nothing fails the pipe)
+  compgen -G "$r/prof_*_summary.txt" > /dev/null || compgen -G "$r/plain_*.txt" > /dev/null ||
+    { echo "no windows"; return; }
   # The vblank has to stay well above the frame rate measured: a window within
   # 10% of it may be held by it (at 240 Hz the Tutorial spot sat at 240.0).
   if [ -n "${3:-}" ]; then
-    hit=$(for f in "$r"/prof_*_summary.txt; do head -1 "$f"; done | grep -o '[0-9.]* fps average' |
+    hit=$(for f in "$r"/prof_*_summary.txt "$r"/plain_*.txt; do [ -f "$f" ] && head -1 "$f"; done | grep -o '[0-9.]* fps average' |
           awk -v cap="$3" '$1 + 0 >= 0.9 * cap / 1000 {print $1; exit}')
     [ -z "$hit" ] || { echo "near the vblank cap ($hit fps at $(( $3 / 1000 )) Hz; raise PERF_VBLANK)"; return; }
   fi

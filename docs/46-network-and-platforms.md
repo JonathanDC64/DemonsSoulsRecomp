@@ -181,7 +181,7 @@ The coverage of DeS's imports is below. "Resolved" means a handler exists under 
 | sceNp | 26 / 34 | ManagerGetNetworkTime, ManagerGetAvatarUrl, BasicGetMatchingInvitationEntryCount, BasicGetFriendPresenceByIndex, BasicGetBlockListEntry, ScoreRecordGameData, ScoreGetGameData, ScoreGetRankingByNpIdPcId | ONLINE only with psnr. |
 | sceNp2 | 24 / 26 | GrantRoomOwner, GetMemoryInfo | ContextStart needs psnr. Without it, the context fails to start with SERVER_NOT_AVAILABLE (`sceNpMatching2.c` lines 799-811). psnr has no owner-change message. |
 | sys_net | 23 / 29 | gethostbyaddr, sys_net_if_ctl, sys_net_set_udpp2p_test_param, sys_net_show_ifconfig, sys_net_show_route, sys_net_show_nameserver | Only with `PS3_NET_ONLINE` (`sysNet.c` lines 1037-1063). One datagram P2P socket per instance, with no vport demux (lines 291-295). |
-| cellHttp | 8 / 18 | 4 exist under wrong names (next table); ClientSetKeepAlive, ClientSetPerHostPoolSize, ClientPollConnections, ClientCloseAllConnections, ClientSetUserAgent, ClientGetUserAgent | A real HTTP/1.1 client on host sockets: one connection per request, no chunked decoding. Not gated by `PS3_NET_ONLINE`. |
+| cellHttp | 8 / 18 | 4 exist under wrong names (next table); ClientSetKeepAlive, ClientSetPerHostPoolSize, ClientPollConnections, ClientCloseAllConnections, ClientSetUserAgent, ClientGetUserAgent | A real HTTP/1.1 client on host sockets: one connection per request; chunked answers are decoded (ps3recomp #138). Not gated by `PS3_NET_ONLINE`. |
 | cellHttpUtil | 1 / 3 | Base64Encoder, Base64Decoder | They exist as Base64Encode and Base64Decode, with other signatures (`cellHttpUtil.c` lines 351 and 390). |
 | cellSysutilAvc2 | 7 / 10 | StartVoiceDetection, StopVoiceDetection, SetAttribute | Silent by design: it loads and joins, but carries no audio. |
 | **Total** | **97 / 128** | **31** | |
@@ -259,15 +259,43 @@ The four cellHttp functions with wrong names (`cellHttp.c`):
 
 The settings window maps each row to an environment knob (`port/ui/src/settings.cpp`, `kDefs`). All of these need a restart, because NP and sockets start at boot.
 
-| Row | Default | Knob |
-|---|---|---|
-| Online | Off | `PS3_NET_ONLINE` |
-| Game server (host or IP) | empty; Online stays off until set | `PS3_NET_HOSTS`, built for the six names |
-| Player name (3-16 letters, digits, `-` or `_`) | empty | `PS3_NP_ONLINE_ID` |
-| Co-op server (psnr, host[:port]) | empty, which means messages and bloodstains only | `PSNR_SERVER` |
-| P2P port | 3658 | `PS3_NET_P2P_PORT` |
+Built (the Network tab, between Controls and Interface). You decided Online is on by default. `apply_network` in `settings.cpp` turns the rows into ps3recomp's knobs once at start:
 
-Text next to Online: "Co-op and PvP connect you directly to other players, who can then see your IP address." A relay avoids that where the psnr server offers one. Offline stays the default.
+| Row | Setting (default) | Knob it sets, online only |
+|---|---|---|
+| Online | `DES_ONLINE` (`1`) | `PS3_NET_ONLINE=1`. Offline sets none of the knobs, not even to `0`, since the runtime counts any value as on. |
+| Server | `DES_NET_SERVER` (`archstones`) | `PS3_NET_HOSTS`: each of the six names `=` the server's address, joined with `&&` |
+| Custom server | `DES_NET_CUSTOM` (empty) | Developer builds only, for now. The address for Server's Custom choice: IPv4 or a host name. With no valid address the game stays offline (fails closed). It also stays offline with an address that was not chosen on this PC (see below). |
+| Online name | `DES_NET_NAME` (empty) | `PS3_NP_ONLINE_ID`, when it is 3-16 letters, digits, `-` or `_`. Online needs one: empty or invalid keeps the game offline, and the row says so (without an NP sign-in the game asks for the network again and again after Continue). |
+| P2P port | `DES_NET_P2P_PORT` (`3658`) | `PS3_NET_P2P_PORT` (1024-65535; anything else means 3658) |
+
+- **The servers** are one table in `settings.hpp` (`kNetServers`: key, name, address, note):
+  - The Archstones = `206.189.232.242`, the RPCS3 address its setup page publishes. It is run by a community volunteer.
+  - Local test server = `127.0.0.1`.
+  - Custom, in developer builds only for now (0.1.0).
+- **No psnr row yet.** `PSNR_SERVER` is never set from settings.
+- **No Custom in release builds, for now.** A portable download repacked with a `settings.ini` that names a server of
+  its own would otherwise send everyone who plays it there. With no Custom choice, a `settings.ini` that picks Custom
+  reads as the default server, as The Archstones' does, and the Custom server row is not shown. Bringing Custom back
+  to players needs a question at start ("This copy is set to play online on <address>. Play there?"), answered by
+  the mark below. The runtime sets up its sockets at boot, before the menu can ask, so the question has to come first.
+- **A custom server must be chosen on this PC** (developer builds). A Custom address counts only once the player presses
+  Custom in Server (even though the copied file already shows it picked), or types the address in Custom server, on
+  this PC. A toast then says to restart. That stores `net_custom_here` in `settings.ini`:
+  a hash of the address and this PC's id (Windows' `MachineGuid`, Linux's `/etc/machine-id`; `report::this_pc`). A
+  `settings.ini` copied to another PC does not match there. Until then the game plays offline, says so at start
+  ("Playing offline"), and the Custom server row says how to use the address. A `DES_NET_CUSTOM` from the environment
+  counts as chosen.
+- **The environment wins.** A knob already set in the environment (for example `PS3_NET_HOSTS`) is left alone, as with every other row.
+- **Test runs stay offline:**
+  - `deslib.sh`'s `des_env_defaults` exports `DES_ONLINE=0` for anything but `play.sh`;
+  - `milestones.sh` and `repro.sh` do the same;
+  - `apply_network` also stays offline in a harness run (`PS3_PIDFILE` set, not `play.sh`) unless `DES_ONLINE` was given.
+- **Cheats win.** `des_dev_boot` runs after the settings are applied (both from `ps3_title_options_init`), so a cheat set at start still clears the network knobs (docs/55 section 6). The tab then shows Online as "Off: cheats used", from `DES_DEV_SESSION`.
+- **Issue reports** show only "(set)" for the online name and the custom address.
+- **The tab's note:** co-op and invasions show your IP address to the other players; summons need an RPCN account (later).
+
+The first plan, for reference: Online off by default; a free-text game server; a co-op (psnr) server row.
 
 ### A6. Legal, terms and safety
 

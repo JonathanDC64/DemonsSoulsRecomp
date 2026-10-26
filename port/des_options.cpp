@@ -24,7 +24,8 @@
  *   fading in (state 0) the last one, and treats the hold of state 2 as already
  *   over: the last logo's fade-in and fade-out still play, about 2 s.
  *   Either way the game takes its own exit path, so nothing downstream sees a
- *   state it would not see on hardware.
+ *   state it would not see on hardware. Read at each update, so a change in
+ *   the settings window applies to the logo on screen (or the next start).
  *
  * DES_SKIP_INTRO_MOVIE=1 — skip the opening movie (movie/ds_advertise.pam, the
  *   130 s advert after the logos; the title screen also replays it when left
@@ -84,26 +85,57 @@
  *   So do the character creation screen's previews, which turn a fixed
  *   angle a frame with the right stick (des_viewer_rate).
  *
- * DES_VSYNC=0 | 1 — whether presents wait for the display's refresh (default
- *   1). 0 presents each frame as soon as it is drawn, with tearing, where the
- *   system supports it (the D3D12 backend asks DXGI; without it, it presents
- *   with vsync and says so once in the log). Sets RSX_VSYNC unless that is
- *   set already. Above the display's refresh (DES_FPS over 60 on a 60 or
- *   144 Hz display) only DES_VSYNC=0 shows every frame.
+ * DES_VSYNC=1 | 0 | even | vrr — how frames meet the display (default 1).
+ *   Read at each flip request, so the settings window changes it live; it
+ *   sets RSX_VSYNC (each frame held that many refreshes; 0 = at once, with
+ *   tearing) unless RSX_VSYNC was set at start, and the vblank clock.
+ *   1 presents at the display's refresh. 0 presents each frame as soon as it
+ *   is drawn, with tearing, where the system supports it (the D3D12 backend
+ *   asks DXGI; without it, it presents with vsync and says so once in the
+ *   log). Above the display's refresh (DES_FPS over 60 on a 60 Hz display)
+ *   only 0 shows every frame.
+ *   even: every frame stays on screen the same number of refreshes. A frame
+ *   rate that does not divide the refresh cannot do that: 60 fps on a 144 Hz
+ *   display shows frames for 2, 3, 2, 2, 3 refreshes, a judder however
+ *   evenly the game makes them (docs/94). So with DES_FPS set, the rate goes
+ *   to the nearest the display divides (the refresh over n: 60 becomes 72 on
+ *   a 144 Hz display, 30 becomes 28.8), the vblank clock ticks on the
+ *   display's own vblanks every n refreshes (ps3_vblank_lock_display), each
+ *   frame is held n refreshes (RSX_VSYNC=n), and the game's step is n
+ *   refreshes long. The game's own 30 fps mode and the cutscenes keep the
+ *   PS3's 59.94 Hz vblank, so they are even only where the display runs at
+ *   a multiple of it (60, 120, 240 Hz): there the clock goes to the
+ *   display's vblanks too (59.94 to 60 Hz, 0.1% faster); elsewhere they
+ *   present as with 1.
+ *   vrr: for a G-Sync or FreeSync display, which shows each frame as it
+ *   comes. The rate is capped a little under the display mode's refresh
+ *   (the refresh x (1 - refresh / 3600): 138 fps at 144 Hz), so the frames
+ *   stay inside the display's range, and frames present at the refresh
+ *   (as 1). On such a display that shows a frame at once, and one that
+ *   comes a little sooner than a refresh after the last (the clock's timer
+ *   wakes up to half a millisecond off) waits for the last to finish
+ *   drawing instead of tearing through it. Presenting at once, with tearing,
+ *   tore a fifth of the frames at 138 fps (docs/94). The display and its
+ *   driver have to have it on; the log says whether the display follows
+ *   the frames (vrr_note).
  *
  * DES_AUTO_CONTINUE=1 — press through the boot menus into the last save.
  *   From the first pad poll it taps CROSS, CROSS, START in a 600 ms cycle:
  *   that clears the notices, the title's "press start", "load game" and the
  *   first save in the list. It never presses CIRCLE or the d-pad, so it only
  *   goes forwards and never moves a cursor off its default. It lets go for
- *   good when the level's script archive (script/m*.luabnd) opens.
+ *   good when the level's script archive (script/m*.luabnd) opens. Read at
+ *   each pad poll, so the settings window turns it on or off live until then;
+ *   after the first level there is nothing left for it to do.
  *
  * The dev cheats and the warp are in des_dev.cpp, compiled into developer
  *   builds only (cmake -DDES_DEV=ON; docs/55).
  */
-#include "ppu_recomp.h"
+#include "ps3emu/ppu_lift.h"   /* ppu_context: the fixed part of the lift's header */
+#include "des_game_calls.h"     /* the lifted functions below (the game DLL's with DES_SPLIT) */
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include "ui/include/des_ui.h"  /* the wrapper UI: settings.ini and the overlay (docs/32) */
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -112,17 +144,27 @@
 #include <cmath>
 #include <cstring>
 #include <string>
+#include <mutex>
+#include <unordered_map>
 
 extern "C" void ppu_register_function(uint64_t addr, void (*fn)(ppu_context*));
 extern "C" void (*g_gcm_flip_request_hook)(void);
 extern "C" unsigned (*g_pad_title_hook)(void);
 extern "C" void (*g_fs_open_hook)(const char* guest_path);
 extern "C" void ps3_vblank_set_mhz(int mhz);   /* boot_main.cpp; 0 = VBLANK_MHZ */
+extern "C" void ps3_vblank_lock_display(int n);   /* boot_main.cpp; a tick every n refreshes, 0 = the timer */
+extern "C" int rsx_d3d12_display_refresh_mhz(void);   /* the window's display, 0 = not known */
+extern "C" int rsx_d3d12_display_mode_mhz(void);      /* its mode alone, in whole Hz */
+extern "C" int rsx_d3d12_display_shown_mhz(void);     /* how often it refreshed, by the swap chain */
 extern "C" void des_aspect_init(void);         /* des_aspect.cpp: DES_ASPECT, DES_HUD */
+extern "C" void des_aspect_poll(void);         /* des_aspect.cpp: their live changes */
+extern "C" void des_hud_init(void);            /* des_hud.cpp: DES_HUD_SIZE, the corners, hidden groups */
 extern "C" volatile unsigned g_pad0_reads, g_pad0_empty_reads, g_pad0_buttons, g_pad0_lstick;   /* cellPad.c */
 extern "C" void cellPad_host_stick(int stick, unsigned char x, unsigned char y, unsigned reads);   /* cellPad.c */
+#ifdef _WIN32
 extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vkey);   /* user32 */
 constexpr int VK_F8 = 0x77;
+#endif
 
 namespace {
 
@@ -139,14 +181,23 @@ bool env_on(const char* name)
     return v && *v && strcmp(v, "0") != 0;
 }
 
-int s_skip_intro = 0;
+/* DES_SKIP_INTRO as it is now: 0, 1 or 2. The settings window changes it
+ * live; the logos only play at start, so a change shows there or at the
+ * next start. */
+int skip_intro()
+{
+    static int mode = 0;
+    PS3_KNOB(mode, env_on("DES_SKIP_INTRO") ? (atoi(getenv("DES_SKIP_INTRO")) == 2 ? 2 : 1) : 0);
+    return mode;
+}
 
 void logo_update_skip(ppu_context* ctx)
 {
     const uint32_t dlg = (uint32_t)ctx->gpr[3];
-    if (dlg && s_skip_intro == 1) {
+    const int mode = skip_intro();
+    if (dlg && mode == 1) {
         vm_write32(dlg + kAnimState, 3);   /* to the next logo, or out after the last */
-    } else if (dlg) {
+    } else if (dlg && mode == 2) {
         const uint32_t state = vm_read32(dlg + kAnimState);
         if (state == 0 && vm_read32(dlg + kCurLogType) < kLastLogType) {
             static bool said = false;
@@ -243,6 +294,139 @@ bool cutfps_on()
     return on != 0;
 }
 
+/* DES_VSYNC (the header): how frames meet the display. Read live. */
+enum class Sync { Off, On, Even, Vrr };
+
+Sync sync_parse(const char* v)
+{
+    if (!v || !*v) return Sync::On;
+    if (strcmp(v, "even") == 0) return Sync::Even;
+    if (strcmp(v, "vrr") == 0) return Sync::Vrr;
+    return atoi(v) ? Sync::On : Sync::Off;
+}
+
+Sync sync_wanted()
+{
+    static int s = int(Sync::On);
+    PS3_KNOB(s, int(sync_parse(getenv("DES_VSYNC"))));
+    return Sync(s);
+}
+
+bool s_vsync_pinned = false;   /* RSX_VSYNC set at start: it wins over DES_VSYNC */
+
+/* What the frame clock and the presents do in the mode the game is in. */
+struct Pacing {
+    int mode60 = -1;      /* the flip mode's 60 byte; -1 = the game's own */
+    int vblank_mhz = 0;   /* ps3_vblank_set_mhz; 0 = VBLANK_MHZ */
+    int lock = 0;         /* ps3_vblank_lock_display */
+    int interval = 1;     /* RSX_VSYNC */
+    float step = 0.0f;    /* even frames: the frame step, n refreshes in seconds (0 = real time only) */
+};
+
+/* fps: s_fps (0 or less: the game's own mode); cut: as in fps_on_flip_request.
+ * The refreshes a frame is held under even frames stay the same while the
+ * frame rate is within 0.6 of them, so a display at 150 Hz with 60 fps (2.5)
+ * does not switch at every reading of its rate. */
+Pacing pacing_for(int fps, int cut, Sync sync)
+{
+    Pacing p;
+    /* 30 mode on the PS3's vblank: the game's own mode, a cutscene, and 30 fps
+     * but under even frames, which runs it like any other rate. */
+    const bool ps3_30 = fps <= 0 || cut == 1 || (fps == 30 && sync != Sync::Even);
+    p.mode60 = fps <= 0 ? -1 : ps3_30 ? 0 : 1;
+    p.vblank_mhz = fps <= 0 ? 0 : cut == 1 ? kPs3VblankMhz : fps_vblank_mhz(fps);
+    p.interval = sync == Sync::Off ? 0 : 1;
+    const int r = rsx_d3d12_display_refresh_mhz();
+    if (r <= 0) return p;
+    if (sync == Sync::Vrr && !ps3_30) {
+        /* From the mode's rate: under a variable refresh the swap chain's
+         * statistics are the frames' own times, and a reading of them that
+         * came near the mode's moved the cap from 138 to 136 and back. */
+        const int mode = rsx_d3d12_display_mode_mhz();
+        const int top = mode > 0 ? mode : r;
+        const int cap = int(top / 1000.0 * (1.0 - top / 3600000.0));
+        if (fps > cap) p.vblank_mhz = fps_vblank_mhz(cap);
+    } else if (sync == Sync::Even && !s_vblank_pinned) {
+        if (ps3_30) {
+            const int m = (r + kPs3VblankMhz / 2) / kPs3VblankMhz;
+            if (m >= 1 && std::abs(r - m * kPs3VblankMhz) * 1000LL <= m * kPs3VblankMhz * 6LL) {   /* 0.6% */
+                p.lock = m;
+                p.interval = std::min(2 * m, 4);
+                p.vblank_mhz = r / m;
+            }
+        } else {
+            static int held = 0;
+            const double x = double(r) / (double(fps) * 1000.0);
+            if (!held || std::fabs(x - held) >= 0.6) held = std::max(1, int(x + 0.5));
+            p.lock = held;
+            p.interval = std::min(held, 4);
+            p.vblank_mhz = r / held;
+            p.step = float(held * 1000.0 / r);
+        }
+    }
+    return p;
+}
+
+Pacing s_paced;   /* as applied (the backend's and the clock's defaults to start) */
+
+void pacing_apply(const Pacing& p, uint32_t obj, Sync sync)
+{
+    if (p.mode60 >= 0 && p.mode60 != s_paced.mode60) vm_write8(obj + kFlipMode60, uint8_t(p.mode60));
+    const bool say = p.lock != s_paced.lock || p.interval != s_paced.interval ||
+                     std::abs(p.vblank_mhz - s_paced.vblank_mhz) * 200LL > std::max(p.vblank_mhz, 1);
+    if (p.lock != s_paced.lock) ps3_vblank_lock_display(p.lock);
+    if (p.vblank_mhz != s_paced.vblank_mhz) ps3_vblank_set_mhz(p.vblank_mhz);
+    if (p.interval != s_paced.interval && !s_vsync_pinned)
+        ps3_setenv("RSX_VSYNC", std::to_string(p.interval).c_str());
+    if (say) {
+        const char* name = sync == Sync::Off ? "0" : sync == Sync::Even ? "even" : sync == Sync::Vrr ? "vrr" : "1";
+        const int r = rsx_d3d12_display_refresh_mhz();
+        if (p.lock)
+            fprintf(stderr, "[des] DES_VSYNC=%s: the vblank on every %d of %.2f Hz, a frame held %d refreshes\n",
+                    name, p.lock, r / 1000.0, p.interval);
+        else
+            fprintf(stderr, "[des] DES_VSYNC=%s: the vblank at %.2f Hz, presents %s%s\n", name,
+                    (p.vblank_mhz ? p.vblank_mhz : kPs3VblankMhz) / 1000.0,
+                    p.interval ? "at the refresh" : "at once",
+                    sync == Sync::Even ? " (this rate does not fit the display: as V-sync)"
+                    : sync == Sync::Vrr ? " (shown at once where the display follows the frames)" : "");
+    }
+    s_paced = p;
+}
+
+/* Under vrr, every 2 s: does the display follow the frames? A fixed
+ * refresh counts its refreshes at the mode's rate whatever the frames do;
+ * one that follows them (G-Sync, FreeSync) refreshes as often as they come,
+ * and the cap keeps them 4% or more under the mode. The log says when the
+ * answer changes, after two readings agree. */
+void vrr_note(Sync sync)
+{
+    using clock = std::chrono::steady_clock;
+    static clock::time_point at;
+    static int said = -1, last = -1;
+    if (sync != Sync::Vrr) {
+        said = last = -1;
+        return;
+    }
+    const clock::time_point now = clock::now();
+    if (now - at < std::chrono::seconds(2)) return;
+    at = now;
+    const int shown = rsx_d3d12_display_shown_mhz(), mode = rsx_d3d12_display_mode_mhz();
+    if (shown <= 0 || mode <= 0) return;
+    const int follows = shown * 100LL < mode * 98LL ? 1 : 0;
+    if (follows == last && follows != said) {
+        if (follows)
+            fprintf(stderr, "[des] DES_VSYNC=vrr: the display follows the frames (%.1f Hz): G-Sync / FreeSync is on\n",
+                    shown / 1000.0);
+        else
+            fprintf(stderr, "[des] DES_VSYNC=vrr: the display stays at %.2f Hz: G-Sync / FreeSync is not on "
+                    "for this window (the driver's setting, the display's own menu, the window in front)\n",
+                    shown / 1000.0);
+        said = follows;
+    }
+    last = follows;
+}
+
 void fps_on_flip_request()
 {
     using clock = std::chrono::steady_clock;
@@ -250,8 +434,12 @@ void fps_on_flip_request()
     static uint32_t orig_dt;
     static int in_cutscene = 0;   /* 0 none, 1 at 30 (the lock), 2 unlocked (DES_CUTFPS) */
     static clock::time_point last;
+    const Sync sync = sync_wanted();
     const uint32_t obj = vm_read32(kFlipModeObj);
-    if (!obj) return;
+    if (!obj) {
+        pacing_apply(pacing_for(0, 0, sync), obj, sync);
+        return;
+    }
     /* A change of DES_FPS takes effect at the next flip request: the mode
      * bytes, the step and the vblank are set as at the start, and the game's
      * own mode puts back what it found. */
@@ -263,9 +451,7 @@ void fps_on_flip_request()
             orig_dt = vm_read32(kFrameDt);
         }
         if (want) {
-            vm_write8(obj + kFlipMode60, want > 30 ? 1 : 0);
             vm_write8(obj + kFlipNoSkip, 1);
-            ps3_vblank_set_mhz(fps_vblank_mhz(want));
             fprintf(stderr, "[des] DES_FPS=%s: FlipMode %s on 0x%08X, real frame time%s\n",
                     fps_name(want).c_str(), want > 30 ? "60FPS(NO SKIP)" : "30FPS(NO SKIP)", obj,
                     fps_vblank_mhz(want) ? ", vblank at the cap" : "");
@@ -273,35 +459,46 @@ void fps_on_flip_request()
             vm_write8(obj + kFlipMode60, orig60);
             vm_write8(obj + kFlipNoSkip, orig_noskip);
             vm_write32(kFrameDt, orig_dt);
-            ps3_vblank_set_mhz(0);
+            s_paced.mode60 = -1;
             fprintf(stderr, "[des] DES_FPS off: the game's own 30 fps mode\n");
         }
         s_fps = want;
         in_cutscene = 0;
         last = clock::time_point();
     }
-    if (!s_fps) return;
     /* A cutscene plays as the game ships it: 30 mode on the PS3's vblank, so
      * it flips every other vblank, and a fixed 1/30 step. Its camera takes
      * the nearest of keys 1/30 s apart while everything else follows the
      * frame step, so any faster and a cutscene judders. The vblank goes back
      * to the unlocked rate when the cutscene ends. With DES_CUTFPS=1 a
-     * cutscene stays unlocked and des_cut_cam blends the camera's keys. */
-    const int cut = s_fps > 30 && cutscene_playing() ? (cutfps_on() ? 2 : 1) : 0;
+     * cutscene stays unlocked and des_cut_cam blends the camera's keys. 30 fps
+     * under even frames runs at the display's rate (pacing_for), so its
+     * cutscenes go to 30 too. */
+    const bool unlocked = s_fps > 30 || (s_fps > 0 && sync == Sync::Even);
+    const int cut = unlocked && cutscene_playing() ? (cutfps_on() ? 2 : 1) : 0;
     if (cut != in_cutscene) {
-        if ((cut == 1) != (in_cutscene == 1)) {
-            vm_write8(obj + kFlipMode60, cut == 1 ? 0 : 1);
-            ps3_vblank_set_mhz(cut == 1 ? kPs3VblankMhz : fps_vblank_mhz(s_fps));
-        }
         fprintf(stderr, "[des] DES_FPS: %s\n",
                 cut == 1 ? "cutscene, 30 fps" : cut == 2 ? "cutscene, unlocked (DES_CUTFPS)"
                 : in_cutscene == 1 ? "cutscene over, unlocked again" : "cutscene over");
         in_cutscene = cut;
     }
+    const Pacing p = pacing_for(s_fps, cut, sync);
+    pacing_apply(p, obj, sync);
+    vrr_note(sync);
+    if (!s_fps) return;
+    /* Under even frames a frame is shown n refreshes after the last, or 2n
+     * after a late one: the step is that many whole frames when the time
+     * since the last flip request is within a quarter frame of it, so the
+     * game moves by the time each frame is on screen and not by when the
+     * request came. */
     const clock::time_point now = clock::now();
     float dt = kCutsceneDt;
     if (cut != 1 && last != clock::time_point()) {
         dt = std::chrono::duration<float>(now - last).count();
+        if (p.step > 0.0f) {
+            const float k = std::round(dt / p.step);
+            if (k >= 1.0f && std::fabs(dt - k * p.step) < p.step * 0.25f) dt = k * p.step;
+        }
         if (dt > kMaxFrameDt) dt = kMaxFrameDt;
     }
     uint32_t bits;
@@ -315,7 +512,14 @@ void fps_on_flip_request()
  * the float x, y, z at *(*(chr + 0x20) + 0x10) + 0x10. Any link can be 0 or
  * stale during a load; every one is range-checked. */
 constexpr uint32_t kChrMan       = 0x01B3D6E0u;
-bool guest_ptr_ok(uint32_t a) { return a >= 0x00010000u && a < 0x50000000u && !(a & 3u); }
+/* Main memory and the lv2 areas below 0x50000000, or the stack area
+ * (0xD0000000-0xDFFFFFFF), where lv2 puts every thread's stack. The main
+ * thread's is there too with PS3_MAIN_STACK_LV2=1, and hooks such as
+ * des_body_xform write to its locals. */
+bool guest_ptr_ok(uint32_t a)
+{
+    return ((a >= 0x00010000u && a < 0x50000000u) || (a >= 0xD0000000u && a < 0xE0000000u)) && !(a & 3u);
+}
 
 /* The character also holds its stamina (int, +0x3D4) and the move speed it
  * asks for (float m/s, +0xCCC): found by dumping it while dashing. */
@@ -334,8 +538,9 @@ bool player_pos(float* x, float* y, float* z, int* stamina, float* speed)
 
 /* DES_FRAMELOG=<file>: one line per flip request (time, interval, the step the
  * game was handed, cutscene, player position) and every half second a summary
- * of the player's ground speed and the sum of steps against real time. F8
- * writes a MARK line, so a player can tag the moment something looks wrong. */
+ * of the player's ground speed and the sum of steps against real time. With
+ * the developer keys on (RSX_DEV_HOTKEYS=1: a developer build, or a tools/des
+ * run), F8 writes a MARK line, to tag the moment something looks wrong. */
 FILE* s_framelog = nullptr;
 char s_framelog_path[260];
 
@@ -441,7 +646,12 @@ void frame_log()
     }
     have_pos = pos; px = x; pz = z;
     win_dt += dt; win_n++;
-    const bool f8 = !ps3_env_int("PS3_NO_USER_INPUT", 0) && (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
+#ifdef _WIN32
+    const bool f8 = !ps3_env_int("PS3_NO_USER_INPUT", 0) && ps3_env_int("RSX_DEV_HOTKEYS", 0) &&
+                    (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
+#else
+    const bool f8 = false;   /* (the F8 mark is Windows-only for now) */
+#endif
     if (f8 && !f8_down) { fprintf(s_framelog, "MARK %.1f\n", ms); movement_dump("mark", ms); }
     f8_down = f8;
     if (ms - win_ms >= 500.0) {
@@ -460,6 +670,8 @@ std::atomic<unsigned> s_flips{0};
 
 void on_flip_request()
 {
+    des_report_flip_hook();   /* (a test knob: DES_HANG_AT_FRAME) */
+    des_aspect_poll();        /* DES_ASPECT, DES_HUD changed while playing */
     s_flips.fetch_add(1, std::memory_order_relaxed);
     fps_on_flip_request();
     if (s_framelog) frame_log();
@@ -470,10 +682,17 @@ volatile bool s_auto_done = false;
 
 extern "C" int des_ui_start_screen_up(void);   /* port/ui/src/des_ui.cpp */
 
+bool auto_continue_on()   /* live: the settings window can turn it on or off before the first level */
+{
+    static bool on = false;
+    PS3_KNOB(on, env_on("DES_AUTO_CONTINUE"));
+    return on;
+}
+
 unsigned auto_continue_buttons()
 {
     /* From settings.ini the start screen still shows: press nothing until Play. */
-    if (s_auto_done || des_ui_start_screen_up()) return 0;
+    if (s_auto_done || !auto_continue_on() || des_ui_start_screen_up()) return 0;
     using clock = std::chrono::steady_clock;
     static const clock::time_point t0 = clock::now();
     const long long ms =
@@ -486,8 +705,8 @@ unsigned auto_continue_buttons()
 void auto_continue_on_open(const char* path)
 {
     if (!s_auto_done && strstr(path, "/script/m") && strstr(path, ".luabnd")) {
-        s_auto_done = true;
-        fprintf(stderr, "[des] DES_AUTO_CONTINUE: level loading (%s), pad released\n", path);
+        s_auto_done = true;   /* on or not: from the first level on there is nothing left to press through */
+        if (auto_continue_on()) fprintf(stderr, "[des] DES_AUTO_CONTINUE: level loading (%s), pad released\n", path);
     }
 }
 
@@ -803,7 +1022,9 @@ extern "C" void des_dof(ppu_context* ctx, uint32_t addr)
     vm_writef(blend + 0x14, 0.0f);
 }
 
+#ifndef PS3_GAME_SPLIT   /* DES_SPLIT: the game DLL's (ps3emu/game_split.h) */
 extern "C" PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);
+#endif
 
 /* Lifted in place of 0x00273D38 (--override-funcs), which is only
  * `0x002EC2B8(*(r3 + 0x20), f1 = step)`: the movement object's step after
@@ -872,6 +1093,778 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
     const float steps = vm_readf(kFrameDt) * 30.0f;
     if (!(k > 0.0 && k < 1.0) || !(steps > 0.0f) || steps == 1.0f) return;
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
+}
+
+/* The foot IK (issue #140, docs/92). A character's movement object places its
+ * feet once an update: the driver 0x002F5B08 calls Havok's
+ * hkaFootPlacementIkSolver::doFootPlacement (0x00FF4DC0) for each leg, then
+ * moves the pelvis. Its smoothing is a fixed amount an update, tuned for 30 fps:
+ * the pelvis offset takes 0.2 of the lower foot's error (or keeps 0.6 of itself
+ * when neither foot hits the ground), the solver's weight eases by its onOffGain
+ * (0.8), and a foot's height by its gains' product (0.64). At 95 fps that
+ * settles three times as fast, so the hips and feet follow every bump. The
+ * lifter calls this after each of those loads (--insn-hooks): an ease k becomes
+ * 1 - (1 - k)^(30 dt) and a keep r becomes r^(30 dt), with dt the driver's own
+ * (kept at its start, 0x002F5B14, for the solver's sites inside the same call),
+ * so a second goes as at 30 fps. DES_IKFIX=0 turns it off live; DES_IKLOG=<file>
+ * writes the player's pelvis offset at each update. */
+static PPU_THREAD_LOCAL float s_ik_dt;
+static void ik_log(ppu_context* ctx, uint32_t addr)
+{
+    static int open = 0;
+    static FILE* f = nullptr;
+    if (!open) {
+        open = 1;
+        const char* path = getenv("DES_IKLOG");
+        if (path && *path && strcmp(path, "0") != 0 && (f = fopen(path, "w")) != nullptr)
+            fprintf(f, "# ms dt offset error (air: neither foot hits)\n");
+    }
+    if (!f) return;
+    uint32_t chr = vm_read32(kChrMan);
+    if (!guest_ptr_ok(chr) || !guest_ptr_ok(chr = vm_read32(chr + 0x1BC)) || vm_read32(chr + 0x20) != ctx->gpr[31])
+        return;   /* r31 is the movement object at both sites; only the player's */
+    static const auto t0 = std::chrono::steady_clock::now();
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (addr == 0x002F5DB8u)   /* f1 = the offset; r9 points at the lower foot's error (0x002F5DBC loads it) */
+        fprintf(f, "%.1f %.4f %.4f %.4f\n", ms, s_ik_dt, ctx->fpr[1], vm_readf((uint32_t)ctx->gpr[9]));
+    else
+        fprintf(f, "%.1f %.4f %.4f air\n", ms, s_ik_dt, ctx->fpr[1]);
+    fflush(f);   /* a test driver lines its phases up with the last line */
+}
+
+/* The ankle's tilt (docs/92). After its two rays the solver turns each ankle to
+ * the ground's normal under the foot: the normal of whichever surface is higher,
+ * the ankle ray's (r1+0xC0) or the toe ray's (r1+0x80), picked fresh at every
+ * update with nothing carried over (0x00FF5BAC). A ray that grazes a step edge,
+ * a rubble block or a wall returns that face's normal, up to 90 degrees from up,
+ * and the foot turns nearly on its side for an update or three: the twitching
+ * foot on uneven ground. The original game does this at 30 fps too.
+ * DES_FOOTFIX=1 (default 0, the original): a normal steeper than 45 degrees is
+ * not used (the solver keeps the last update's, or straight up), and the rest
+ * eases from the last update's toward the new one, keeping half the difference
+ * per 30 fps update (0.5^(30 dt) at other rates). DES_FOOTTILT=<degrees> and
+ * DES_FOOTSMOOTH=<share kept> set the two parts (0 turns one off). It runs at
+ * 0x00FF54D4, on the solver's path with a hit and its weight above 0, after the
+ * normal is picked into r1+0xA0 and before the ankle is turned (0x00FF59BC);
+ * the solver stores the result at +0xA0 itself (0x00FF56C0), where the next
+ * update finds it. Every character with foot IK gets it. DES_FOOTLOG=<file>
+ * writes the player's normals at each update. */
+static PPU_THREAD_LOCAL bool s_ik_player;
+static FILE* foot_log_file()
+{
+    static int open = 0;
+    static FILE* f = nullptr;
+    if (!open) {
+        open = 1;
+        const char* path = getenv("DES_FOOTLOG");
+        if (path && *path && strcmp(path, "0") != 0 && (f = fopen(path, "w")) != nullptr)
+            fprintf(f, "# ms solver dt weight picked(x y z) used(x y z) toe(x y z) ankle(x y z) player(x y z)\n");
+    }
+    return f;
+}
+struct FootFix { float cos_tilt; float keep; };   /* cos_tilt -2: no limit; keep 0: no easing */
+static FootFix foot_fix()
+{
+    const bool on = ps3_env_int("DES_FOOTFIX", 0) != 0;
+    const char* t = getenv("DES_FOOTTILT");
+    const char* s = getenv("DES_FOOTSMOOTH");
+    float tilt = (t && *t) ? (float)atof(t) : (on ? 45.0f : 0.0f);
+    float keep = (s && *s) ? (float)atof(s) : (on ? 0.5f : 0.0f);
+    if (!(tilt > 0.0f && tilt < 90.0f)) tilt = 0.0f;
+    if (!(keep > 0.0f && keep < 1.0f)) keep = 0.0f;
+    return {tilt > 0.0f ? std::cos(tilt * 3.14159265f / 180.0f) : -2.0f, keep};
+}
+static void foot_normal(ppu_context* ctx)
+{
+    static FootFix fix = {-2.0f, 0.0f};
+    PS3_KNOB(fix, foot_fix());
+    FILE* log = s_ik_player ? foot_log_file() : nullptr;
+    if (fix.cos_tilt < -1.5f && fix.keep <= 0.0f && !log) return;
+    const uint32_t solver = (uint32_t)ctx->gpr[30], sp = (uint32_t)ctx->gpr[1], n_ea = (sp + 0xA0u) & ~0xFu;
+    float h[3], p[3], n[3], hl = 0.0f, pl = 0.0f;
+    for (int i = 0; i < 3; i++) {
+        h[i] = n[i] = vm_readf(n_ea + 4 * i);
+        p[i] = vm_readf(solver + 0xA0 + 4 * i);
+        hl += h[i] * h[i]; pl += p[i] * p[i];
+    }
+    const bool h_ok = hl > 0.25f && hl < 4.0f, p_ok = pl > 0.25f && pl < 4.0f;   /* +Y is up */
+    const bool p_flat = p_ok && p[1] >= fix.cos_tilt * std::sqrt(pl);
+    bool changed = false;
+    if (h_ok && n[1] < fix.cos_tilt * std::sqrt(hl)) {   /* too steep to stand on */
+        for (int i = 0; i < 3; i++) n[i] = p_flat ? p[i] : (i == 1 ? 1.0f : 0.0f);
+        changed = true;
+    }
+    const float steps = s_ik_dt * 30.0f;
+    if (fix.keep > 0.0f && steps > 0.0f && h_ok && p_flat) {
+        const float a = 1.0f - std::pow(fix.keep, steps);   /* the share of the difference taken this update */
+        for (int i = 0; i < 3; i++) n[i] = p[i] + (n[i] - p[i]) * a;
+        changed = true;
+    }
+    if (changed) {
+        const float m = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
+        if (m > 1e-6f) {
+            const float r = 1.0f / std::sqrt(m);
+            for (int i = 0; i < 3; i++) { n[i] *= r; vm_writef(n_ea + 4 * i, n[i]); }
+        } else {
+            for (int i = 0; i < 3; i++) n[i] = h[i];
+        }
+    }
+    if (log) {
+        static const auto t0 = std::chrono::steady_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        float x = 0, y = 0, z = 0, speed = 0;
+        int stamina = 0;
+        player_pos(&x, &y, &z, &stamina, &speed);
+        fprintf(log, "%.1f %08X %.4f %.3f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.2f %.2f %.2f\n",
+                ms, solver, s_ik_dt, vm_readf(solver + 0x90), h[0], h[1], h[2], n[0], n[1], n[2], vm_readf(sp + 0x80),
+                vm_readf(sp + 0x84), vm_readf(sp + 0x88), vm_readf(sp + 0xC0), vm_readf(sp + 0xC4), vm_readf(sp + 0xC8),
+                x, y, z);
+        fflush(log);
+    }
+}
+
+extern "C" void des_ik_rate(ppu_context* ctx, uint32_t addr)
+{
+    if (addr == 0x002F5B14u) {   /* fmr f30, f1: the driver's dt; r3 is still the movement object */
+        s_ik_dt = (float)ctx->fpr[30];
+        if (foot_log_file()) {
+            uint32_t chr = vm_read32(kChrMan);
+            s_ik_player = guest_ptr_ok(chr) && guest_ptr_ok(chr = vm_read32(chr + 0x1BC)) &&
+                          vm_read32(chr + 0x20) == (uint32_t)ctx->gpr[3];
+        }
+        return;
+    }
+    if (addr == 0x00FF54D4u) foot_normal(ctx);
+    if (addr == 0x002F5DB8u || addr == 0x002F5CCCu) ik_log(ctx, addr);
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_IKFIX", 1) != 0);
+    if (!on || s_fps <= 0) return;
+    const int fd = (vm_read32(addr) >> 21) & 31;   /* the lfs's or the fmuls's target */
+    const double k = ctx->fpr[fd];
+    const float steps = s_ik_dt * 30.0f;
+    if (!(k > 0.0 && k < 1.0) || !(steps > 0.0f) || steps == 1.0f) return;
+    ctx->fpr[fd] = (float)(addr == 0x002F5CCCu ? std::pow(k, (double)steps) : 1.0 - std::pow(1.0 - k, (double)steps));
+}
+
+/* The lower body's turn against the upper body (docs/28, "Locked-on direction
+ * changes above 30 fps"). Moving locked on, the locomotion controller (vtable
+ * 0x0185C338) plays one of four direction clips and turns the Master,
+ * Upper_Root and Neck bones by the angle between the move and the clip. That
+ * angle jumps when the clip changes (about 85 degrees on a diagonal), and the
+ * bone turner (0x003D3BC0) eases each bone toward it by a fixed share an update:
+ * cur += (target - cur) * k, with k = 0.35 (the controller's +0x154, stored to
+ * each bone at 0x00322AB0). At 30 fps that settles in about 0.18 s, alongside the
+ * clips' 0.2 s blend; at 240 fps in about 20 ms, so the body snaps round while
+ * the legs still blend. The lifter calls this after the load of k (0x003D42BC):
+ * k becomes 1 - (1 - k)^(30 dt), with dt the game's frame time, so a second
+ * eases as at 30 fps. The turner's other user, a two-bone controller
+ * (0x0031B56C), gets the same. DES_TWISTFIX=0 turns it off live. */
+extern "C" void des_twist_rate(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_TWISTFIX", 1) != 0);
+    if (!on || s_fps <= 0) return;
+    const int fd = (vm_read32(addr) >> 21) & 31;   /* the lfs's target */
+    const double k = ctx->fpr[fd];
+    const float steps = vm_readf(kFrameDt) * 30.0f;
+    if (!(k > 0.0 && k < 1.0) || !(steps > 0.0f) || steps == 1.0f) return;
+    ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
+}
+
+/* DES_PHYS_HZ=<n> (default 30; 0 = step every frame): at most n Havok steps
+ * a second. The physics update 0x001D1E30 steps the world once a frame with
+ * the frame's dt (f31). Havok counts its solver passes and its sleep checks
+ * in steps, so at 400 fps a ragdoll gets 13 times the passes and 1/13 of the
+ * time to settle: corpses twitch after death and sink through the floor when
+ * touched. The hook runs after 0x001D1E64 (lbz r28, 0x14(r31), the update's
+ * own skip byte). Frames shorter than 1/n add up; the world steps 1/n each
+ * time they reach it and skips the step (r28 = 1) otherwise. A frame of 1/n
+ * or longer steps its own dt, so 30 fps is the game as it was. */
+static int phys_hz()
+{
+    static int hz = 30;
+    PS3_KNOB(hz, ps3_env_int("DES_PHYS_HZ", 30));
+    return hz;
+}
+static std::atomic<double> s_phys_clock{0.0};   /* game seconds, summed frame dts */
+static std::atomic<bool> s_phys_capped{false};  /* this frame was shorter than the step */
+extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
+{
+    const int hz = phys_hz();
+    static double acc = 0.0;
+    const double dt = ctx->fpr[31], h = hz > 0 ? 1.0 / hz : 0.0;
+    if (dt > 0.0) s_phys_clock.store(s_phys_clock.load() + dt);
+    s_phys_capped.store(hz > 0 && dt > 0.0 && dt < h);
+    if (hz <= 0 || ctx->gpr[28] != 0) { acc = 0.0; return; }
+    if (!(dt > 0.0) || dt >= h) { acc = 0.0; return; }
+    acc += dt;
+    if (acc < h) {
+        ctx->gpr[28] = 1;              /* skip this frame's step */
+        return;
+    }
+    ctx->fpr[31] = (float)h;
+    acc -= h;
+    if (acc >= h) acc = 0.0;
+}
+
+/* With DES_PHYS_HZ: the passes that drive a character's bodies to its
+ * animation pose (0x001EF670, 0x001DF7C0, through Havok's hard keyframe
+ * 0x0131BAF8) set each body's velocity to the distance to the pose times
+ * 1/dt. Under the cap the world steps 1/n, so a frame's 1/dt would carry the
+ * body n*dt times too far. The hook runs after their fdivs f31, f0, f1 and
+ * makes 1/dt n when the frame is shorter than 1/n. */
+extern "C" void des_phys_kf(ppu_context* ctx, uint32_t)
+{
+    const int hz = phys_hz();
+    if (hz <= 0 || !(ctx->fpr[1] > 0.0) || ctx->fpr[1] >= 1.0 / hz) return;
+    ctx->fpr[31] = (float)(ctx->fpr[0] * hz);
+}
+
+/* DES_RAGINTERP (default 1; 0 = off): with DES_PHYS_HZ capping the steps,
+ * physics objects would be drawn at 30 Hz. A rigid body's swept transform
+ * holds its pose at the start and the end of its last step (centre of mass 0
+ * at +0x120, whose w is the step's start time, centre of mass 1 at +0x130,
+ * whose w is 1 / the step length, rotations at +0x140 and +0x150, local
+ * centre of mass at +0x160). Two hooks draw the pose between the two instead,
+ * blended by the game time since the body last got a new step over the step
+ * length, so the drawn pose runs one step behind:
+ *  - ragdolls: Havok's pose readers (0x012D85E8, 0x012D9288) turn each bone's
+ *    body transform into a position and rotation (0x0109FB30, through
+ *    0x011801C8); the hook runs after that call;
+ *  - everything else the game draws from a body (breakables, debris, loose
+ *    objects): the game reads the transform through 0x0109F250, which copies
+ *    an hkTransform into a 4x4 matrix; the hook runs after its last store.
+ * Only moving dynamic bodies are touched: a body that sleeps or stops
+ * stepping shows its own transform, keyframed bodies (inverse mass 0) are
+ * left to the game, and frames of a step or longer are left alone. */
+namespace {
+struct RagSeen { float t0; double at; };
+std::mutex s_rag_mu;
+std::unordered_map<uint32_t, RagSeen> s_rag_seen;
+void vm_read4f(uint32_t ea, float* v) { for (int i = 0; i < 4; i++) v[i] = vm_readf(ea + 4 * i); }
+/* v rotated by the quaternion q (x, y, z, w) */
+void quat_rotate(const float* q, const float* v, float* r)
+{
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float tx = 2.0f * (y * v[2] - z * v[1]), ty = 2.0f * (z * v[0] - x * v[2]), tz = 2.0f * (x * v[1] - y * v[0]);
+    r[0] = v[0] + w * tx + (y * tz - z * ty);
+    r[1] = v[1] + w * ty + (z * tx - x * tz);
+    r[2] = v[2] + w * tz + (x * ty - y * tx);
+}
+}
+static bool rag_interp_on()
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_RAGINTERP", 1));
+    return on && s_phys_capped.load();
+}
+/* The body's pose between the start and the end of its last step: the
+ * position of its origin in pos, its rotation (x, y, z, w) in q. False when
+ * it shows its own transform. */
+static bool body_pose_between(uint32_t body, float* pos, float* q)
+{
+    float c0[4], c1[4], q0[4], q1[4], cl[4];
+    vm_read4f(body + 0x120, c0); vm_read4f(body + 0x130, c1);
+    vm_read4f(body + 0x140, q0); vm_read4f(body + 0x150, q1);
+    vm_read4f(body + 0x160, cl);
+    if (!(c1[3] > 0.0f)) return false;
+    const double now = s_phys_clock.load(), span = 1.0 / c1[3];
+    double since;
+    {
+        std::lock_guard<std::mutex> lk(s_rag_mu);
+        if (s_rag_seen.size() > 8192) s_rag_seen.clear();
+        RagSeen& s = s_rag_seen[body];
+        if (s.t0 != c0[3]) { s.t0 = c0[3]; s.at = now; }
+        since = now - s.at;
+    }
+    if (since >= span) return false;
+    static int log = 0; static std::atomic<int> nlog{0};
+    PS3_KNOB(log, ps3_env_int("DES_RAGINTERP_LOG", 0));
+    if (log && (nlog++ < 40 || nlog.load() % 4000 == 0)) {
+        /* the swept end against the body's transform: origin and first column */
+        float e[3], col[3], ex[3] = {1.0f, 0.0f, 0.0f};
+        quat_rotate(q1, cl, e); quat_rotate(q1, ex, col);
+        fprintf(stderr, "[raginterp] body %08X span %.4f since %.4f end %.3f %.3f %.3f transform %.3f %.3f %.3f"
+                " col0 %.3f %.3f %.3f transform %.3f %.3f %.3f\n", body, span, since,
+                c1[0] - e[0], c1[1] - e[1], c1[2] - e[2], vm_readf(body + 0x110), vm_readf(body + 0x114), vm_readf(body + 0x118),
+                col[0], col[1], col[2], vm_readf(body + 0xE0), vm_readf(body + 0xE4), vm_readf(body + 0xE8));
+    }
+    const float a = (float)(since / span);
+    const float d = q0[0] * q1[0] + q0[1] * q1[1] + q0[2] * q1[2] + q0[3] * q1[3];
+    const float s1 = d < 0.0f ? -a : a;
+    float n = 0.0f;
+    for (int i = 0; i < 4; i++) { q[i] = q0[i] * (1.0f - a) + q1[i] * s1; n += q[i] * q[i]; }
+    if (!(n > 1e-12f)) return false;
+    n = 1.0f / std::sqrt(n);
+    for (int i = 0; i < 4; i++) q[i] *= n;
+    float r[3];
+    quat_rotate(q, cl, r);   /* origin = centre of mass - q * local centre of mass */
+    for (int i = 0; i < 3; i++) pos[i] = c0[i] + (c1[i] - c0[i]) * a - r[i];
+    return true;
+}
+static void rag_interp(uint32_t inst, uint32_t out, uint32_t idx)
+{
+    if (!rag_interp_on()) return;
+    uint32_t map, bodies, bi, body;
+    if (!guest_ptr_ok(inst) || !guest_ptr_ok(out) || !guest_ptr_ok(map = vm_read32(inst + 0x20)) ||
+        !guest_ptr_ok(bodies = vm_read32(inst + 8))) return;
+    if ((int32_t)(bi = vm_read32(map + 4 * idx)) < 0 || !guest_ptr_ok(body = vm_read32(bodies + 4 * bi))) return;
+    float pos[3], q[4], qo[4];
+    if (!body_pose_between(body, pos, q)) return;
+    vm_read4f(out + 0x10, qo);
+    if (q[0] * qo[0] + q[1] * qo[1] + q[2] * qo[2] + q[3] * qo[3] < 0.0f)
+        for (int i = 0; i < 4; i++) q[i] = -q[i];      /* same sign as the converter's */
+    for (int i = 0; i < 3; i++) vm_writef(out + 4 * i, pos[i]);
+    for (int i = 0; i < 4; i++) vm_writef(out + 0x10 + 4 * i, q[i]);
+}
+/* After 0x012D86C4: ragdoll instance in r30, pose slot in r29, bone in r28. */
+extern "C" void des_rag_pose_a(ppu_context* ctx, uint32_t)
+{
+    rag_interp((uint32_t)ctx->gpr[30], (uint32_t)ctx->gpr[29], (uint32_t)ctx->gpr[28]);
+}
+/* After 0x012D9354: ragdoll instance in r29, pose slot in r30, bone in r28. */
+extern "C" void des_rag_pose_b(ppu_context* ctx, uint32_t)
+{
+    rag_interp((uint32_t)ctx->gpr[29], (uint32_t)ctx->gpr[30], (uint32_t)ctx->gpr[28]);
+}
+/* After 0x0109F2C4, the last store of the transform-to-matrix copy: r3 and r4
+ * are the source and the destination plus 0x30. A source at +0xE0 of a moving
+ * dynamic rigid body (vtable 0x018B4810) gets the in-between pose. */
+extern "C" void des_body_xform(ppu_context* ctx, uint32_t)
+{
+    if (!rag_interp_on()) return;
+    const uint32_t src = (uint32_t)ctx->gpr[3] - 0x30, dst = (uint32_t)ctx->gpr[4] - 0x30, body = src - 0xE0;
+    if (!guest_ptr_ok(body) || !guest_ptr_ok(dst) || vm_read32(body) != 0x018B4810u || !(vm_readf(body + 0x19C) > 0.0f)) return;
+    float pos[3], q[4];
+    if (!body_pose_between(body, pos, q)) return;
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float col[3][3] = {
+        {1.0f - 2.0f * (y * y + z * z), 2.0f * (x * y + w * z), 2.0f * (x * z - w * y)},
+        {2.0f * (x * y - w * z), 1.0f - 2.0f * (x * x + z * z), 2.0f * (y * z + w * x)},
+        {2.0f * (x * z + w * y), 2.0f * (y * z - w * x), 1.0f - 2.0f * (x * x + y * y)}};
+    for (int c = 0; c < 3; c++)
+        for (int i = 0; i < 3; i++) vm_writef(dst + 0x10 * c + 4 * i, col[c][i]);
+    for (int i = 0; i < 3; i++) vm_writef(dst + 0x30 + 4 * i, pos[i]);
+}
+
+/* DES_NETLOG=1: seconds since the first line, for des_net_sync's log. */
+static double net_log_time()
+{
+    static const auto start = std::chrono::steady_clock::now();
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
+
+/* What des_net_sync keeps about each remote player, by its NetworkManipulator
+ * (eight at most; a new one takes the slot used longest ago). Main thread. */
+struct NetRemote {
+    uint32_t m;
+    float x, z;          /* the target at the last packet */
+    float acc;           /* seconds since it */
+    float speed, gap;    /* the sender's speed, and the last gap between packets */
+    float gap_avg;       /* those gaps averaged, 0 after a long one */
+    float dir_x, dir_z;  /* the direction of the last move that went somewhere */
+    unsigned last_use;
+};
+static NetRemote s_net_rem[8];
+
+/* A vector register's word as the guest's float bits, and back (the register
+ * holds guest bytes). */
+static uint32_t net_swap(uint32_t b)
+{
+    return (b >> 24) | ((b >> 8) & 0xFF00u) | ((b << 8) & 0xFF0000u) | (b << 24);
+}
+
+static NetRemote* net_remote(uint32_t m)
+{
+    static unsigned use;
+    NetRemote* r = nullptr;
+    for (NetRemote& e : s_net_rem)
+        if (e.m == m) { r = &e; break; }
+    if (!r) {
+        r = &s_net_rem[0];
+        for (NetRemote& e : s_net_rem)
+            if (e.last_use < r->last_use) r = &e;
+        *r = NetRemote{m, vm_readf(m + 0x1D0), vm_readf(m + 0x1D8), 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0};
+    }
+    r->last_use = ++use;
+    return r;
+}
+
+/* Once a frame, from SetMoveVector's entry: the sender's speed. The game
+ * picks idle / walk / run / dash from the frame's chase move (speed below 0.01,
+ * 2 and 6 m/s), and the chase restarts at each packet at distance / (1.2 *
+ * the last gap) and stops dead when it reaches the last position early. With
+ * packets 200 ms apart (30 fps, the game's rate) that holds steady; 40-60 ms
+ * apart (a sender above 30 fps, or DES_NET_SYNC) the gaps jitter by a frame
+ * or two, the chase arrives early on a fifth of the frames, and each arrival
+ * shows idle for at least 0.2 s (the gait's hold): a walk that flickers into
+ * idle, and a walk that reads as a run. The sender's speed is the distance
+ * between its last two positions over their gap, averaged with the one
+ * before: the speed the game's chase settles to (its 1.2 lead sets only how
+ * far behind it trails). */
+static void net_remote_frame(NetRemote* r, float dt)
+{
+    const uint32_t m = r->m;
+    r->acc += dt;
+    if (vm_readf(m + 0x21C) != 0.0f) return;   /* the update resets its gap timer on a packet */
+    const float x = vm_readf(m + 0x1D0), z = vm_readf(m + 0x1D8);
+    const float d = std::sqrt((x - r->x) * (x - r->x) + (z - r->z) * (z - r->z));
+    const float gap = r->acc;
+    r->x = x; r->z = z; r->acc = 0.0f;
+    if (gap > 0.0f) {   /* (a second packet in the same frame: no gap to measure) */
+        r->gap = gap;
+        const float v = d / gap;
+        r->speed = (d < 0.005f || v > 20.0f) ? 0.0f : (r->speed > 0.0f ? 0.5f * (r->speed + v) : v);
+    }
+}
+
+/* The sender's speed while packets come under 150 ms apart and it moves; -1
+ * for a packet with the same position (it stopped), a gap over 150 ms, or a
+ * jump over 20 m/s (a warp): then the game's own value stands. */
+static float net_remote_gait(const NetRemote* r)
+{
+    if (r->gap > 0.15f || r->acc > 0.15f || r->speed <= 0.0f) return -1.0f;
+    return r->speed;
+}
+
+/* Remote players (docs/69, "Remote players"). The local player's position
+ * goes to the other players in a type-1 packet every 6 game frames:
+ * PadManipulator counts +0x198 down once a frame, sends at 0, and reloads it
+ * with `li r0, 5` at 0x00313B24, so 5 packets a second at 30 fps. The
+ * packet holds the position and nothing about time or speed. The receiving
+ * NetworkManipulator (OnPacket 0x0030C090) chases the last position at
+ * distance / (1.2 * the gap since the previous packet), so after a stop the
+ * other copy shows the walk dying out over about 0.7 s, as on a PS3.
+ *
+ * DES_NET_SYNC=<n>: send n packets a second (every second frame at most, as
+ * a reload of 0 would never send); 15 at 30 fps is every other frame, and the
+ * tail on the other copies shrinks with the gap. It changes what this copy
+ * sends, so it smooths this player on the others' screens. Unset = the
+ * game's 6 frames, and never less often than those (above 30 fps they are
+ * more than 5 a second). DES_NETLOG=1 logs each reload and, each frame, each
+ * remote's chase (move, gait, timers, velocity, target). Live.
+ *
+ * SetMoveVector (0x0030C378) picks the remote's walk, run or dash from the
+ * frame's move times 30 (the fmuls at 0x0030C46C): a speed only at 30 fps,
+ * so above it a running remote walked. While packets come under 150 ms apart
+ * the gait comes from the sender's speed (net_remote_gait); otherwise, with
+ * DES_FPS set, the product is scaled by 1/(30 dt).
+ *
+ * With packets that close, the chase also jumps at each one: the gap the game
+ * divides by (+0x21C, 0x0030C330) is counted in the receiver's frames and is
+ * off by up to one, 20-30% of 45 ms, so the remote surges and slows 20 times
+ * a second. That gap is replaced with the average of the recent ones (an
+ * exponential average, a fifth of each new gap). And a chase that reaches the
+ * last position before the next packet (the game then moves nothing until
+ * it) handed SetMoveVector a zero move, which sets the remote's stick to
+ * zero: a frame of letting go mid-walk. While the sender moves, such a frame
+ * gets a 0.1 mm move along the last direction instead, so the stick holds.
+ * In a replay of a 110 fps log, the jumps at packets halved (p90 1.6 to 0.6
+ * m/s) and the zero frames went from 29 to none, with the same lag.
+ *
+ * At 30 fps with the game's packet rate none of this applies. DES_NETFIX=0
+ * turns it all off. Main thread. */
+extern "C" void des_net_sync(ppu_context* ctx, uint32_t addr)
+{
+    const float dt = vm_readf(kFrameDt);
+    static int log = 0;
+    PS3_KNOB(log, env_on("DES_NETLOG"));
+    if (addr == 0x00313B24u) {   /* li r0, 5: the send counter's reload */
+        static int hz = 0;
+        PS3_KNOB(hz, ps3_env_int("DES_NET_SYNC", 0));
+        if (hz > 0 && dt > 0.0f) {
+            /* never less often than the game's 6 frames: above 30 fps those
+             * are already more than 5 a second */
+            int frames = (int)(1.0f / ((float)hz * dt) + 0.5f);
+            if (frames < 2) frames = 2;
+            if (frames > 6) frames = 6;
+            ctx->gpr[0] = (uint64_t)(frames - 1);
+        }
+        if (log) fprintf(stderr, "[netlog] %.3f send reload %u dt=%.4f\n", net_log_time(), (unsigned)ctx->gpr[0], dt);
+        return;
+    }
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_NETFIX", 1) != 0);
+    const bool fix = on && dt > 0.0f && dt <= kMaxFrameDt;
+    if (addr == 0x0030C330u) {   /* fmuls f0, f12, f0: OnPacket's 1.2 * gap; r31 = the manipulator */
+        if (!fix) return;
+        NetRemote* r = net_remote((uint32_t)ctx->gpr[31]);
+        const float gap = (float)ctx->fpr[12];
+        if (!(gap > 0.0f && gap < 0.15f)) {
+            r->gap_avg = 0.0f;
+            return;
+        }
+        r->gap_avg = r->gap_avg > 0.0f ? r->gap_avg + 0.2f * (gap - r->gap_avg) : gap;
+        ctx->fpr[0] = (float)(ctx->fpr[0] * (r->gap_avg / gap));
+        return;
+    }
+    if (addr == 0x0030C378u) {   /* SetMoveVector's entry: v2 = this frame's move, r3 = the manipulator */
+        if (!fix) return;
+        NetRemote* r = net_remote((uint32_t)ctx->gpr[3]);
+        net_remote_frame(r, dt);
+        float mv[3];
+        for (int i = 0; i < 3; i++) {
+            const uint32_t b = net_swap(ctx->vr[2].w[i]);
+            memcpy(&mv[i], &b, 4);
+        }
+        const float len = std::sqrt(mv[0] * mv[0] + mv[2] * mv[2]);
+        if (len > 1e-5f) {
+            r->dir_x = mv[0] / len;
+            r->dir_z = mv[2] / len;
+        } else if (len < 1e-6f && net_remote_gait(r) >= 0.0f && (r->dir_x != 0.0f || r->dir_z != 0.0f)) {
+            const float hold[2] = {r->dir_x * 1e-4f, r->dir_z * 1e-4f};
+            for (int i = 0; i < 2; i++) {
+                uint32_t b;
+                memcpy(&b, &hold[i], 4);
+                ctx->vr[2].w[2 * i] = net_swap(b);
+            }
+            if (log) fprintf(stderr, "[netlog] %.3f m=%08X stick held\n", net_log_time(), r->m);
+        }
+        return;
+    }
+    /* 0x0030C46C, fmuls f12, f0, f12: |move| * 30; r3 = the NetworkManipulator */
+    if (log) {
+        const uint32_t m = (uint32_t)ctx->gpr[3];
+        fprintf(stderr, "[netlog] %.3f m=%08X mv=%.5f dt=%.4f cat=%u tmr=%.3f since=%.4f snap=%u "
+                        "vel=%.3f,%.3f,%.3f tgt=%.3f,%.3f,%.3f\n",
+                net_log_time(), m, ctx->fpr[0], dt, vm_read8(m + 0x224), vm_readf(m + 0x220), vm_readf(m + 0x21C),
+                vm_read8(m + 0x1CC), vm_readf(m + 0x1F0), vm_readf(m + 0x1F4), vm_readf(m + 0x1F8),
+                vm_readf(m + 0x1D0), vm_readf(m + 0x1D4), vm_readf(m + 0x1D8));
+    }
+    if (!fix) return;
+    const float gait = net_remote_gait(net_remote((uint32_t)ctx->gpr[3]));
+    if (gait >= 0.0f) {
+        ctx->fpr[12] = gait;
+        return;
+    }
+    if (s_fps > 0) ctx->fpr[12] = (float)(ctx->fpr[12] / (30.0 * dt));
+}
+
+/* DES_NET_TENDENCY=own: the server stops changing this player's world
+ * tendency (docs/69, "World tendency"). The game's QWC object (*(*0x01B4EF9C
+ * + 0x24)) keeps the player's own value per area at +0x48 + 8 * (area - 1),
+ * two floats, white/black then left/right. Online, two functions read the
+ * server's per-area values from the getQWCData reply through 0x00567E98
+ * (out = r4, area 1-7 = r5): 0x009204A0, once per load, sets the area and
+ * own values to (1 - 0.5) * own + 0.5 * server, and 0x00920FC8 (a new
+ * character, and after the login) sets them to the server's. Offline both
+ * use the own values alone. Called after the mflr at 0x00567E9C, before r4
+ * is tested: it writes the own values to out and clears r4, so the reader
+ * skips the reply, both functions see server = own, and the result is the
+ * offline one. The player's own values still go to the server (addQWCData).
+ * Blends saved before stay. Live: from the next load. Main thread. */
+extern "C" void des_qwc_local(ppu_context* ctx, uint32_t)
+{
+    static int own = 0;
+    PS3_KNOB(own, [] {
+        const char* e = std::getenv("DES_NET_TENDENCY");
+        return e && std::strcmp(e, "own") == 0 ? 1 : 0;
+    }());
+    if (!own) return;
+    const uint32_t out = (uint32_t)ctx->gpr[4], area = (uint32_t)ctx->gpr[5];
+    if (!guest_ptr_ok(out) || area < 1 || area > 7) return;
+    uint32_t q = vm_read32(0x01B4EF9Cu);
+    if (!guest_ptr_ok(q) || !guest_ptr_ok(q = vm_read32(q + 0x24))) return;
+    const uint32_t own_at = q + 0x48 + 8 * (area - 1);
+    vm_write32(out, vm_read32(own_at));
+    vm_write32(out + 4, vm_read32(own_at + 4));
+    ctx->gpr[4] = 0;
+    if (area == 1) {
+        float bw, lr;
+        const uint32_t b0 = vm_read32(own_at), b1 = vm_read32(own_at + 4);
+        std::memcpy(&bw, &b0, 4);
+        std::memcpy(&lr, &b1, 4);
+        std::fprintf(stderr, "[des] world tendency: yours only (the server's skipped; area 1 %.0f / %.0f)\n", bw, lr);
+    }
+}
+
+/* DES_NET_RATING_POLL=<seconds>, 30-299: how often the game asks the server
+ * whether the player's messages were rated (docs/69, "Message ratings"). The
+ * game asks for the player's total rating (getBloodMessageGrade) every 300
+ * s: its network scheduler 0x0054E7E8 tests the seconds since the last ask
+ * against 0x12C at 0x0054E938. When the total has gone up, a step that runs
+ * each frame (0x0049BFF8) heals the player and shows that a message was
+ * rated. So a rating showed up to 5 minutes late, as on the PS3; the server
+ * cannot push it. Called after the subf at 0x0054E934 (r0 = the seconds
+ * since the last ask): from the knob's seconds on, r0 becomes 301. "" (the
+ * default) leaves the game's 300 s. Main thread. */
+extern "C" void des_net_grade_poll(ppu_context* ctx, uint32_t)
+{
+    static int every = 0;
+    PS3_KNOB(every, ps3_env_int("DES_NET_RATING_POLL", 0));
+    if (every < 30 || every >= 300) return;
+    if (ctx->gpr[0] >= (uint64_t)every) ctx->gpr[0] = 0x12D;
+}
+
+/* DES_NET_MESSAGES / DES_NET_BLOODSTAINS / DES_NET_GHOSTS = 0: hide what
+ * other players put in your world through the server (docs/69, "Showing
+ * messages, bloodstains and ghosts"). Each is on (1) by default, the game as
+ * it is. The requests and uploads go on as before; only the lists are taken
+ * as empty:
+ * - messages: the getBloodMessage parser 0x00562A98 reads the entry count
+ *   into r21 (0x00562BC4). 0 takes the game's own empty-reply path: the
+ *   messages shown are removed, the player's own too. An empty list is
+ *   cached under the key -1, so the real list comes back when switched on.
+ * - bloodstains: the getReplayList parser 0x005607D0, the count in r18
+ *   (0x00560904), the same way. The soul bloodstain is the game's own and
+ *   stays.
+ * - ghosts: the ghost tick 0x003A5808 sets r29 = 1 to start the next ghost
+ *   (0x003A5CA8); 0 starts none, and those walking finish their path.
+ * A switch applies at once: the network scheduler 0x0054E7E8 loads each
+ * list's last time (bloodstains +0xC8 at 0x0054E8C0, messages +0xD0 at
+ * 0x0054E8F8), and a 0 there makes it parse the list again, from its cache.
+ * Main thread.
+ *
+ * The same sites, and the ghost list's 0x00558884, hold each count to the
+ * room its array has: the parsers write that many records from the server's
+ * reply with no bound (docs/69, "Replays"). Each list's array is allocated
+ * with its element count just before it (array - 4; array - 8 is the
+ * allocation): messages *(list + 0x144), 0x3C bytes each; bloodstains
+ * *(list + 0x140), 0x40 each; the ghost reply's two lists, counts at
+ * +0x18C and +0x190, *(list + 0x150) and *(list + 0x14C), 12 bytes each.
+ * Messages and bloodstains also copy the last list's ids into a stack array
+ * of list + 0x4 and list + 0x0 entries, so their counts stay within those
+ * too. A count held back is logged, the first few times. */
+static void list_fit(ppu_context* ctx, int reg, const char* what, uint32_t list, uint32_t array_at, int room_at)
+{
+    const uint32_t n = (uint32_t)ctx->gpr[reg];
+    if (!n) return;
+    uint32_t room = 0;
+    if (guest_ptr_ok(list)) {
+        const uint32_t a = vm_read32(list + array_at);
+        if (guest_ptr_ok(a) && guest_ptr_ok(a - 8)) room = vm_read32(a - 4);
+        if (room_at >= 0 && vm_read32(list + (uint32_t)room_at) < room) room = vm_read32(list + (uint32_t)room_at);
+    }
+    if (n <= room) return;
+    static int said = 0;
+    if (said < 8) {
+        said++;
+        fprintf(stderr, "[des] the server's %s list has %u entries; %u fit, the rest are left out\n", what, n, room);
+    }
+    ctx->gpr[reg] = room;
+}
+
+extern "C" void des_net_show(ppu_context* ctx, uint32_t addr)
+{
+    static int msgs = 1, stains = 1, ghosts = 1;
+    PS3_KNOB(msgs, ps3_env_int("DES_NET_MESSAGES", 1) != 0);
+    PS3_KNOB(stains, ps3_env_int("DES_NET_BLOODSTAINS", 1) != 0);
+    PS3_KNOB(ghosts, ps3_env_int("DES_NET_GHOSTS", 1) != 0);
+    static int msgs_seen = 1, stains_seen = 1;
+    switch (addr) {
+    case 0x00562BC4u:   /* mr r21, r3: the message count */
+        list_fit(ctx, 21, "message", (uint32_t)ctx->gpr[23], 0x144, 0x4);
+        if (!msgs && ctx->gpr[21]) {
+            fprintf(stderr, "[des] messages hidden (%u from the server)\n", (unsigned)ctx->gpr[21]);
+            ctx->gpr[21] = 0;
+        }
+        break;
+    case 0x00558884u: {   /* lwz r0, 0x18c(r31): the ghost list's first count; the loops read both from r31 */
+        const uint32_t list = (uint32_t)ctx->gpr[31];
+        if (!guest_ptr_ok(list)) break;
+        for (const uint32_t off : { 0x18Cu, 0x190u }) {
+            ctx->gpr[0] = vm_read32(list + off);
+            list_fit(ctx, 0, "ghost", list, off == 0x18Cu ? 0x150 : 0x14C, -1);
+            vm_write32(list + off, (uint32_t)ctx->gpr[0]);
+        }
+        ctx->gpr[0] = vm_read32(list + 0x18C);
+        break;
+    }
+    case 0x00560904u:   /* mr r18, r3: the bloodstain count */
+        list_fit(ctx, 18, "bloodstain", (uint32_t)ctx->gpr[24], 0x140, 0x0);
+        if (!stains && ctx->gpr[18]) {
+            fprintf(stderr, "[des] bloodstains hidden (%u from the server)\n", (unsigned)ctx->gpr[18]);
+            ctx->gpr[18] = 0;
+        }
+        break;
+    case 0x003A5CA8u:   /* li r29, 1: start a ghost */
+        if (!ghosts) ctx->gpr[29] = 0;
+        break;
+    case 0x0054E8C0u:   /* ld r0, 0xc8(r31): the bloodstain list's last time */
+        if (stains != stains_seen) {
+            stains_seen = stains;
+            ctx->gpr[0] = 0;
+        }
+        break;
+    case 0x0054E8F8u:   /* ld r0, 0xd0(r31): the message list's last time */
+        if (msgs != msgs_seen) {
+            msgs_seen = msgs;
+            ctx->gpr[0] = 0;
+        }
+        break;
+    }
+}
+
+/* Other players' ghost and bloodstain replays come from the server, and the
+ * game trusts their frame count. The reader 0x003957B8 (r3 the replay, r4
+ * the unpacked data) takes the count at the data's start, allocates
+ * count * 32 + 8 bytes and copies count * 32 from offset 12, then reads
+ * 0x50 + 0x22 bytes after the frames: 12 + count * 32 + 0x72 in all. Nothing
+ * checks that against the data's length (docs/69, "Replays"). These hooks
+ * drop a replay whose count does not fit, through the game's own path for
+ * one that did not unpack:
+ * - a bloodstain's: 0x00391818, the cmpwi of r3 after the unpack 0x005685E8,
+ *   which put the length at 0x74(r1). r3 = 0 and cr7 EQ, as if it had failed;
+ * - a wandering ghost's: 0x003A596C and 0x003A5EA0, the cmplwi of length - 1
+ *   against 0xFFF after each of its two unpacks (r3 the data, r5 the
+ *   length). cr7 GT, the game's own "length out of range";
+ * - any other: 0x003957B8, the reader's cmpwi of r4. Both unpacks write
+ *   0x1000-byte buffers, so a count past that is dropped there: r4 = 0 and
+ *   cr7 EQ, the reader's own "no data".
+ * DES_NET_REPLAY_CHECK=0 turns the checks off. Main thread. */
+constexpr uint32_t kReplayAround = 12 + 0x50 + 0x22;   /* the bytes before and after the frames */
+constexpr uint32_t kReplayMax = 0x1000;                 /* the unpack buffers */
+
+static bool replay_fits(uint32_t data, uint32_t len)
+{
+    if (!guest_ptr_ok(data) || len > kReplayMax) return false;
+    const int32_t n = (int32_t)vm_read32(data);
+    return n > 0 && (uint64_t)n * 32 + kReplayAround <= len;
+}
+
+static void replay_dropped(const char* what, uint32_t data, uint32_t len)
+{
+    static int said = 0;
+    if (said >= 8) return;
+    said++;
+    fprintf(stderr, "[des] a %s replay from the server was dropped: %d frames do not fit its %u bytes\n", what,
+            guest_ptr_ok(data) ? (int)vm_read32(data) : 0, len);
+}
+
+extern "C" void des_net_replay(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_NET_REPLAY_CHECK", 1) != 0);
+    if (!on) return;
+    switch (addr) {
+    case 0x00391818u: {   /* cmpwi cr7, r3, 0: the bloodstain's unpacked data */
+        const uint32_t data = (uint32_t)ctx->gpr[3];
+        const uint32_t len = vm_read32((uint32_t)ctx->gpr[1] + 0x74);
+        if (!data || replay_fits(data, len)) break;
+        replay_dropped("bloodstain", data, len);
+        ctx->gpr[3] = 0;
+        ppu_cr_set(ctx, 7, 2u);   /* EQ: the beq takes the no-data exit */
+        break;
+    }
+    case 0x003A596Cu:
+    case 0x003A5EA0u: {   /* cmplwi cr7, r0, 0xFFF: the ghost's length - 1 */
+        const uint32_t data = (uint32_t)ctx->gpr[3], len = (uint32_t)ctx->gpr[5];
+        if (len - 1u > 0xFFFu || replay_fits(data, len)) break;   /* (out of range: the game refuses it itself) */
+        replay_dropped("ghost", data, len);
+        ppu_cr_set(ctx, 7, 4u);   /* GT: the bgt takes the out-of-range path */
+        break;
+    }
+    case 0x003957B8u: {   /* cmpwi cr7, r4, 0: the reader's entry */
+        const uint32_t data = (uint32_t)ctx->gpr[4];
+        if (!data || !guest_ptr_ok(data)) break;
+        const int32_t n = (int32_t)vm_read32(data);
+        if (n >= 0 && (uint64_t)n * 32 + kReplayAround <= kReplayMax) break;
+        replay_dropped("", data, kReplayMax);
+        ctx->gpr[4] = 0;
+        ppu_cr_set(ctx, 7, 2u);   /* EQ: the beq takes the reader's no-data exit */
+        break;
+    }
+    }
 }
 
 /* A step a camera adds once a frame, cur += input * step, tuned for 30 fps:
@@ -1008,6 +2001,84 @@ extern "C" void des_slide_rate(ppu_context* ctx, uint32_t addr)
     }
 }
 
+/* DES_ROLLDIR=1 (the default; 0 is the original): a roll while locked on goes
+ * where the stick points. Locked on, the game rolls only forward, back, left
+ * or right of the target (docs/47, section 3): the player's script asks its
+ * function 110 (0x002EB3E8, r3 = the character's controller, r4 = k) once a
+ * roll for the move set's roll animation k (0 forward, 1 back, 2 left, 3
+ * right; 4 is the backstep), and the animation moves the character along its
+ * facing. The lifter calls this just before that call (0x002FF8F0; 0x00301C24
+ * is the call's other path). For the player's roll it turns the facing (the
+ * yaw at *(controller + 0x10) + 4, the bearing + pi) to the target's bearing
+ * plus the stick's angle from k's direction, at most 90 degrees, so the roll
+ * runs along the stick. On its own that turn is undone: the locked facing
+ * update turns the character back to the target before the roll moves. So for
+ * the first 0.3 s of game time this adds the same angle to the yaw that update
+ * aims at (0x0030F734, r26 = the controller). The roll keeps its facing to its
+ * end, and the lock then turns the character back as usual. Live.
+ * DES_ROLLLOG=1 prints each of the player's calls. */
+static uint32_t player_controller()
+{
+    uint32_t p = vm_read32(kChrMan);
+    if (!guest_ptr_ok(p) || !guest_ptr_ok(p = vm_read32(p + 0x1BC))) return 0;
+    p = vm_read32(p + 0x20);
+    return guest_ptr_ok(p) ? p : 0;
+}
+
+extern "C" void des_roll_dir(ppu_context* ctx, uint32_t addr)
+{
+    constexpr float kPi = 3.14159265f, kHold = 0.3f;
+    static const float kDir[4] = {0.0f, kPi, -kPi / 2, kPi / 2};   /* roll k's direction from the facing; + = right */
+    static struct { uint32_t ctrl; float turn, yaw, left; } s;
+    static int on = 1, log = 0;
+    PS3_KNOB(on, ps3_env_int("DES_ROLLDIR", 1) != 0);
+    PS3_KNOB(log, env_on("DES_ROLLLOG"));
+    if (addr == 0x0030F734u) {   /* fadds f1, f1, f0: f1 = the yaw the locked facing update aims at */
+        if (!(s.left > 0.0f) || (uint32_t)ctx->gpr[26] != s.ctrl) return;
+        const uint32_t xf = vm_read32(s.ctrl + 0x10);
+        /* Off, or the facing jumped away from the turned roll's (the lock was dropped in between): done. */
+        if (!on || !guest_ptr_ok(xf) || std::fabs(std::remainder(vm_readf(xf + 4) - s.yaw, 2 * kPi)) > 0.25f) {
+            s.left = 0.0f;
+            return;
+        }
+        s.yaw = vm_readf(xf + 4);
+        ctx->fpr[1] = (float)(ctx->fpr[1] + s.turn);
+        const float dt = vm_readf(kFrameDt);
+        s.left -= dt > 0.0f && dt < 0.25f ? dt : 1.0f / 30.0f;
+        return;
+    }
+    /* 0x002FF8F0 (extsw r4, r4) or 0x00301C24 (li r4, 0) */
+    const uint32_t ctrl = (uint32_t)ctx->gpr[3];
+    if (ctrl != player_controller()) return;
+    const int k = (int)(int32_t)ctx->gpr[4];
+    const unsigned st = g_pad0_lstick;
+    const float x = ((int)(st >> 8) - 128) / 127.0f, up = (128 - (int)(st & 0xFFu)) / 127.0f;
+    const float stick = std::atan2(x, up);   /* from up; + = right */
+    float turn = 0.0f;
+    uint32_t xf = 0, lock = 0;
+    const char* why = nullptr;
+    if (!on) why = "off";
+    else if (vm_read8(ctrl + 0x139)) why = "not locked on";
+    else if (k < 0 || k > 3) why = "not a roll";
+    else if (x * x + up * up < 0.2f * 0.2f) why = "stick centred";
+    else if (std::fabs(turn = std::remainder(stick - kDir[k], 2 * kPi)) > kPi / 2) why = "stick too far from the roll";
+    else if (std::fabs(turn) < 0.01f) why = "stick along the roll";
+    else if (!guest_ptr_ok(xf = vm_read32(ctrl + 0x10)) || !guest_ptr_ok(lock = vm_read32(ctrl + 4)) ||
+             !vm_read8(lock + 0x100))
+        why = "no target";
+    else {
+        /* The target's bearing, as the locked facing update takes it: its position is at +0x110. */
+        const float dx = vm_readf(lock + 0x110) - vm_readf(xf + 0x10);
+        const float dz = vm_readf(lock + 0x118) - vm_readf(xf + 0x18);
+        const float yaw = vm_readf(xf + 4);
+        s = {ctrl, turn, yaw + std::remainder(std::atan2(dx, dz) + kPi + turn - yaw, 2 * kPi), kHold};
+        vm_writef(xf + 4, s.yaw);
+    }
+    if (log)
+        fprintf(stderr, "[rolllog] %08X k=%d stick %+.2f %+.2f (%+.0f deg), turn %+.0f deg: %s\n", addr, k, x, up,
+                stick * 180.0f / kPi, turn * 180.0f / kPi, why ? why : "turned");
+}
+
 /* The character creation screen's previews turn with the right stick: the
  * whole body (0x008DB170, from Create Profile on) and the face in Edit
  * Appearance (0x008DA0E0). Each step gets r3 = the preview and f1, f2 = the
@@ -1070,6 +2141,33 @@ extern "C" void des_fx_state(ppu_context* ctx, uint32_t addr)
         carry_node = node;
         carry = t - tick;
     }
+}
+
+/* Wandering ghosts (other players' phantoms walking through your world)
+ * play back through ReplayManipulator (vtable 0x0185C128): a recorded path of
+ * up to 27 samples, a third of a second apart. Its Update (0x00314C80) moves
+ * to the next sample every 10 frames (the li r9, 10 at 0x00315030), and the
+ * sample's move and turn are split into 10 per-frame steps (the 10.0 at
+ * 0x003147EC). Frames, not time: at 144 fps a ghost walked its path 4.8 times
+ * as fast. SetMoveVector (0x00314ABC) picks walk or run from the step times
+ * 30, a speed only at 30 fps. With DES_FPS set, the hooks put N = 1/(3 dt)
+ * frames a sample, N as the divisor and 3 N as the factor: 10, 10 and 30 at
+ * 30 fps, where nothing changes. Recording already runs on dt (a sample each
+ * 1/3 s, 0x002E4C68), so what is uploaded stays as on the PS3. Bloodstain
+ * replays most likely play through the same code. DES_GHOSTFIX=0 turns it
+ * off. Main thread. */
+extern "C" void des_ghost_rate(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_GHOSTFIX", 1) != 0);
+    const float dt = vm_readf(kFrameDt);
+    if (!on || s_fps <= 0 || !(dt > 0.0f && dt <= kMaxFrameDt)) return;
+    int n = (int)(1.0f / (3.0f * dt) + 0.5f);
+    if (n < 1) n = 1;
+    if (n == 10) return;
+    if (addr == 0x00315030u) ctx->gpr[9] = (uint64_t)n;         /* li r9, 10: frames to the next sample */
+    else if (addr == 0x003147ECu) ctx->fpr[12] = (float)n;      /* lfs f12: the move and turn divisor */
+    else ctx->fpr[12] = 3.0f * (float)n;                        /* 0x00314ABC, lfs f12: the step's speed factor */
 }
 
 #if !DES_DEV
@@ -1558,6 +2656,76 @@ extern "C" void des_mouse_look(ppu_context* ctx, uint32_t addr)
 extern "C" void des_menu_sfx_init(void);   /* des_menu_sfx.cpp */
 extern "C" void des_chrins_init(void);     /* des_chrins.cpp */
 
+/* The run defaults every start needs, from setup's Play, Explorer or a
+ * shortcut as much as from tools/des (docs/45 1.3). Without them a player's
+ * start hung on the loading screen: libsre was never loaded, so every SPURS
+ * call stayed on HLE, LFQueue included (measured 10-22, docs/88 section 11). A value
+ * already in the environment wins, so tools/des/deslib.sh (des_env_defaults)
+ * and tools/linux/appimage.sh, which set the same, still decide for their runs. */
+static void run_defaults()
+{
+    static const struct { const char* name; const char* value; } kDefaults[] = {
+        /* The known-good boot (docs/25): load libsre (read by the generated
+         * libsre glue, scripts/gen_libsre_exports.py), these families (LFQueue,
+         * SpursQueue) on Sony's code, the rest on HLE, and no round notify. */
+        {"LIBSRE_LLE", "1"},
+        {"LIBSRE_LLE_ONLY", "011EE38B,1656D49F,8A85674D,73E06F91,082BFB09,E5443BE7,039D70B7,91066667"},
+        {"SPURS_NO_ROUND_NOTIFY", "1"},
+        /* The level's busiest frames need ~850k vertices; growing the buffer
+         * during play stalled a frame for 100-400 ms (docs/28). */
+        {"VP_VB_VERTS", "1572864"},
+        /* No per-event log lines: they go through one lock and fill des.log. */
+        {"PS3_VERBOSE", "0"},
+        /* The main thread's stack where lv2 puts it, in the stack region
+         * (0xD0000000 up): the lifter's stack stores take their direct path
+         * only there (docs/98). */
+        {"PS3_MAIN_STACK_LV2", "1"},
+        /* HDR output's highlights (RSX_HDR): the composite stores the scene at
+         * half brightness and clamps it to white once doubled; with HDR on it
+         * clamps at the target's own limit, twice white (docs/103). */
+        {"RSX_HDR_SCENE_FP", "B42C01:2"},
+    };
+    for (const auto& d : kDefaults)
+        if (!getenv(d.name)) ps3_setenv(d.name, d.value);
+}
+
+extern "C" int des_prework_shaders(const char* game, const char* eboot);   /* des_prework.cpp */
+extern "C" void des_prework_elf(const char* path);
+
+/* main's ELF, as boot_main reads its arguments: the first that is not a
+ * --username or --psnr flag (or its value). */
+static const char* main_elf(int argc, char** argv)
+{
+    for (int i = 1; i < argc; i++) {
+        const char* a = argv[i];
+        if (std::strncmp(a, "--username", 10) && std::strncmp(a, "--psnr", 6)) return a;
+        if (!std::strchr(a, '=')) i++;
+    }
+    return nullptr;
+}
+
+/* First thing in main (ps3recomp's launch hook, docs/88 section 3): setup's
+ * shaders phase (`--shaders <game folder> [<EBOOT.elf>]`: the shader cache
+ * filled with no window, then the exit), or the run defaults, then setup's
+ * screens alone, or the game (des_ui_launch), whose ELF the shader pass at
+ * the start reads too (des_prework_elf). */
+extern "C" int ps3_title_launch(int* argc, char*** argv)
+{
+    if ((*argc == 3 || *argc == 4) && std::strcmp((*argv)[1], "--shaders") == 0)
+        return des_prework_shaders((*argv)[2], *argc == 4 ? (*argv)[3] : nullptr);
+    run_defaults();
+    const int launch = des_ui_launch(argc, argv);
+    if (launch == -1) des_prework_elf(main_elf(*argc, *argv));   /* (-1: PS3_LAUNCH_BOOT) */
+    return launch;
+}
+
+/* Setup's screens alone, in place of ps3_title_options_init: no game, so none
+ * of the game's options, hooks or menu sounds. */
+extern "C" void ps3_title_window_only_init(void)
+{
+    des_ui_setup_only_init();
+}
+
 extern "C" void ps3_title_options_init(void)
 {
     /* First: settings.ini fills in the options not set in the environment. */
@@ -1566,14 +2734,14 @@ extern "C" void ps3_title_options_init(void)
     des_dev_boot();        /* developer build: the marker (log, window title) and the cheats' offline rule (docs/55) */
 #endif
     des_aspect_init();     /* DES_ASPECT, DES_HUD: before the first camera is built */
+    des_hud_init();        /* the HUD's size, corners and hidden groups */
     des_menu_sfx_init();   /* the UI's sounds through the game's menu sounds */
     des_chrins_init();     /* the character step's handshake without its lost-kick race */
-    if (env_on("DES_SKIP_INTRO")) {
-        s_skip_intro = atoi(getenv("DES_SKIP_INTRO")) == 2 ? 2 : 1;
-        ppu_register_function(kLogoUpdate, logo_update_skip);
-        fprintf(stderr, "[des] DES_SKIP_INTRO=%d: boot logos %s\n", s_skip_intro,
-                s_skip_intro == 1 ? "skipped" : "shortened");
-    }
+    /* DES_SKIP_INTRO and DES_AUTO_CONTINUE are read as they are used, so the
+     * settings window changes them live; their hooks are always on. */
+    ppu_register_function(kLogoUpdate, logo_update_skip);
+    if (const int mode = skip_intro())
+        fprintf(stderr, "[des] DES_SKIP_INTRO=%d: boot logos %s\n", mode, mode == 1 ? "skipped" : "shortened");
     if (env_on("DES_SKIP_INTRO_MOVIE") && !getenv("PS3_SAIL_SKIP")) {
         ps3_setenv("PS3_SAIL_SKIP", kOpeningMovie);
         fprintf(stderr, "[des] DES_SKIP_INTRO_MOVIE: the opening movie is skipped\n");
@@ -1595,26 +2763,21 @@ extern "C" void ps3_title_options_init(void)
     if (const int fps = fps_wanted())
         fprintf(stderr, "[des] DES_FPS=%s: real frame time, no skip frames%s\n", fps_name(fps).c_str(),
                 fps_vblank_mhz(fps) ? ", vblank at the cap" : "");
-    if (const char* v = getenv("DES_VSYNC")) {
-        if (*v && !getenv("RSX_VSYNC")) {
-            const bool on = atoi(v) != 0;
-            ps3_setenv("RSX_VSYNC", on ? "1" : "0");
-            if (!on) fprintf(stderr, "[des] DES_VSYNC=0: presents do not wait for the display\n");
-        }
-    }
+    /* DES_VSYNC is read at each flip request (pacing_apply); an RSX_VSYNC
+     * given at start wins over it. */
+    s_vsync_pinned = getenv("RSX_VSYNC") != nullptr;
     if (const char* f = getenv("DES_FRAMELOG")) {
         if (*f && (s_framelog = fopen(f, "w")) != nullptr) {
             snprintf(s_framelog_path, sizeof s_framelog_path, "%s", f);
             fprintf(s_framelog, "# t_ms interval_ms step_ms cutscene pad buttons lstick reads empty [x y z stamina want_m/s speed_factor hp mp]; SUM t fps speed m/s game/real; MARK t (F8)\n");
             g_gcm_flip_request_hook = on_flip_request;
-            fprintf(stderr, "[des] DES_FRAMELOG: %s (F8 marks)\n", f);
+            fprintf(stderr, "[des] DES_FRAMELOG: %s%s\n", f, ps3_env_int("RSX_DEV_HOTKEYS", 0) ? " (F8 marks)" : "");
         } else if (*f) {
             fprintf(stderr, "[des] DES_FRAMELOG: cannot open %s\n", f);
         }
     }
-    if (env_on("DES_AUTO_CONTINUE")) {
-        g_pad_title_hook = auto_continue_buttons;
-        g_fs_open_hook = auto_continue_on_open;
+    g_pad_title_hook = auto_continue_buttons;
+    g_fs_open_hook = auto_continue_on_open;
+    if (auto_continue_on())
         fprintf(stderr, "[des] DES_AUTO_CONTINUE: pressing through the menus to the last save\n");
-    }
 }

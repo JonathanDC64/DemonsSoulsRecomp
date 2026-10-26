@@ -18,14 +18,14 @@ The repository is written as `<owner>/DemonsSoulsRecomp`.
   3. Add a setup screen to `des_host.exe`. The UI already runs without the game: the crash dialog does (docs/32). Setup takes the disc folder and the player's RPCS3. It runs `rpcs3 --decrypt` on `EBOOT.BIN` and `libsre.sprx`, checks SHA-256 against known dumps, lifts with the bundled Python, compiles in parallel within the free RAM, links with lld, and compares the DLL's hash with the published one.
   4. Rebuild only when a "lift key" changes: lifter version, options, hooks, toolchain, flags or inputs.
 - **What it costs the player (inferred from measured numbers).** About 11 minutes on this 8-core desktop (measured: 10.7 min wall, 41 min of CPU time). About 20 minutes on a 6-core desktop with 16 GB. 35 minutes to 2 hours on a 4-core laptop, the long end with 8 GB. About 4 GB of free disk during setup, about 0.3 GB after. `/O1`, a hot/cold split and smaller chunks may cut this; they need runs.
-- **Updates, recommended in two stages.**
+- **Updates, recommended in two stages.** *(Built 10-24: docs/105, the check and the update applied in the launcher, with one version kept to go back to. Not built from Stage B: signing, components, channels.)*
   - Stage A, first release: an update check with a banner and release notes (FFCCEOT-Recomp's 152-line WinHTTP check, ported) and a manual zip. Settings, saves, caches and the game build all live outside the install folder, so a manual update keeps them. The game is rebuilt only if the lift key changed.
   - Stage B, later, if wanted: apply updates in the app. A signed manifest (minisign format, checked with Monocypher), SHA-256 per component (Windows CNG), WinHTTP downloads with resume, side-by-side version folders under a small launcher stub, rollback to the kept version, and stable and beta channels. Download changed components instead of binary deltas. A typical update is then the 10 to 15 MB app part, because the toolchain rarely changes (inferred).
 - **Signing.** Sign `des_host.exe` and the stub. Options: Azure Artifact Signing (about $9.99 a month, where eligible), SignPath Foundation (free for open-source projects) or an OV certificate ($150 to $300 a year) (read). The DLL built on the player's PC cannot be signed. It is never downloaded, so SmartScreen does not judge it, but Defender scans it (inferred).
 - **Found while reading (read and measured).**
   - The exe needs the Visual C++ runtime DLLs, which are not part of Windows.
   - It imports Media Foundation directly, which Windows N editions lack.
-  - The run defaults (LIBSRE_LLE and others) live in `tools/des/deslib.sh`, not in the exe.
+  - The run defaults (LIBSRE_LLE and others) live in `tools/des/deslib.sh`, not in the exe. *(Since 10-22 the exe sets the ones a start needs itself; see 1.3.)*
   - The game's /dev_hdd1 cache is written into the disc folder.
   - Several paths are relative to the working folder.
   - Host code includes the generated `ppu_recomp.h`.
@@ -86,6 +86,8 @@ This PC: Ryzen 7 9800X3D, 8 cores and 16 threads, 31.1 GB of RAM. Times from the
   - `PS3_SHADER_CACHE`.
 
   Nothing in `port/` sets LIBSRE_LLE. An exe started from Explorer runs without these defaults.
+
+  *Update 10-22:* without them a player's start from setup hung on the loading screen (docs/88 section 11). The host now sets `LIBSRE_LLE=1`, `LIBSRE_LLE_ONLY`, `SPURS_NO_ROUND_NOTIFY=1`, `VP_VB_VERTS` and `PS3_VERBOSE=0` itself at the start of `main`, each only when the environment lacks it (`run_defaults` in `port/des_options.cpp`). `LIBSRE_LLE` is read by the generated libsre glue (`scripts/gen_libsre_exports.py`), not by `port/` or the runtime, so a search of those finds nothing; without it libsre is never loaded. `PS3_VFS_ROOT` comes from setup's `ready.txt` (docs/88 section 7), and the shader cache keeps its default beside the exe.
 - **Paths relative to the working folder.**
   - The libsre image is `work/libsre/libsre_image.bin` (in the glue from `gen_libsre_exports.py`).
   - `/dev_hdd0/` maps to `gamedata/dev_hdd0/` (`libs/filesystem/cellFs.c`).

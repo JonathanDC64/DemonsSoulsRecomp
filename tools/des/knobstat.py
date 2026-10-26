@@ -3,7 +3,7 @@
 
 Reads <dir>/manifest.txt (window number, side, knob line; the same in every boot), runs.txt (one
 line per boot: K, boot, number, validity, background cpu) and each valid boot's
-lc_<boot>/prof_NNN_summary.txt. Per knob line: the A and B window frame rates of every valid boot,
+lc_<boot>/plain_NNN.txt (plain windows, kabplain.py) or prof_NNN_summary.txt (KAB_PLAIN=0). Per knob line: the A and B window frame rates of every valid boot,
 the B-A change in fps and in frame time, paired over the adjacent A/B pairs of the order (ABBAAB
 gives AB, BA, AB: three pairs a boot), with a paired t over all the pairs of all boots.
 Both sides share each boot, so the boot-to-boot spread drops out and the bar is lower than across
@@ -59,7 +59,9 @@ def main(d):
             for i, s, k2 in man:
                 if k2 != kv:
                     continue
-                p = os.path.join(rd, f"prof_{i:03d}_summary.txt")
+                p = os.path.join(rd, f"plain_{i:03d}.txt")
+                if not os.path.exists(p):
+                    p = os.path.join(rd, f"prof_{i:03d}_summary.txt")
                 f = fps_of(p) if os.path.exists(p) else None
                 if f is not None:
                     seq.append((s, f))

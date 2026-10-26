@@ -520,7 +520,7 @@ Steps:
 3. **The notes** (`changelog.py`).
 4. **The zip** (`package.py build`).
 5. **The game-file check** of the staged folder.
-6. **`gh release create <tag> --draft --verify-tag`**, plus `--prerelease` for a tag with a `-`. It uploads the zip and `SHA256SUMS`.
+6. **`gh release create <tag> --draft --verify-tag`**, plus `--prerelease` for a tag with a `-`. It uploads the zip and `SHA256SUMS`, and since 10-23 the player's zip (section 8.2a), whose exe host.yml builds first.
    - `--verify-tag` aborts if the tag is not on GitHub, so gh never makes a tag itself (read, gh manual).
 
 Nothing is published. You read the draft and publish it. Only this workflow has `contents: write`; every other workflow is read-only.
@@ -549,6 +549,19 @@ Nothing is published. You read the draft and publish it. Only this workflow has 
   - The game-file check of the staged folder is clean.
 - **Later,** docs/45 section 5.2's parts join the same draft release: the host zip, the trimmed LLVM, the embeddable Python, `update.json` and its signature.
 
+### 8.2a The player's zip (10-23)
+
+- **Name.** `DemonsSoulsRecomp-<version>-windows.zip`, beside the source zip, and listed in the same `SHA256SUMS`.
+- **Holds** the source zip's files, plus `des_host.exe` and `des_host.map` at the top of the tree. The exe finds setup's engine (`tools/setup`) beside it (setup_engine.cpp), and setup builds the game from the source next to it. So a player unzips it anywhere and starts the exe.
+- **The exe** is host.yml's, built from the tag. release.yml calls host.yml as its first job (`workflow_call`), with all of host.yml's checks: no Visual C++ runtime DLL among the imports, not a developer build, and the game-file check with the host's allow list. The draft job downloads that artifact.
+- **`package.py build --host <exe>`** writes it. The map is taken from beside the exe when it is there. The zip is as deterministic as the source zip, apart from the exe's own bytes.
+- **The dry run** (release-check.yml) makes it twice around a stand-in exe, compares the sums, and checks that the exe lands at the top.
+- **Measured (10-23)**, at master f4d0472 with a local host build:
+  - 1,037 files, 11.1 MB: the source zip's 1,035 files (6.5 MB), plus the exe and its map.
+  - The same SHA-256 on a second run.
+  - Unzipped into a new folder, the exe started setup's screens and found the engine beside it with no `DES_SETUP_SCRIPT`.
+  - A whole real setup from that folder, with the pinned compiler zip and a new data folder: ok after 1,610 s. The compile was 1,531 s of it, at master's rule, which gave one compile at a time with about 7 GB free (docs/53 section 16). Then a player's start loaded the game DLL and libsre, compiled the 3,603 shaders and reached the game.
+
 ### 8.3 The notes
 
 - **Where they come from.** Merged pull requests on master's first-parent line since the previous `v` tag, read from `Merge pull request #N from owner/branch`. The title comes from the merge commit's body.
@@ -566,7 +579,8 @@ Nothing is published. You read the draft and publish it. Only this workflow has 
 
 ### 8.4 First release checklist (for you; nothing done)
 
-1. Merge the PRs, in the order in section 12.
+1. Merge the PRs, in the order in section 12. Once, before the first release: make the release key and add its
+   public line to `tools/setup/des_setup/release-keys.txt` (docs/105 section 7.1).
 2. **Fork tag.**
    - Run `git -C ps3recomp fetch fork`.
    - Run `git -C ps3recomp tag -a des-0.14.0-1 -m "ps3recomp for DemonsSoulsRecomp 0.1.0" fork/master`.
@@ -577,7 +591,8 @@ Nothing is published. You read the draft and publish it. Only this workflow has 
    - Run `git fetch origin`.
    - Run `git tag -a v0.1.0 -m "DemonsSoulsRecomp 0.1.0" origin/master`.
    - Run `git push origin v0.1.0`.
-5. Read the draft release and publish it.
+5. **Sign it:** `python tools/release/sign_release.py v0.1.0 --key <your key file>` (it checks the draft's files and
+   their attestations first). Then read the draft release and publish it.
 6. In the next PR, move `VERSION` to 0.1.1 or 0.2.0.
 
 ## 9. Game-file check

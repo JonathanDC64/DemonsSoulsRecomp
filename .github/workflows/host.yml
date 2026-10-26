@@ -1,0 +1,625 @@
+# Builds des_host.exe, the half of the split build (docs/57) with no game code in it, the way players will
+# get it (docs/85): the Visual C++ runtime and the C++ library linked in, the UCRT of Windows 10 and 11
+# used as a DLL. Then it checks that the exe imports no Visual C++ runtime DLL and uploads it. CI never has
+# the lift, so des_boot.exe and des_game.dll are not built here.
+#
+# It needs a ps3recomp.pin commit with the DLL split (PS3RECOMP_GAME_SPLIT), the static runtime
+# (PS3RECOMP_STATIC_CRT and the /MT form of boot_main.cpp's getenv cache, docs/85 2.3) and the header
+# split (ps3emu/ppu_lift.h, the fixed part of the lift's header, which the host's sources include; docs/85 4).
+name: Host exe
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:   # release.yml: the exe of the player's zip, built from the tag
+
+permissions:
+  contents: read
+
+concurrency:
+  group: host-${{ github.ref }}
+  cancel-in-progress: true
+
+# FFmpeg's release tarball of tag n8.1.3 (commit 1041abdc962f4cc4f394aa8de9dc5236c0c3b9e7, a signed tag): the tag's
+# files plus VERSION. Both hosts' FFmpeg is built from it (host-linux, ffmpeg-windows), and
+# tools/release/third_party_sources.py attaches the same archive to releases.
+env:
+  FFMPEG_VERSION: 8.1.3
+  FFMPEG_SIZE: '11732036'
+  FFMPEG_SHA256: 7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3
+
+jobs:
+  # FFmpeg for the Windows host's movies: libavcodec with only the MPEG-2 video decoder and its parser, and
+  # libavutil, as DLLs beside des_host.exe (avcodec-62.dll, avutil-60.dll); the runtime opens them when a movie
+  # starts (PS3RECOMP_FFMPEG_RUNTIME), else Windows' own decoder, which needs the Microsoft Store's MPEG-2 Video
+  # Extension. Built here, on Linux, with mingw-w64's cross compiler, from the same release as host-linux's: LGPL
+  # 2.1 or later, nothing from the system, Windows' own threads (no winpthread DLL) and GCC's runtime linked in. The
+  # DLLs import only Windows' own DLLs (the check below); their C runtime is msvcrt.dll, which every Windows has.
+  # Only FFmpeg's own functions cross between them and the host, never a C runtime object.
+  ffmpeg-windows:
+    name: FFmpeg DLLs for des_host.exe (mingw-w64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      FFMPEG_DIR: ${{ github.workspace }}/ffmpeg-windows   # no checkout in this job: the workspace is empty
+    steps:
+      - name: Restore FFmpeg
+        id: ffmpeg-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.FFMPEG_DIR }}
+          key: ffmpeg-windows-${{ env.FFMPEG_SHA256 }}-mingw-ubuntu-24.04-v1
+
+      - name: Install the cross compiler
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 nasm
+          x86_64-w64-mingw32-gcc-win32 --version | head -n 1
+
+      # The Linux host's options (--disable-everything, then the decoder and the parser), for mingw32, with the win32
+      # thread model's compiler.
+      - name: Build FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 5 --retry-all-errors -o ffmpeg.tar.xz \
+            "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
+          [ "$(stat -c %s ffmpeg.tar.xz)" = "$FFMPEG_SIZE" ] || { echo "::error::ffmpeg.tar.xz has the wrong size"; exit 1; }
+          echo "$FFMPEG_SHA256  ffmpeg.tar.xz" | sha256sum -c -
+          tar xf ffmpeg.tar.xz
+          cd "ffmpeg-$FFMPEG_VERSION"
+          opts=(--enable-shared --disable-static --disable-programs --disable-doc --disable-autodetect
+                --disable-network --disable-everything --disable-avdevice --disable-avformat --disable-avfilter
+                --disable-swscale --disable-swresample --enable-decoder=mpeg2video --enable-parser=mpegvideo)
+          cross=(--enable-cross-compile --target-os=mingw32 --arch=x86_64 --cross-prefix=x86_64-w64-mingw32-
+                 --cc=x86_64-w64-mingw32-gcc-win32 --enable-w32threads --extra-ldflags=-static-libgcc)
+          ./configure --prefix="$FFMPEG_DIR" "${opts[@]}" "${cross[@]}" | tee configure.txt
+          grep -qx 'License: LGPL version 2.1 or later' configure.txt \
+            || { echo "::error::FFmpeg is not configured as LGPL 2.1 or later"; exit 1; }
+          make -s -j"$(nproc)"
+          make -s install
+          mkdir -p "$FFMPEG_DIR/share/licenses/ffmpeg"
+          cp COPYING.LGPLv2.1 LICENSE.md CREDITS "$FFMPEG_DIR/share/licenses/ffmpeg/"
+          {
+            echo "FFmpeg $FFMPEG_VERSION, unchanged: libavcodec and libavutil, LGPL 2.1 or later."
+            echo "Source: ffmpeg-$FFMPEG_VERSION.tar.xz on this release's page, the same archive as"
+            echo "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz (SHA-256 $FFMPEG_SHA256)."
+            echo "Configured with: ./configure ${opts[*]} ${cross[*]}"
+            echo "You may replace these DLLs with your own build of the same major versions."
+          } > "$FFMPEG_DIR/share/licenses/ffmpeg/README.txt"
+
+      - name: Save FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.FFMPEG_DIR }}
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
+
+      # What players' PCs must have for the DLLs to load: Windows' own DLLs and avutil, nothing else (a
+      # libwinpthread-1.dll or libgcc_s_*.dll here would be missing on every player's PC). objdump comes from the
+      # cross binutils; a cache hit skipped installing them, so install them for the check.
+      - name: What the DLLs import
+        run: |
+          command -v x86_64-w64-mingw32-objdump >/dev/null || {
+            sudo apt-get update; sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64; }
+          ls -la "$FFMPEG_DIR/bin"
+          bad=0
+          for dll in "$FFMPEG_DIR"/bin/avcodec-*.dll "$FFMPEG_DIR"/bin/avutil-*.dll; do
+            [ -f "$dll" ] || { echo "::error::no $(basename "$dll")"; bad=1; continue; }
+            echo "$(basename "$dll"):"
+            for imp in $(x86_64-w64-mingw32-objdump -p "$dll" | sed -n 's/^[[:space:]]*DLL Name: //p'); do
+              case "${imp,,}" in
+                kernel32.dll|msvcrt.dll|bcrypt.dll|advapi32.dll|user32.dll|avutil-*.dll) echo "  $imp" ;;
+                *) echo "::error::$(basename "$dll") imports $imp, which players do not have"; bad=1 ;;
+              esac
+            done
+          done
+          exit $bad
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ffmpeg-windows-${{ github.sha }}
+          path: |
+            ${{ env.FFMPEG_DIR }}/bin/*.dll
+            ${{ env.FFMPEG_DIR }}/include/
+            ${{ env.FFMPEG_DIR }}/share/licenses/
+          if-no-files-found: error
+          retention-days: 14
+
+  host:
+    name: des_host.exe (Windows, clang-cl, hybrid CRT)
+    needs: ffmpeg-windows
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0   # the version counts the commits since the last v tag (port/cmake/DesVersion.cmake)
+
+      # A fixed version, as in ci.yml. The lifter needs 3.10 or newer (its type hints).
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      # ps3recomp.pin names one commit of the fork (docs/54). DES_REQUIRE_PIN=ON below checks that the
+      # checkout is exactly that commit, and pin.yml checks that the commit is on the fork's master.
+      - name: Read the ps3recomp pin
+        id: pin
+        shell: python
+        run: |
+          import os, re, sys
+          keys = {}
+          with open("ps3recomp.pin", encoding="utf-8") as f:
+              for line in f:
+                  m = re.match(r"\s*(repo|tag|commit)\s*=\s*(\S*)", line)
+                  if m:
+                      keys[m.group(1)] = m.group(2)
+          repo = re.fullmatch(r"https://github\.com/([\w.-]+/[\w.-]+?)(?:\.git)?/?", keys.get("repo", ""))
+          commit = keys.get("commit", "")
+          if not repo or not re.fullmatch(r"[0-9a-f]{40}", commit):
+              print("::error file=ps3recomp.pin::needs repo=https://github.com/<owner>/<name> and a 40-digit commit=")
+              sys.exit(1)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"repo={repo.group(1)}\ncommit={commit}\n")
+          print(f"ps3recomp: {repo.group(1)} at {commit}")
+
+      # port/CMakeLists.txt finds ps3recomp beside port/ (PS3RECOMP_DIR defaults to ../ps3recomp), as on a
+      # developer's PC. The port's .gitignore leaves /ps3recomp/ out.
+      - name: Check out the pinned ps3recomp
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.commit }}
+          path: ps3recomp
+          persist-credentials: false
+
+      # clang-cl compiles, but needs the MSVC headers and libraries (the static Visual C++ runtime among
+      # them) and the Windows SDK (ucrt.lib) on the path.
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+
+      - name: Install Ninja
+        run: choco install ninja --version=1.13.2 --allow-downgrade -y --no-progress
+
+      # docs/54 section 5.4 wants CI on the LLVM that players get (22.1.8), failing on any other. Not yet:
+      # the runner's clang-cl is used, as in ci.yml, and another version is a warning (docs/85, open questions).
+      - name: Show toolchain
+        shell: bash
+        run: |
+          clang-cl --version
+          lld-link --version || echo "(no lld-link on the path: CMake links with link.exe)"
+          cmake --version
+          ninja --version
+          v=$(clang-cl --version | sed -n 's/.*clang version \([0-9][0-9.]*\).*/\1/p' | head -n 1)
+          if [ "$v" != "22.1.8" ]; then
+            echo "::warning::clang-cl $v, not the 22.1.8 of the player builds (docs/54 5.4, docs/85)"
+          fi
+
+      # The ffmpeg-windows job's DLLs, headers and licence files.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ffmpeg-windows-${{ github.sha }}
+          path: ${{ runner.temp }}/ffmpeg
+
+      # The runtime library des_host links: PS3RECOMP_GAME_SPLIT=ON (docs/57), the static Visual C++ runtime
+      # (/MT), because a /MT exe cannot link C++ objects built /MD, and FFmpeg opened at run time for the movies
+      # (its headers only: nothing links the DLLs).
+      - name: Configure the runtime library
+        run: >
+          cmake -S ps3recomp -B ps3recomp/build_split -G Ninja
+          -DCMAKE_C_COMPILER=clang-cl
+          -DCMAKE_CXX_COMPILER=clang-cl
+          -DCMAKE_BUILD_TYPE=Release
+          -DPS3RECOMP_GAME_SPLIT=ON
+          -DPS3RECOMP_STATIC_CRT=ON
+          -DPS3RECOMP_FFMPEG_RUNTIME=ON
+          "-DPS3RECOMP_FFMPEG_INCLUDE_DIR=${{ runner.temp }}/ffmpeg/include"
+
+      - name: Build the runtime library
+        run: cmake --build ps3recomp/build_split --target ps3recomp_runtime
+
+      # des_host takes one file from the lift folder (RECOMP_DIR), and it is ps3recomp's own: a table of
+      # the HLE functions it implements, made from its sources alone (tools/gen_hle_nids.py --all, as
+      # setup's "nids" step makes it). It goes to the runner's temp folder, never into the repository.
+      - name: The HLE NID table, from ps3recomp alone
+        shell: python
+        run: |
+          import os, subprocess, sys
+          lift = os.path.join(os.environ["RUNNER_TEMP"], "host_lift").replace("\\", "/")
+          os.makedirs(lift, exist_ok=True)
+          subprocess.run([sys.executable, "ps3recomp/tools/gen_hle_nids.py", "--all",
+                          "--out", lift + "/hle_nid_table.cpp"], check=True)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+              f.write(f"HOST_LIFT={lift}\n")
+
+      # The port with only des_host in it (DES_HOST_ONLY: no des_boot or des_game build, no SPU workload
+      # table), the hybrid CRT for every target (des_ui, FreeType and RmlUi too), exactly the pinned
+      # ps3recomp, and no developer code. No build type, as in README.md and ci.yml.
+      - name: Configure des_host
+        run: >
+          cmake -S port -B build/host -G Ninja
+          -DCMAKE_C_COMPILER=clang-cl
+          -DCMAKE_CXX_COMPILER=clang-cl
+          -DCMAKE_BUILD_TYPE=
+          -DCMAKE_CXX_FLAGS_DEBUG=
+          -DCMAKE_C_FLAGS_DEBUG=
+          -DRECOMP_DIR=${{ env.HOST_LIFT }}
+          -DDES_SPLIT=ON
+          -DDES_HOST_ONLY=ON
+          -DDES_HOST_STATIC_CRT=ON
+          -DDES_REQUIRE_PIN=ON
+          -DDES_DEV=OFF
+
+      - name: Build des_host
+        run: cmake --build build/host --target des_host
+
+      - name: Import check, self-test
+        run: python tools/ci/check_host_imports.py --self-test
+
+      - name: No Visual C++ runtime DLL among the imports
+        run: python tools/ci/check_host_imports.py --require-ucrt build/host/des_host.exe
+
+      - name: Not a developer build
+        run: python tools/ci/check_release_no_dev.py build/host/des_host.exe
+
+      # The map symbolizes crash addresses in the exe (des_game.map is the DLL's, made on the player's PC).
+      # FFmpeg's DLLs go beside the exe, under the names the runtime opens (the majors its headers name), and
+      # their licence in licenses/ffmpeg (package.py takes both into the player's zip).
+      - name: Stage the artifact
+        shell: bash
+        run: |
+          mkdir -p dist/host/licenses
+          cp build/host/des_host.exe build/host/des_host.map dist/host/
+          ff="$RUNNER_TEMP/ffmpeg"
+          for lib in avcodec avutil; do
+            maj=$(cat "$ff/include/lib$lib/"version*.h | tr -d '\r' \
+              | sed -n "s/^#define LIB${lib^^}_VERSION_MAJOR *\([0-9]*\)$/\1/p")
+            [ -n "$maj" ] || { echo "::error::no major version for lib$lib"; exit 1; }
+            cp "$ff/bin/$lib-$maj.dll" dist/host/
+          done
+          [ -d "$ff/share/licenses/ffmpeg" ] || { echo "::error::no licence files for ffmpeg"; exit 1; }
+          cp -r "$ff/share/licenses/ffmpeg" dist/host/licenses/
+          # mbedTLS is compiled into the runtime (TLS to the online server), under Apache-2.0: its licence goes along.
+          [ -f ps3recomp/third_party/mbedtls/LICENSE ] || { echo "::error::no licence file for mbedTLS"; exit 1; }
+          mkdir -p dist/host/licenses/mbedtls
+          cp ps3recomp/third_party/mbedtls/LICENSE dist/host/licenses/mbedtls/
+          ls -laR dist/host
+          find dist/host -type f -exec sha256sum {} +
+
+      - name: No Visual C++ runtime DLL among FFmpeg's imports
+        shell: bash
+        run: python tools/ci/check_host_imports.py dist/host/av*.dll
+
+      # The check treats every .exe and .map as holding the compiled game. These two are built from no lift,
+      # so a list of their own lets them through (.github/host-files-allow.txt, docs/85 3.3); anything else
+      # in the folder still fails. --allow replaces the default list, so both are named.
+      - name: No game-derived files in the artifact
+        run: >
+          python .github/scripts/check_game_files.py --dir dist/host
+          --allow .github/game-files-allow.txt --allow .github/host-files-allow.txt
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: des_host-${{ github.sha }}
+          path: dist/host/
+          if-no-files-found: error
+          retention-days: 14
+
+  # The Linux host (docs/87), built on ubuntu-22.04, the oldest glibc the Linux build supports, so it runs on 2.35
+  # and later. As players will get it:
+  #   - the C++ library linked in: LLVM's libc++ (ubuntu-22.04's libstdc++ 12 has no <format>), with GCC's runtime
+  #     static too (-static-libgcc);
+  #   - SDL2 and vkd3d built from their pinned sources and shipped beside it, found through RUNPATH $ORIGIN. SDL2
+  #     opens X11, Wayland, PulseAudio, PipeWire, ALSA and the rest at run time, as distros build it; vkd3d opens
+  #     the Vulkan loader the same way.
+  # The compiler is LLVM's own 22.1.8 Linux build, the one setup uses for the game part (docs/86; llvm-archive.yml
+  # checks its attestation and signature, this job its size and SHA-256). For the movies, FFmpeg's libavcodec and
+  # libavutil go beside it too, built from FFmpeg's release with only the MPEG-2 video decoder and its parser
+  # (LGPL); the runtime opens them when a movie starts (PS3RECOMP_FFMPEG_RUNTIME).
+  host-linux:
+    name: des_host (Linux, clang 22.1.8, libc++, SDL2 and vkd3d beside it)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      LLVM_ARCHIVE: LLVM-22.1.8-Linux-X64.tar.xz
+      LLVM_URL: https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-X64.tar.xz
+      LLVM_SIZE: '1938859476'
+      LLVM_SHA256: df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384
+      LLVM_DIR: ${{ github.workspace }}/../llvm
+      SDL2_VERSION: 2.32.10
+      SDL2_SIZE: '7630262'
+      SDL2_SHA256: 5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165
+      VKD3D_VERSION: "2.1"
+      VKD3D_SHA256: 7510146aff2adfb4ae07ab890701a607e5ff7c66e57100cfc9f630ec92eeda6a
+      # vkd3d 2.1 needs Vulkan headers 1.3.228 or newer; ubuntu-22.04 has 1.3.204. Khronos' v1.3.275 (Ubuntu
+      # 24.04's), by its commit.
+      VULKAN_HEADERS_VERSION: 1.3.275
+      VULKAN_HEADERS_COMMIT: 217e93c664ec6704ec2d8c36fa116c1a4a1e2d40
+      DEPS_DIR: ${{ github.workspace }}/../deps
+      FFMPEG_DIR: ${{ github.workspace }}/../ffmpeg
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0   # the version counts the commits since the last v tag (port/cmake/DesVersion.cmake)
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Read the ps3recomp pin
+        id: pin
+        run: python .github/scripts/read_pin.py >> "$GITHUB_OUTPUT"
+
+      - name: Check out the pinned ps3recomp
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.commit }}
+          path: ps3recomp
+          persist-credentials: false
+
+      # Build tools and the headers SDL2 opens its back ends with; patchelf for the libraries' RUNPATH; nasm for
+      # FFmpeg's x86 code.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config patchelf nasm flex bison libjson-perl spirv-headers \
+            libvulkan-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev \
+            libxss-dev libxinerama-dev libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev \
+            libegl-dev libgl-dev libgles-dev libdrm-dev libgbm-dev libpulse-dev libasound2-dev \
+            libpipewire-0.3-dev libdbus-1-dev libudev-dev libibus-1.0-dev
+
+      # Restored and saved as separate steps, so a later failure still keeps what was built.
+      - name: Restore SDL2 and vkd3d
+        id: deps-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.DEPS_DIR }}
+          key: host-linux-deps-sdl2-${{ env.SDL2_VERSION }}-vkd3d-${{ env.VKD3D_VERSION }}-vulkan-${{ env.VULKAN_HEADERS_VERSION }}-ubuntu-22.04-v2
+
+      - name: Check out the Vulkan headers
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: KhronosGroup/Vulkan-Headers
+          ref: ${{ env.VULKAN_HEADERS_COMMIT }}
+          path: vulkan-headers
+          persist-credentials: false
+
+      # The Vulkan headers go into the same folder, so vkd3d, the runtime and des_host all build against them.
+      - name: Build SDL2 and vkd3d
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          grep -q "VK_HEADER_VERSION ${VULKAN_HEADERS_VERSION##*.}$" vulkan-headers/include/vulkan/vulkan_core.h \
+            || { echo "::error::the Vulkan headers are not $VULKAN_HEADERS_VERSION"; exit 1; }
+          mkdir -p "$DEPS_DIR/include"
+          cp -r vulkan-headers/include/vulkan vulkan-headers/include/vk_video "$DEPS_DIR/include/"
+          rm -rf vulkan-headers
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 5 --retry-all-errors -o sdl2.tar.gz \
+            "https://github.com/libsdl-org/SDL/releases/download/release-$SDL2_VERSION/SDL2-$SDL2_VERSION.tar.gz"
+          [ "$(stat -c %s sdl2.tar.gz)" = "$SDL2_SIZE" ] || { echo "::error::sdl2.tar.gz has the wrong size"; exit 1; }
+          echo "$SDL2_SHA256  sdl2.tar.gz" | sha256sum -c -
+          tar xf sdl2.tar.gz
+          cmake -S "SDL2-$SDL2_VERSION" -B sdl2-build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$DEPS_DIR" -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TEST=OFF
+          cmake --build sdl2-build
+          cmake --install sdl2-build
+          curl -fsSL --retry 5 --retry-all-errors -O "https://dl.winehq.org/vkd3d/source/vkd3d-$VKD3D_VERSION.tar.xz"
+          echo "$VKD3D_SHA256  vkd3d-$VKD3D_VERSION.tar.xz" | sha256sum -c -
+          tar xf "vkd3d-$VKD3D_VERSION.tar.xz"
+          cd "vkd3d-$VKD3D_VERSION"
+          ./configure -q --prefix="$DEPS_DIR" --disable-doxygen-doc CPPFLAGS="-I$DEPS_DIR/include"
+          make -s -j"$(nproc)"
+          make -s install
+          # vkd3d is LGPL 2.1 or later: its licence and notices go with its libraries (SDL2's install has its own).
+          mkdir -p "$DEPS_DIR/share/licenses/vkd3d"
+          cp LICENSE COPYING AUTHORS "$DEPS_DIR/share/licenses/vkd3d/"
+
+      - name: Save SDL2 and vkd3d
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.DEPS_DIR }}
+          key: ${{ steps.deps-cache.outputs.cache-primary-key }}
+
+      - name: Restore FFmpeg
+        id: ffmpeg-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.FFMPEG_DIR }}
+          key: host-linux-ffmpeg-${{ env.FFMPEG_SHA256 }}-ubuntu-22.04-v1
+
+      # Only what the movies use: libavcodec with the MPEG-2 video decoder and its parser, and libavutil. LGPL 2.1
+      # or later (configure must say so: no --enable-gpl, --enable-version3 or --enable-nonfree), and nothing from
+      # the system (--disable-autodetect). Its licence, and a note with the source and the configure options, go
+      # with the libraries.
+      - name: Build FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 5 --retry-all-errors -o ffmpeg.tar.xz \
+            "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
+          [ "$(stat -c %s ffmpeg.tar.xz)" = "$FFMPEG_SIZE" ] || { echo "::error::ffmpeg.tar.xz has the wrong size"; exit 1; }
+          echo "$FFMPEG_SHA256  ffmpeg.tar.xz" | sha256sum -c -
+          tar xf ffmpeg.tar.xz
+          cd "ffmpeg-$FFMPEG_VERSION"
+          opts=(--enable-shared --disable-static --disable-programs --disable-doc --disable-autodetect
+                --disable-network --disable-everything --disable-avdevice --disable-avformat --disable-avfilter
+                --disable-swscale --disable-swresample --enable-decoder=mpeg2video --enable-parser=mpegvideo)
+          ./configure --prefix="$FFMPEG_DIR" "${opts[@]}" | tee configure.txt
+          grep -qx 'License: LGPL version 2.1 or later' configure.txt \
+            || { echo "::error::FFmpeg is not configured as LGPL 2.1 or later"; exit 1; }
+          make -s -j"$(nproc)"
+          make -s install
+          mkdir -p "$FFMPEG_DIR/share/licenses/ffmpeg"
+          cp COPYING.LGPLv2.1 LICENSE.md CREDITS "$FFMPEG_DIR/share/licenses/ffmpeg/"
+          {
+            echo "FFmpeg $FFMPEG_VERSION, unchanged: libavcodec and libavutil, LGPL 2.1 or later."
+            echo "Source: ffmpeg-$FFMPEG_VERSION.tar.xz on this release's page, the same archive as"
+            echo "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz (SHA-256 $FFMPEG_SHA256)."
+            echo "Configured with: ./configure ${opts[*]}"
+            echo "You may replace these libraries with your own build of the same major versions."
+          } > "$FFMPEG_DIR/share/licenses/ffmpeg/README.txt"
+
+      - name: Save FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.FFMPEG_DIR }}
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
+
+      - name: Restore LLVM
+        id: llvm-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.LLVM_DIR }}
+          key: host-linux-llvm-${{ env.LLVM_SHA256 }}-v1
+
+      # Only what the build runs: clang, lld, clang's headers, and libc++ with its headers. tar reports a pattern
+      # with no match at the end; the check after it says what is missing.
+      - name: LLVM 22.1.8
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 5 --retry-all-errors -o llvm.tar.xz "$LLVM_URL"
+          [ "$(stat -c %s llvm.tar.xz)" = "$LLVM_SIZE" ] || { echo "::error::llvm.tar.xz has the wrong size"; exit 1; }
+          echo "$LLVM_SHA256  llvm.tar.xz" | sha256sum -c -
+          mkdir -p "$LLVM_DIR"
+          top="${LLVM_ARCHIVE%.tar.xz}"
+          tar -xJf llvm.tar.xz -C "$LLVM_DIR" --strip-components=1 --wildcards \
+            "$top/bin/clang" "$top/bin/clang++" "$top/bin/clang-22" "$top/bin/lld" "$top/bin/ld.lld" \
+            "$top/lib/clang/*" "$top/include/c++/*" "$top/include/x86_64-unknown-linux-gnu/*" \
+            "$top/lib/x86_64-unknown-linux-gnu/*" || echo "tar: some patterns had no match (exit $?)"
+          rm llvm.tar.xz
+          find "$LLVM_DIR" -maxdepth 3 \( -name 'libc++*' -o -name 'libunwind*' -o -name 'clang*' -o -name '*lld*' \) | sort
+          for f in bin/clang bin/clang++ bin/ld.lld include/c++/v1/format; do
+            [ -e "$LLVM_DIR/$f" ] || { echo "::error::LLVM's archive has no $f"; exit 1; }
+          done
+          ls "$LLVM_DIR"/lib/x86_64-unknown-linux-gnu/libc++.a "$LLVM_DIR"/lib/x86_64-unknown-linux-gnu/libc++abi.a \
+            || { echo "::error::no static libc++ in LLVM's archive"; exit 1; }
+
+      - name: Save LLVM
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.LLVM_DIR }}
+          key: ${{ steps.llvm-cache.outputs.cache-primary-key }}
+
+      - name: Show toolchain
+        run: |
+          "$LLVM_DIR/bin/clang" --version
+          "$LLVM_DIR/bin/ld.lld" --version
+          cmake --version
+          ninja --version
+
+      # des_host takes one file from the lift folder, and it is ps3recomp's own (as in the Windows job).
+      - name: The HLE NID table, from ps3recomp alone
+        run: |
+          lift="$RUNNER_TEMP/host_lift"
+          mkdir -p "$lift"
+          python ps3recomp/tools/gen_hle_nids.py --all --out "$lift/hle_nid_table.cpp"
+          echo "HOST_LIFT=$lift" >> "$GITHUB_ENV"
+
+      # The same compiler, C++ library and link flags for the runtime library, des_host and what CMake fetches
+      # (FreeType, RmlUi). lld finds libc++abi in any order. The deps folder's include comes first, for its
+      # Vulkan headers (vkd3d.h includes vulkan/vulkan.h).
+      - name: Toolchain flags
+        run: |
+          {
+            echo "CC=$LLVM_DIR/bin/clang"
+            echo "CXX=$LLVM_DIR/bin/clang++"
+            echo "CFLAGS=-I$DEPS_DIR/include"
+            echo "CXXFLAGS=-stdlib=libc++ -I$DEPS_DIR/include"
+            echo "LDFLAGS=-fuse-ld=lld -stdlib=libc++ -static-libstdc++ -rtlib=libgcc -unwindlib=libgcc -static-libgcc -Wl,-Bstatic -lc++abi -Wl,-Bdynamic"
+            echo "PKG_CONFIG_PATH=$DEPS_DIR/lib/pkgconfig"
+            echo "CMAKE_PREFIX_PATH=$DEPS_DIR"
+          } >> "$GITHUB_ENV"
+
+      - name: Configure the runtime library
+        run: >
+          cmake -S ps3recomp -B ps3recomp/build_split -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DPS3RECOMP_BUILD_TESTS=OFF
+          -DPS3RECOMP_RSX_D3D12_VKD3D=ON
+          -DPS3RECOMP_GAME_SPLIT=ON
+          -DPS3RECOMP_FFMPEG_RUNTIME=ON
+          "-DPS3RECOMP_FFMPEG_INCLUDE_DIR=$FFMPEG_DIR/include"
+
+      - name: Build the runtime library
+        run: cmake --build ps3recomp/build_split --target ps3recomp_runtime
+
+      # des_host alone (DES_HOST_ONLY), exactly the pinned ps3recomp, no developer code, and RUNPATH $ORIGIN only.
+      - name: Configure des_host
+        run: >
+          cmake -S port -B build/host -G Ninja
+          -DCMAKE_BUILD_TYPE=
+          "-DRECOMP_DIR=$HOST_LIFT"
+          -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+          "-DCMAKE_INSTALL_RPATH=\$ORIGIN"
+          -DDES_SPLIT=ON
+          -DDES_SPLIT_FREESTANDING=ON
+          -DDES_HOST_ONLY=ON
+          -DDES_VKD3D=ON
+          -DDES_REQUIRE_PIN=ON
+          -DDES_DEV=OFF
+
+      - name: Build des_host
+        run: cmake --build build/host --target des_host
+
+      # The libraries under their sonames, each finding the others beside it, and their licences (package.py puts
+      # the folder at the top of the Linux tarball).
+      - name: Stage the artifact
+        run: |
+          mkdir -p dist/host-linux/licenses
+          cp build/host/des_host build/host/des_host.map dist/host-linux/
+          for so in libSDL2-2.0.so.0 libvkd3d.so.1 libvkd3d-shader.so.1 libvkd3d-utils.so.1; do
+            cp -L "$DEPS_DIR/lib/$so" dist/host-linux/
+            patchelf --set-rpath '$ORIGIN' "dist/host-linux/$so"
+          done
+          # FFmpeg's under the names the runtime opens, the majors its headers name (libavcodec.so.62, ...).
+          for lib in avcodec avutil; do
+            maj=$(cat "$FFMPEG_DIR/include/lib$lib/"version*.h \
+              | sed -n "s/^#define LIB${lib^^}_VERSION_MAJOR *\([0-9]*\)$/\1/p")
+            [ -n "$maj" ] || { echo "::error::no major version for lib$lib"; exit 1; }
+            cp -L "$FFMPEG_DIR/lib/lib$lib.so.$maj" dist/host-linux/
+            patchelf --set-rpath '$ORIGIN' "dist/host-linux/lib$lib.so.$maj"
+          done
+          for lib in SDL2 vkd3d; do
+            [ -d "$DEPS_DIR/share/licenses/$lib" ] || { echo "::error::no licence files for $lib"; exit 1; }
+            cp -r "$DEPS_DIR/share/licenses/$lib" dist/host-linux/licenses/
+          done
+          [ -d "$FFMPEG_DIR/share/licenses/ffmpeg" ] || { echo "::error::no licence files for ffmpeg"; exit 1; }
+          cp -r "$FFMPEG_DIR/share/licenses/ffmpeg" dist/host-linux/licenses/
+          # mbedTLS is compiled into the runtime (TLS to the online server), under Apache-2.0: its licence goes along.
+          [ -f ps3recomp/third_party/mbedtls/LICENSE ] || { echo "::error::no licence file for mbedTLS"; exit 1; }
+          mkdir -p dist/host-linux/licenses/mbedtls
+          cp ps3recomp/third_party/mbedtls/LICENSE dist/host-linux/licenses/mbedtls/
+          ls -laR dist/host-linux
+          find dist/host-linux -type f -exec sha256sum {} +
+
+      - name: What each file needs, self-test
+        run: python tools/ci/check_host_elf.py --self-test
+
+      - name: What each file needs (NEEDED, GLIBC_ versions, RUNPATH)
+        run: python tools/ci/check_host_elf.py --glibc 2.35 dist/host-linux
+
+      - name: Not a developer build
+        run: python tools/ci/check_release_no_dev.py dist/host-linux/des_host
+
+      - name: No game-derived files in the artifact
+        run: >
+          python .github/scripts/check_game_files.py --dir dist/host-linux
+          --allow .github/game-files-allow.txt --allow .github/host-files-allow.txt
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: des_host-linux-${{ github.sha }}
+          path: dist/host-linux/
+          if-no-files-found: error
+          retention-days: 14

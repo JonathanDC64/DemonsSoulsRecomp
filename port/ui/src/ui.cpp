@@ -25,6 +25,7 @@ std::vector<std::unique_ptr<Document>> sDocumentStack;
 std::vector<std::unique_ptr<Document>> sPassiveDocuments;
 
 std::deque<Toast> sToasts;
+std::deque<Rml::String> sTickers;
 bool sMenuNotificationRequested = false;
 }  // namespace
 
@@ -220,6 +221,11 @@ void update() noexcept {
         }
     }
 
+    // Anywhere in the stack, not only on top: Settings or the on-screen keyboard opened over a setup page keep its
+    // scale, so the page behind them is not laid out again when they open and close.
+    host::set_follow_height(std::any_of(sDocumentStack.begin(), sDocumentStack.end(),
+        [](const auto& doc) { return !doc->closed() && doc->scales_with_window(); }));
+
     input::sync_input_block();
 }
 
@@ -362,6 +368,14 @@ void push_toast(Toast toast) noexcept {
 
 std::deque<Toast>& get_toasts() noexcept {
     return sToasts;
+}
+
+void push_ticker(Rml::String text) noexcept {
+    sTickers.push_back(std::move(text));
+}
+
+std::deque<Rml::String>& get_tickers() noexcept {
+    return sTickers;
 }
 
 void show_menu_notification() noexcept {

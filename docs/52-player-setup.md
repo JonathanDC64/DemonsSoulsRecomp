@@ -230,6 +230,8 @@ Under every plan, setup also accepts files the player already decrypted.
 
 docs/45's rule: jobs = min(logical CPUs, (free RAM - 2 GB) / 3 GB per job), with 3 GB until docs/53 measures it. If a job fails out of memory (the exit code, or "out of memory" in its output), setup retries that file once with one job fewer (inferred design).
 
+Built differently on 10-23 (docs/81 section 8): the compile follows the memory as it goes, with each object's measured peak, and an object that runs out of memory runs once more alone. The time estimate before setup counts the chunks that fit in the memory free now, with the compile's figures.
+
 ### 4.5 Errors and reports
 
 Every failure gives a one-line cause, the next action, the last 1,500 characters of the tool's output (as FFCCEOT does), the full `setup.log`, and Report. Report goes through the docs/32 report path with redaction, and never attaches game files or the DLL (docs/45 section 7).
@@ -245,7 +247,8 @@ Check before starting, again before the compile, and again before the link (sect
 | What | Today | What covers it in setup | State |
 |---|---|---|---|
 | RSX programs to DXBC (FXC) | the prework at the first start after an update: 3,535 shaders in 28 s on 15 threads (docs/32) | the same pass, run from setup | exists |
-| The EBOOT's 8 Cg programs | compiled at first use | docs/49 step 2 | to build |
+| The EBOOT's 8 Cg programs | compiled at first use: 2 in the menus, 2 as the level appears (docs/93) | the same pass, which finds them in the executable by their headers (10-23) | exists |
+| The 2D forms of the filter, menu and font programs (the sprite-edge clamp above 100% scale, docs/37) | compiled at first use: 16 at a first start at 200%, most in one frame of 280-500 ms as the level appears (docs/93) | the same pass (`RSX_PRECOMPILE_2D`, 10-23) | exists |
 | Fetch-form vertex programs | precompiled since 13f5fb3 (docs/49) | the same pass | exists |
 | D3D12 pipelines (PSOs) | built at first draw; kept in `pso_library.bin` (PR #34) and rebuilt from the manifest after a driver change | `pso_predict.py` plus the predicted build (docs/49 steps 1 to 3): 5,062 pipelines; 98.1% of the live manifest and 100% of 6 samples (measured in docs/49); about 88 MB (inferred in docs/49) | to build |
 | What prediction misses | compiled at first use, on the render thread | docs/49 fallback B: compile a frame's misses in parallel before that frame | to build |
@@ -258,6 +261,8 @@ Check before starting, again before the compile, and again before the link (sect
 3. Build the predicted pipelines tier by tier into `pso_library.bin`. Use all threads at normal priority: the player is waiting and nothing else runs. During play, docs/49 does this at the lowest priority on up to 4 threads instead.
 
 Time: 28 s for the shaders (docs/32), plus 35 to 101 CPU-seconds of driver compiles (docs/49), so about a minute on this PC (inferred).
+
+Step 1 is built (10-23, docs/88 section 13): the engine's `shaders` phase runs `des_host --shaders <game folder> <EBOOT.elf>`, 3,603 shaders in about 20 s on 15 threads (more since the 2D forms and the executable's programs, docs/93). It runs at the engine's priority, below normal, like the rest of setup. Steps 2 and 3 are not built.
 
 The step does not need the game DLL. The prework, the precompiler and the PSO code are host code. They read the game folder's files and `EBOOT.ELF` (inferred from docs/49 2.2). So under Route B it could even overlap the compile. It stays last, as asked, and because the compile already uses every core.
 
@@ -621,6 +626,7 @@ Route A' adds about 0.2 GB to the install, and about 1.4 GB after setup if objec
 | LLVM: clang, lld, clang's headers | toolchain | Apache-2.0 with LLVM exception (read, docs/45) | ship `LICENSE.TXT` and the third-party notices for whatever the release build links in statically (inferred: check the release's licence files when packaging) |
 | Embeddable Python 3.13.9 | tools | PSF licence, plus its bundled libraries (OpenSSL, libffi, zlib, bzip2, liblzma, SQLite, mpdecimal, expat) (inferred list) | ship its `LICENSE.txt`, which covers the bundled ones (docs/45) |
 | Monocypher (docs/45 stage B update signatures, later) | host | CC0-1.0 or BSD-2-Clause (docs/45) | a notice under BSD |
+| Mbed TLS 3.6 (in ps3recomp `third_party/`; TLS to the online server) | host, static | Apache-2.0, taken instead of GPL-2.0-or-later (read, its LICENSE) | ship the licence: host.yml copies it to `licenses/mbedtls` in both artifacts; it has no NOTICE file (read) |
 | CMake, Ninja | not shipped | | |
 | Route A' only: mingw-w64 CRT, headers, winpthreads | toolchain, and linked into the exe | permissive notices (the mingw-w64 notice, getopt, gdtoa, Sun math, Rich Felker's MIT code); Wine-derived headers and IDL under LGPL-2.1+; Cephes math marked "FIXME" for permission (read, `COPYING.MinGW-w64-runtime.txt`) | ship that file with the toolchain. Binaries that link the runtime must carry its notices (read). Ours are built on the player's PC and never distributed. |
 | Route A' only: libc++, libc++abi, libunwind, compiler-rt | toolchain, and linked into the exe | Apache-2.0 with LLVM exception (inferred) | ship the licence with the toolchain |

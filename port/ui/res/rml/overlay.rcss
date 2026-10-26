@@ -178,6 +178,57 @@ toast.trophy grade.bronze {
     color: var(--color-grade-bronze);
 }
 
+/* The online server's banners: a thin bar across the top that slides down, and back up when done. Its text holds
+   still if it fits, else the overlay scrolls it (ticker-text's transform). */
+ticker {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 34dp;
+    display: flex;
+    align-items: center;
+    gap: var(--space-lg);
+    padding: 0 var(--space-xl);
+    background-color: rgba(var(--color-surface-rgb), 70%);
+    border-bottom-width: 1dp;
+    border-bottom-color: rgba(var(--color-border-rgb), 35%);
+    transform: translateY(-100%);
+    transition: transform 0.35s cubic-out;
+}
+
+ticker[open] {
+    transform: translateY(0);
+}
+
+ticker ticker-label {
+    flex: 0 0 auto;
+    font-family: var(--font-family-heading);
+    font-size: var(--font-size-md);
+    font-weight: bold;
+    text-transform: uppercase;
+    color: var(--color-warning);
+}
+
+ticker ticker-track {
+    flex: 1 1 auto;
+    position: relative;
+    height: 100%;
+    overflow: hidden;
+    /* RmlUi clips only content that overflows the layout, and a transform moves the text without that: clip always. */
+    clip: always;
+}
+
+ticker ticker-text {
+    position: absolute;
+    top: 0;
+    left: 0;
+    white-space: nowrap;
+    line-height: 34dp;
+    font-size: var(--font-size-xl);
+    color: var(--color-text);
+}
+
 @media (max-height: 640dp) {
     toast {
         top: 20dp;

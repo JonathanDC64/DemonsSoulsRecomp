@@ -22,7 +22,7 @@ Terms used below:
    - **Noise radius** (read; that enemies hear with it is inferred). Sound events (a position, a radius of 0.5 to 13 m, a life of 0.5 to 2 s) lose 1% of their radius each frame (x0.99 at 0x006A3990), while their life counts down by dt. At 240 a 2 s sound covers about a quarter of the radius-time it covers at 30, so enemies probably hear the player less. You see it only through enemy behaviour.
    - **Character fades** (read; what triggers them is inferred). Two of the 20 node types in a character's effect list fade the model by a fixed step per call: type 16 (0.05 a call, 0x0025EB20) and type 14 (1/30 a call, 0x002654E8). At 240 their fades are 8 times as fast: 0.67 s becomes 83 ms, 1 s becomes 125 ms.
    - **Pitch return after a scripted camera angle** (read). Keep factor C+0x18C = 0.3 a frame (0x0011C15C). It takes about 4 frames at any rate: 133 ms at 30, 17 ms at 240. Low.
-4. Everything else that was checked uses dt (section 3): the stamina drain tick, the regen accumulator, the camera manager's blend, the other effect-list timers, the noise life, and Havok (physics and animation, from 0x00FF0000 up).
+4. Everything else that was checked uses dt (section 3): the stamina drain tick, the regen accumulator, the camera manager's blend, the other effect-list timers, the noise life, and Havok (physics and animation, from 0x00FF0000 up). *(Corrected 10-22: not the foot placement IK. Its gains, and the game's pelvis filter around it, are per frame; issue #140, docs/92.)*
 5. Reports from players of RPCS3's 60 fps patch (2019) say the jump distance changes, and that sliding down a ladder can drop you through the floor (the second is from Dark Souls with DSfix, said to apply here too). The jump report has nothing to check here: Demon's Souls has no jump (checked by hand in RPCS3, 2026-10-19: L3 while dashing does nothing). The ladder report needs a run (section 5).
 6. Two side notes. The ChrFollowCam update 0x00122C40 has no callers (read), so its five lines in `insn_hooks.txt` never run. 0x00798878, a twin of ObjScrollMsg's update with the same -1.5 px step a call, has no callers either.
 7. `DES_FRAMELOCK` and `DES_FLWATCH` cannot see any of this. They wrap functions with `ppu_register_function`, which only catches calls through a vtable or a pointer. Every function here is reached by a direct `bl`, which the lift emits as a plain C call (`func_00119670(ctx)` at `ppu_recomp_000.cpp:317601`). So a longer hook list would not help. The run request logs from inside `des_cam_rate` instead: it already runs every frame inside 0x00119670, with r31 = C.
@@ -134,7 +134,7 @@ All of these give the 30 fps behaviour at any frame rate, so they fit "original 
 | Steep-slope slide | 0x001FEAF4, 0x001FED50 | fixed (`des_slide_rate`) |
 | A vector ease in the proxy code | 0x001FF160 | k is the step's +0x20, the step's dt (inferred) |
 | A vector ease | 0x00381030 | k from f1, dt (scan) |
-| Havok: physics, animation, vehicles | 0x00FF0000 and up (`hkp...`, `hk...` class names) | Havok steps by dt (inferred) |
+| Havok: physics, animation, vehicles | 0x00FF0000 and up (`hkp...`, `hk...` class names) | Havok steps by dt (inferred). Not the foot placement solver (0x00FF4DC0): its gains are per frame (docs/92) |
 | ChrFollowCam | 0x00122C40 | no callers; never runs |
 | The other constructor of ChrExFollowCam | 0x00118288 | no callers |
 

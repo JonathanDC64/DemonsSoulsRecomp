@@ -5,10 +5,18 @@
 # pinned regression save) on DES_EXE (default port/build/des_boot.exe),
 # uncapped like exeab.sh (DES_FPS=60, VBLANK_MHZ=PERF_VBLANK default 960000,
 # RSX_VSYNC=0), waits for the level and KAB_SETTLE s (default 40; a cutscene
-# is pressed through), then for each knob line takes KAB_WIN-second profile
+# is pressed through), then for each knob line takes KAB_WIN-second
 # windows (default 6) in KAB_ORDER (default ABBAAB, pairs of AB or BA, so a
 # drift inside the boot cancels): A with the line's knobs cleared
 # (`setenv KNOB=`), B with them set.
+# The windows are plain by default (KAB_PLAIN=1): two console `stat` calls
+# give the flip count at either end, the boot runs with FRAME_LOG, and after
+# the boot kabplain.py turns each flip range into presents over frames.log time
+# (lc_<boot>/plain_NNN.txt). Nothing is armed in the window. KAB_PLAIN=0 takes
+# profile windows instead (prof_NNN_*.txt, with the per-thread tables), but the
+# profile session times every texture, SRV and pipeline lookup on the FIFO
+# thread, so there the FIFO thread holds the frame and a FIFO-thread change
+# reads bigger than in plain play (docs/83 2.1: +6.5% there, +2.3% plain).
 # A knobs file has one comparison per line ("KNOB=value", or several as
 # "KNOB=value,OTHER=value"; blank lines and # comments skipped). Extra ENV...
 # go to every boot.
@@ -25,7 +33,7 @@
 # Same quiet, save and validity checks as exeab.sh. Output in
 # $DES_SCRATCH/<tag>/: batch.txt, knobs.txt, manifest.txt (window number, side,
 # knob line; the same in every boot), runs.txt, wincheck.txt, shots/,
-# <tag>.out ("<side> <boot> <profile summary line>" per window, kabsum.sh's
+# <tag>.out ("<side> <boot> <window line>" per window, kabsum.sh's
 # means at the end), knobstat.txt (the verdict per knob line, knobstat.py),
 # lc_<boot>/, <boot>.log, knobab.log. Exit status as exeab.sh's (0 ran
 # through, 2 bad arguments, 3 a des_boot.exe was running or the save folder
@@ -42,14 +50,19 @@ if [ -n "${KAB_CHILD:-}" ]; then
   . "$HERE/perflib.sh"
   . "$HERE/abboot.sh"
   W=${KAB_WIN:-6}; ORDER=${KAB_ORDER:-ABBAAB}; pid=$(perf_game_pid); i=0; stopc=0
-  check=${PERF_WINCHECK:-1}; [ "${RSX_PRESENT:-1}" = 0 ] && check=0
+  check=${PERF_WINCHECK:-1}; [ "${RSX_PRESENT:-1}" = 0 ] && check=0; plain=${KAB_PLAIN:-1}
   for kv in "${KNOBS[@]}"; do
     for s in $(echo "$ORDER" | sed 's/./& /g'); do
       kill -0 "$LC" 2>/dev/null || break 2   # the run ended (its cap, a crash): the parent counts the windows
       for one in ${kv//,/ }; do
         if [ "$s" = A ]; then con "setenv ${one%%=*}=" > /dev/null; else con "setenv $one" > /dev/null; fi
       done
-      sleep 1; con profile > /dev/null; sleep "$W"; con profile > /dev/null
+      if [ "$plain" = 1 ]; then
+        sleep 1; s1=$(con stat | awk '$1 == "flips" {print $2}'); sleep "$W"
+        echo "$((i + 1)) $s1 $(con stat | awk '$1 == "flips" {print $2}')" >> "$RUN/plainwin.txt"
+      else
+        sleep 1; con profile > /dev/null; sleep "$W"; con profile > /dev/null
+      fi
       i=$((i + 1)); sleep 2 & gap=$!
       if [ "$check" = 1 ]; then
         shot=$(perf_wincap "$pid" "$BD/shots/${TAG}_w$(printf %03d "$i").png")
@@ -68,6 +81,7 @@ if [ -n "${KAB_CHILD:-}" ]; then
     for one in ${kv//,/ }; do con "setenv ${one%%=*}=" > /dev/null; done
   done
   ab_finish
+  [ "$plain" = 1 ] && python "$(cygpath -m "$HERE/kabplain.py")" "$(cygpath -m "$RUN")" > "$RUN/kabplain.txt" 2>&1
   exit $stopc
 fi
 
@@ -77,6 +91,8 @@ TAG=${1:?tag}; KV=${2:?KNOB=value or a knobs file}; shift 2
 D=$DES_SCRATCH/$TAG
 [ -e "$D" ] && { echo "[ab] $D exists; pick a new tag"; exit 2; }
 NB=${KAB_BOOTS:-1}; W=${KAB_WIN:-6}; ORDER=${KAB_ORDER:-ABBAAB}; SETTLE=${KAB_SETTLE:-40}
+PLAIN=${KAB_PLAIN:-1}   # the window files: plain_NNN.txt, or prof_NNN_summary.txt
+if [ "$PLAIN" = 1 ]; then WF=plain; WP="plain_[0-9]*.txt"; else WF=prof; WP="prof_[0-9]*_summary.txt"; fi
 # knobstat.py pairs windows 1-2, 3-4, ...: each pair has to be AB or BA.
 echo "$ORDER" | grep -Eqx '((AB)|(BA))+' || { echo "[ab] KAB_ORDER is pairs of AB or BA (like ABBAAB)"; exit 2; }
 X=${DES_EXE:-port/build/des_boot.exe}
@@ -109,7 +125,7 @@ perf_save_snapshot "$D" || exit 3
 perf_present; perf_uncapped
 {
   perf_header wincheck
-  echo "boots $NB  order $ORDER  window ${W}s  settle ${SETTLE}s  save $SAVE  map ${MAP:-(not checked)}"
+  echo "boots $NB  order $ORDER  window ${W}s ($WF)  settle ${SETTLE}s  save $SAVE  map ${MAP:-(not checked)}"
   echo "exe $X  md5 $(perf_md5 "$X")"
   echo "env DES_FPS=60 VBLANK_MHZ=$VB RSX_VSYNC=$RSX_VSYNC PS3_PRIORITY=normal PS3_AFFINITY=all DES_AUTO_CONTINUE=1 $*"
   sed 's/^/knob /' "$D/knobs.txt"
@@ -124,23 +140,25 @@ stop_kid() { [ -n "$kpid" ] && kill -0 "$kpid" 2>/dev/null && { kill "$kpid" 2>/
 trap stop_kid EXIT
 for b in $(seq 1 "$NB"); do
   N=${TAG}_k$b; RUN=$D/lc_$N
+  FL=(); [ "$PLAIN" = 1 ] && FL=("FRAME_LOG=$(cygpath -m "$RUN")/frames.log")
   perf_no_game 20 || { echo "[ab] a des_boot.exe is running; stopping before $N"; ec=3; break; }
   perf_present_ok || { echo "[ab] the session locked under a presenting batch; stopping before $N"; ec=4; break; }
   perf_wait_quiet 3 || { echo "[ab] stopping before $N"; ec=4; break; }
   echo "[ab] $(date +%T) $N (background cpu ${PERF_BG:-?}%)"
   KAB_CHILD=$D DES_SCRATCH=$D DES_EXE=$X LC_SAVE=$SAVE KAB_SETTLE=$SETTLE \
     bash "$HERE/knobab.sh" "$N" "$D/knobs.txt" PS3_PRIORITY=normal PS3_AFFINITY=all \
+    ${FL[@]+"${FL[@]}"} \
     DES_FPS=60 VBLANK_MHZ="$VB" RSX_VSYNC="$RSX_VSYNC" "$@" > "$D/$N.log" 2>&1 &
   kpid=$!
   wait "$kpid"; rc=$?; kpid=
   v=$(perf_run_valid "$RUN" "$MAP" "$VB")
   [ "$rc" = 5 ] && v="level went black: $(cat "$RUN/stopped" 2>/dev/null)"
   [ "$rc" = 6 ] && v="window check failed: $(cat "$RUN/stopped" 2>/dev/null)"
-  got=$(ls "$RUN"/prof_*_summary.txt 2>/dev/null | wc -l)
+  got=$(ls "$RUN"/$WP 2>/dev/null | wc -l)
   [ "$v" = ok ] && [ "$got" -ne "$nw" ] && v="windows $got of $nw"
   printf '%s\t%s\t%s\t%s\t%s\n' K "$N" "$b" "$v" "${PERF_BG:-?}" >> "$D/runs.txt"
   i=0
-  for f in "$RUN"/prof_*_summary.txt; do
+  for f in "$RUN"/$WP; do
     [ -f "$f" ] || continue
     i=$((i + 1)); echo "$(awk -v i=$i '$1 == i {print $2}' "$D/manifest.txt") $N $(head -1 "$f")" >> "$OUT"
   done

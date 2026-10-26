@@ -229,7 +229,47 @@ bool show(const Content& content, const Actions& actions) {
         ok = true;
         sClose = false;
         const auto dismiss = [](Modal&) { sClose = true; };
-        push_document(std::make_unique<Modal>(Modal::Props{
+        const auto details = [&content](Modal& modal) {
+            modal.push(std::make_unique<Modal>(Modal::Props{
+                .title = "Details",
+                .bodyRml = escape_lines(content.details),
+                .actions = {ModalAction{.label = "Close", .onPressed = [](Modal& d) { d.pop(); }}},
+                .onDismiss = [](Modal& d) { d.pop(); },
+            }));
+        };
+        if (content.hang) push_document(std::make_unique<Modal>(Modal::Props{
+            .title = "The game is not responding",
+            .bodyRml = "<b>" + escape(content.what) +
+                       ".</b> The menu cannot open. The game may still recover: keep waiting, or close it.<br/><br/>"
+                       "A report was saved on this PC. Reporting the problem opens a new issue on GitHub with the "
+                       "details filled in, and a zip to attach with what each part of the game was doing, your settings "
+                       "and the game's recent messages. It has no save data or game files; nothing is sent until you "
+                       "submit the issue.",
+            .actions =
+                {
+                    ModalAction{.label = "Keep waiting", .onPressed = dismiss},
+                    ModalAction{
+                        .label = "Report on GitHub",
+                        .onPressed =
+                            [&actions](Modal& modal) {
+                                if (actions.report) modal.set_body_text(actions.report());
+                            },
+                    },
+                    ModalAction{.label = "Show details", .onPressed = details},
+                    ModalAction{
+                        .label = "Close the game",
+                        .onPressed =
+                            [&actions](Modal&) {
+                                if (actions.close_game) actions.close_game();
+                                sClose = true;
+                            },
+                    },
+                },
+            .onDismiss = dismiss,
+            .variant = "danger",
+            .icon = "error",
+        }));
+        else push_document(std::make_unique<Modal>(Modal::Props{
             .title = "The game has crashed",
             .bodyRml = "<b>" + escape(content.what) +
                        "</b><br/><br/>A report was saved on this PC. Reporting the problem opens a new issue on GitHub "
@@ -253,27 +293,18 @@ bool show(const Content& content, const Actions& actions) {
                                 if (actions.report) modal.set_body_text(actions.report());
                             },
                     },
-                    ModalAction{
-                        .label = "Show details",
-                        .onPressed =
-                            [&content](Modal& modal) {
-                                modal.push(std::make_unique<Modal>(Modal::Props{
-                                    .title = "Details",
-                                    .bodyRml = escape_lines(content.details),
-                                    .actions = {ModalAction{.label = "Close",
-                                                            .onPressed = [](Modal& details) { details.pop(); }}},
-                                    .onDismiss = [](Modal& details) { details.pop(); },
-                                }));
-                            },
-                    },
+                    ModalAction{.label = "Show details", .onPressed = details},
                     ModalAction{.label = "Close", .onPressed = dismiss},
                 },
             .onDismiss = dismiss,
             .variant = "danger",
             .icon = "error",
         }));
-        ShowWindow(hwnd, SW_SHOWNORMAL);
-        SetForegroundWindow(hwnd);
+        // (PS3_NO_USER_INPUT=1, a test run: it never takes the focus from what the user is doing)
+        const char* no_input = std::getenv("PS3_NO_USER_INPUT");
+        const bool quiet = no_input && std::atoi(no_input) != 0;
+        ShowWindow(hwnd, quiet ? SW_SHOWNOACTIVATE : SW_SHOWNORMAL);
+        if (!quiet) SetForegroundWindow(hwnd);
 
         // Test knobs (crash_dialog.hpp).
         const char* shot = std::getenv("DES_CRASH_DIALOG_SHOT");

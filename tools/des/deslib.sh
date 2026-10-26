@@ -35,6 +35,9 @@ des_env_defaults() {
   export LIBSRE_LLE="${LIBSRE_LLE:-1}"
   export LIBSRE_LLE_ONLY="${LIBSRE_LLE_ONLY:-011EE38B,1656D49F,8A85674D,73E06F91,082BFB09,E5443BE7,039D70B7,91066667}"
   export SPURS_NO_ROUND_NOTIFY="${SPURS_NO_ROUND_NOTIFY:-1}"
+  # The main thread's stack in the stack region, as lv2 places it: the lifter's
+  # stack stores take their direct path only there (docs/98).
+  export PS3_MAIN_STACK_LV2="${PS3_MAIN_STACK_LV2:-1}"
   # Behind the lock screen DWM holds the back buffers and every frame waits on
   # the GPU (docs/28, unattended runs). A test run checks the lock at launch
   # and renders without presenting there; set RSX_PRESENT to pin it instead.
@@ -47,6 +50,8 @@ des_env_defaults() {
   # Scripted input still drives it. PS3_NO_USER_INPUT=0 to drive one by hand.
   if [ "${DES_KIND:-test}" != play ]; then
     export PS3_NO_USER_INPUT="${PS3_NO_USER_INPUT:-1}"
+    # Test runs stay offline (settings Online is on by default); DES_ONLINE=1 to test online play.
+    export DES_ONLINE="${DES_ONLINE:-0}"
   fi
   # Per-event log lines go through one FILE lock and change the timing being
   # measured (ps3_log.h); runs are quiet unless asked. PS3_VERBOSE=1 restores.
@@ -74,6 +79,10 @@ des_env_defaults() {
   # (game-derived) captures in the scratch directory, never the repository.
   export RSX_HOTKEY_DIR="${RSX_HOTKEY_DIR:-$(cygpath -m "$DES_SCRATCH/rsx_hotkey" 2>/dev/null || echo "$DES_SCRATCH/rsx_hotkey")}"
   # F11 starts and stops a profile session (prof_NNN_summary.txt and friends).
+  # F8 to F11 are developer keys: a player's build ignores them, and these runs
+  # (play.sh too) turn them on (ps3recomp's RSX_DEV_HOTKEYS; docs/28).
+  # RSX_DEV_HOTKEYS=0 to see what a player gets.
+  export RSX_DEV_HOTKEYS="${RSX_DEV_HOTKEYS:-1}"
   export PROF_DIR="${PROF_DIR:-$(cygpath -m "$DES_SCRATCH/prof" 2>/dev/null || echo "$DES_SCRATCH/prof")}"
 }
 
@@ -106,23 +115,49 @@ des_stage_exe() {
 # has the test-run staging marker beside it (any DES_SCRATCH, including runs
 # started from an earlier shell with a different one). The build output and a
 # play session's copy have no test-run marker.
+# It returns once they have gone: taskkill only starts a process's end, and a
+# save put back meanwhile could take the game's last writes. Then it looks
+# once more, for a game one of them had just started (setup's Play starts the
+# game anew, docs/88 section 7). Fails if one is still running after that; its
+# pid stays in the pid file, for des_stop_games.
 des_kill_own() {
-  local pid exe
+  local pid exe ids="" round left=""
   if [ -f "$DES_PIDFILE" ]; then
     while read -r pid; do pid="${pid//[!0-9]/}"   # boot_main writes CRLF
       [ -n "$pid" ] || continue
       if tasklist //FI "PID eq $pid" //FO CSV //NH 2>/dev/null | grep -qi 'des_boot'; then
-        taskkill //F //PID "$pid" > /dev/null 2>&1
+        taskkill //F //PID "$pid" > /dev/null 2>&1; ids="$ids $pid"
       fi
     done < "$DES_PIDFILE"
     : > "$DES_PIDFILE"
   fi
-  while IFS='|' read -r pid exe _; do
-    pid="${pid//[!0-9]/}"; exe="$(printf %s "$exe" | tr -d '\015')"   # powershell writes CRLF
-    [ -n "$pid" ] && [ -n "$exe" ] || continue
-    [ -f "$(dirname "$(cygpath -u "$exe")")/$DES_STAGED_MARK" ] || continue
-    taskkill //F //PID "$pid" > /dev/null 2>&1
-  done < <(des_games)
+  for round in 1 2; do
+    while IFS='|' read -r pid exe _; do
+      pid="${pid//[!0-9]/}"; exe="$(printf %s "$exe" | tr -d '\015')"   # powershell writes CRLF
+      [ -n "$pid" ] && [ -n "$exe" ] || continue
+      [ -f "$(dirname "$(cygpath -u "$exe")")/$DES_STAGED_MARK" ] || continue
+      taskkill //F //PID "$pid" > /dev/null 2>&1; ids="$ids $pid"
+    done < <(des_games)
+    [ -n "$ids" ] || break
+    des_wait_gone $ids
+    left="$left$ids"; ids=""
+  done
+  [ -n "$left" ] || return 0
+  for pid in $(printf '%s\n' $left | sort -u); do
+    tasklist //FI "PID eq $pid" //FO CSV //NH 2>/dev/null | grep -qi 'des_boot' || continue
+    echo "[des] des_boot $pid is still running after taskkill" >&2; ids="$ids $pid"
+  done
+  [ -n "$ids" ] || return 0
+  for pid in $ids; do echo "$pid"; done >> "$DES_PIDFILE"
+  return 1
+}
+
+# des_wait_gone <pid>...: wait, at most 10 s, for those processes to end.
+des_wait_gone() {
+  local ids; ids=$(echo "$*" | tr -s ' ' ','); ids="${ids#,}"
+  [ -n "$ids" ] || return 0
+  powershell -NoProfile -Command "Wait-Process -Id $ids -Timeout 10 -ErrorAction SilentlyContinue" > /dev/null 2>&1
+  return 0
 }
 
 # des_games: "<pid>|<exe path>|<start>" for each running des_boot.exe, the
@@ -179,6 +214,21 @@ des_running() {
   return 1
 }
 
+# des_wait_own <secs>: wait, at most <secs>, for the des_boot processes of the
+# pid file that still run to end. Setup's Play (the launch hook, docs/88
+# section 7) starts the game as a new process of the same exe and ends the
+# first, so a run goes on past the process it started.
+des_wait_own() {
+  local pid ids=""
+  [ "${1:-0}" -gt 0 ] && [ -f "$DES_PIDFILE" ] || return 0
+  while read -r pid; do pid="${pid//[!0-9]/}"
+    [ -n "$pid" ] && tasklist //FI "PID eq $pid" //FO CSV //NH 2>/dev/null | grep -qi 'des_boot' && ids="${ids:+$ids,}$pid"
+  done < "$DES_PIDFILE"
+  [ -n "$ids" ] || return 0
+  powershell -NoProfile -Command "Wait-Process -Id $ids -Timeout $1 -ErrorAction SilentlyContinue" > /dev/null 2>&1
+  return 0
+}
+
 # des_console <cmdfile-base> <command> [cap-secs]: send one debug-console
 # command and print the reply once it has been written (no fixed sleep; the
 # cap defaults to 15 s, longer for commands like `prof <tid> <secs>`).
@@ -218,6 +268,43 @@ des_restore_save() {
   if [ -d "$1" ]; then echo "[save] could not put $1 back into $2; the backup is still there" >&2
   else echo "[save] could not put $1 back into $2: that backup is missing" >&2; fi
   return 1
+}
+
+# A test run plays from its own copy of a save, in a folder of its scratch
+# directory that the game takes as its save folder (ps3recomp's
+# PS3_SAVEDATA_ROOT, cellSaveData.c). The player's save folder is then neither
+# swapped nor put back, and a game that outlives its run writes only the copy.
+# Builds from before PS3_SAVEDATA_ROOT (ps3recomp #80) swap the player's
+# save instead (regress.sh, levelcap.sh).
+#
+# des_save_root_ok: true if the build that runs (DES_EXE, or the default that
+# des_stage_exe copies) or a DLL beside it reads PS3_SAVEDATA_ROOT.
+des_save_root_ok() {
+  local src="${DES_EXE:-$DES_ROOT/port/build/des_boot.exe}" f
+  for f in "$src" "$(dirname "$src")"/*.dll; do
+    [ -f "$f" ] && grep -aqF PS3_SAVEDATA_ROOT "$f" && return 0
+  done
+  return 1
+}
+
+# des_run_save <from> <dir>: make <dir> a checked copy of the save folder
+# <from> (empty if there is none: a new game), and print <dir> as
+# PS3_SAVEDATA_ROOT takes it. A copy of the player's own save folder is made
+# under its lock (des_save_lock), so not while a play session (play.sh) or
+# another run holds it.
+des_run_save() {
+  local live="$DES_ROOT/gamedata/dev_hdd0/home/00000001/savedata" rc
+  if [ ! -d "$1" ]; then
+    rm -rf "$2" && mkdir -p "$2" || return 1
+  elif [ "$(realpath -m "$1")" = "$(realpath -m "$live")" ]; then
+    des_save_lock "$live" || return 1
+    des_backup_save "$1" "$2"; rc=$?
+    des_save_unlock "$live"
+    [ $rc = 0 ] || return 1
+  else
+    des_backup_save "$1" "$2" || return 1
+  fi
+  cygpath -m "$2"
 }
 
 # des_save_files <dir>: "<md5> <path under dir>" for each file in <dir>,

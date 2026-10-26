@@ -25,6 +25,7 @@ std::vector<std::unique_ptr<Document>> sDocumentStack;
 std::vector<std::unique_ptr<Document>> sPassiveDocuments;
 
 std::deque<Toast> sToasts;
+std::deque<Rml::String> sTickers;
 bool sMenuNotificationRequested = false;
 }  // namespace
 
@@ -367,6 +368,14 @@ void push_toast(Toast toast) noexcept {
 
 std::deque<Toast>& get_toasts() noexcept {
     return sToasts;
+}
+
+void push_ticker(Rml::String text) noexcept {
+    sTickers.push_back(std::move(text));
+}
+
+std::deque<Rml::String>& get_tickers() noexcept {
+    return sTickers;
 }
 
 void show_menu_notification() noexcept {

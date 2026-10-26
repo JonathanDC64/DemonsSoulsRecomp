@@ -107,6 +107,10 @@ void push_toast(Toast toast) noexcept;
 // Does nothing if it is already asking.
 void request_quit_confirm();
 std::deque<Toast>& get_toasts() noexcept;
+// A line from the online server (its banners) for the thin bar at the top of the screen, which shows them one at a
+// time, the oldest first. Plain text, never markup.
+void push_ticker(Rml::String text) noexcept;
+std::deque<Rml::String>& get_tickers() noexcept;
 void show_menu_notification() noexcept;
 bool consume_menu_notification_request() noexcept;
 

@@ -286,7 +286,12 @@ default) hide what other players put in your world. Read from the EBOOT, 2026-10
   `apply_network` sets `PS3_NET_SIGNIN=<server>:18000`, `PS3_NET_KEY_FILE`, `PS3_NET_CLIENT_VERSION` (this
   build's version) and `PS3_NET_NETWORK_VERSION`; with the project's own server also `PSNR_SERVER=<server>:36100`.
   A server with no sign-in (the old ones) is used as before. A refusal (a ban, maintenance, an old build) shows
-  as an "Online" toast with the server's words (`port/ui/src/net_notices.cpp`). A test run keeps no data folder
+  as an "Online" toast with the server's words (`port/ui/src/net_notices.cpp`). The server's banners
+  (`GET /dss/v1/banners`, asked every 5 minutes) show each once in a thin bar across the top of the screen, as the
+  later Souls games show server notices: it slides down, holds a text that fits for 12 s, scrolls a longer one from
+  its start to its end (twice, once if one pass is over 30 s), and slides back up (`Overlay::update_ticker`,
+  `port/ui/src/overlay.cpp`). Demon's Souls has no such bar of its own; its only server text in play is a box
+  that stays until the player presses OK. A test run keeps no data folder
   and so does not sign in, unless it is given one (`DES_DATA_DIR`, as `duo.sh` does).
   Checked 2026-10-25 against a local copy of the new server on 127.0.0.2, sessions required:
   `DUO_TEST=1 tools/des/duo.sh start a DES_ONLINE=1 DES_NET_SERVER=custom DES_NET_CUSTOM=127.0.0.2

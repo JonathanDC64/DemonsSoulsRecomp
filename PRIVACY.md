@@ -3,8 +3,8 @@
 Version 1, 26 October 2026
 
 This note covers this project's online server, the one the game uses when Settings > Network > Server is "Demon's
-Souls Recomp". The project's maintainer runs it. Offline play sends nothing to it, and another server's owner decides
-what that server keeps.
+Souls Recomp". The project's maintainer runs it, on a DigitalOcean server in New York, United States. Offline play
+sends nothing to it, and another server's owner decides what that server keeps.
 
 ## What the server keeps
 
@@ -29,7 +29,7 @@ When you play online, the game signs in to the server and sends it what the orig
 Summon signs, wandering ghosts and co-op rooms stay in the server's memory only, for minutes.
 
 The server's logs hold online names and what the game asked for, but no IP addresses. Backups of the server's data
-are kept for 14 days.
+are kept for 14 days, on the server and on the maintainer's PC.
 
 ## What other players see
 

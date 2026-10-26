@@ -290,10 +290,20 @@ takes their counts as they are. The port checks them before the game uses them (
 
 - **Online on by default** (your decision). Test runs stay offline: `deslib.sh` sets `DES_ONLINE=0` for every test
   kind, and a developer-cheat session clears the network knobs, as before.
-- **Default server** (changed 2026-10-25). The project's own server is the first preset and the default. Until it
-  has a host name (`kNetProjectHost` in port/ui/src/settings.hpp), online stays off with it: "not available
-  yet". The Archstones is a preset in developer builds only. In a release build a saved `archstones` reads as
-  the default, and Custom still takes any address.
+- **Default server** (changed 2026-10-25). The project's own server is the first preset and the default. Its host
+  name is `server.boletaria.org` (`kNetProjectHost` in port/ui/src/settings.hpp, set 2026-10-26), a DigitalOcean
+  server in New York. With an empty `kNetProjectHost` online
+  stays off with it: "not available yet". The Archstones is a preset in developer builds only. In a release build a
+  saved `archstones` reads as the default, and Custom still takes any address.
+  The server tells the game its game server's address in the bootstrap reply (its `PUBLIC_HOST`). That is the
+  server's IP address, not the name: the game resolves only the names in `PS3_NET_HOSTS`, and an address is used
+  as it is. TLS checks the name all the same (ps3recomp's `ps3_net_signin_server` picks the sign-in server's
+  connections by address, and the name to check is the sign-in server's).
+  Checked 2026-10-26 with a developer build against the live server as Custom (`DES_NET_SERVER=custom
+  DES_NET_CUSTOM=server.boletaria.org PSNR_SERVER=server.boletaria.org:36100 PS3_NET_TLS=1`): the sign-in, psnr
+  and the game's requests went over TLS with the server's Let's Encrypt certificate and the roots built into the
+  runtime, and a banner added on the admin site reached the bar within the 5-minute ask (`[ui] online banner
+  shown`). Its 12 s are easy to miss, as the first test found.
 - **Sign-in** (2026-10-25, ps3recomp's docs/ONLINE.md "Sign-in"). With the project's own server, Local test server
   and Custom, the game signs in to the server with a key of this install, `online-key.bin` in the data folder
   (`net_key_file`), made at the first sign-in. The first key to sign in with a name owns that name there.

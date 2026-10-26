@@ -80,9 +80,9 @@ bool no_user_input();
 
 // ---- Online play (the Network tab; docs/46 A5) ----
 
-// This project's own server: its host name, once it has one. Until then its entry has no address, and online stays
-// off with it ("not available yet").
-inline constexpr const char* kNetProjectHost = "";
+// This project's own server: the sign-in and psnr reach it by this name, and its TLS certificate is checked for it.
+// An empty name keeps online off with it ("not available yet").
+inline constexpr const char* kNetProjectHost = "server.boletaria.org";
 
 // The game servers the Server row offers; edit this table to add, change or drop one. The key is what settings.ini
 // stores (DES_NET_SERVER); the first entry, the project's server, is the default. A stored key that is not in the

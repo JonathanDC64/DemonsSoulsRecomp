@@ -35,6 +35,7 @@
 #include "setup_engine.hpp"
 #include "setup_screens.hpp"
 #include "setup_window.hpp"
+#include "players_window.hpp"
 #include "trophies_window.hpp"
 #include "trophy_toasts.hpp"
 #include "ui.hpp"
@@ -506,13 +507,15 @@ void push_documents() {
     ui::push_document(std::make_unique<ui::MenuBar>(), false);
     if (sStartScreen) ui::push_document(std::make_unique<ui::Prelaunch>());
 
-    // DES_UI_OPEN=menu | settings | trophies | osk | setup | setup-run: open one at startup (for screenshots and tests).
+    // DES_UI_OPEN=menu | settings | trophies | players | osk | setup | setup-run: open one at startup (for screenshots
+    // and tests).
     // setup is setup's start screen over the game (docs/88: its own window comes with the split host), with
     // DES_SETUP_GAME's folders to begin with; setup-run runs the setup engine at once, on those folders.
     if (const char* open = std::getenv("DES_UI_OPEN"); open && *open) {
         if (!std::strcmp(open, "menu")) open_menu_bar();
         else if (!std::strcmp(open, "settings")) ui::push_document(std::make_unique<ui::SettingsWindow>());
         else if (!std::strcmp(open, "trophies")) ui::push_document(std::make_unique<ui::TrophiesWindow>());
+        else if (!std::strcmp(open, "players")) ui::push_document(std::make_unique<ui::PlayersWindow>());
         else if (!std::strcmp(open, "osk")) open_test_osk();
         else if (!std::strcmp(open, "setup") || !std::strcmp(open, "setup-run")) push_setup(open);
     }

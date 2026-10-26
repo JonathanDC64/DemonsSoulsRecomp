@@ -284,6 +284,10 @@ jobs:
           done
           [ -d "$ff/share/licenses/ffmpeg" ] || { echo "::error::no licence files for ffmpeg"; exit 1; }
           cp -r "$ff/share/licenses/ffmpeg" dist/host/licenses/
+          # mbedTLS is compiled into the runtime (TLS to the online server), under Apache-2.0: its licence goes along.
+          [ -f ps3recomp/third_party/mbedtls/LICENSE ] || { echo "::error::no licence file for mbedTLS"; exit 1; }
+          mkdir -p dist/host/licenses/mbedtls
+          cp ps3recomp/third_party/mbedtls/LICENSE dist/host/licenses/mbedtls/
           ls -laR dist/host
           find dist/host -type f -exec sha256sum {} +
 
@@ -592,6 +596,10 @@ jobs:
           done
           [ -d "$FFMPEG_DIR/share/licenses/ffmpeg" ] || { echo "::error::no licence files for ffmpeg"; exit 1; }
           cp -r "$FFMPEG_DIR/share/licenses/ffmpeg" dist/host-linux/licenses/
+          # mbedTLS is compiled into the runtime (TLS to the online server), under Apache-2.0: its licence goes along.
+          [ -f ps3recomp/third_party/mbedtls/LICENSE ] || { echo "::error::no licence file for mbedTLS"; exit 1; }
+          mkdir -p dist/host-linux/licenses/mbedtls
+          cp ps3recomp/third_party/mbedtls/LICENSE dist/host-linux/licenses/mbedtls/
           ls -laR dist/host-linux
           find dist/host-linux -type f -exec sha256sum {} +
 

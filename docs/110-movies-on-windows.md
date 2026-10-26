@@ -1,7 +1,7 @@
 # 110. Movies on Windows: FFmpeg beside des_host.exe
 
-Date: 2026-10-26. Status: built in CI; checked in game on a PC without the Store extension (the title screen's
-advert plays, 30 frames a second, for 110 s). The runtime side is JonathanDC64/ps3recomp (sail_movie, FFmpeg on
+Date: 2026-10-26. Status: built in CI; checked in game (FFmpeg's decoder plays the title screen's advert, 30 frames
+a second, and Media Foundation is never started). The runtime side is JonathanDC64/ps3recomp (sail_movie, FFmpeg on
 Windows too). Background: docs/109 section 5.
 
 ## Short answer

@@ -577,10 +577,11 @@ Nothing is published. You read the draft and publish it. Only this workflow has 
 - **No GitHub API**, so it runs the same on your PC (inferred). It needs merge commits, which is how PRs are merged here.
 - **Measured** on today's master: 45 pull requests, plus 180 direct commits counted (from before PRs were used).
 
-### 8.4 First release checklist (for you; nothing done)
+### 8.4 First release checklist (for you)
 
 1. Merge the PRs, in the order in section 12. Once, before the first release: make the release key and add its
-   public line to `tools/setup/des_setup/release-keys.txt` (docs/105 section 7.1).
+   public line to `tools/setup/des_setup/release-keys.txt` (docs/105 section 7.1). Done 2026-10-26: the key's
+   fingerprint is `SHA256:tQV2sW13lxTvWohtsXh8sS3/bazB/SwEqUZ/AMELGLc`.
 2. **Fork tag.**
    - Run `git -C ps3recomp fetch fork`.
    - Run `git -C ps3recomp tag -a des-0.14.0-1 -m "ps3recomp for DemonsSoulsRecomp 0.1.0" fork/master`.

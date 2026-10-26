@@ -179,6 +179,14 @@ upstream patch in the fork.
     2 ms safety net.
   - Upstream d0d67442 and 89cc4c5a fix this. Port the release calls and the larger tables, not 89cc4c5a's locked
     lookup (the fork's lock-free one is tuned, docs/28, docs/48).
+  - **MFC engine table: fixed in JonathanDC64/ps3recomp#133.**
+    - The job paths and the async worker give their slot back when the job ends. The table has 64 slots.
+    - In a boot to the Palace, the MFC warning is gone, and no `given back after its job` line is printed: the
+      job-exit releases catch every slot.
+    - A/B, 4 rounds at the deep Palace save: median -1.04%, p=0.93, inside the 4.5% noise bar. No change was
+      measured.
+  - The lock-line table still overflows. Its notify walk visits every slot on each guest store, so a larger table
+    needs its own measurement.
   - Smaller items:
     - `_cellSpursAttributeInitialize` reads the revision as nSpus (37ea6328);
     - CreateTaskset clears about 152 bytes of a 0x2900-byte Taskset2 (194bb185);
@@ -194,5 +202,36 @@ upstream patch in the fork.
     - `cellFsUnlink` and `cellFsRmdir` do nothing.
   - **Do not port:** the memory-map change (340a8b4e, fb5354fe, 807e8e14). It would move Demon's Souls'
     allocations next to the fork's TLS window.
-- **cellGcm and D3D12:** 0650a590 (the wait-label flip, above) and 7c1d6f12 (a wrapped ring overwriting
-  commands the RSX hasn't read) are not in the fork. The rest of this area is still being compared.
+- **cellGcm and D3D12:** no upstream commit here explains #205. Facts from the imports and logs:
+  - Demon's Souls does not import GetFlipStatus, ResetFlipStatus, SetWaitFlip, SetUserHandler, MapMainMemory or
+    MapEaIoAddress(WithFlags).
+  - Its reports are all local.
+  - It uses its own command-buffer-full callback, so the runtime's ring recycle (`cellGcm_fifo_recycle`) never
+    runs for it.
+  - **Worth porting** (small, low risk; the gain for Demon's Souls is unproven):
+    - 17bf55aa (and a6cfb0f0 with the row copy of ff66a355): NV3089 `IMAGE_IN_POINT` is 12.4 fixed point. The
+      fork shifts by 8, not 16, so a source origin under 256 texels is ignored.
+    - e3f78720: texture offsets masked to 31 bits, as RPCS3 does.
+    - a8572e99: get is published past a semaphore RELEASE, before its label. This is safe in the fork because the
+      RELEASE already syncs the backend first.
+    - fa001d07: a late flip completion no longer marks a newer flip done. Demon's Souls never reads the flip
+      status.
+  - **Only after a check run:**
+    - 53efeaf1 (NV40 pack/unpack opcodes), 93cccd1d (perspective-correct texcoord reads) and the `_bx2` part of
+      122690f2. They change what D3D12 shaders compute, but only for programs that use them. A run with
+      `PS3_SHADER_CACHE_HLSL=1` shows whether Demon's Souls has any.
+  - **Do not port as-is:**
+    - a98af7c9 publishes get at every JUMP without a backend sync, which breaks the fork's ordering rule
+      (docs/66). A sync per JUMP would cost the FIFO thread time on every frame.
+    - c1cdab11 and b00e0e2a complete a queued flip only when the drain reaches its marker. That moves Demon's
+      Souls' flip-handler timing and conflicts with present-at-flip. Only with an A/B on pacing and frame rate.
+    - 7c1d6f12 fixes a wrapped ring overwriting unread commands in `cellGcm_fifo_recycle`, which Demon's Souls
+      never calls.
+    - 3bfa3b9d keys the fragment-program cache on code, not address. That brings no gain here, and it would
+      disturb the address-bucketed cache and the pipeline index (docs/97).
+    - 6752b129 (bounded semaphore ACQUIRE) depends on b3082644, and the fork's watchdog already has its own
+      exemption for waits.
+  - **Already in the fork, or equivalent:** 156c5910 (VS cache keyed to the end bit), fb3ce861 (strip parity),
+    f616c301 (export width), e99cbbf0 (the fork's own 27202ad0), 49eabf32, 88187d11. 24286f4b is equivalent for
+    Demon's Souls. f734bbc8 is partly in: a depth-only clear of the display target still goes through
+    `d3d12_clear_display`.

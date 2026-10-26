@@ -18,8 +18,9 @@
 # DUO_MINUTES   how long a copy may run (default 120)
 # DES_EXE       the build to run (default port/build/des_boot.exe); each copy runs its own staged copy of it.
 #
-# The two windows share the PC's input: keyboard and mouse go to the focused window, but every copy reads the
-# controllers. Give one copy no pad with B_PS3_NO_USER_INPUT=1, or play one with keyboard and mouse.
+# The two windows share the PC's input: keyboard and mouse go to the window in front, and so do the controllers in
+# a play session (PAD_FOCUS_ONLY=1, which it sets unless given): one controller plays whichever copy is in front;
+# click the other window or Alt+Tab to switch. PAD_FOCUS_ONLY=0 lets every copy read the controllers at once.
 # Cores are split: "a" runs on the lower half of the logical CPUs and "b" on the upper half. Audio: "a" is heard,
 # "b" is muted (A_AUDIO_MUTE / B_AUDIO_MUTE change it).
 set -uo pipefail
@@ -99,6 +100,7 @@ duo_start() {
     else
       # a play session's staged exe has no test-run marker, so other test scripts' des_kill_own leave it alone
       export DES_KIND=play
+      export PAD_FOCUS_ONLY="${PAD_FOCUS_ONLY:-1}"   # one controller for both: it plays the copy in front
       DES_OWN_MARK=.des_play
     fi
     des_env_defaults

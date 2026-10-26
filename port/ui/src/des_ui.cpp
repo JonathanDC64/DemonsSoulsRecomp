@@ -92,6 +92,7 @@ typedef struct {
     unsigned char l2, r2;
 } PadHidSonyState;
 int pad_hid_sony_poll(PadHidSonyState* out, int max);
+int cellPad_host_pads_on(void);  // cellPad.h: 0 while the game ignores the pads (PAD_FOCUS_ONLY in the background)
 
 typedef struct CellOskDialogHost {  // cellOskDialog.h: the game's on-screen keyboard, shown by the UI
     void (*open)(const unsigned short* prompt, const unsigned short* text, unsigned limit);
@@ -416,6 +417,7 @@ ui::input::PadState read_pads(bool& neutral) {
     ui::input::PadState pad;
     neutral = true;
     if (ui::settings::no_user_input()) return pad;  // PS3_NO_USER_INPUT: no pad of the user's is read
+    if (!cellPad_host_pads_on()) return pad;         // PAD_FOCUS_ONLY, with the window in the background
     read_xinput(pad, neutral);
     PadHidSonyState hid[4];
     const int n = pad_hid_sony_poll(hid, 4);

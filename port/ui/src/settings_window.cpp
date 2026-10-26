@@ -14,6 +14,7 @@
 #include "number_button.hpp"
 #include "pane.hpp"
 #include "players_window.hpp"
+#include "privacy_window.hpp"
 #include "report.hpp"
 #include "settings.hpp"
 #include "string_button.hpp"
@@ -26,6 +27,7 @@
 #endif
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -290,6 +292,46 @@ constexpr Credit kCredits[] = {
      "https://www.trustedfirmware.org/projects/mbed-tls/"},
     {"RPCS3", "A behavioural reference for the PS3 system libraries. No RPCS3 code is copied.", "", "https://rpcs3.net"},
 };
+
+// ps3emu/ps3_net_signin.h (declared here: des_ui does not take ps3recomp's include paths). Its outcome comes back
+// through ps3_net_erase_result, which net_notices.cpp shows.
+extern "C" int ps3_net_player_erase(void);
+
+// Delete my data (the server's docs/social.md), asked first.
+void ask_erase() {
+    push_document(std::make_unique<Modal>(Modal::Props{
+        .title = "Delete your data on the server?",
+        .bodyText = "This deletes your name, your characters' online records, your messages and bloodstains, and the "
+                    "rest the online server keeps about you (Privacy note). Online play turns off, so the game goes "
+                    "back to its title screen. It cannot be undone.",
+        .actions =
+            {
+                ModalAction{.label = "Cancel",
+                    .onPressed =
+                        [](Modal& modal) {
+                            play_sound(kSoundWindowClose);
+                            modal.pop();
+                        }},
+                ModalAction{.label = "Delete",
+                    .onPressed =
+                        [](Modal& modal) {
+                            play_sound(kSoundClick);
+                            modal.pop();
+                            if (ps3_net_player_erase() != 0) {
+                                push_toast({
+                                    .type = "warning",
+                                    .title = "Online",
+                                    .content = "Not signed in to the online server, so nothing was deleted. Play "
+                                               "online, then try again.",
+                                    .duration = std::chrono::seconds(10),
+                                });
+                            }
+                        }},
+            },
+        .onDismiss = [](Modal& modal) { modal.pop(); },
+        .icon = "warning",
+    }));
+}
 
 // Go back to the version the last update kept (updates.hpp), asked first. Over the game, the program starts again with
 // setup's screens alone for it: a running game cannot replace its own files.
@@ -786,6 +828,28 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                 pane.clear();
                 pane.add_text("The players you met online lately: who helped you, who you helped, and who invaded. "
                               "Block one so you never meet again, or report one to the server's admins.");
+            });
+
+        leftPane.add_section("Your data");
+        leftPane.register_control(
+            leftPane.add_group_button({.text = "Privacy note"}).on_pressed([this] {
+                play_sound(kSoundWindowOpen);
+                push(std::make_unique<PrivacyWindow>(PrivacyWindow::Mode::Read));
+            }),
+            rightPane, [](Pane& pane) {
+                pane.clear();
+                pane.add_text("What this project's online server keeps about you, and for how long. The game asks "
+                              "you to accept it before it first goes online with that server.");
+            });
+        leftPane.register_control(
+            leftPane.add_group_button({.text = "Delete my data"}).on_pressed([] {
+                play_sound(kSoundWindowOpen);
+                ask_erase();
+            }),
+            rightPane, [](Pane& pane) {
+                pane.clear();
+                pane.add_text("Deletes your name and what this project's online server keeps about you, at once. "
+                              "Online play then turns off. Works while you are signed in to that server.");
             });
 
         leftPane.add_section("This session");

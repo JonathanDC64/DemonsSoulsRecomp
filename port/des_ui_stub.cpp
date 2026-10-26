@@ -15,6 +15,8 @@ int des_ui_launch(int*, char***) {
 
 void des_ui_setup_only_init(void) {}
 
+void des_ui_privacy_wait(void) {}  // (no settings.ini: nothing goes online through the Network rows)
+
 void des_mouse_take(int* dx, int* dy) {
     *dx = 0;
     *dy = 0;

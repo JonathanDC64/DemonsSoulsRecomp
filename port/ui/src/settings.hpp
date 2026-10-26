@@ -95,21 +95,24 @@ struct NetServer {
     bool signin;          // may run this project's server: the runtime signs in to it (a server without it: no harm)
     bool psnr;            // runs its matchmaking (psnr) on kNetPsnrPort: co-op and invasions go through it
     bool tls;             // the sign-in, the game's requests and psnr go over TLS, with a certificate for address
+    bool privacy;         // keeps what PRIVACY.md says: the player accepts the note before going online (privacy.hpp)
 };
 inline constexpr NetServer kNetServers[] = {
-    {"project", "Demon's Souls Recomp", kNetProjectHost, "This project's own server.", true, true, true},
+    {"project", "Demon's Souls Recomp", kNetProjectHost, "This project's own server.", true, true, true, true},
 #if DES_DEV
     // Developer builds only. The address is the one its setup page publishes for emulators (thearchstones.com,
     // "serverinfo"). Not this project's server: no sign-in (it would get the install's key and name for nothing).
     {"archstones", "The Archstones", "206.189.232.242",
-     "The community server RPCS3 players use, run by a volunteer. Developer builds only.", false, false, false},
+     "The community server RPCS3 players use, run by a volunteer. Developer builds only.", false, false, false,
+     false},
 #endif
-    {"local", "Local test server", "127.0.0.1", "A server on this PC, for testing.", true, false, false},
+    {"local", "Local test server", "127.0.0.1", "A server on this PC, for testing.", true, false, false, false},
 #if DES_DEV
     // Developer builds only, for now (0.1.0): with no Custom choice, a settings.ini that names a server of its own
     // (a repacked portable download) cannot send players there. Bringing it back to players needs a question at
     // start that custom_chosen_here's mark answers.
-    {"custom", "Custom", "", "The address in Custom server, below. Developer builds only.", true, false, false},
+    {"custom", "Custom", "", "The address in Custom server, below. Developer builds only.", true, false, false,
+     false},
 #endif
 };
 inline constexpr const char* kNetCustomKey = "custom";
@@ -158,6 +161,9 @@ std::string net_key_file();
 // Online is off", ...). A developer build's cheat session clears the network after this (des_dev_boot); the tab
 // says so from DES_DEV_SESSION.
 const std::string& net_status();
+// This run went offline after the start (the privacy note declined, privacy.hpp; the player's data deleted,
+// net_notices.cpp): the network knobs are cleared (the runtime is locked offline as well), and net_status says why.
+void net_off(const std::string& why);
 
 void save();
 

@@ -44,6 +44,7 @@
  * DES_PRECOMPILE=0 skips it at a start; =force runs it whatever the stamp says.
  */
 #include "ps3emu/ps3_knob.h"
+#include "ui/include/des_ui.h"  /* des_ui_privacy_wait */
 #include "rsx_shader_precompile.h"
 
 #ifdef _WIN32
@@ -468,6 +469,7 @@ extern "C" void des_prework_elf(const char* path)
 
 extern "C" void ps3_title_prework(void)
 {
+    des_ui_privacy_wait();   /* (the privacy note's question, when it is due: before anything goes online) */
     rsx_d3d12_pso_index_game(game_tag().c_str());   /* (boot_main has read PARAM.SFO) */
     const char* knob = std::getenv("DES_PRECOMPILE");
     if (knob && std::strcmp(knob, "0") == 0) return;

@@ -1,6 +1,7 @@
 // The port's settings (see settings.hpp). Adapted for Demon's Souls from FFCCEOT-Recomp's settings.ini handling.
 #include "settings.hpp"
 
+#include "privacy.hpp"
 #include "report.hpp"
 #include "version.hpp"
 
@@ -84,6 +85,7 @@ constexpr Def kDefs[] = {
     {"show_start_screen", "1", Apply::UiOnly},
     {"update_check", "1", Apply::UiOnly},      // updates.hpp: look for a newer release at each start (docs/105)
     {"update_skip", "", Apply::UiOnly},        // the release the player chose to skip ("Skip this version")
+    {"privacy_accepted", "", Apply::UiOnly},   // privacy.hpp: the version of the privacy note accepted; "" = none
     {"setup_preset", "", Apply::UiOnly},       // the setup screens' preset (setup_options.hpp); "" = not picked yet
     {"rpcs3_dir", "", Apply::UiOnly},          // the RPCS3 setup last imported from (setup_rpcs3.hpp, docs/90 3.2)
     {"menu_hint", "1", Apply::UiOnly},
@@ -430,6 +432,11 @@ void apply_network() {
     if (chosen && chosen->psnr && !address.empty())
         set_net_knob("PSNR_SERVER", address + ":" + std::to_string(kNetPsnrPort));
     sNetOnline = true;
+    // A server that keeps what PRIVACY.md says: the start waits for the player to accept this version of the note
+    // (privacy.hpp, des_ui_privacy_wait). DES_PRIVACY_ASK=1 asks with any server, for tests.
+    const char* ask = std::getenv("DES_PRIVACY_ASK");
+    privacy::set_needed(((chosen && chosen->privacy && !address.empty()) || (ask && !std::strcmp(ask, "1"))) &&
+                        get_int("privacy_accepted") < privacy::version());
     // (what is in use, the environment's values included)
     const NetServer* s = net_server(effective("DES_NET_SERVER"));
     sNetStatus = "Online (" + std::string(hosts_pinned        ? "PS3_NET_HOSTS from the environment"
@@ -634,6 +641,13 @@ std::string net_hosts(const std::string& address) {
 
 const std::string& net_status() {
     return sNetStatus;
+}
+
+void net_off(const std::string& why) {
+    for (const char* k : {"PS3_NET_ONLINE", "PSNR_SERVER", "PS3_NET_HOSTS", "PS3_NET_SIGNIN"})
+        ps3_setenv(k, "");  // (an empty value reads as unset)
+    sNetOnline = false;
+    sNetStatus = why;
 }
 
 void save() {

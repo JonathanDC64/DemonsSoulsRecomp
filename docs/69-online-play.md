@@ -307,7 +307,8 @@ takes their counts as they are. The port checks them before the game uses them (
   `port/ui/src/overlay.cpp`). Demon's Souls has no such bar of its own; its only server text in play is a box
   that stays until the player presses OK. A test run keeps no data folder
   and so does not sign in, unless it is given one (`DES_DATA_DIR`, as `duo.sh` does).
-  Checked 2026-10-25 against a local copy of the new server on 127.0.0.2, sessions required:
+  Checked 2026-10-25 against a local copy of the new server on 127.0.0.2, sessions required, with a developer build
+  (Custom is in developer builds only):
   `DUO_TEST=1 tools/des/duo.sh start a DES_ONLINE=1 DES_NET_SERVER=custom DES_NET_CUSTOM=127.0.0.2
   DES_NET_NAME=<name> PSNR_SERVER=127.0.0.2:36100`. The game made its key, signed in, psnr took the session,
   and every game request came back 200. With the server in maintenance the toast said so and the game went on

@@ -280,6 +280,19 @@ default) hide what other players put in your world. Read from the EBOOT, 2026-10
   has a host name (`kNetProjectHost` in port/ui/src/settings.hpp), online stays off with it: "not available
   yet". The Archstones is a preset in developer builds only. In a release build a saved `archstones` reads as
   the default, and Custom still takes any address.
+- **Sign-in** (2026-10-25, ps3recomp's docs/ONLINE.md "Sign-in"). With the project's own server, Local test server
+  and Custom, the game signs in to the server with a key of this install, `online-key.bin` in the data folder
+  (`net_key_file`), made at the first sign-in. The first key to sign in with a name owns that name there.
+  `apply_network` sets `PS3_NET_SIGNIN=<server>:18000`, `PS3_NET_KEY_FILE`, `PS3_NET_CLIENT_VERSION` (this
+  build's version) and `PS3_NET_NETWORK_VERSION`; with the project's own server also `PSNR_SERVER=<server>:36100`.
+  A server with no sign-in (the old ones) is used as before. A refusal (a ban, maintenance, an old build) shows
+  as an "Online" toast with the server's words (`port/ui/src/net_notices.cpp`). A test run keeps no data folder
+  and so does not sign in, unless it is given one (`DES_DATA_DIR`, as `duo.sh` does).
+  Checked 2026-10-25 against a local copy of the new server on 127.0.0.2, sessions required:
+  `DUO_TEST=1 tools/des/duo.sh start a DES_ONLINE=1 DES_NET_SERVER=custom DES_NET_CUSTOM=127.0.0.2
+  DES_NET_NAME=<name> PSNR_SERVER=127.0.0.2:36100`. The game made its key, signed in, psnr took the session,
+  and every game request came back 200. With the server in maintenance the toast said so and the game went on
+  offline.
 - **IP addresses.** P2P shares your public IP with the players you meet, as on a PS3 and on RPCS3. The Network tab
   says so.
 - **Cheats.** docs/55's offline rule now has the ps3recomp lock it was missing: once cheats are used, the network

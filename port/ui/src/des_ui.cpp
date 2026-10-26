@@ -22,6 +22,7 @@
 #include "keys.hpp"
 #include "menu_bar.hpp"
 #include "mouse.hpp"
+#include "net_notices.hpp"
 #include "osk_window.hpp"
 #include "overlay.hpp"
 #include "platform.hpp"
@@ -803,6 +804,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     const char* shot = sShots.empty() ? nullptr : shot_for_frame(sFrame);
     if (script) script_keys_for_frame(sFrame);
     ui::trophies::poll_test_knob();  // DES_TROPHY_TEST
+    ui::net_notices::poll();          // what the online sign-in has to tell the player
 
     // Fast path: nothing showing, nothing queued (input, a trophy pop-up), no chord pressed.
     const unsigned mask = sChordMask;
@@ -814,7 +816,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     const bool prework = ui::prework_running();
     if (!sActive && !sStartScreen && !chordEdge && !shot && !sQueued.load(std::memory_order_acquire) &&
         !sOpenPending && !sReportCountdown && !(prework && !sPreworkShown) && !sCloseRequested.load() &&
-        !sOskPending.load(std::memory_order_acquire) && !ui::trophies::pending() &&
+        !sOskPending.load(std::memory_order_acquire) && !ui::trophies::pending() && !ui::net_notices::pending() &&
         !sHangNotice.load(std::memory_order_relaxed)) {
         return;
     }
@@ -872,6 +874,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     }
     if (ui::OskWindow* osk = ui::active_osk()) osk->on_pad(pad.buttons);
     ui::trophies::drain();
+    ui::net_notices::drain();
     ui::update();
     sStartUp.store(ui::is_prelaunch_open());
 

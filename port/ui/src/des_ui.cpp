@@ -640,8 +640,8 @@ void push_custom_server_notice() {
         .type = "warning",
         .title = "Playing offline",
         .content = "The settings name a custom server (" + ui::settings::get("DES_NET_CUSTOM") +
-                   ") that was not chosen on this PC. To play on it, pick Custom in Settings > Network > Server, "
-                   "then restart the game.",
+                   ") that was not chosen on this PC. To play on it, press Custom again in Settings > Network > "
+                   "Server, then restart the game.",
         .duration = kCustomServerNoticeDuration,
     });
     std::fprintf(stderr, "[ui] the custom server notice is up\n");

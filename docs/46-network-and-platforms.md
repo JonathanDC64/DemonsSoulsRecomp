@@ -275,8 +275,9 @@ Built (the Network tab, between Controls and Interface). You decided Online is o
   - Custom.
 - **No psnr row yet.** `PSNR_SERVER` is never set from settings.
 - **A custom server must be chosen on this PC.** A portable download repacked with a `settings.ini` that names a server
-  of its own would otherwise send everyone who plays it there. So a Custom address counts only once the player picks
-  Custom in Server, or types the address in Custom server, on this PC. That stores `net_custom_here` in `settings.ini`:
+  of its own would otherwise send everyone who plays it there. So a Custom address counts only once the player presses
+  Custom in Server (even though the copied file already shows it picked), or types the address in Custom server, on
+  this PC. A toast then says to restart. That stores `net_custom_here` in `settings.ini`:
   a hash of the address and this PC's id (Windows' `MachineGuid`, Linux's `/etc/machine-id`; `report::this_pc`). A
   `settings.ini` copied to another PC does not match there. Until then the game plays offline, says so at start
   ("Playing offline"), and the Custom server row says how to use the address. A `DES_NET_CUSTOM` from the environment

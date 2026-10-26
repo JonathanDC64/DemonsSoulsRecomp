@@ -610,10 +610,11 @@ bool custom_chosen_here() {
     return !a.empty() && get("net_custom_here") == custom_mark(a);
 }
 
-void choose_custom_here() {
+bool choose_custom_here() {
     const std::string a = trim(get("DES_NET_CUSTOM"));
-    if (!a.empty() && !pinned("DES_NET_CUSTOM") && get("net_custom_here") != custom_mark(a))
-        set("net_custom_here", custom_mark(a));
+    if (a.empty() || pinned("DES_NET_CUSTOM") || get("net_custom_here") == custom_mark(a)) return false;
+    set("net_custom_here", custom_mark(a));
+    return true;
 }
 
 bool net_custom_held() {

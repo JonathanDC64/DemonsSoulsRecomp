@@ -208,6 +208,40 @@ std::string trim_spaces(const std::string& s) {
     return s.substr(a, s.find_last_not_of(" \t") - a + 1);
 }
 
+// Custom's address, chosen on this PC (settings::choose_custom_here): says so, since the row looks the same as before.
+void choose_custom_here() {
+    if (!settings::choose_custom_here()) return;
+    push_toast({
+        .content = "Custom server chosen. Restart the game to play on " + trim_spaces(net_value("DES_NET_CUSTOM")) + ".",
+        .duration = std::chrono::seconds(8),
+    });
+}
+
+// Custom is picked, but its address came in a copied settings file (settings::custom_chosen_here), so the game is
+// offline: the Server and Custom server rows say how to use it.
+bool custom_held() {
+    return net_value("DES_NET_SERVER") == settings::kNetCustomKey &&
+           settings::net_address_ok(trim_spaces(net_value("DES_NET_CUSTOM"))) && !settings::custom_chosen_here();
+}
+
+// RML in a pane that shows only while `visible` holds, checked at each update: a note that goes away as soon as what
+// it asks for is done (the Server row's, once Custom is pressed), without rebuilding the pane from inside the press.
+class LiveNote : public Component {
+public:
+    LiveNote(Rml::Element* parent, const Rml::String& rml, std::function<bool()> visible)
+        : Component(append(parent, "div")), mVisible(std::move(visible)) {
+        mRoot->SetInnerRML(rml);
+        update();
+    }
+    void update() override {
+        set_display(mRoot, mVisible() ? Rml::Style::Display::Block : Rml::Style::Display::None);
+        Component::update();
+    }
+
+private:
+    std::function<bool()> mVisible;
+};
+
 // The Online name row never stores an empty or invalid name: online play needs one, and a player who cleared it would
 // stay offline without knowing why. It keeps the last good name (with none, a suggested one) and says so here.
 std::string sNameNote;
@@ -582,9 +616,16 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                           escape(s.note);
         }
         choice_row(leftPane, rightPane, "Server", "DES_NET_SERVER", std::move(serverValues), std::move(serverLabels),
-            serverHelp + "<br/><br/>(DES_NET_SERVER)", [] {
-                // (picking Custom chooses its address on this PC: settings::custom_chosen_here)
-                if (settings::get("DES_NET_SERVER") == settings::kNetCustomKey) settings::choose_custom_here();
+            serverHelp + "<br/><br/>(DES_NET_SERVER)",
+            [] {
+                // (pressing Custom, even when it is already picked, chooses its address on this PC)
+                if (settings::get("DES_NET_SERVER") == settings::kNetCustomKey) choose_custom_here();
+            },
+            [](Pane& pane) {
+                pane.add_child<LiveNote>("<br/><status-badge class=\"warning\">Custom's address came in a copied "
+                                         "settings file, so you stay offline. Press Custom above to play on "
+                                         "it.</status-badge>",
+                    custom_held);
             });
 
         auto& customServer = leftPane.add_child<StringButton>(StringButton::Props{
@@ -601,7 +642,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                     if (!value.empty() && !settings::pinned("DES_NET_SERVER")) {
                         settings::set("DES_NET_SERVER", settings::kNetCustomKey);
                     }
-                    settings::choose_custom_here();
+                    choose_custom_here();
                 },
             .isDisabled = [] { return settings::pinned("DES_NET_CUSTOM"); },
             .isModified = [] { return !settings::is_default("DES_NET_CUSTOM"); },
@@ -615,9 +656,9 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                 help = "<status-badge class=\"warning\">" +
                        Rml::String(v.empty() ? "No address yet" : "Not a valid address") +
                        ", so you stay offline.</status-badge><br/>";
-            } else if (net_value("DES_NET_SERVER") == settings::kNetCustomKey && !settings::custom_chosen_here()) {
-                help = "<status-badge class=\"warning\">This address was not chosen on this PC (it came in a copied "
-                       "settings file), so you stay offline. To use it, pick Custom in Server.</status-badge><br/>";
+            } else if (custom_held()) {
+                help = "<status-badge class=\"warning\">This address came in a copied settings file, so you stay "
+                       "offline. To play on it, press Custom in Server again.</status-badge><br/>";
             }
             pane.add_rml(help + with_note("DES_NET_CUSTOM",
                 "A server not in the list: an IP address or a host name. Typing one picks Custom.<br/><br/>"

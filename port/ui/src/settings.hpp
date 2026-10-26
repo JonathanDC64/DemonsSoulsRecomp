@@ -140,7 +140,7 @@ std::string net_server_address();
 // repacked to name a server of its own) leaves online off until then. The mark (net_custom_here) is a hash of this
 // PC's id and the address, so a settings.ini copied to another PC does not carry it.
 bool custom_chosen_here();
-void choose_custom_here();
+bool choose_custom_here();  // true when it marked an address that was not chosen here before
 // apply_network left online off at start because the Custom server was not chosen on this PC (des_ui.cpp says so).
 bool net_custom_held();
 // PS3_NET_HOSTS for an address: each of kNetHosts mapped to it, joined with "&&" (RPCS3's IP/Host switch form).

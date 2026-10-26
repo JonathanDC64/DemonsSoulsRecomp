@@ -313,6 +313,17 @@ takes their counts as they are. The port checks them before the game uses them (
   DES_NET_NAME=<name> PSNR_SERVER=127.0.0.2:36100`. The game made its key, signed in, psnr took the session,
   and every game request came back 200. With the server in maintenance the toast said so and the game went on
   offline.
+- **TLS** (2026-10-26; ps3recomp's docs/ONLINE.md "TLS", the server's docs/tls.md). With the project's own server
+  (`NetServer::tls`), `apply_network` also sets `PS3_NET_TLS=1`: the sign-in, the game's requests to the server and
+  psnr's connection go over TLS, and the runtime checks the server's Let's Encrypt certificate for
+  `kNetProjectHost` against the roots built into it. A connection that can't be made secure isn't made: online
+  stays off for the session, and an "Online" toast says the game could not connect securely. Players' own traffic
+  (P2P, and psnr's relay) is as before. Local test server and Custom stay without TLS unless `PS3_NET_TLS` is given
+  (with `PS3_NET_CA_FILE` for a test certificate).
+  Checked 2026-10-26 against a local copy of the server on 127.0.0.2 with a test certificate and plain connections
+  refused: `duo.sh start a ... PS3_NET_TLS=dss.test PS3_NET_CA_FILE=<the test CA>` signed in, joined psnr and
+  sent the game's requests over TLS, all answered 200; without `PS3_NET_CA_FILE` all three were refused and the
+  toast showed once.
 - **IP addresses.** P2P shares your public IP with the players you meet, as on a PS3 and on RPCS3. The Network tab
   says so.
 - **Players you met** (2026-10-26; the server's docs/social.md). Settings > Network > Players you met opens a

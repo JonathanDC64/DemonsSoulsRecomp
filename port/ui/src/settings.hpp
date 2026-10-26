@@ -94,21 +94,22 @@ struct NetServer {
     const char* note;     // the Server row's help text for it
     bool signin;          // may run this project's server: the runtime signs in to it (a server without it: no harm)
     bool psnr;            // runs its matchmaking (psnr) on kNetPsnrPort: co-op and invasions go through it
+    bool tls;             // the sign-in, the game's requests and psnr go over TLS, with a certificate for address
 };
 inline constexpr NetServer kNetServers[] = {
-    {"project", "Demon's Souls Recomp", kNetProjectHost, "This project's own server.", true, true},
+    {"project", "Demon's Souls Recomp", kNetProjectHost, "This project's own server.", true, true, true},
 #if DES_DEV
     // Developer builds only. The address is the one its setup page publishes for emulators (thearchstones.com,
     // "serverinfo"). Not this project's server: no sign-in (it would get the install's key and name for nothing).
     {"archstones", "The Archstones", "206.189.232.242",
-     "The community server RPCS3 players use, run by a volunteer. Developer builds only.", false, false},
+     "The community server RPCS3 players use, run by a volunteer. Developer builds only.", false, false, false},
 #endif
-    {"local", "Local test server", "127.0.0.1", "A server on this PC, for testing.", true, false},
+    {"local", "Local test server", "127.0.0.1", "A server on this PC, for testing.", true, false, false},
 #if DES_DEV
     // Developer builds only, for now (0.1.0): with no Custom choice, a settings.ini that names a server of its own
     // (a repacked portable download) cannot send players there. Bringing it back to players needs a question at
     // start that custom_chosen_here's mark answers.
-    {"custom", "Custom", "", "The address in Custom server, below. Developer builds only.", true, false},
+    {"custom", "Custom", "", "The address in Custom server, below. Developer builds only.", true, false, false},
 #endif
 };
 inline constexpr const char* kNetCustomKey = "custom";

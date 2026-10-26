@@ -286,6 +286,8 @@ constexpr Credit kCredits[] = {
      "https://github.com/TwilitRealm/dusklight"},
     {"Cinzel and Alegreya Sans", "The fonts of the menus.", "SIL Open Font Licence 1.1", "https://fonts.google.com"},
     {"Material Symbols", "The icons of the menus.", "Apache-2.0", "https://fonts.google.com/icons"},
+    {"Mbed TLS", "The secure connection to the online server.", "Apache-2.0",
+     "https://www.trustedfirmware.org/projects/mbed-tls/"},
     {"RPCS3", "A behavioural reference for the PS3 system libraries. No RPCS3 code is copied.", "", "https://rpcs3.net"},
 };
 

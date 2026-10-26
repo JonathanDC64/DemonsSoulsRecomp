@@ -12,6 +12,7 @@ About tab of the settings lists the same.
 | [Cinzel](https://github.com/NDISCOVER/Cinzel) | Headings | SIL Open Font Licence 1.1 | `res/fonts/Cinzel.ttf`, licence in `res/fonts/OFL-Cinzel.txt` |
 | [Alegreya Sans](https://github.com/huertatipografica/Alegreya-Sans) | Body text | SIL Open Font Licence 1.1 | `res/fonts/AlegreyaSans-*.ttf`, licence in `res/fonts/OFL-AlegreyaSans.txt` |
 | [Material Symbols Rounded](https://github.com/google/material-design-icons) | Icons | Apache-2.0 | `res/fonts/MaterialSymbolsRounded-Regular.ttf`, licence in `res/fonts/LICENSE-Apache-2.0.txt` |
+| [Mbed TLS](https://www.trustedfirmware.org/projects/mbed-tls/) 3.6 | TLS to the online server, in the runtime (ps3recomp) | Apache-2.0 | ps3recomp's `third_party/mbedtls`, compiled in; licence in `licenses/mbedtls` of the download |
 
 Crash reports use Windows' own dbghelp (stack and minidump) and report screenshots its Imaging Component (PNG); both
 are part of Windows, nothing is added.

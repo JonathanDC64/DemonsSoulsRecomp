@@ -104,6 +104,7 @@ How to read the table:
 - The level cutscenes run in the engine, not as movies. If the reporter means one of those, it is something else,
   and the reply asks which.
 - ps3recomp#130 tries every listed decoder and logs why one can't be used. When Windows' decoder lacks its
-  licence, it names the extension. The player's fix is to install the free MPEG-2 Video Extension.
-- Not decided: bundling FFmpeg's MPEG-2 decoder on Windows, as the Linux build does, so movies need nothing from
-  the Store.
+  licence, it names the extension. Until the next release, the player's fix is to install the free MPEG-2 Video
+  Extension.
+- Decided (10-26): the Windows build ships FFmpeg's MPEG-2 decoder beside the exe, as the Linux build does, so
+  movies need nothing from the Store (ps3recomp#131, port #206, docs/110).

@@ -118,6 +118,8 @@ constexpr long long kStoppedMs = 2000;
 // After this long without a new frame the overlay says how to report it.
 constexpr long long kHangNoticeMs = 15000;
 constexpr auto kHangNoticeDuration = std::chrono::seconds(30);
+// "Playing offline": a Custom server that was not chosen on this PC (settings::custom_chosen_here).
+constexpr auto kCustomServerNoticeDuration = std::chrono::seconds(15);
 
 struct InputEvent {
     enum Type { KeyDown, KeyUp, Char, MouseMove, MouseDown, MouseUp, Wheel, Leave } type;
@@ -153,6 +155,7 @@ std::atomic<unsigned long long> sFramesRun{0};
 std::atomic<unsigned long long> sWakeAt{0}, sWakeMark{0};
 std::atomic<bool> sWakeByUser{false};       // that wake was the player's (not the hang notice's)
 std::atomic<bool> sHangNotice{false};      // the watch thread asks frame for the hang notice
+std::atomic<bool> sCustomServerNotice{false};  // "Playing offline" is due (des_ui_early_init); frame shows it
 clock_type::time_point sHangNoticeUntil{};  // repaints stay on while it shows (the game draws no frames)
 int sReportCountdown = 0;     // "Report an issue": frames until the game's picture is taken (report.cpp)
 bool sInitFailed = false;
@@ -630,6 +633,19 @@ void push_hang_notice() {
     std::fprintf(stderr, "[ui] no new frame for %lld s: the hang notice is up\n", ms / 1000);
 }
 
+// "Playing offline": the settings name a Custom server that was not chosen on this PC (settings::custom_chosen_here).
+void push_custom_server_notice() {
+    ui::push_toast({
+        .type = "warning",
+        .title = "Playing offline",
+        .content = "The settings name a custom server (" + ui::settings::get("DES_NET_CUSTOM") +
+                   ") that was not chosen on this PC. To play on it, pick Custom in Settings > Network > Server, "
+                   "then restart the game.",
+        .duration = kCustomServerNoticeDuration,
+    });
+    std::fprintf(stderr, "[ui] the custom server notice is up\n");
+}
+
 // The game's frames each second, the last minute, oldest first (the watch thread counts them), for reports.
 std::mutex sRateLock;
 std::vector<unsigned> sRates;
@@ -815,7 +831,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     if (!sActive && !sStartScreen && !chordEdge && !shot && !sQueued.load(std::memory_order_acquire) &&
         !sOpenPending && !sReportCountdown && !(prework && !sPreworkShown) && !sCloseRequested.load() &&
         !sOskPending.load(std::memory_order_acquire) && !ui::trophies::pending() &&
-        !sHangNotice.load(std::memory_order_relaxed)) {
+        !sHangNotice.load(std::memory_order_relaxed) && !sCustomServerNotice.load(std::memory_order_relaxed)) {
         return;
     }
 
@@ -829,6 +845,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         if (sOskPending.exchange(false)) apply_osk_request(false);
         ui::trophies::discard();  // (the unlocks are saved; only the pop-ups are lost)
         sHangNotice.store(false);
+        sCustomServerNotice.store(false);
         sActive = false;
         std::lock_guard<std::mutex> lock(sQueueLock);
         sQueue.clear();
@@ -847,6 +864,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         if (chordEdge) open_menu_bar();
     }
     if (sHangNotice.exchange(false)) push_hang_notice();
+    if (sCustomServerNotice.exchange(false)) push_custom_server_notice();
 
     if (prework && !sPreworkShown) {
         sPreworkShown = true;
@@ -1088,6 +1106,7 @@ extern "C" void des_ui_early_init(void) {
     }
     ui::settings::load_and_apply_env();
     if (sSetupOnly) setup_only_env();
+    if (!sSetupOnly && ui::settings::net_custom_held()) sCustomServerNotice.store(true);
     parse_debug_knobs();
     sOpenPending = sSetupOnly || env_on("DES_UI_OPEN");
     sChordMask = ui::input::chord_mask(ui::settings::get_int("pad_menu_chord"));

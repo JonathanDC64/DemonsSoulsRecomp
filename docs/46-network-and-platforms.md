@@ -265,7 +265,7 @@ Built (the Network tab, between Controls and Interface). You decided Online is o
 |---|---|---|
 | Online | `DES_ONLINE` (`1`) | `PS3_NET_ONLINE=1`. Offline sets none of the knobs, not even to `0`, since the runtime counts any value as on. |
 | Server | `DES_NET_SERVER` (`archstones`) | `PS3_NET_HOSTS`: each of the six names `=` the server's address, joined with `&&` |
-| Custom server | `DES_NET_CUSTOM` (empty) | The address for Server's Custom choice: IPv4 or a host name. With no valid address the game stays offline (fails closed). |
+| Custom server | `DES_NET_CUSTOM` (empty) | The address for Server's Custom choice: IPv4 or a host name. With no valid address the game stays offline (fails closed). It also stays offline with an address that was not chosen on this PC (see below). |
 | Online name | `DES_NET_NAME` (empty) | `PS3_NP_ONLINE_ID`, when it is 3-16 letters, digits, `-` or `_`. Online needs one: empty or invalid keeps the game offline, and the row says so (without an NP sign-in the game asks for the network again and again after Continue). |
 | P2P port | `DES_NET_P2P_PORT` (`3658`) | `PS3_NET_P2P_PORT` (1024-65535; anything else means 3658) |
 
@@ -274,6 +274,13 @@ Built (the Network tab, between Controls and Interface). You decided Online is o
   - Local test server = `127.0.0.1`.
   - Custom.
 - **No psnr row yet.** `PSNR_SERVER` is never set from settings.
+- **A custom server must be chosen on this PC.** A portable download repacked with a `settings.ini` that names a server
+  of its own would otherwise send everyone who plays it there. So a Custom address counts only once the player picks
+  Custom in Server, or types the address in Custom server, on this PC. That stores `net_custom_here` in `settings.ini`:
+  a hash of the address and this PC's id (Windows' `MachineGuid`, Linux's `/etc/machine-id`; `report::this_pc`). A
+  `settings.ini` copied to another PC does not match there. Until then the game plays offline, says so at start
+  ("Playing offline"), and the Custom server row says how to use the address. A `DES_NET_CUSTOM` from the environment
+  counts as chosen.
 - **The environment wins.** A knob already set in the environment (for example `PS3_NET_HOSTS`) is left alone, as with every other row.
 - **Test runs stay offline:**
   - `deslib.sh`'s `des_env_defaults` exports `DES_ONLINE=0` for anything but `play.sh`;

@@ -105,8 +105,9 @@ Reports are posted on a public GitHub issue, so:
   its last name). It also replaces the online name, because the runtime logs
   it (`[sceNp] Init(... username=...)`): `<online name>`. When no name is
   set, the runtime's default (`PS3Player`) stays.
-- The online name, matchmaking password and custom server address appear
-  only as `(set)`, in `settings.ini` (both report kinds) and in
+- The online name, matchmaking password and custom server address (and its
+  mark, `net_custom_here`) appear only as `(set)`, in `settings.ini` (both
+  report kinds) and in
   `environment.txt` (`DES_NET_NAME`, `DES_NET_PASSWORD`, `DES_NET_CUSTOM`,
   `PS3_NP_ONLINE_ID`, `PS3_NET_PASSWORD`).
 - Nothing is sent by the game. The zip is saved and the issue form opens in

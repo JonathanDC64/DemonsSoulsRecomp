@@ -582,7 +582,10 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                           escape(s.note);
         }
         choice_row(leftPane, rightPane, "Server", "DES_NET_SERVER", std::move(serverValues), std::move(serverLabels),
-            serverHelp + "<br/><br/>(DES_NET_SERVER)");
+            serverHelp + "<br/><br/>(DES_NET_SERVER)", [] {
+                // (picking Custom chooses its address on this PC: settings::custom_chosen_here)
+                if (settings::get("DES_NET_SERVER") == settings::kNetCustomKey) settings::choose_custom_here();
+            });
 
         auto& customServer = leftPane.add_child<StringButton>(StringButton::Props{
             .key = "Custom server",
@@ -598,6 +601,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                     if (!value.empty() && !settings::pinned("DES_NET_SERVER")) {
                         settings::set("DES_NET_SERVER", settings::kNetCustomKey);
                     }
+                    settings::choose_custom_here();
                 },
             .isDisabled = [] { return settings::pinned("DES_NET_CUSTOM"); },
             .isModified = [] { return !settings::is_default("DES_NET_CUSTOM"); },
@@ -611,6 +615,9 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
                 help = "<status-badge class=\"warning\">" +
                        Rml::String(v.empty() ? "No address yet" : "Not a valid address") +
                        ", so you stay offline.</status-badge><br/>";
+            } else if (net_value("DES_NET_SERVER") == settings::kNetCustomKey && !settings::custom_chosen_here()) {
+                help = "<status-badge class=\"warning\">This address was not chosen on this PC (it came in a copied "
+                       "settings file), so you stay offline. To use it, pick Custom in Server.</status-badge><br/>";
             }
             pane.add_rml(help + with_note("DES_NET_CUSTOM",
                 "A server not in the list: an IP address or a host name. Typing one picks Custom.<br/><br/>"

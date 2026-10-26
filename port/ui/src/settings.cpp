@@ -69,6 +69,7 @@ constexpr Def kDefs[] = {
     {"DES_ONLINE", "1", Apply::Restart},       // "1" = online (the default), "0" = offline
     {"DES_NET_SERVER", kNetServers[0].key, Apply::Restart},  // a kNetServers key
     {"DES_NET_CUSTOM", "", Apply::Restart},    // Custom's address: IPv4 or a host name
+    {"net_custom_here", "", Apply::UiOnly},    // custom_chosen_here's mark for that address on this PC
     {"DES_NET_NAME", "", Apply::Restart},      // the online name (PS3_NP_ONLINE_ID); "" = no NP identity
     {"DES_NET_P2P_PORT", "3658", Apply::Restart},  // PS3_NET_P2P_PORT, 1024-65535
     {"DES_NET_PASSWORD", "", Apply::Live},     // matchmaking password; a hash of it goes to the server; "" = everyone
@@ -198,9 +199,10 @@ const std::string& path() {
 std::string describe() {
     std::string out;
     for (const Def& d : kDefs) {
-        // (an issue report leaves out the online name and the custom server's address: only whether one is set)
+        // (an issue report leaves out the online name, the custom server's address and its mark: only whether one is
+        // set)
         const bool hide = std::strcmp(d.key, "DES_NET_NAME") == 0 || std::strcmp(d.key, "DES_NET_CUSTOM") == 0 ||
-                          std::strcmp(d.key, "DES_NET_PASSWORD") == 0;
+                          std::strcmp(d.key, "DES_NET_PASSWORD") == 0 || std::strcmp(d.key, "net_custom_here") == 0;
         const auto shown = [hide](const std::string& v) { return hide && !v.empty() ? std::string("(set)") : v; };
         const std::string value = get(d.key);
         out += std::string(d.key) + " = " + shown(value);
@@ -263,6 +265,7 @@ void load_file() {
 std::string sNetStatus = "Off";
 bool sNetOnline = false;  // apply_network went online: the matchmaking group can then change live
 bool sHeaderPinned = false;  // PS3_HTTP_HEADER came from the environment (it wins over the password)
+bool sNetCustomHeld = false;  // apply_network left online off: the Custom server was not chosen on this PC
 
 // SHA-256 (FIPS 180-4) of a string, as 64 lowercase hex digits: the matchmaking group the server sees instead of the
 // password. (Here rather than from ps3recomp: CI builds the UI on its own.)
@@ -311,6 +314,11 @@ std::string sha256_hex(const std::string& text) {
     return out;
 }
 
+// custom_chosen_here's mark for a Custom address: a hash of this PC's id and the address.
+std::string custom_mark(const std::string& address) {
+    return sha256_hex("des-custom-server-here:" + report::this_pc() + "\n" + address).substr(0, 32);
+}
+
 // A setting's value in use: the environment's when it was set there, else settings.ini's or the default.
 std::string effective(std::string_view key) {
     return pinned(key) ? pinned_value(key) : get(key);
@@ -342,7 +350,8 @@ std::string net_options_header() {
 //           PS3_NET_P2P_PORT=<port>; online needs a valid online name (this row's, or PS3_NP_ONLINE_ID's);
 //   offline: none of them is set. Not even to "0": the runtime counts any value as on.
 // PSNR_SERVER is never set here (no row yet). Fails closed: with no valid server address and no PS3_NET_HOSTS from the
-// environment, the game stays offline rather than reach whoever owns the original names now.
+// environment, the game stays offline rather than reach whoever owns the original names now. So it does with a Custom
+// address that was not chosen on this PC (custom_chosen_here).
 // A developer build's cheat session wins over this: des_dev_boot runs after des_ui_early_init (which calls
 // load_and_apply_env) in ps3_title_options_init, and clears PS3_NET_ONLINE, PSNR_SERVER and PS3_NET_HOSTS when a cheat
 // is set at start (docs/55 section 6). So nothing here checks DES_DEV_SESSION; the Network tab reads it to say why.
@@ -357,7 +366,19 @@ void apply_network() {
         std::fprintf(stderr, "[ui] network: off in a test run unless DES_ONLINE=1 is given\n");
         return;
     }
-    const std::string address = net_server_address();
+    std::string address = net_server_address();
+    // A Custom address that was not chosen on this PC counts as none: only a PS3_NET_HOSTS from the environment then
+    // goes online.
+    if (!address.empty() && effective("DES_NET_SERVER") == kNetCustomKey && !custom_chosen_here()) {
+        if (!env_set("PS3_NET_HOSTS")) {
+            sNetCustomHeld = true;
+            sNetStatus = "Off: the custom server was not chosen on this PC";
+            std::fprintf(stderr, "[ui] network: off, the custom server in settings.ini was not chosen on this PC "
+                         "(Settings > Network)\n");
+            return;
+        }
+        address.clear();
+    }
     if (address.empty() && !env_set("PS3_NET_HOSTS")) {
         const NetServer* s = net_server(effective("DES_NET_SERVER"));
         const bool not_yet = s && !*s->address && s->key != std::string_view(kNetCustomKey);
@@ -559,6 +580,22 @@ std::string net_server_address() {
     const std::string a = s->key == std::string_view(kNetCustomKey) ? trim(effective("DES_NET_CUSTOM"))
                                                                     : std::string(s->address);
     return net_address_ok(a) ? a : std::string();
+}
+
+bool custom_chosen_here() {
+    if (pinned("DES_NET_CUSTOM")) return true;  // (the environment is this PC's own)
+    const std::string a = trim(get("DES_NET_CUSTOM"));
+    return !a.empty() && get("net_custom_here") == custom_mark(a);
+}
+
+void choose_custom_here() {
+    const std::string a = trim(get("DES_NET_CUSTOM"));
+    if (!a.empty() && !pinned("DES_NET_CUSTOM") && get("net_custom_here") != custom_mark(a))
+        set("net_custom_here", custom_mark(a));
+}
+
+bool net_custom_held() {
+    return sNetCustomHeld;
 }
 
 std::string net_hosts(const std::string& address) {

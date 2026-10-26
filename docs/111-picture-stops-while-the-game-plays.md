@@ -185,8 +185,18 @@ upstream patch in the fork.
       job-exit releases catch every slot.
     - A/B, 4 rounds at the deep Palace save: median -1.04%, p=0.93, inside the 4.5% noise bar. No change was
       measured.
-  - The lock-line table still overflows. Its notify walk visits every slot on each guest store, so a larger table
-    needs its own measurement.
+  - **Lock-line table: fixed in JonathanDC64/ps3recomp#134.**
+    - A scratch dump on each refusal showed about 19 contexts reserving lines: one per SPURS and async-worker
+      thread (each job's context is a stack local at the same address on its thread), plus image 2 (the
+      HighGraphics ring consumer) and image 12.
+    - The 8 slots were held by images 2 and 12 and five or six image-1 job contexts. In 90 s at the Palace,
+      16.7 million GETLLARs came from contexts left out, most of them image 7 jobs polling line 0x477FD980. Each
+      of those slept the full 2 ms nap, since no store could wake it.
+    - The table has 64 slots. Every walk stops at the slots claimed so far (about 19), and a notify tests four
+      hints at a time with SSE2, so it costs less than the old 8-slot loop.
+    - Check run: neither warning is printed. A/B on top of #133, 4 rounds at the deep Palace save: median +1.02%,
+      faster in 4 of 4 rounds (paired p=0.046), inside the 4.5% noise bar. The Tutorial's opening cutscene at
+      60 fps had no frame over 40 ms on either side.
   - Smaller items:
     - `_cellSpursAttributeInitialize` reads the revision as nSpus (37ea6328);
     - CreateTaskset clears about 152 bytes of a 0x2900-byte Taskset2 (194bb185);
@@ -210,7 +220,8 @@ upstream patch in the fork.
     runs for it.
   - **Worth porting** (small, low risk; the gain for Demon's Souls is unproven):
     - 17bf55aa (and a6cfb0f0 with the row copy of ff66a355): NV3089 `IMAGE_IN_POINT` is 12.4 fixed point. The
-      fork shifts by 8, not 16, so a source origin under 256 texels is ignored.
+      fork shifts by 8, not 16, so a source origin under 256 texels is ignored. A run each at the Palace and in
+      the Tutorial with `NV3089_GATE` on logged no NV3089 blit at all, so Demon's Souls gains nothing there.
     - e3f78720: texture offsets masked to 31 bits, as RPCS3 does.
     - a8572e99: get is published past a semaphore RELEASE, before its label. This is safe in the fork because the
       RELEASE already syncs the backend first.

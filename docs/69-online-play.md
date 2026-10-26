@@ -315,6 +315,15 @@ takes their counts as they are. The port checks them before the game uses them (
   offline.
 - **IP addresses.** P2P shares your public IP with the players you meet, as on a PS3 and on RPCS3. The Network tab
   says so.
+- **Players you met** (2026-10-26; the server's docs/social.md). Settings > Network > Players you met opens a
+  window (`port/ui/src/players_window.cpp`; `DES_UI_OPEN=players` opens it at start) with the players met online
+  in the last 30 days, the latest first: their name, the start of their key's fingerprint, how you met (came to
+  help you, you helped them, invaded you, you invaded them, the Old Monk) and when. Pressing one offers Block (or
+  Unblock) and Report (Cheating, Offensive name or Other). A block is kept on the server against their key and
+  works both ways, from any PC: neither sees the other's summon signs, and neither can summon or invade the other.
+  A report goes to the admin site's Reports page. The outcome shows as an "Online" toast. The calls go through the
+  runtime (ps3recomp's `ps3_net_players`), on a thread of their own, with the sign-in's session. This stands in for
+  PvP Watchdog's player tools for now; its packet filter is still to come.
 - **Cheats.** docs/55's offline rule now has the ps3recomp lock it was missing: once cheats are used, the network
   stays off for the session in every module.
 

@@ -13,6 +13,7 @@
 #include "modal.hpp"
 #include "number_button.hpp"
 #include "pane.hpp"
+#include "players_window.hpp"
 #include "report.hpp"
 #include "settings.hpp"
 #include "string_button.hpp"
@@ -772,6 +773,18 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "(DES_NET_BLOODSTAINS)");
         bool_row(leftPane, rightPane, "Ghosts", "DES_NET_GHOSTS",
             "Other players' ghosts walking through your world.<br/><br/>(DES_NET_GHOSTS)");
+
+        leftPane.add_section("Players");
+        leftPane.register_control(
+            leftPane.add_group_button({.text = "Players you met"}).on_pressed([this] {
+                play_sound(kSoundClick);
+                push(std::make_unique<PlayersWindow>());
+            }),
+            rightPane, [](Pane& pane) {
+                pane.clear();
+                pane.add_text("The players you met online lately: who helped you, who you helped, and who invaded. "
+                              "Block one so you never meet again, or report one to the server's admins.");
+            });
 
         leftPane.add_section("This session");
         info_row(leftPane, rightPane, "Network", net_cheat_session() ? Rml::String("Off: cheats used") : settings::net_status(),

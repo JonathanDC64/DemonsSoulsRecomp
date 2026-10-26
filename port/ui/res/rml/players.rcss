@@ -1,0 +1,158 @@
+/* The Players window (players_window.cpp): the summary above the list, laid out like the Trophies window
+   (trophies.rcss); the colours come from theme.rcss. */
+
+/* (this window's document only) the summary on top, the list under it */
+#content {
+    flex-flow: column;
+}
+
+players-summary {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--space-lg);
+    padding: var(--space-lg) var(--space-xl);
+    border-bottom-width: 1dp;
+    border-bottom-color: var(--color-border);
+    background-color: rgba(var(--color-neutral-rgb), 4%);
+}
+
+summary-icon {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+}
+
+summary-icon icon {
+    font-size: 56dp;
+    color: var(--color-border);
+}
+
+summary-text {
+    display: flex;
+    flex-flow: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: var(--space-xs);
+}
+
+summary-title {
+    display: block;
+    font-family: var(--font-family-heading);
+    font-weight: bold;
+    font-size: var(--font-size-xl);
+    text-transform: uppercase;
+    color: var(--color-accent);
+}
+
+summary-line {
+    display: block;
+    font-size: var(--font-size-lg);
+    color: rgba(var(--color-text-rgb), 80%);
+}
+
+/* One player: how you met, the name and key, then when */
+player-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-lg);
+    padding: var(--space-sm) var(--space-lg) var(--space-sm) var(--space-sm);
+    border-radius: var(--radius-window);
+    background-color: var(--button-background);
+    box-shadow: rgba(var(--color-border-rgb), 25%) 0 0 0 1dp;
+    focus: auto;
+    cursor: pointer;
+    transition: background-color 0.1s linear-in-out;
+}
+
+player-row:hover,
+player-row:focus-visible {
+    background-color: var(--button-background-hover);
+    box-shadow: rgba(var(--color-interactive-rgb), 70%) 0 0 0 1dp;
+}
+
+player-icon {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48dp;
+    height: 48dp;
+}
+
+player-icon icon {
+    font-size: 32dp;
+    color: rgba(var(--color-text-rgb), 60%);
+}
+
+player-text {
+    display: flex;
+    flex-flow: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: var(--space-2xs);
+}
+
+player-name {
+    display: block;
+    font-weight: bold;
+    font-size: var(--font-size-2xl);
+    color: var(--color-accent);
+}
+
+player-row.blocked player-name {
+    color: rgba(var(--color-text-rgb), 60%);
+}
+
+player-detail {
+    display: block;
+    font-size: var(--font-size-md);
+    color: rgba(var(--color-text-rgb), 72%);
+}
+
+player-key {
+    margin-left: var(--space-md);
+    color: rgba(var(--color-text-rgb), 45%);
+}
+
+player-tag {
+    display: inline-block;
+    margin-left: var(--space-sm);
+    padding: 0 var(--space-xs);
+    border-width: 1dp;
+    border-color: rgba(var(--color-border-rgb), 60%);
+    border-radius: var(--radius-small);
+    font-size: var(--font-size-2xs);
+    font-weight: normal;
+    text-transform: uppercase;
+    vertical-align: middle;
+    color: rgba(var(--color-text-rgb), 70%);
+}
+
+player-date {
+    display: block;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    font-size: var(--font-size-md);
+    color: rgba(var(--color-text-rgb), 80%);
+}
+
+icon.players {
+    decorator: text("&#xe7ef;" center center);  /* group */
+}
+
+icon.met-help {
+    decorator: text("&#xebcb;" center center);  /* handshake */
+}
+
+icon.met-invasion {
+    decorator: text("&#xf889;" center center);  /* swords */
+}
+
+icon.met-monk {
+    decorator: text("&#xef55;" center center);  /* local_fire_department */
+}
+
+icon.met-blocked {
+    decorator: text("&#xe14b;" center center);  /* block */
+}

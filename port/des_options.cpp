@@ -1289,6 +1289,7 @@ static int phys_hz()
 static std::atomic<double> s_phys_clock{0.0};   /* game seconds, summed frame dts */
 static std::atomic<bool> s_phys_capped{false};  /* this frame was shorter than the step */
 static std::atomic<bool> s_phys_ride{false};    /* this frame steps uncapped: the player rides a moving body */
+static std::atomic<double> s_phys_world_now{0.0}; /* under the cap: the world's time that matches the game's */
 
 /* The cap and moving bodies. An elevator, a lift or a turning bridge is a
  * keyframed body, moved by the world step, so under the cap it moves in 1/n
@@ -1345,14 +1346,23 @@ extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
     s_phys_capped.store(hz > 0 && dt > 0.0 && dt < h);
     if (hz <= 0 || ctx->gpr[28] != 0) { acc = 0.0; return; }
     if (!(dt > 0.0) || dt >= h) { acc = 0.0; return; }
+    /* for DES_PARTINTERP: the world's time before this frame's step (the
+     * world *(*(r31 + 0x10) + 4), vtable 0x018B4F98; its simulation, +8;
+     * the time, +0x14) */
+    uint32_t pw = vm_read32((uint32_t)ctx->gpr[31] + 0x10);
+    pw = guest_ptr_ok(pw) ? vm_read32(pw + 4) : 0;
+    const uint32_t sim = guest_ptr_ok(pw) && vm_read32(pw) == 0x018B4F98u ? vm_read32(pw + 8) : 0;
+    const double wt = guest_ptr_ok(sim) ? vm_readf(sim + 0x14) : 0.0;
     acc += dt;
     if (acc < h) {
         ctx->gpr[28] = 1;              /* skip this frame's step */
+        s_phys_world_now.store(wt + acc);
         return;
     }
     ctx->fpr[31] = (float)h;
     acc -= h;
     if (acc >= h) acc = 0.0;
+    s_phys_world_now.store(wt + h + acc);
 }
 
 /* With DES_PHYS_HZ: the passes that drive a character's bodies to its
@@ -1407,6 +1417,17 @@ static bool rag_interp_on()
     PS3_KNOB(on, ps3_env_int("DES_RAGINTERP", 1));
     return on && s_phys_capped.load();
 }
+/* Game seconds since the body got the step that starts at t0 (its swept
+ * transform's start time). */
+static double body_since(uint32_t body, float t0)
+{
+    const double now = s_phys_clock.load();
+    std::lock_guard<std::mutex> lk(s_rag_mu);
+    if (s_rag_seen.size() > 8192) s_rag_seen.clear();
+    RagSeen& s = s_rag_seen[body];
+    if (s.t0 != t0) { s.t0 = t0; s.at = now; }
+    return now - s.at;
+}
 /* The body's pose between the start and the end of its last step: the
  * position of its origin in pos, its rotation (x, y, z, w) in q. False when
  * it shows its own transform. */
@@ -1417,15 +1438,7 @@ static bool body_pose_between(uint32_t body, float* pos, float* q)
     vm_read4f(body + 0x140, q0); vm_read4f(body + 0x150, q1);
     vm_read4f(body + 0x160, cl);
     if (!(c1[3] > 0.0f)) return false;
-    const double now = s_phys_clock.load(), span = 1.0 / c1[3];
-    double since;
-    {
-        std::lock_guard<std::mutex> lk(s_rag_mu);
-        if (s_rag_seen.size() > 8192) s_rag_seen.clear();
-        RagSeen& s = s_rag_seen[body];
-        if (s.t0 != c0[3]) { s.t0 = c0[3]; s.at = now; }
-        since = now - s.at;
-    }
+    const double span = 1.0 / c1[3], since = body_since(body, c0[3]);
     if (since >= span) return false;
     static int log = 0; static std::atomic<int> nlog{0};
     PS3_KNOB(log, ps3_env_int("DES_RAGINTERP_LOG", 0));
@@ -1494,6 +1507,59 @@ extern "C" void des_body_xform(ppu_context* ctx, uint32_t)
     for (int c = 0; c < 3; c++)
         for (int i = 0; i < 3; i++) vm_writef(dst + 0x10 * c + 4 * i, col[c][i]);
     for (int i = 0; i < 3; i++) vm_writef(dst + 0x30 + 4 * i, pos[i]);
+}
+
+/* DES_PARTINTERP (default 1; 0 = off): with DES_PHYS_HZ capping the steps.
+ * The game reads where a character's part is (body i of the character's body
+ * lists) through four getters (0x001DFB68, 0x001E1610, 0x001EFA20,
+ * 0x001EFED0). An arrow stuck in a character follows one (0x00262DB0,
+ * through 0x002E86D8 and 0x001EFA20), and so does an effect tied to a part.
+ * Each samples the body's swept transform at the world's time (0x001E4228)
+ * plus a frame, through Havok's approxTransformAt (0x011B1D50, by the stub
+ * 0x000112E0, which nothing else calls). The world's time stands still
+ * between steps, so these moved in 30 Hz steps while the character's model
+ * moves every frame. The hook in the stub (r3 = the body's motion, body +
+ * 0xD0; f1 = the time) moves the time on:
+ *  - a keyframed body (inverse mass 0: a living character's parts, driven to
+ *    the animation pose) by the game time the world has not stepped yet
+ *    (des_phys_rate's world time for now, less the body's world's time:
+ *    world at +8, its simulation at +8, the time at +0x14), so it carries on
+ *    its last step and keeps up with the model. Not after a jump of more
+ *    than 1 m in one step, or two steps or more behind;
+ *  - a dynamic body (a ragdoll's parts) to the pose between the start and the
+ *    end of its last step, where DES_RAGINTERP draws it.
+ * DES_PARTINTERP_LOG=1 prints the first samples it moves. */
+extern "C" void des_body_sample(ppu_context* ctx, uint32_t)
+{
+    static int on = 1, log = 0;
+    PS3_KNOB(on, ps3_env_int("DES_PARTINTERP", 1));
+    PS3_KNOB(log, ps3_env_int("DES_PARTINTERP_LOG", 0));
+    if (!on || !s_phys_capped.load()) return;
+    const uint32_t body = (uint32_t)ctx->gpr[3] - 0xD0;
+    if (!guest_ptr_ok(body) || vm_read32(body) != 0x018B4810u) return;
+    float c0[4], c1[4];
+    vm_read4f(body + 0x120, c0); vm_read4f(body + 0x130, c1);
+    if (!(c1[3] > 0.0f)) return;
+    const double span = 1.0 / c1[3];
+    const bool keyframed = !(vm_readf(body + 0x19C) > 0.0f);
+    double add;
+    if (keyframed) {
+        const uint32_t world = vm_read32(body + 8);
+        const uint32_t sim = guest_ptr_ok(world) && vm_read32(world) == 0x018B4F98u ? vm_read32(world + 8) : 0;
+        if (!guest_ptr_ok(sim)) return;
+        const float dx = c1[0] - c0[0], dy = c1[1] - c0[1], dz = c1[2] - c0[2];
+        add = s_phys_world_now.load() - vm_readf(sim + 0x14);
+        if (!(add > 0.0) || add >= 2.0 * span || dx * dx + dy * dy + dz * dz > 1.0f) return;
+    } else {
+        const double since = body_since(body, c0[3]);
+        if (since >= span) return;
+        add = since - span;
+    }
+    static std::atomic<int> nlog{0};
+    if (log && nlog++ < 60)
+        fprintf(stderr, "[partinterp] body %08X %s t %.4f step %.4f..%.4f -> %.4f\n", body, keyframed ? "kf" : "dyn",
+                ctx->fpr[1], c0[3], c0[3] + span, ctx->fpr[1] + add);
+    ctx->fpr[1] = (float)(ctx->fpr[1] + add);
 }
 
 /* DES_NETLOG=1: seconds since the first line, for des_net_sync's log. */

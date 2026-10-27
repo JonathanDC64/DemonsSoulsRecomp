@@ -302,6 +302,7 @@ issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
 | `DES_REPORT_AT_FRAME=<n>` | Start an issue report at presented frame n, as the menu's Report does. |
 | `DES_REPORT_NO_OPEN=1` | Reports open neither the browser nor Explorer; the issue link goes to `<zip>.url.txt`. |
 | `DES_CRASH_DIALOG_REPORT=1` | The crash dialog presses Report on GitHub by itself (its frame 10). |
+| `DES_CRASH_DIALOG_DETAILS=1` | The crash dialog presses Show details by itself (its frame 10). |
 | `DES_CRASH_DIALOG_SHOT=<file.bmp>` | The crash dialog writes its picture (its frame 40). |
 | `DES_CRASH_DIALOG_EXIT_MS=<ms>` | The crash dialog closes itself after that long. |
 | `DES_UI_OPEN=menu` / `settings` / `trophies` / `osk` | Open the menu bar, the settings window, the Trophies window or a test of the on-screen keyboard at startup. |

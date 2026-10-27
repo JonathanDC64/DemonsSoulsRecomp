@@ -13,6 +13,7 @@ struct Content {
     std::string what;     // "access violation writing 0000000000000000", or for a hang "no new frame for 14 s"
     std::string details;  // the top of the stack, or for a hang the guest threads
     bool hang = false;    // the game is not responding (still running), not crashed
+    bool lost = false;    // the game lost its graphics device (still running, drawing nothing)
 };
 
 struct Actions {

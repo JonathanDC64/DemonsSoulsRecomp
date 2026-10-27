@@ -155,19 +155,35 @@ void on_abort(int sig) {
 
 bool hang_dialog_open() { return false; }  // (no dialog off Windows yet)
 
-void report_hang(long long ms_since_frame) {
+namespace {
+
+// A report of a game that is still running: <kind>-<time>.txt (`mark`, `what`, then `note` and the runtime's
+// snapshot) and the end of the log beside it.
+void report_running(const char* kind, const char* mark, const std::string& what, const char* note) {
     if (!g_installed) return;
-    const std::string base = stem_of("hang");
+    const std::string base = stem_of(kind);
     FILE* out = std::fopen((base + ".txt").c_str(), "w");
     if (!out) return;
-    std::fprintf(out, "\n=== NOT RESPONDING: no new frame for %lld s ===\n", ms_since_frame / 1000);
+    std::fprintf(out, "\n%s%s ===\n", mark, what.c_str());
     std::fprintf(out, "version %s, ps3recomp %s, game dump %s\n", kVersion, kPs3recompVersion,
                  *kDumpSha256 ? kDumpSha256 : "unknown");
-    std::fprintf(out, "The menu could not open: the render thread did not answer.\n\n");
+    std::fprintf(out, "%s\n\n", note);
     ps3_diag_report(out, 2);
     std::fclose(out);
     write_log_tail(base + ".log");
-    std::fprintf(stderr, "[report] hang report: %s.txt\n", base.c_str());
+    std::fprintf(stderr, "[report] %s report: %s.txt\n", kind, base.c_str());
+}
+
+}  // namespace
+
+void report_hang(long long ms_since_frame) {
+    report_running("hang", "=== NOT RESPONDING: ", "no new frame for " + std::to_string(ms_since_frame / 1000) + " s",
+                   "The menu could not open: the render thread did not answer.");
+}
+
+void report_graphics_lost(const std::string& what) {
+    report_running("graphics", "=== GRAPHICS LOST: ", what,
+                   "The graphics device was lost: nothing more can be drawn, while the game runs on.");
 }
 
 void install() {

@@ -29,8 +29,8 @@ Code:
 | `des.log` | the first 120 lines of the log and its last 512 KB |
 | `des.prev.log` | the end of the previous run's log, when that run was in the last 24 h: a freeze or crash the player restarted after |
 
-The crash and hang dialog's **Report on GitHub** zips `crash.txt` or
-`hang.txt`, `system.txt`, `settings.ini`, `environment.txt` (the game's
+The crash and hang dialog's **Report on GitHub** zips `crash.txt`,
+`hang.txt` or `graphics-lost.txt`, `system.txt`, `settings.ini`, `environment.txt` (the game's
 command line, saved with the report) and `des.log`. The dialog runs as a
 process of its own and reads no settings. So the game keeps
 `logs\settings.txt` up to date: the same listing as above, written at
@@ -85,6 +85,22 @@ deadlock, a wait that never ends).
    the game**.
 3. The dialog opens once per freeze by itself (through the 15 s notice's
    wake). After **Keep waiting**, only another F1 or chord opens it again.
+
+**The graphics device is lost** (2026-10-27, issue #205; docs/111 section 8).
+A driver reset (TDR) or a GPU that goes away leaves the game running with
+nothing to draw with. No frame stops and the overlay cannot draw, so neither
+path above sees it.
+1. The watch thread asks `rsx_d3d12_device_lost()` (ps3recomp#142) every
+   250 ms.
+2. Once it says so, the thread writes `crashes\graphics-<time>.txt` (the
+   reason, then the snapshot), `.log` and `.cmdline`. It then starts the
+   dialog in its lost form: "The game can no longer draw", with
+   **Restart game / Report on GitHub / Show details / Close the game**.
+   Restart closes the game first. The report attaches it as
+   `graphics-lost.txt`.
+3. On Windows, every report's `system.txt` also counts the System log's
+   graphics driver resets (`Display` event 4101) of the last 7 days, with the
+   time of the last.
 
 One fix was needed for the first path: a repaint used to wait until the
 previous Present was taken. A window the compositor is not showing (behind

@@ -24,6 +24,7 @@
 #include <shellapi.h>
 #include <share.h>
 #include <shlobj.h>
+#include <winevt.h>
 #else
 #include "platform.hpp"
 
@@ -925,6 +926,51 @@ std::string other_modules() {
     return out + "\n";
 }
 
+// Windows' own record of graphics driver resets in the last week: event 4101 from "Display" in the System log
+// ("Display driver ... stopped responding and has successfully recovered"), which Windows writes when it resets a
+// GPU that has not finished its work in about 2 s (a TDR). The game then has no device to draw with, and its picture
+// stops while it runs on (issue #205). Empty if the log cannot be read.
+std::string driver_resets() {
+    EVT_HANDLE query = EvtQuery(nullptr, L"System",
+                                L"*[System[Provider[@Name='Display'] and (EventID=4101) and "
+                                L"TimeCreated[timediff(@SystemTime) <= 604800000]]]",
+                                EvtQueryChannelPath | EvtQueryReverseDirection);
+    if (!query) return {};
+    LPCWSTR paths[] = {L"Event/System/TimeCreated/@SystemTime"};
+    EVT_HANDLE context = EvtCreateRenderContext(1, paths, EvtRenderContextValues);
+    int count = 0;
+    ULONGLONG newest = 0;  // (a FILETIME)
+    EVT_HANDLE events[16];
+    DWORD got = 0;
+    while (EvtNext(query, 16, events, 0, 0, &got)) {
+        for (DWORD i = 0; i < got; i++) {
+            if (count == 0 && context) {
+                EVT_VARIANT value{};
+                DWORD used = 0, props = 0;
+                if (EvtRender(context, events[i], EvtRenderEventValues, sizeof value, &value, &used, &props) &&
+                    value.Type == EvtVarTypeFileTime)
+                    newest = value.FileTimeVal;
+            }
+            count++;
+            EvtClose(events[i]);
+        }
+    }
+    if (context) EvtClose(context);
+    EvtClose(query);
+    std::string out = "Graphics driver resets (Windows' log), the last 7 days: ";
+    if (!count) return out + "none\n";
+    out += std::to_string(count);
+    FILETIME utc{DWORD(newest), DWORD(newest >> 32)}, local{};
+    SYSTEMTIME t{};
+    if (newest && FileTimeToLocalFileTime(&utc, &local) && FileTimeToSystemTime(&local, &t)) {
+        char when[64];
+        std::snprintf(when, sizeof when, " (the last on %04u-%02u-%02u at %02u:%02u)", t.wYear, t.wMonth, t.wDay,
+                      t.wHour, t.wMinute);
+        out += when;
+    }
+    return out + "\n";
+}
+
 // The OS, the CPU, the memory and the displays; on Windows also the gamepads and the power, and in the game's
 // own process the other software loaded into it.
 void platform_facts(std::ostringstream& o, bool game_process) {
@@ -1032,6 +1078,7 @@ void platform_facts(std::ostringstream& o, bool game_process) {
             }
             factory->Release();
         }
+        o << driver_resets();
     }
     {
         struct Monitors {

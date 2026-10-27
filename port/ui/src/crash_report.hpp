@@ -25,7 +25,12 @@ void install();
 // it). Nothing without a data folder. Takes a few seconds (the snapshot samples the threads), on the caller's
 // thread: the watch thread (des_ui.cpp), which first asks hang_dialog_open().
 void report_hang(long long ms_since_frame);
-// A hang dialog report_hang started is still open.
+// The graphics device was lost (a driver reset, or the GPU went away; `what` says which): the game runs on but can
+// draw nothing more, the menu included, so its picture stays as it was. Writes graphics-<time>.txt and .log as
+// report_hang does, then starts the dialog in its lost form (restart the game, close it, or report it). The watch
+// thread, once.
+void report_graphics_lost(const std::string& what);
+// A hang (or lost graphics) dialog report_hang started is still open.
 bool hang_dialog_open();
 
 // Play on setup alone (des_ui.cpp): starts this program again as a new process, with the command line and the

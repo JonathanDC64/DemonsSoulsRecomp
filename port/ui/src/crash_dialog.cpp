@@ -237,7 +237,47 @@ bool show(const Content& content, const Actions& actions) {
                 .onDismiss = [](Modal& d) { d.pop(); },
             }));
         };
-        if (content.hang) push_document(std::make_unique<Modal>(Modal::Props{
+        if (content.lost) push_document(std::make_unique<Modal>(Modal::Props{
+            .title = "The game can no longer draw",
+            .bodyRml = "<b>" + escape(content.what) +
+                       ".</b> The game lost its graphics device, so its picture stays as it was while it runs on. "
+                       "Restart the game to go on.<br/><br/>"
+                       "A report was saved on this PC. Reporting the problem opens a new issue on GitHub with the "
+                       "details filled in, and a zip to attach with what each part of the game was doing, your settings "
+                       "and the game's recent messages. It has no save data or game files; nothing is sent until you "
+                       "submit the issue.",
+            .actions =
+                {
+                    ModalAction{
+                        .label = "Restart game",
+                        .onPressed =
+                            [&actions](Modal&) {
+                                if (actions.restart) actions.restart();
+                                sClose = true;
+                            },
+                    },
+                    ModalAction{
+                        .label = "Report on GitHub",
+                        .onPressed =
+                            [&actions](Modal& modal) {
+                                if (actions.report) modal.set_body_text(actions.report());
+                            },
+                    },
+                    ModalAction{.label = "Show details", .onPressed = details},
+                    ModalAction{
+                        .label = "Close the game",
+                        .onPressed =
+                            [&actions](Modal&) {
+                                if (actions.close_game) actions.close_game();
+                                sClose = true;
+                            },
+                    },
+                },
+            .onDismiss = dismiss,
+            .variant = "danger",
+            .icon = "error",
+        }));
+        else if (content.hang) push_document(std::make_unique<Modal>(Modal::Props{
             .title = "The game is not responding",
             .bodyRml = "<b>" + escape(content.what) +
                        ".</b> The menu cannot open. The game may still recover: keep waiting, or close it.<br/><br/>"

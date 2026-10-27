@@ -79,6 +79,7 @@ unsigned ppu_boot_frames_presented(void);  // boot_main.cpp: the game's frames s
 void ps3_setenv(const char* name, const char* value);  // boot_main.cpp: the debug console's setenv
 int rsx_d3d12_borderless(void);
 void* rsx_d3d12_device(void);
+long rsx_d3d12_device_lost(long long* qpc);  // 0, or why the device was lost (GetDeviceRemovedReason)
 void* rsx_d3d12_queue(void);
 void* rsx_d3d12_hwnd(void);
 void rsx_d3d12_post_message(unsigned msg, unsigned long long wp, long long lp);
@@ -702,18 +703,43 @@ std::string session_text(unsigned width, unsigned height) {
     return s;
 }
 
+// Why the graphics device was lost (rsx_d3d12_device_lost), for the player.
+std::string lost_text(long reason) {
+    switch (static_cast<unsigned long>(reason)) {
+    case 0x887A0006ul: return "The graphics card stopped responding, and Windows reset its driver";
+    case 0x887A0005ul: return "The graphics card was removed, or its driver was updated or restarted";
+    case 0x887A0007ul: return "The graphics driver was reset after a bad command";
+    case 0x887A0020ul: return "The graphics driver had an internal error";
+    case 0x8007000Eul: return "The graphics card ran out of memory";
+    default: {
+        char text[64];
+        std::snprintf(text, sizeof text, "The graphics device was lost (0x%08lX)", static_cast<unsigned long>(reason));
+        return text;
+    }
+    }
+}
+
 // Every quarter second, on a thread of its own: what the render thread cannot do once the game has stopped. The game
 // no longer reads the pad, so the menu chord is read here. A menu key or chord that frame has not answered within
 // kStoppedMs means the render thread is stuck too: the hang dialog (a second process) takes over. After kHangNoticeMs
 // without a new frame the overlay is asked to say how to report it (and if it cannot, the dialog opens). It also
-// counts the game's frames each second for reports.
+// counts the game's frames each second for reports. A lost graphics device (a driver reset) opens the dialog in its
+// lost form: the game runs on, so no frame stops, but nothing can be drawn, the menu included (issue #205).
 void watch_thread() {
     bool chordWasDown = true;  // (a chord held from before is not a press)
     bool noticed = false;
     bool dialogShown = false;  // the hang dialog opened in this stop: again only when the player asks
+    bool lostShown = false;
     unsigned lastFrames = ppu_boot_frames_presented(), ticks = 0;
     for (;;) {
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if (!lostShown) {
+            if (const long reason = rsx_d3d12_device_lost(nullptr)) {
+                lostShown = true;
+                std::fprintf(stderr, "[ui] the graphics device was lost (0x%08lX): the dialog\n", (unsigned long)reason);
+                ui::crash_report::report_graphics_lost(lost_text(reason));
+            }
+        }
         if (++ticks % 4 == 0) {
             const unsigned frames = ppu_boot_frames_presented();
             std::lock_guard<std::mutex> lock(sRateLock);

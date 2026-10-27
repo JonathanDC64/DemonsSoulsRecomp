@@ -36,6 +36,8 @@ walks into them. RPCS3's DeS FPS patch has the same warning: above 60 fps "users
   `0x0109F250`, which copies an hkTransform into a 4x4 matrix; a hook after its last store (`0x0109F2C4`) writes
   the in-between pose into the matrix when the source is a moving dynamic rigid body (vtable `0x018B4810`,
   inverse mass above 0). Keyframed bodies and copies of anything else are left alone.
+- `DES_PARTINTERP` (default 1): what the game ties to a character's part, such as an arrow stuck in it, moves
+  every frame too. See "Arrows stuck in a character" below.
 - `DES_PHYS_HZ=0` steps every frame (the old behaviour above 30 fps). Other values set the cap; 60 was tried and
   is worse than 30 (below).
 
@@ -99,6 +101,52 @@ Normal play on the deep Palace save is unchanged (same build, knob off and on, 3
 The breaks were replayed from a player's recording: the frame log with the camera yaw, then a scratch probe that kills
 every enemy, warps to where the player stood before each roll, and rolls along the same world direction (stick angle =
 heading minus camera yaw).
+
+## Arrows stuck in a character (2026-10-27)
+
+Above 30 fps, arrows stuck in the player jittered.
+
+- **Cause.** A stuck arrow is an effect tied to one of the character's bodies, the hit capsules that the game keeps
+  keyframed to the animation pose.
+  - Each frame `0x00262DB0` sets the arrow's matrix from that body's world matrix, read through `0x002E86D8` and
+    `0x001EFA20`.
+  - That getter, and three like it (`0x001DFB68`, `0x001E1610`, `0x001EFED0`), samples the body's swept transform
+    at the world's time plus one frame (`0x001E4228`). It does this through Havok's approxTransformAt
+    (`0x011B1D50`), which only the stub `0x000112E0` calls.
+  - Under the cap the world's time moves only when the world steps. So the arrow held still for most frames and
+    then jumped a whole step (12-14 cm at a run), while the model moved every frame.
+  - Nothing reads these bodies' transforms directly between steps, which is why the breakables hook
+    (`0x0109F250`) never saw them.
+- **Fix.** `des_body_sample` runs after `0x000112E8` in the stub. There r3 is the body's motion (body + 0xD0) and
+  f1 is the time. It moves the time on:
+  - For a keyframed body (a living character's parts), by the game time the world has not stepped yet. Each frame,
+    `des_phys_rate` keeps the world's time that matches the game's: the world's time before the frame's step
+    (its simulation, `*(world + 8)`, at +0x14) plus the step and the cap's leftover. The hook subtracts the time of
+    the body's own world (body + 8). So the body carries on its last step and keeps up with the model. It is left
+    alone after a jump of more than 1 m in one step, or when it is two steps or more behind.
+  - For a dynamic body (a ragdoll's parts), to the pose between the start and the end of its last step, which is
+    where `DES_RAGINTERP` draws it.
+- An earlier version measured the game time since the body's last step instead. That left a correction of up to a
+  frame's move at each step, because the frames between two steps never add up to exactly 1/30 s. The cap's
+  leftover is exact.
+- The remaining roughness comes from carrying a step's motion on: a body that speeds up or slows down within a
+  stride is a few millimetres off until the next step.
+- `DES_PARTINTERP=0` turns it off. `DES_PARTINTERP_LOG=1` prints the first samples it moves. The hook is new, so the
+  game needs a re-lift.
+
+Measured on the deep Palace save, under the four 1-1 archers:
+- 13 arrows over three rounds. An arrow is a position that appeared after the arrows hit and moves with the player.
+- In each round the player walks straight while the settings switch live, 0.5 s each.
+- Still frames are frames of the player in which the arrow moved less than a fifth of the player's median move.
+- Smoothness is the rms change of the arrow's move from one update to the next.
+
+| Setting | Still frames | Smoothness | Biggest move in one update |
+|---|---|---|---|
+| Unlocked, no cap (`DES_PHYS_HZ=0`) | 0-2% | 0.7-1.4 mm | 11-18 mm |
+| Unlocked, cap 30, `DES_PARTINTERP=0` (before) | 68-71% | 42-56 mm | 124-140 mm |
+| Unlocked, cap 30, fix | 0-2% | 4.1-6.8 mm | 26-34 mm |
+
+The player moved 9-13 mm a frame in the capped rows.
 
 ## Moving platforms (2026-10-26)
 

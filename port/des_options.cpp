@@ -2079,6 +2079,42 @@ extern "C" void des_roll_dir(ppu_context* ctx, uint32_t addr)
                 stick * 180.0f / kPi, turn * 180.0f / kPi, why ? why : "turned");
 }
 
+/* DES_ROLLTIE=1 (the default; 0 is the original): a roll toward a diagonal
+ * when not locked on. Each frame 0x0030E750 keeps one axis of the stick, the
+ * larger (up/down on a tie, 0x0030E8B0). Not locked on, it then turns that
+ * axis and its 6-frame history into the frame of the stick's own direction
+ * (0x0030EC44 to 0x0030F2C0). The kept axis is at most 45 degrees off the
+ * stick, so the turned forward part (f30) beats the side part (f31), a tie
+ * going forward (0x0030EA34), and the roll goes toward the stick. On an exact
+ * diagonal the two parts are equal (0.5 and 0.5). The game reads an axis as
+ * (byte - 127.5) / 127.5, so the keys' corners (0 or 255 on each axis) are
+ * exact diagonals, and the turn's rounding in the last bit picked the side
+ * roll, 90 degrees off, in about half of those rolls. The lifter calls this
+ * after the turn's last load (0x0030F2BC). A near tie (the side part larger
+ * by at most 1%) goes forward, as the game means: f31, and f27 of the current
+ * frame's pair (f26, f27), set to 0. Live. DES_ROLLLOG=1 prints the first
+ * frame of each run of near ties. */
+static bool roll_near_tie(double fwd, double side)
+{
+    const double a = std::fabs(fwd), b = std::fabs(side);
+    return b > a && b - a <= 0.01 * b;
+}
+extern "C" void des_roll_tie(ppu_context* ctx, uint32_t)
+{
+    static int on = 1, log = 0;
+    static bool was = false;
+    PS3_KNOB(on, ps3_env_int("DES_ROLLTIE", 1) != 0);
+    PS3_KNOB(log, env_on("DES_ROLLLOG"));
+    const bool hist = roll_near_tie(ctx->fpr[30], ctx->fpr[31]), cur = roll_near_tie(ctx->fpr[26], ctx->fpr[27]);
+    if (log && (hist || cur) && !was)
+        fprintf(stderr, "[rolllog] 0030F2BC near tie: forward %+.7f side %+.7f, now %+.7f %+.7f: %s\n", ctx->fpr[30],
+                ctx->fpr[31], ctx->fpr[26], ctx->fpr[27], on ? "forward" : "left to the game");
+    was = hist || cur;
+    if (!on) return;
+    if (hist) ctx->fpr[31] = 0.0;
+    if (cur) ctx->fpr[27] = 0.0;
+}
+
 /* The character creation screen's previews turn with the right stick: the
  * whole body (0x008DB170, from Create Profile on) and the face in Edit
  * Appearance (0x008DA0E0). Each step gets r3 = the preview and f1, f2 = the

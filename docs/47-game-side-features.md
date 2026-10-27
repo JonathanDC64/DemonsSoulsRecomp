@@ -415,6 +415,33 @@ Run rd4, the turn without the 0.3 s hold, 30 / 138 fps: 22.5 gave +1.9 / +0.9, 4
 
 Not tested: the heavy and overweight move sets (rows 1 to 5 use the same k), rolls out of an attack's input window, and a remote player's view online.
 
+### 3.8 Built: `DES_ROLLTIE`, diagonal rolls when not locked on (2026-10-26)
+
+Not locked on, a roll toward a diagonal sometimes went 90 degrees off, to the side. It showed with the keyboard (W+D and the other pairs), at 30 fps and above.
+
+**Why.** Not locked on, 0x0030E750 still keeps one stick axis each frame (section 3.2 step 2). It then turns that axis and its history into the frame of the stick's own direction (0x0030EC44 to 0x0030F2C0, run when M+0x139 is 1). The kept axis is at most 45 degrees off the stick, so the turned forward part (f30) is at least the side part (f31): the roll is slot 15, and the character rolls toward the stick. On an exact diagonal the two parts are equal (0.5 and 0.5), and the turn's rounding in the last bit decides between them.
+
+- The game reads an axis byte as (b - 127.5) / 127.5. The pad diagonal (219, 37) fits that exactly: its turned parts were 0.505494 and 0.499970, 44.69 degrees. So the keyboard's corners (0 or 255 on each axis) are always exact diagonals. Of the pad's four diagonals at full tilt, (219, 219) and (37, 37) are exact too.
+- In the logged frames, the side part was never larger than the forward part to 6 decimals. Every off roll came from a tie that the rounding broke the other way.
+- With the stick and Circle pressed together, the character's facing was still turning, and the parts were the same. So the turn uses the stick's direction, not the facing.
+
+**Fix.** `des_roll_tie` runs after the turn's last load (0x0030F2BC). A near tie (the side part larger by at most 1%) goes forward, as the game's own tie rule means: f31 is set to 0, and f27 too for the current frame's pair (f26, f27). The hook is only on the not-locked path, so locked-on rolls (and `DES_ROLLDIR`) are unchanged. `DES_ROLLTIE=0` is the original. `DES_ROLLLOG=1` prints the first frame of each run of near ties.
+
+**Runs** rk4 (unlocked, about 240 fps) and rk5 (30 fps). Deep Palace save, scripted stick (`PAD_STICK`) and Circle (`PAD_FILE`), the four diagonals in the pad's shape ((219, 37) and so on) and the keyboard's ((255, 0) and so on). Three starts: standing after turning to the stick, running, and the stick and Circle together. A roll more than 30 degrees off the stick counts as off; the off rolls went 70 to 92 degrees off.
+
+| Off rolls, of 4 diagonals | Standing | Running | Stick and Circle together |
+|---|---|---|---|
+| Unlocked, `DES_ROLLTIE=0`, pad shape | 0 | 1 | 0 |
+| Unlocked, `DES_ROLLTIE=0`, keyboard | 2 | 3 | 2 |
+| Unlocked, `DES_ROLLTIE=1`, pad shape | 0 | 0 | 0 |
+| Unlocked, `DES_ROLLTIE=1`, keyboard | 0 | 0 | 0 |
+| 30 fps, `DES_ROLLTIE=0`, pad shape | 1 | 0 | 2 |
+| 30 fps, `DES_ROLLTIE=0`, keyboard | 2 | 3 | 1 |
+| 30 fps, `DES_ROLLTIE=1`, pad shape | 0 | 0 | 0 |
+| 30 fps, `DES_ROLLTIE=1`, keyboard | 0 | 0 | 0 |
+
+The pad shape's off rolls were all on its exact diagonals. In one 30 fps trial with the fix (keyboard, running, 315 degrees) no roll started; in run rk6 that trial rolled toward the stick three times out of three, and the other keyboard diagonals once each.
+
 ## 4. PvP arena
 
 ### 4.1 What the game has

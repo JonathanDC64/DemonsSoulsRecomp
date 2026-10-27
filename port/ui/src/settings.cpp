@@ -36,7 +36,7 @@ constexpr Def kDefs[] = {
     {"DES_MOTION_BLUR", "1", Apply::Live},     // des_motion_blur, read each frame
     {"DES_VSYNC", "1", Apply::Live},           // 1, 0, even, vrr; des_options.cpp sets RSX_VSYNC from it at each flip
     {"DES_SKIP_INTRO", "0", Apply::Live},      // 1 = no logos, 2 = the last logo only; read at each logo update
-    {"DES_SKIP_INTRO_MOVIE", "0", Apply::Live},  // PS3_SAIL_SKIP, read as each movie opens
+    {"DES_SKIP_INTRO_MOVIE", "0", Apply::Live},  // PS3_SAIL_SKIP_FIRST, read as each movie opens
     {"DES_AUTO_CONTINUE", "0", Apply::Live},   // read at each pad poll, until the first level loads
     {"AUDIO_MUTE", "0", Apply::Live},
     {"DES_DOF", "1", Apply::Live},             // des_dof, read each frame
@@ -127,7 +127,7 @@ void make_dirs(const std::string& file) {
     std::filesystem::create_directories(std::filesystem::path(report::widen(file)).parent_path(), ec);
 }
 
-// The environment variables a setting drives (DES_SKIP_INTRO_MOVIE sets PS3_SAIL_SKIP, which cellSail reads as each movie opens; PAD_KEYS gives cellPad the
+// The environment variables a setting drives (DES_SKIP_INTRO_MOVIE sets PS3_SAIL_SKIP_FIRST, which cellSail reads as each movie opens; PAD_KEYS gives cellPad the
 // layout with the changes after it).
 void apply_env(std::string_view key, const std::string& value) {
     const std::string k(key);
@@ -143,7 +143,7 @@ void apply_env(std::string_view key, const std::string& value) {
         return;
     }
     ps3_setenv(k.c_str(), value.c_str());
-    if (key == "DES_SKIP_INTRO_MOVIE") ps3_setenv("PS3_SAIL_SKIP", value == "0" ? "" : "ds_advertise.pam");
+    if (key == "DES_SKIP_INTRO_MOVIE") ps3_setenv("PS3_SAIL_SKIP_FIRST", value == "0" ? "" : "ds_advertise.pam");
 }
 
 }  // namespace

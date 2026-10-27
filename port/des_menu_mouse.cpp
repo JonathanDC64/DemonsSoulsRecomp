@@ -380,10 +380,15 @@ void build_menus(ppu_context* ctx)
          * 1. its host word is the dialog;
          * 2. it is an object whose first word points just past the dialog, and the piece has the dialog's rect;
          * 3. it has a host of its own and the dialog's rect (the inventory's tabs, held through another object);
-         * 4. an object whose first word points just past the dialog, whatever its rect.
+         * 4. an object whose first word points just past the dialog, whatever its rect;
+         * 5. a drawn piece with the dialog's rect, whatever its host word holds.
          * (4 alone named the stats panel the host of a new Create Profile dialog: the game made it where an old one
-         * was, and the panel holds an object that still points there. Its spots were then 777 px off.) */
+         * was, and the panel holds an object that still points there. Its spots were then 777 px off.)
+         * (5 is for the inventory opened on a tab other than the first: then its pieces' host words hold no pointer,
+         * so its tabs and the rows' icons had no host. The tabs then sat at the canvas's corner, and as a menu not
+         * part of the inventory they left the inventory out.) */
         std::vector<int> parent(n, -1), via(n, -1), loose(n, -1), loose_via(n, -1);
+        std::vector<char> rule(n, 0);   /* the rule that named it (the census shows it) */
         auto has_rect = [&](size_t j, size_t k, size_t i) {
             float r[4];
             return rect_of(pcs[j][k].obj, r) && same_box(r, ds[i].cur);
@@ -404,6 +409,7 @@ void build_menus(ppu_context* ctx)
                     if (hit) {
                         parent[i] = (int)j;
                         via[i] = (int)k;
+                        rule[i] = h == ds[i].dlg ? 1 : 2;
                         break;
                     }
                 }
@@ -415,11 +421,23 @@ void build_menus(ppu_context* ctx)
                     if (!guest_ok(pcs[j][k].host, 4) || !has_rect(j, k, i)) continue;
                     parent[i] = (int)j;
                     via[i] = (int)k;
+                    rule[i] = 3;
                     break;
                 }
         }
         for (size_t i = 0; i < n; i++)   /* 4 */
-            if (ds[i].vis && parent[i] < 0 && loose[i] >= 0) parent[i] = loose[i], via[i] = loose_via[i];
+            if (ds[i].vis && parent[i] < 0 && loose[i] >= 0) parent[i] = loose[i], via[i] = loose_via[i], rule[i] = 4;
+        for (size_t i = 0; i < n; i++) {   /* 5 */
+            if (!ds[i].vis || parent[i] >= 0) continue;
+            for (size_t j = 0; j < i && parent[i] < 0; j++)
+                for (size_t k = 0; k < pcs[j].size(); k++) {
+                    if (!pcs[j][k].drawn || !has_rect(j, k, i)) continue;
+                    parent[i] = (int)j;
+                    via[i] = (int)k;
+                    rule[i] = 5;
+                    break;
+                }
+        }
         /* Each dialog's layout in the canvas: its own map after its host's. */
         std::vector<std::array<float, 4>> xf(n);
         std::vector<char> done(n, 0);
@@ -448,9 +466,14 @@ void build_menus(ppu_context* ctx)
                 last = sig;
                 for (size_t i = 0; i < n; i++) {
                     if (!ds[i].vis) continue;
-                    fprintf(stderr, "[mm] dialog 0x%08X vt 0x%08X cur %.0f,%.0f,%.0f,%.0f lay %.0f,%.0f,%.0f,%.0f parent %d\n",
+                    const int p = parent[i];
+                    fprintf(stderr, "[mm] dialog 0x%08X vt 0x%08X cur %.0f,%.0f,%.0f,%.0f lay %.0f,%.0f,%.0f,%.0f parent %d",
                             ds[i].dlg, ds[i].vt, ds[i].cur[0], ds[i].cur[1], ds[i].cur[2], ds[i].cur[3], ds[i].lay[0],
-                            ds[i].lay[1], ds[i].lay[2], ds[i].lay[3], parent[i]);
+                            ds[i].lay[1], ds[i].lay[2], ds[i].lay[3], p);
+                    if (p >= 0)
+                        fprintf(stderr, " (0x%08X via %s, rule %d)", ds[p].dlg, name_of(pcs[p][via[i]].obj).c_str(),
+                                rule[i]);
+                    fprintf(stderr, "\n");
                     for (const Piece& p : pcs[i]) {
                         float lay[4] = {0, 0, 0, 0}, box[4] = {0, 0, 0, 0};
                         if (rect_of(p.obj, lay)) apply(xf[i].data(), lay, box);

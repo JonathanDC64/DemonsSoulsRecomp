@@ -1290,36 +1290,69 @@ static std::atomic<double> s_phys_clock{0.0};   /* game seconds, summed frame dt
 static std::atomic<bool> s_phys_capped{false};  /* this frame was shorter than the step */
 static std::atomic<bool> s_phys_ride{false};    /* this frame steps uncapped: the player rides a moving body */
 
-/* The cap and moving bodies. An elevator, a lift or a turning bridge is a
- * keyframed body, moved by the world step, so under the cap it moves in 1/n
- * steps and the player standing on it with it: on the Palace 1-4 elevator at
- * 200 fps, a 6 cm jump every 33 ms with still frames between. So while the
- * player touches a moving keyframed body, and for 0.25 s of game time after,
- * the world steps every frame, as with DES_PHYS_HZ=0. The player's character
- * proxy (*(P + 0x34), P = *(*(chr + 0x20) + 0x10), vtable 0x018B89F0) lists
- * the rigid bodies it touches at +0x8C (data, size). A moving keyframed one
- * (vtable 0x018B4810) has inverse mass 0 (+0x19C) and a linear (+0x1A0) or
- * angular (+0x1B0) velocity; the level's fixed bodies have none.
+/* The cap and moving bodies. An elevator, a lift, a paternoster or a turning
+ * bridge is a keyframed body, moved by the world step, so under the cap it
+ * moves in 1/n steps and the player standing on it with it: on the Palace 1-4
+ * elevator at 200 fps, a 6 cm jump every 33 ms with still frames between. So
+ * while the player is in or on a moving keyframed body, and for 0.25 s of game
+ * time after, the world steps every frame, as with DES_PHYS_HZ=0.
+ * The player's character proxy does not list the floor the player stands on
+ * (its contacts stay empty on level ground and on a platform's floor; only a
+ * side contact shows), so the test is by position: the world
+ * (*(*(r31 + 0x10) + 4) in the physics update, vtable 0x018B4F98) lists its
+ * active simulation islands at +0x28 (data, size), and an island its bodies
+ * at +0x48. A moving keyframed body (vtable 0x018B4810) has inverse mass 0
+ * (+0x19C) and a linear (+0x1A0) or angular (+0x1B0) velocity. Characters'
+ * own bodies are keyframed too, on collision layer 8 (the filter word +0x2C,
+ * low 5 bits), and layer 6 once the character is dead; both are left out.
+ * The lifts and paternosters seen are on layer 12. The body's bounding
+ * box is held as 32-bit broadphase integers (+0x30 min, +0x40 max); the
+ * broadphase (*(world + 0x54)) maps them back with its offset (+0x70) and
+ * scale (+0x90). The player is on the body when the player's position
+ * (P + 0x10, P = *(*(chr + 0x20) + 0x10)) is in the box widened by 0.3 m.
  * DES_PHYS_RIDE=0 keeps the cap there too; DES_PHYS_RIDE_LOG=1 prints each
  * start and end. */
-static uint32_t player_moving_body()
+static uint32_t player_moving_body(uint32_t world)
 {
     uint32_t p = vm_read32(kChrMan);
     if (!guest_ptr_ok(p) || !guest_ptr_ok(p = vm_read32(p + 0x1BC)) || !guest_ptr_ok(p = vm_read32(p + 0x20)) ||
-        !guest_ptr_ok(p = vm_read32(p + 0x10)) || !guest_ptr_ok(p = vm_read32(p + 0x34)) ||
-        vm_read32(p) != 0x018B89F0u)
+        !guest_ptr_ok(p = vm_read32(p + 0x10)))
         return 0;
-    const uint32_t bodies = vm_read32(p + 0x8C), n = vm_read32(p + 0x90);
-    if (!guest_ptr_ok(bodies) || n > 32) return 0;
-    for (uint32_t i = 0; i < n; i++) {
-        const uint32_t b = vm_read32(bodies + 4 * i);
-        if (!guest_ptr_ok(b) || vm_read32(b) != 0x018B4810u || vm_readf(b + 0x19C) != 0.0f) continue;
-        float v = 0.0f, w = 0.0f;
-        for (int k = 0; k < 3; k++) {
-            const float a = vm_readf(b + 0x1A0 + 4 * k), r = vm_readf(b + 0x1B0 + 4 * k);
-            v += a * a; w += r * r;
+    const float pos[3] = {vm_readf(p + 0x10), vm_readf(p + 0x14), vm_readf(p + 0x18)};
+    if (!guest_ptr_ok(world) || vm_read32(world) != 0x018B4F98u) return 0;
+    const uint32_t bp = vm_read32(world + 0x54);
+    if (!guest_ptr_ok(bp)) return 0;
+    double off[3], scale[3];
+    for (int k = 0; k < 3; k++) {
+        off[k] = vm_readf(bp + 0x70 + 4 * k); scale[k] = vm_readf(bp + 0x90 + 4 * k);
+        if (!(scale[k] > 0.0)) return 0;
+    }
+    const uint32_t islands = vm_read32(world + 0x28), ni = vm_read32(world + 0x2C);
+    if (!guest_ptr_ok(islands) || ni > 1024) return 0;
+    for (uint32_t i = 0; i < ni; i++) {
+        const uint32_t isl = vm_read32(islands + 4 * i);
+        if (!guest_ptr_ok(isl)) continue;
+        const uint32_t bodies = vm_read32(isl + 0x48), n = vm_read32(isl + 0x4C);
+        if (!guest_ptr_ok(bodies) || n > 4096) continue;
+        for (uint32_t j = 0; j < n; j++) {
+            const uint32_t b = vm_read32(bodies + 4 * j);
+            if (!guest_ptr_ok(b) || vm_read32(b) != 0x018B4810u || vm_readf(b + 0x19C) != 0.0f) continue;
+            const uint32_t layer = vm_read32(b + 0x2C) & 31;
+            if (layer == 8 || layer == 6) continue;
+            float v = 0.0f, w = 0.0f;
+            for (int k = 0; k < 3; k++) {
+                const float a = vm_readf(b + 0x1A0 + 4 * k), r = vm_readf(b + 0x1B0 + 4 * k);
+                v += a * a; w += r * r;
+            }
+            if (!(v > 1e-4f || w > 1e-4f)) continue;
+            bool in = true;
+            for (int k = 0; k < 3 && in; k++) {
+                const double lo = vm_read32(b + 0x30 + 4 * k) / scale[k] - off[k];
+                const double hi = vm_read32(b + 0x40 + 4 * k) / scale[k] - off[k];
+                in = pos[k] >= lo - 0.3 && pos[k] <= hi + 0.3;
+            }
+            if (in) return b;
         }
-        if (v > 1e-4f || w > 1e-4f) return b;
     }
     return 0;
 }
@@ -1333,12 +1366,19 @@ extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
     static double acc = 0.0, ride_until = 0.0;
     const double dt = ctx->fpr[31];
     if (dt > 0.0) s_phys_clock.store(s_phys_clock.load() + dt);
-    const uint32_t body = hz > 0 && ride_on && dt > 0.0 && dt < 1.0 / hz ? player_moving_body() : 0;
+    uint32_t world = vm_read32((uint32_t)ctx->gpr[31] + 0x10);
+    world = guest_ptr_ok(world) ? vm_read32(world + 4) : 0;
+    static uint32_t world_seen = 0;
+    if (ride_log && world != world_seen) {
+        world_seen = world;
+        fprintf(stderr, "[physride] world %08X (vtable %08X)\n", world, guest_ptr_ok(world) ? vm_read32(world) : 0u);
+    }
+    const uint32_t body = hz > 0 && ride_on && dt > 0.0 && dt < 1.0 / hz ? player_moving_body(world) : 0;
     if (body) ride_until = s_phys_clock.load() + 0.25;
     const bool ride = hz > 0 && ride_on && s_phys_clock.load() < ride_until;
     if (ride_log && ride != s_phys_ride.load())
-        fprintf(stderr, "[physride] %s at %.2f s (body %08X)\n", ride ? "every frame" : "capped again",
-                s_phys_clock.load(), body);
+        fprintf(stderr, "[physride] %s at %.2f s (body %08X, filter %08X)\n", ride ? "every frame" : "capped again",
+                s_phys_clock.load(), body, body ? vm_read32(body + 0x2C) : 0u);
     s_phys_ride.store(ride);
     if (ride) hz = 0;
     const double h = hz > 0 ? 1.0 / hz : 0.0;

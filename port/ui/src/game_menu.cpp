@@ -46,6 +46,8 @@ std::atomic<int> sX{0}, sY{0};    // where, in the back buffer's pixels
 std::atomic<int> sW{0}, sH{0};    // the back buffer's size (frame)
 int sMode = 0;                    // what frame told the host last (the render thread): host::GamePointer
 int sWheel = 0;                   // wheel movement short of a notch (the window's thread)
+constexpr int kClosedPolls = 4;   // presented frames the game's side must report no menu before it counts as closed
+int sClosedPolls = kClosedPolls;  // (the render thread)
 
 // Back buffer pixels to the menu canvas, and back.
 bool mapping(float pic[4], float view[4]) {
@@ -77,7 +79,11 @@ bool to_pixels(float cx, float cy, float& x, float& y) {
 namespace ui::game_menu {
 
 bool poll() {
-    const bool open = des_menu_mouse_open() != 0;
+    // Closed once the game's side has said so a few frames running: a frame without the menu (a redraw) neither
+    // hides the pointer nor gives the mouse back to mouse look.
+    if (des_menu_mouse_open()) sClosedPolls = 0;
+    else if (sClosedPolls < kClosedPolls) sClosedPolls++;
+    const bool open = sClosedPolls < kClosedPolls;
     if (sOpen.exchange(open) != open) {
         ui::mouse::set_game_menu(open);
         if (!open && !ui::settings::no_user_input()) sShown.store(false);

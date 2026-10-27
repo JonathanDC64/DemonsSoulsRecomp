@@ -1,6 +1,6 @@
 # 114. The mouse in the game's own menus
 
-Date: 2026-10-27. Status: first version, for the user to try.
+Date: 2026-10-27. Status: experimental, off by default (Settings > Controls > Mouse in game menus (experimental)).
 
 - While one of the game's menus is up, the mouse works in it: the title, its prompts, the profile list, character
   creation, the pause menu and its pages, the inventory and its command menu, and any other screen built the same
@@ -20,14 +20,14 @@ Date: 2026-10-27. Status: first version, for the user to try.
   on any row, so the options' values change in one click though the game draws their arrows on the selected row only.
 - **Sliders** (Edit Appearance's age and gender): a click on the track moves the thumb there, and while the button is
   down the thumb follows the pointer. The wheel steps it, up to the right.
-- Settings > Controls > **Mouse in game menus** (`DES_MENU_MOUSE`, on by default) turns it off. With mouse look on,
+- Settings > Controls > **Mouse in game menus (experimental)** (`DES_MENU_MOUSE`, off by default) turns it on. With mouse look on,
   the mouse is the menu's while a menu of the game is up: the camera does not turn behind the pause menu.
 
 ## 1. Knobs
 
 | Knob | Default | What it does |
 |---|---|---|
-| `DES_MENU_MOUSE` | `1` | `0`: the game's menus take no mouse (the buttons and wheel are the keyboard layout's again, as before). Its row is Mouse in game menus. Live. |
+| `DES_MENU_MOUSE` | `0` | `1`: the mouse in the game's menus (experimental). `0`: the game's menus take no mouse, and the buttons and wheel are the keyboard layout's. Its row is Mouse in game menus (experimental). Live. |
 | `DES_MENU_MOUSE_PRESS` | `1` | Frames (and pad packets) each of the clicks' presses is held, and let go after (section 3). |
 | `DES_MENU_MOUSE_LOG` | `0` | `1`: the menus found, each time they change, and each walk. `2`: also the arrow pieces on screen. `3`: also every visible dialog with its pieces, each time the set changes (the census used to learn a screen). |
 
@@ -51,7 +51,18 @@ Found in the census runs (`DES_MENU_MOUSE_LOG=3`, section 1); nothing here is a 
   `obj_rect`).
 - **Hosts the pointer does not name.** Some dialogs hang off an object the rule above does not read (the
   inventory's tabs, in `tab_select`). Their host is the piece with a host pointer of its own and the dialog's rect,
-  in a dialog drawn before it: a host always draws before what it holds.
+  in a dialog drawn before it.
+- **Which host wins.** A host always draws before what it holds, so only dialogs drawn earlier are looked at. Best
+  first:
+  1. a piece whose host word is the dialog;
+  2. an object whose first word points just past the dialog, and whose piece has the dialog's rect;
+  3. a piece with a host of its own and the dialog's rect;
+  4. an object pointing just past the dialog, whatever its rect.
+
+  Rule 4 alone used to win, and it named the wrong host after Edit Appearance. Going back makes a new Create
+  Profile dialog where an old one was, and the stats panel on its right holds an object that still points there.
+  Create Profile was then placed in the panel's layout, 777 px right and 155 down, and nothing under the pointer
+  was its.
 - **A menu.** Each menu with a selection has a cursor dialog hosted by a piece whose name ends in `cursor`
   (`cursor`, `list_cursor`, `tab_cursor`, `stay_cursor`). The cursor dialog takes the selected spot's rect: a
   `DsMenuDlgCursor` (vtable `0x01867F50`, 32x32 layout), a plain dialog with the same 32x32 layout (the profile
@@ -152,6 +163,10 @@ does, so every screen keeps its own rules, sounds and help text.
   game is open"): no mouse look, and the buttons and wheel do not go to the keyboard layout (left click is not R1
   in a menu). des_ui.cpp's window procedure sends the mouse messages to `game_menu` instead (while no document of the
   UI is up). On Windows, mouse.cpp asks for WM_MOUSELEAVE, so the sword goes when the cursor leaves the window.
+- **A lost button up.** An arrow held down holds the game's button, and every press after it waits. If the left
+  button's up never reaches the menu (let go over another window, or while the menu was not taking the mouse),
+  `game_menu::frame` sees the button up and lets go itself. It does so only once it has seen the button down
+  through `ui::keys::key_down`: a platform that does not report the mouse's buttons there leaves it to the messages.
 - **The glow** is an element of the overlay document (`game-glow` in overlay.rcss), placed over the spot's box each
   frame (`game_menu::glow`) and faded with its `open` attribute.
 - **The sword** is host.cpp's, at the pointer (`set_game_pointer`); the lizard stays off over the game's menus.

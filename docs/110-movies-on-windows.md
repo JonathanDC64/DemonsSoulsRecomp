@@ -2,7 +2,8 @@
 
 Date: 2026-10-26. Status: built in CI; checked in game (FFmpeg's decoder plays the title screen's advert, 30 frames
 a second, and Media Foundation is never started). The runtime side is JonathanDC64/ps3recomp (sail_movie, FFmpeg on
-Windows too). Background: docs/109 section 5.
+Windows too). Background: docs/109 section 5. Builds from source download the same FFmpeg since 2026-10-27
+(section 4).
 
 ## Short answer
 
@@ -51,9 +52,9 @@ Windows too). Background: docs/109 section 5.
     the exe;
   - `[sail_movie] no Media Foundation on this PC ...` means Windows' own is missing too (section 3): the movies play
     their sound alone.
-- **Developer builds** (`des_boot.exe`, a local `des_host.exe`) have no DLLs beside them and use Media Foundation.
-  To try FFmpeg locally, copy `avcodec-62.dll` and `avutil-60.dll` from a CI run's `ffmpeg-windows-<sha>` artifact
-  beside the exe. `tools/des` stages any DLL beside `DES_EXE` into the run folder.
+- **Developer builds** (`des_boot.exe`, a local `des_host.exe`) get the DLLs from the runtime's download
+  (section 4). To try another build, copy its `avcodec-62.dll` and `avutil-60.dll` (a CI run's
+  `ffmpeg-windows-<sha>` artifact) beside the exe. `tools/des` stages any DLL beside `DES_EXE` into the run folder.
 
 ## 3. Windows N editions
 
@@ -64,7 +65,27 @@ Windows 10 and 11's N and KN editions have no Media Foundation unless the Media 
   `mfplat.dll` the first time a movie needs Windows' decoder. `MFPlat.DLL` was the only import those editions lack,
   so the program starts there:
   - with FFmpeg's DLLs beside it (the package), the movies play as anywhere else;
-  - without them (a source build), the log says
+  - without them (a source build whose download failed), the log says
     `[sail_movie] no Media Foundation on this PC (a Windows N edition needs the Media Feature Pack), so no MPEG-2 decoder of Windows' own`
     once, and the movies play their sound alone.
 - Checked on this PC with a scratch switch that loads a DLL name that doesn't exist; no N edition was at hand.
+
+## 4. Builds from source
+
+Until 2026-10-27 a build from source had no FFmpeg, so its movies needed the extension (issues #202 and #205: both
+reporters build from source). Now:
+- **The package:** JonathanDC64/ps3recomp's `ffmpeg-archive.yml`, started by hand, builds FFmpeg as `ffmpeg-windows`
+  does here. It attaches `ffmpeg-win64-<version>-<rev>.zip` (the DLLs, the headers, the licences) and FFmpeg's
+  source archive to a release of ps3recomp.
+- **The download:** ps3recomp's `cmake/ffmpeg_download.cmake` pins the zip's URL and SHA-256. A Windows configure
+  without `PS3RECOMP_FFMPEG_RUNTIME` downloads it once into `<build>/ffmpeg-win64`, checks it, and turns the run-time
+  FFmpeg on. A pull and a build are enough, because a changed CMake file makes the build configure again.
+- **Beside the exe:** after each link, `port/CMakeLists.txt` (`des_copy_ffmpeg_dlls`) copies the DLLs beside
+  `des_boot.exe` from `PS3RECOMP_BUILD_DIR`, and beside `des_host.exe` from the split runtime's folder.
+- **Offline, or a file that doesn't match:** the configure step warns and goes on without FFmpeg, and the movies use
+  Windows' own decoder as before. Configuring again with a network connection retries.
+  - `-DPS3RECOMP_FFMPEG_DOWNLOAD=OFF` never downloads.
+  - `-DPS3RECOMP_FFMPEG_URL=<url>` with `-DPS3RECOMP_FFMPEG_SHA256=<hex>` takes another copy (a mirror, or
+    `file:///` offline).
+- **CI:** the host job builds its own FFmpeg and sets `PS3RECOMP_FFMPEG_RUNTIME`, so it downloads nothing.
+- **Check:** in `des.log`, `[ffmpeg] libavcodec 62.x.y loaded` at the first movie (section 2).

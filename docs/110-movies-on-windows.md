@@ -48,13 +48,23 @@ Windows too). Background: docs/109 section 5.
     `[sail_movie] stream read: N frames decoded` at its end;
   - `[cellSail] video GetFrame #N: ... new frames 30.0/s` says the game is shown the frames at the movie's rate;
   - `[sail_movie] no FFmpeg decoder: Windows' own (Media Foundation) instead` means the DLLs were not found beside
-    the exe.
+    the exe;
+  - `[sail_movie] no Media Foundation on this PC ...` means Windows' own is missing too (section 3): the movies play
+    their sound alone.
 - **Developer builds** (`des_boot.exe`, a local `des_host.exe`) have no DLLs beside them and use Media Foundation.
   To try FFmpeg locally, copy `avcodec-62.dll` and `avutil-60.dll` from a CI run's `ffmpeg-windows-<sha>` artifact
   beside the exe. `tools/des` stages any DLL beside `DES_EXE` into the run folder.
 
-## 3. Open
+## 3. Windows N editions
 
-- **Windows N editions:** they have no Media Foundation unless the Media Feature Pack is installed (docs/45).
-  `des_host.exe` imports `MFPlat.DLL` directly, so it doesn't start there at all. Delay-loading Media Foundation,
-  and skipping it when it is missing, would let FFmpeg's decoder cover those PCs too.
+Windows 10 and 11's N and KN editions have no Media Foundation unless the Media Feature Pack is installed
+(docs/45).
+- **Before JonathanDC64/ps3recomp#143,** `des_host.exe` imported `MFPlat.DLL` directly, so it didn't start there at all.
+- **Now**, the runtime looks up Media Foundation's six functions in System32's
+  `mfplat.dll` the first time a movie needs Windows' decoder. `MFPlat.DLL` was the only import those editions lack,
+  so the program starts there:
+  - with FFmpeg's DLLs beside it (the package), the movies play as anywhere else;
+  - without them (a source build), the log says
+    `[sail_movie] no Media Foundation on this PC (a Windows N edition needs the Media Feature Pack), so no MPEG-2 decoder of Windows' own`
+    once, and the movies play their sound alone.
+- Checked on this PC with a scratch switch that loads a DLL name that doesn't exist; no N edition was at hand.

@@ -438,8 +438,10 @@ des_copy_ffmpeg_dlls(des_boot "${PS3RECOMP_BUILD_DIR}")
 # Made at configure time from the game's own PS3_GAME/ICON0.PNG (copy it to
 # work/game/ next to EBOOT.ELF, or point DES_ICON0 at it) by scripts/make_icon.py,
 # which needs only the Python standard library. GAME-DERIVED: written into the
-# build directory, never committed. Without the file the exe has no icon. The
-# window uses it too (resource 1, loaded by the runtime's window class).
+# build directory, never committed. The window uses it too (resource 1, loaded
+# by the runtime's window class). Without the file the exe has no icon, and the
+# window takes the game's ICON0.PNG at run time instead (ps3recomp's
+# rsx_window_icon.h), as CI's des_host.exe does.
 set(DES_ICON0 "${CMAKE_CURRENT_SOURCE_DIR}/../work/game/ICON0.PNG" CACHE FILEPATH "the game's PS3_GAME/ICON0.PNG")
 if(EXISTS "${DES_ICON0}" AND WIN32)
     enable_language(RC)

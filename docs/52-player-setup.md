@@ -558,7 +558,7 @@ Route B. Start with docs/45's milestone 1, the split built with today's toolchai
 | Data tables: known input hashes, job blob offsets, sizes and fingerprints, the override list, `insn_hooks.txt`, published DLL hashes | CI | addresses and hashes, not code (docs/45) |
 | Embeddable Python, trimmed LLVM | CI repackages, hash-pinned | third-party |
 | UI resources, fonts, licences | CI | ours and third-party |
-| The window and shortcut icon | the player's PC, at run time from `ICON0.PNG` (docs/45). The exe's own file icon is ours (docs/51 6, point 4). | game data |
+| The window icon | the player's PC, at run time from `ICON0.PNG` (ps3recomp's `rsx_window_icon.h`; docs/45). Setup makes no shortcut. The exe's own file icon is to be ours (docs/51 6, point 4); it has none yet. | game data |
 | Decrypted `EBOOT.ELF`, the 26 decrypted `.sdat` files, and `libsre.prx` while LLE | the player's PC; under docs/51 Plan L the player makes them and setup checks and copies them | game and firmware data |
 | Loader JSON, lifted PPU, SPU and libsre sources, glue, workload table | the player's PC | game-derived |
 | Objects, `des_game.dll`, its map | the player's PC | game-derived |

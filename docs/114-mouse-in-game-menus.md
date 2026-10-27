@@ -29,7 +29,7 @@ Date: 2026-10-27. Status: experimental, off by default (Settings > Controls > Mo
 |---|---|---|
 | `DES_MENU_MOUSE` | `0` | `1`: the mouse in the game's menus (experimental). `0`: the game's menus take no mouse, and the buttons and wheel are the keyboard layout's. Its row is Mouse in game menus (experimental). Live. |
 | `DES_MENU_MOUSE_PRESS` | `1` | Frames (and pad packets) each of the clicks' presses is held, and let go after (section 3). |
-| `DES_MENU_MOUSE_LOG` | `0` | `1`: the menus found, each time they change, and each walk. `2`: also the arrow pieces on screen. `3`: also every visible dialog with its pieces, each time the set changes (the census used to learn a screen). |
+| `DES_MENU_MOUSE_LOG` | `0` | `1`: the menus found, each time they change, and each walk. It also lists the menus left out, with why (`under` a higher menu's spots, `beneath` a menu over it) and the menu they went for, and the pass's draws. When the mouse stops in a menu, that tells a menu over it from one not found. `2`: also the arrow pieces on screen. `3`: also every visible dialog with its pieces, each time the set changes (the census used to learn a screen). |
 
 Tests click with the UI's `DES_UI_MOUSE` (des_ui.cpp): over a menu of the game, `x,y` moves the pointer there (back
 buffer pixels), `down`/`up` are the left button, `rdown`/`rup` the right one, `wheelup`/`wheeldown` a notch. They go

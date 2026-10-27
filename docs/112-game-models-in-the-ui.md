@@ -2,9 +2,10 @@
 
 Date: 2026-10-27. Status: first version, for the user to try.
 - While a menu is open, the mouse cursor is the **Large Sword of Moonlight**: the game's own model, drawn live in 3D,
-  with its translucent blade. Its tip is the cursor's point.
-- The **crystal lizard** dances in the bottom right corner while a menu is open. That place is for now. In a
-  document it is one line of RCSS (section 5).
+  with its translucent blade and a soft blue glow about it. Its tip is the cursor's point.
+- The **crystal lizard** dances in the bottom right corner while a menu is open, turning round slowly (once in
+  12 s), and it twinkles: its gems flash and star glints come and go on it. That place is for now. In a document it
+  is one line of RCSS (section 5).
 - Settings > Interface turns each off: **Sword cursor** and **Crystal lizard**, both on by default, at once.
 - Nothing of the game is in the program or in this repository. Both models are read from the player's own copy of
   the game, the first time each is drawn.
@@ -19,10 +20,12 @@ set from outside).
 | `DES_CURSOR3D` | `1` | `0`: the system's arrow, as before. Its row is Sword cursor. |
 | `DES_CURSOR_SIZE` | `64` | The sword's length, in dp (the UI's units: pixels at 96 DPI, times the UI scale). |
 | `DES_CURSOR_SPIN` | `0` | A slow turn about the blade, in degrees a second (`20` is one turn in 18 s). |
+| `DES_CURSOR_GLOW` | `1` | `0`: no glow about the blade (section 4.1). |
 | `DES_UI_LIZARD` | `1` | The lizard, dancing, in the bottom right corner while a document is up; `0`: none. Its row is Crystal lizard. |
 | `DES_UI_LIZARD_SIZE` | `160` | Its box, in dp. |
-| `DES_UI_LIZARD_SPIN` | `0` | The lizard turning round as it dances, in degrees a second (`30` is a turn in 12 s). |
+| `DES_UI_LIZARD_SPIN` | `30` | The lizard turning round as it dances, in degrees a second (`30` is a turn in 12 s; `0` keeps it facing the front left). |
 | `DES_UI_LIZARD_ANIM` | `a00_3301` | Another of its animations, by name (`a00_0000` is its idle). |
+| `DES_UI_LIZARD_TWINKLE` | `1` | `0`: no twinkle, neither the gems' flashes nor the star glints (section 4.1). |
 
 The sword shows where RmlUi would show the arrow or the hand: over the documents, while one is up, and the mouse is
 over the window. The text cursor, the HUD editor's move and resize cursors, and the "unavailable" one stay the
@@ -119,6 +122,28 @@ The UI's D3D12 renderer has a model shader beside RmlUi's.
 
 Only the D3D12 renderer draws models. With `DES_UI_RENDER=d3d11` the system's arrow stays.
 
+### 4.1 The glow and the twinkle
+
+In the game both are effects of their own (the sword's is attached at its dummy 206), not parts of the models, and
+their files are not read here. These are stand-ins, drawn with the model shader. Their numbers are in
+`ui::models::look`.
+- **The sword's glow**, as the previews had it:
+  - the blade's alpha, in a pale blue (0.55, 0.78, 1.0), at 0.85, is drawn into a postprocess target;
+  - it is blurred there with RmlUi's blur, sigma 3.5% of the sword's length (2 px or so at 64 dp);
+  - it is put on the layer under the sword, so it shows round the blade and a little through it.
+- **The lizard's twinkle**:
+  - **Its gems flash.** A gem is a texel more blue, green or violet than red; its skin is grey, brown and pink.
+    The texture is cut into cells (64 by 32), each on a clock of its own (1.5 to 4 s), and at about 4 turns in
+    10 a cell's gems flash white for an instant.
+  - **Star glints.** Four of them, each on its own clock (1.1 s, then 0.37 s longer for each next one), shine for
+    half of it. They are four thin rays over a bright core, 22% of the lizard's length at their brightest, and
+    they grow and shrink as they brighten and fade.
+  - Each turn a glint goes to another gem: one of 64 vertices on gems, spread over its body when it loads.
+  - A glint sits where its gem is in the pose, a little in front of it, so the lizard's depth hides those behind
+    it. None shows on a gem turned well away. The dance keeps its back, where most gems are, away from its front
+    left, so the glints show most while its turn brings its back round (with `DES_UI_LIZARD_SPIN=0`, on its tail and
+    at its outline only).
+
 ## 5. The lizard in a document
 
 Any element can show it:
@@ -143,5 +168,5 @@ Where it goes in the UI is still to be decided. Until then host.cpp draws it in 
 
 ## 7. Not done yet
 
-- The glow of the game's moonlight effect. The previews faked it with a blur; the shader has none.
+- The game's own effects (FFX) for the sword's moonlight and the lizard's twinkle. Section 4.1 draws stand-ins.
 - A place for the lizard in the menus.

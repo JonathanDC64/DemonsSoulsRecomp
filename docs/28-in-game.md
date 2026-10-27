@@ -482,7 +482,8 @@ Measured (`017dd06` counters): the game calls GetFrame about 31 times a second a
 Tools and knobs:
 - `PS3_SAIL_MOVIES=0`: never play; every stream ends at once (the old behaviour).
 - `PS3_SAIL_MOVIES=<text>` (`96757fc`): play only the movies whose path contains `<text>`; the rest end at once. `PS3_SAIL_MOVIES=title` reaches the title movie in about 50 s without sitting through the 130 s advert, which CROSS does not skip.
-- `PS3_SAIL_SKIP=<text>[,<text>...]`: never play the movies whose path contains one of the texts; the rest play. `DES_SKIP_INTRO_MOVIE=1` sets it to `ds_advertise.pam`.
+- `PS3_SAIL_SKIP=<text>[,<text>...]`: never play the movies whose path contains one of the texts; the rest play.
+- `PS3_SAIL_SKIP_FIRST=<text>[,<text>...]`: the same, but only the first time each such movie opens in a run. `DES_SKIP_INTRO_MOVIE=1` sets it to `ds_advertise.pam`.
 - `SAIL_AUDIO_TONE=<peak>` (`96757fc`): replace the movie's sound with one sine per channel, 250 Hz x (channel + 1). Pair it with `AUDIO_WAV=<file>` and look at the spectrum per channel.
 - `SAIL_AUDIO_DOWNMIX=0` (`7f48932`): hand 5.1 out as 5.1 (default: stereo).
 - `RSX_STALE_FLIPS=<n>` (`ad2d649`): flips without a present before the frame-size max counts as stale (default 4; 0 = never).
@@ -830,6 +831,8 @@ The two are now separate options:
 - `DES_SKIP_INTRO_MOVIE=1` skips only the opening movie, `movie/ds_advertise.pam`, the 130 s advert after the auto-save notice. It sets the runtime's `PS3_SAIL_SKIP` (ps3recomp `feat/sail-skip`: a comma list of path texts that are never played, while the rest play). The skipped movie ends as soon as it starts, as START ends it on hardware. In a test run the advert was skipped, and `ds_title.pam`, the movie behind the title screen, still played all 300 frames. Left idle, the title screen replays the advert as its attract movie, so that is skipped too, and the title movie plays again. `ds_opening` (after character creation) and the endings are not touched.
 
 `PS3_SAIL_MOVIES=0` still skips every movie. The settings window's "Intro movies" row (`PS3_SAIL_MOVIES`) is replaced by "Skip opening movie" (`DES_SKIP_INTRO_MOVIE`). A settings.ini with `PS3_SAIL_MOVIES = 0` reads as `DES_SKIP_INTRO_MOVIE = 1`.
+
+**2026-10-27: the first play only.** The title screen replays the advert after every 10 s loop of `ds_title.pam`, not after a long idle, so `PS3_SAIL_SKIP` skipped every one of those plays. The option is meant to skip only the play after the logos. `DES_SKIP_INTRO_MOVIE=1` now sets ps3recomp's `PS3_SAIL_SKIP_FIRST` (#141), which skips a listed movie only the first time it opens in a run. A test run with it: the advert after the logos was skipped, the title movie played its 300 frames, then the advert played in full (3,896 frames), then the title again. Every open counts, so turning the option on in the settings window after the advert has played skips nothing.
 
 ## 60 fps mode: runtime cost on the HighGraphics ring (ps3recomp branch `perf/spu-regions`, 2026-10-16)
 

@@ -28,11 +28,13 @@
  *   the settings window applies to the logo on screen (or the next start).
  *
  * DES_SKIP_INTRO_MOVIE=1 — skip the opening movie (movie/ds_advertise.pam, the
- *   130 s advert after the logos; the title screen also replays it when left
- *   idle). It sets PS3_SAIL_SKIP, so cellSail ends that movie as soon as it
- *   starts, as START does on hardware; the title screen's own movie, the one
- *   after character creation and the endings still play. The settings window
- *   changes it live (from the next movie).
+ *   130 s advert after the logos), and only that play of it: the title screen
+ *   replays the same advert after each 10 s loop of its own movie, and those
+ *   plays stay. It sets PS3_SAIL_SKIP_FIRST, so cellSail ends that movie the
+ *   first time it starts, as START does on hardware; the title screen's own
+ *   movie, the one after character creation and the endings still play. The
+ *   settings window changes it live (from the next movie; once the advert has
+ *   played, there is nothing left to skip).
  *
  * DES_FPS=30 | 60 | 31..500 | unlocked — the game's own frame-rate mode, with real frame time.
  *   The engine object at *0x01AD6298 (built by 0x00025DD8) holds a flip mode
@@ -173,7 +175,7 @@ constexpr uint32_t kElapseTime   = 0x0F8u;
 constexpr uint32_t kCurLogType   = 0x0FCu;
 constexpr uint32_t kAnimState    = 0x100u;
 constexpr uint32_t kLastLogType  = 4u;
-constexpr const char* kOpeningMovie = "ds_advertise.pam";   /* PS3_SAIL_SKIP for DES_SKIP_INTRO_MOVIE */
+constexpr const char* kOpeningMovie = "ds_advertise.pam";   /* PS3_SAIL_SKIP_FIRST for DES_SKIP_INTRO_MOVIE */
 
 bool env_on(const char* name)
 {
@@ -2827,8 +2829,8 @@ extern "C" void ps3_title_options_init(void)
     ppu_register_function(kLogoUpdate, logo_update_skip);
     if (const int mode = skip_intro())
         fprintf(stderr, "[des] DES_SKIP_INTRO=%d: boot logos %s\n", mode, mode == 1 ? "skipped" : "shortened");
-    if (env_on("DES_SKIP_INTRO_MOVIE") && !getenv("PS3_SAIL_SKIP")) {
-        ps3_setenv("PS3_SAIL_SKIP", kOpeningMovie);
+    if (env_on("DES_SKIP_INTRO_MOVIE") && !getenv("PS3_SAIL_SKIP_FIRST")) {
+        ps3_setenv("PS3_SAIL_SKIP_FIRST", kOpeningMovie);
         fprintf(stderr, "[des] DES_SKIP_INTRO_MOVIE: the opening movie is skipped\n");
     }
     /* DES_FPS is read at each flip request, so the settings window changes it

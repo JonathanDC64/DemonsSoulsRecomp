@@ -10,6 +10,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <set>
 
 namespace ui::models {
 
@@ -27,6 +28,7 @@ struct Model {
     std::vector<Qs> reference;
     std::vector<std::vector<Qs>> frames;  // [frame][bone], every bone (the tracks bound, the others as the reference)
     double length = 0;
+    std::vector<Spot> spots;
 };
 
 namespace {
@@ -831,6 +833,64 @@ void bind_bounds(Model& m) {
             }
 }
 
+// The colour at (u, v) of a texture's largest level, from its blocks' colour part (BC1, BC2 and BC3 alike), 0 to 1.
+bool texel(const Texture& t, float u, float v, float rgb[3]) {
+    if (t.width < 4 || t.height < 4 || !std::isfinite(u) || !std::isfinite(v)) return false;
+    u -= std::floor(u);
+    v -= std::floor(v);
+    const int x = std::min(int(u * float(t.width)), t.width - 1), y = std::min(int(v * float(t.height)), t.height - 1);
+    const size_t size = t.format == TexFormat::BC1 ? 8 : 16;
+    const size_t at = (size_t(y / 4) * size_t((t.width + 3) / 4) + size_t(x / 4)) * size + (size - 8);
+    if (at + 8 > t.data.size()) return false;
+    const uint8_t* b = t.data.data() + at;
+    const unsigned c0 = unsigned(b[0] | b[1] << 8), c1 = unsigned(b[2] | b[3] << 8);
+    const unsigned i = (b[4 + (y & 3)] >> ((x & 3) * 2)) & 3u;
+    float e[2][3];
+    for (int k = 0; k < 2; k++) {
+        const unsigned c565 = k ? c1 : c0;
+        e[k][0] = float(c565 >> 11) / 31.f;
+        e[k][1] = float((c565 >> 5) & 63u) / 63.f;
+        e[k][2] = float(c565 & 31u) / 31.f;
+    }
+    const bool four = c0 > c1 || size == 16;
+    const float w = i == 0 ? 0.f : i == 1 ? 1.f : four ? (i == 2 ? 1.f / 3.f : 2.f / 3.f) : i == 2 ? 0.5f : 0.f;
+    for (int k = 0; k < 3; k++) rgb[k] = !four && i == 3 ? 0.f : e[0][k] + (e[1][k] - e[0][k]) * w;
+    return true;
+}
+
+// The lizard's gems, for its star glints: vertices on a texel more blue, green or violet than red (its skin is grey,
+// brown and pink), one to a cell of a coarse grid over its rest pose so they spread over the body, at most 64, chosen
+// the same way each time.
+void find_spots(Model& m) {
+    bind_bounds(m);
+    float cell = 0.f;
+    for (int k = 0; k < 3; k++) cell = std::max(cell, (m.hi[k] - m.lo[k]) / 24.f);
+    if (!(cell > 0.f)) return;
+    std::set<std::array<int, 3>> taken;
+    std::vector<Spot> all;
+    for (size_t mi = 0; mi < m.meshes.size(); mi++) {
+        const Mesh& mesh = m.meshes[mi];
+        if (mesh.texture < 0 || size_t(mesh.texture) >= m.textures.size()) continue;
+        for (size_t vi = 0; vi < mesh.vertices.size(); vi++) {
+            const Vertex& v = mesh.vertices[vi];
+            float rgb[3];
+            if (!texel(m.textures[size_t(mesh.texture)], v.uv[0], v.uv[1], rgb)) continue;
+            const float top = std::max({rgb[0], rgb[1], rgb[2]}), low = std::min({rgb[0], rgb[1], rgb[2]});
+            if (top - low < 0.2f || std::max(rgb[1], rgb[2]) - rgb[0] < 0.12f) continue;
+            const std::array<int, 3> key{int((v.pos[0] - m.lo[0]) / cell), int((v.pos[1] - m.lo[1]) / cell),
+                                         int((v.pos[2] - m.lo[2]) / cell)};
+            if (taken.insert(key).second) all.push_back({uint32_t(mi), uint32_t(vi)});
+        }
+    }
+    uint32_t seed = 0x2545F491u;
+    for (size_t i = all.size(); i > 1; i--) {
+        seed = seed * 1664525u + 1013904223u;
+        std::swap(all[i - 1], all[(seed >> 8) % i]);
+    }
+    if (all.size() > 64) all.resize(64);
+    m.spots = std::move(all);
+}
+
 // parts/wp_a_0258.partsbnd: the weapon's FLVER0 and its textures.
 std::unique_ptr<Model> load_moonlight(const std::string& dir, std::string& why) {
     std::vector<uint8_t> file;
@@ -918,6 +978,7 @@ std::unique_ptr<Model> load_lizard(const std::string& dir, std::string& why) {
     for (Mesh& mesh : m->meshes)
         for (auto& b : mesh.bones)
             for (uint16_t& i : b) i = uint16_t(i < to_skeleton.size() && to_skeleton[i] >= 0 ? to_skeleton[i] : 0);
+    find_spots(*m);
     // The box: around every frame of the animation (not the rest pose, which the dance never takes), so the lizard
     // stays put in its place as it moves.
     std::vector<std::vector<Vertex>> posed;
@@ -933,8 +994,8 @@ std::unique_ptr<Model> load_lizard(const std::string& dir, std::string& why) {
                 }
     }
     if (first) bind_bounds(*m);
-    std::fprintf(stderr, "[ui] model: the crystal lizard, %s (%zu frames, %.2f s)\n", used.c_str(), m->frames.size(),
-                 m->length);
+    std::fprintf(stderr, "[ui] model: the crystal lizard, %s (%zu frames, %.2f s, %zu gems for its twinkle)\n",
+                 used.c_str(), m->frames.size(), m->length, m->spots.size());
     return m;
 }
 
@@ -973,6 +1034,8 @@ void bounds(const Model& m, float lo[3], float hi[3]) {
 
 double duration(const Model& m) { return m.frames.empty() ? 0.0 : m.length; }
 
+const std::vector<Spot>& spots(const Model& m) { return m.spots; }
+
 namespace {
 
 // A turn of `degrees` about the unit axis (x, y, z), and a product of two, as rows.
@@ -1004,6 +1067,16 @@ float spin(const std::string& name) {
     return name == "moonlight" ? sword : name == "lizard" ? lizard : 0.f;
 }
 
+namespace {
+
+// An effect's knob: on unless "0".
+bool effect_on(const char* var) {
+    const char* v = std::getenv(var);
+    return !v || std::strcmp(v, "0") != 0;
+}
+
+}  // namespace
+
 Look look(const std::string& name, float turn) {
     // The models have +Y up, the screen y down: turned over about x (which keeps them right-handed).
     static const float kOver[9] = {1, 0, 0, 0, -1, 0, 0, 0, -1};
@@ -1021,6 +1094,12 @@ Look look(const std::string& name, float turn) {
         std::memcpy(l.tint, tint, sizeof tint);
         l.ambient = 0.62f;
         l.alpha_test = 0.5f;
+        // The moonlight: a pale blue halo about the blade, as the previews had it.
+        static const bool glow = effect_on("DES_CURSOR_GLOW");
+        const float halo[3] = {0.55f, 0.78f, 1.0f};
+        std::memcpy(l.glow, halo, sizeof halo);
+        l.glow_strength = glow ? 0.85f : 0.f;
+        l.glow_radius = 0.035f;
     } else {
         // Seen from 35 degrees to its left (plus turn), from 28 degrees above.
         turn_about(0, 1, 0, -35.f + turn, a);
@@ -1032,6 +1111,11 @@ Look look(const std::string& name, float turn) {
         l.tint[0] = l.tint[1] = l.tint[2] = 1.f;
         l.ambient = 0.55f;
         l.alpha_test = 0.f;
+        // The twinkle: its gems flash, and star glints come and go on them.
+        static const bool twinkle = effect_on("DES_UI_LIZARD_TWINKLE");
+        l.glitter = twinkle ? 1.f : 0.f;
+        l.sparkles = twinkle ? 4 : 0;
+        l.sparkle_size = 0.22f;
     }
     return l;
 }

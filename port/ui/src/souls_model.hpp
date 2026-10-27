@@ -55,17 +55,33 @@ double duration(const Model& m);
 // The vertices of each mesh at time t in seconds (looping), for an animated model. False for a rigid one.
 bool pose(const Model& m, double t, std::vector<std::vector<Vertex>>& out);
 
+// Where a model's star glints show (the lizard's gems): vertices, by mesh and index. Empty for the sword.
+struct Spot {
+    uint32_t mesh, vertex;
+};
+const std::vector<Spot>& spots(const Model& m);
+
 // How a model is shown, as the previews had it. rotation: model space to the screen's (x right, y down, z toward the
 // viewer), its rows: the sword with its tip to the top left, the lizard seen from its front left and a little above;
 // each turned `turn` degrees more (the sword about its blade, the lizard about its up). light: toward the light, in
 // the screen's space, and ambient the part of it that is everywhere. tint: the blended meshes' colour (the blade's
 // moonlight blue). alpha_test: below it an opaque mesh's texel is not drawn.
+// The effects, stand-ins for the game's own (docs/112): glow, a soft halo in that colour around the blended meshes, as
+// strong as glow_strength (0: none; the sword's moonlight, DES_CURSOR_GLOW), blurred by glow_radius of the model's
+// length; glitter, how bright a gem flashes white now and then (0: none), and sparkles, how many star glints at most
+// show at once at its spots, each sparkle_size of its length (the lizard's twinkle, DES_UI_LIZARD_TWINKLE).
 struct Look {
     float rotation[9];
     float light[3];
     float ambient;
     float tint[3];
     float alpha_test;
+    float glow[3];
+    float glow_strength;
+    float glow_radius;
+    float glitter;
+    int sparkles;
+    float sparkle_size;
 };
 Look look(const std::string& name, float turn);
 

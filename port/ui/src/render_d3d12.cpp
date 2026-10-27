@@ -210,7 +210,8 @@ float4 main(PS_IN i) : SV_Target {
 // The game's models (docs/112), shaded as the previews were: the diffuse texture under a light from the upper left
 // (ambient plus Lambert, both sides of a face lit as the side toward the viewer), the specular texture's colour as a
 // highlight. View space: x right, y down, z toward the viewer. An opaque mesh drops its texels under the alpha test;
-// a blended one (the blade) keeps only its faces toward the viewer, as a single sheet of glass, premultiplied.
+// a blended one (the blade) keeps only its faces toward the viewer, as a single sheet of glass, premultiplied. The
+// effects (docs/112) are drawn with the same shaders: the glow's mask, the gems' glitter, the star glints.
 #define DES_UI_HLSL_MODEL                                                                                  \
     "struct MODEL_IN { float3 position : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD; };\n"     \
     "struct MODEL_PS { float4 position : SV_Position; float3 normal : NORMAL; float2 uv : TEXCOORD; };\n"  \
@@ -218,7 +219,7 @@ float4 main(PS_IN i) : SV_Target {
     "Texture2D t1 : register(t1);\n"                                                                       \
     "SamplerState s_wrap : register(s0);\n"                                                                \
     "cbuffer Model : register(b0) { float4x4 m_clip; float4 m_view[3]; float4 m_light; float4 m_tint;\n"   \
-    "                                float4 m_flags; };\n"
+    "                                float4 m_flags; float4 m_fx; };\n"
 
 const char kVsModel[] = DES_UI_HLSL_MODEL R"(
 MODEL_PS main(MODEL_IN v) {
@@ -231,20 +232,49 @@ MODEL_PS main(MODEL_IN v) {
 )";
 
 // m_light: toward the light, and the ambient part. m_tint: a colour, and the opacity. m_flags: x faces toward the
-// viewer only, y opaque, z the alpha test.
+// viewer only, y opaque, z the alpha test. m_fx: x the time in seconds, y the gems' glitter (0: none), z what is drawn:
+// 0 the model; 1 the glow's mask, the mesh's alpha in the tint's colour; 2 star glints (uv from -1 to 1 across each,
+// the normal's x its brightness), added to what is there.
 const char kPsModel[] = DES_UI_HLSL_MODEL R"(
+float hash(float2 p) { return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
+
 float4 main(MODEL_PS i) : SV_Target {
+    if (m_fx.z > 1.5) {
+        // Four thin rays, narrowing to their ends, over a bright core and a faint halo.
+        float2 p = abs(i.uv);
+        float rays = pow(saturate(1.0 - p.x), 3.0) * exp(-p.y * p.y * 220.0) +
+                     pow(saturate(1.0 - p.y), 3.0) * exp(-p.x * p.x * 220.0);
+        float r2 = dot(p, p);
+        float glint = saturate((rays * 1.2 + exp(-r2 * 60.0) + exp(-r2 * 8.0) * 0.25) * i.normal.x);
+        return float4(m_tint.rgb * (glint * m_tint.a), 0.0);
+    }
     float4 d = t0.Sample(s_wrap, i.uv);
     float3 s = t1.Sample(s_wrap, i.uv).rgb;
     float len = length(i.normal);
     float3 n = len > 0.000001 ? i.normal / len : float3(0.0, 0.0, 1.0);
     if (m_flags.x > 0.5 && n.z <= 0.0) discard;
     if (m_flags.y > 0.5 && d.a < m_flags.z) discard;
+    if (m_fx.z > 0.5) {
+        float m = d.a * m_tint.a;
+        return float4(m_tint.rgb * m, m);
+    }
     if (n.z < 0.0) n = -n;
     float3 L = normalize(m_light.xyz);
     float3 H = normalize(L + float3(0.0, 0.0, 1.0));
     float3 rgb = d.rgb * (m_light.w + (1.0 - m_light.w) * saturate(dot(n, L)));
     rgb = saturate((rgb + s * pow(saturate(dot(n, H)), 24.0) * 0.9) * m_tint.rgb);
+    if (m_fx.y > 0.0) {
+        // A gem flashes white now and then: the texture in cells, each on its own clock and not at every turn of
+        // it. A gem is a texel more blue, green or violet than red (the skin is grey, brown and pink).
+        float gem = smoothstep(0.05, 0.2, max(d.g, d.b) - d.r) *
+                    smoothstep(0.1, 0.25, max(d.r, max(d.g, d.b)) - min(d.r, min(d.g, d.b)));
+        float2 cell = floor(i.uv * float2(64.0, 32.0));
+        float period = 1.5 + 2.5 * hash(cell + 17.0);
+        float phase = m_fx.x / period + hash(cell);
+        float on = step(hash(cell + floor(phase) * 3.1), 0.4);
+        float flash = on * pow(saturate(1.0 - abs(frac(phase) - 0.5) * 12.0), 2.0);
+        rgb = saturate(rgb + gem * flash * m_fx.y);
+    }
     float a = (m_flags.y > 0.5 ? 1.0 : d.a) * m_tint.a;
     return float4(rgb * a, a);
 }
@@ -300,6 +330,7 @@ struct ModelConstants {
     float light[4];
     float tint[4];
     float flags[4];
+    float fx[4];
 };
 
 // A Matrix4f as HLSL reads it (column major).
@@ -957,7 +988,7 @@ bool RendererImpl::back_buffer(ID3D12Resource* res, Target& out) {
 
 ID3D12PipelineState* RendererImpl::pipeline(Program p, Blend b, Stencil s, const Target& t) {
     const bool model = p == kModel || p == kModelBlend;
-    if (!mPs[p] || (model && (!mVs[2] || !t.layer))) return nullptr;
+    if (!mPs[p] || (model && !mVs[2])) return nullptr;
     const uint64_t key = uint64_t(p) | uint64_t(b) << 4 | uint64_t(s) << 8 | uint64_t(t.format) << 12 |
                          uint64_t(t.samples) << 24 | uint64_t(t.layer) << 32;
     if (const auto it = mPipelines.find(key); it != mPipelines.end()) return it->second;
@@ -999,7 +1030,7 @@ ID3D12PipelineState* RendererImpl::pipeline(Program p, Blend b, Stencil s, const
     d.RasterizerState.DepthClipEnable = FALSE;
     d.RasterizerState.MultisampleEnable = t.samples > 1;
     D3D12_DEPTH_STENCIL_DESC& ds = d.DepthStencilState;
-    ds.DepthEnable = model ? TRUE : FALSE;  // (the models only: the rest of the UI keeps to the stencil)
+    ds.DepthEnable = model && t.layer ? TRUE : FALSE;  // (the models only: the rest of the UI keeps to the stencil)
     ds.DepthWriteMask = p == kModel ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
     ds.DepthFunc = model ? D3D12_COMPARISON_FUNC_LESS_EQUAL : D3D12_COMPARISON_FUNC_ALWAYS;
     if (t.layer && s != kStencilOff) {
@@ -2125,7 +2156,11 @@ bool RendererImpl::render_model(const std::string& name, const ModelView& view, 
                             (c & 4 ? hi[2] : lo[2]) - pivot[2]};
         reach = std::max(reach, std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
     }
-    reach = reach * scale + 1.f;
+    // The effects reach a little further: the glow's blur, half a star glint.
+    const float length = std::max({hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]}) * scale;
+    const float sigma = look.glow_strength > 0.f ? look.glow_radius * length : 0.f;
+    const float glint = look.sparkles > 0 ? look.sparkle_size * length : 0.f;
+    reach = reach * scale + std::max(3.f * sigma, 0.5f * glint) + 2.f;
     if (!(reach < 100000.f)) return false;
     const D3D12_RECT square{Rml::Math::Clamp(int(std::floor(at[0] - reach)), 0, mBound->w),
                             Rml::Math::Clamp(int(std::floor(at[1] - reach)), 0, mBound->h),
@@ -2150,11 +2185,15 @@ bool RendererImpl::render_model(const std::string& name, const ModelView& view, 
     k.clip[15] = 1.f;
     std::memcpy(k.light, look.light, sizeof look.light);
     k.light[3] = look.ambient;
+    k.fx[0] = float(std::fmod(view.time, 3600.0));
+    k.fx[1] = look.glitter;
 
     // The vertices: an animated model's, posed now, in the ring; a rigid one's, in its block.
     const auto& meshes = ui::models::meshes(m);
     std::vector<D3D12_GPU_VIRTUAL_ADDRESS> vertices(meshes.size());
-    if (ui::models::duration(m) > 0 && ui::models::pose(m, view.time, mPosed) && mPosed.size() == meshes.size()) {
+    const bool posed =
+        ui::models::duration(m) > 0 && ui::models::pose(m, view.time, mPosed) && mPosed.size() == meshes.size();
+    if (posed) {
         size_t total = 0;
         for (const auto& p : mPosed) total += p.size() * sizeof(ui::models::Vertex);
         const auto [cpu, gpu] = ring(std::max<size_t>(total, 16), 16);
@@ -2171,12 +2210,14 @@ bool RendererImpl::render_model(const std::string& name, const ModelView& view, 
 
     const Blend saved = mBlend;
     mBlend = kPremultiplied;
-    for (const bool blended : {false, true}) {
+    const auto pass = [&](bool blended) {
         k.flags[0] = blended ? 1.f : 0.f;  // a blended mesh: its faces toward the viewer only
         k.flags[1] = blended ? 0.f : 1.f;
         k.flags[2] = look.alpha_test;
         for (int c = 0; c < 3; c++) k.tint[c] = blended ? look.tint[c] : 1.f;
         k.tint[3] = opacity;
+    };
+    const auto draw_meshes = [&](bool blended) {
         D3D12_GPU_VIRTUAL_ADDRESS constants_at = 0;
         for (size_t i = 0; i < meshes.size(); i++) {
             const ui::models::Mesh& mesh = meshes[i];
@@ -2198,6 +2239,116 @@ bool RendererImpl::render_model(const std::string& name, const ModelView& view, 
             mList->IASetVertexBuffers(0, 1, &vb);
             mList->IASetIndexBuffer(&ib);
             mList->DrawIndexedInstanced(part.index_count, 1, 0, 0, 0);
+        }
+    };
+
+    // The glow (the sword's moonlight): the blended meshes' alpha in the glow's colour, drawn into the first
+    // postprocess target, blurred there, and put on the layer under the model.
+    Target* layer = mBound;
+    Target* mask = sigma >= 0.5f ? post(0) : nullptr;
+    Target* temp = mask ? post(1) : nullptr;
+    const Rml::Rectanglei area = region();
+    const Rml::Rectanglei window = Rml::Rectanglei::FromCorners(
+        {std::max(int(square.left), area.Left()), std::max(int(square.top), area.Top())},
+        {std::min(int(square.right), area.Right()), std::min(int(square.bottom), area.Bottom())});
+    if (mask && temp && window.Width() > 0 && window.Height() > 0) {
+        const Rml::Rectanglei scissor = mScissor;
+        bind(*mask);
+        const D3D12_RECT rect{window.Left(), window.Top(), window.Right(), window.Bottom()};
+        const float zero[4] = {0.f, 0.f, 0.f, 0.f};
+        mList->ClearRenderTargetView(mRtv.cpu(mask->rtv), zero, 1, &rect);
+        set_scissor(window);
+        pass(true);
+        std::memcpy(k.tint, look.glow, sizeof look.glow);
+        k.tint[3] = look.glow_strength * opacity;
+        k.fx[2] = 1.f;
+        draw_meshes(true);
+        k.fx[2] = 0.f;
+        render_blur(sigma, *mask, *temp, window);
+        bind(*layer);
+        mBlend = kPremultiplied;
+        sample(2, *mask);
+        if (prepare(kPassthrough)) draw_quad(0, 0, 1, 1);
+        set_scissor(scissor);
+    }
+
+    pass(false);
+    draw_meshes(false);
+    pass(true);
+    draw_meshes(true);
+
+    // The twinkle (the lizard's): star glints, each for a moment on one of its gems and then on another, where the
+    // gem is in the pose and a little in front of it, so the model's depth hides those behind it; at the outline too,
+    // where they show against what is behind the model, but none on a gem turned well away.
+    const auto& spots = ui::models::spots(m);
+    if (glint > 0.f && !spots.empty()) {
+        struct Glint {
+            float x, y, z, bright;  // (it grows as it brightens, and shrinks as it fades)
+        };
+        std::vector<Glint> glints;
+        for (int j = 0; j < look.sparkles; j++) {
+            const double period = 1.1 + 0.37 * j, t = view.time / period + 0.41 * j;
+            const double turn = std::floor(t), f = t - turn;
+            if (f >= 0.5) continue;
+            uint32_t h = uint32_t(int64_t(turn)) * 2654435761u ^ uint32_t(j + 1) * 40503u;
+            h ^= h >> 15;
+            h *= 2246822519u;
+            h ^= h >> 13;
+            const ui::models::Spot& spot = spots[h % spots.size()];
+            if (spot.mesh >= meshes.size()) continue;
+            const std::vector<ui::models::Vertex>& vs = posed ? mPosed[spot.mesh] : meshes[spot.mesh].vertices;
+            if (spot.vertex >= vs.size()) continue;
+            const ui::models::Vertex& v = vs[spot.vertex];
+            const float d[3] = {v.pos[0] - pivot[0], v.pos[1] - pivot[1], v.pos[2] - pivot[2]};
+            float p[3];
+            for (int r = 0; r < 3; r++)
+                p[r] = (R[r * 3] * d[0] + R[r * 3 + 1] * d[1] + R[r * 3 + 2] * d[2]) * scale + origin[r];
+            const float* nv = v.normal;
+            const float nz = R[6] * nv[0] + R[7] * nv[1] + R[8] * nv[2];
+            const float nl = std::sqrt(nv[0] * nv[0] + nv[1] * nv[1] + nv[2] * nv[2]);
+            if (!(nl > 0.f) || nz < -0.2f * nl) continue;
+            glints.push_back({p[0], p[1], p[2] + 0.5f * glint, float(std::sin(3.14159265 * f / 0.5))});
+        }
+        const size_t n = glints.size();
+        const auto [cpu, gpu] = n ? ring(n * (4 * sizeof(ui::models::Vertex) + 6 * sizeof(uint32_t)), 16)
+                                  : std::pair<uint8_t*, D3D12_GPU_VIRTUAL_ADDRESS>{nullptr, 0};
+        if (cpu) {
+            auto* quad = reinterpret_cast<ui::models::Vertex*>(cpu);
+            auto* index = reinterpret_cast<uint32_t*>(cpu + n * 4 * sizeof(ui::models::Vertex));
+            for (size_t i = 0; i < n; i++) {
+                const Glint& gl = glints[i];
+                const float half = 0.5f * glint * (0.5f + 0.5f * gl.bright);
+                for (int c = 0; c < 4; c++) {
+                    const float u = c == 1 || c == 2 ? 1.f : -1.f, w = c >= 2 ? 1.f : -1.f;
+                    quad[i * 4 + c] = {{gl.x + u * half, gl.y + w * half, gl.z}, {gl.bright, 0.f, 0.f}, {u, w}};
+                }
+                const uint32_t b = uint32_t(i * 4), six[6] = {b, b + 1, b + 2, b, b + 2, b + 3};
+                std::memcpy(index + i * 6, six, sizeof six);
+            }
+            // Pixels to clip space as above, with no turn.
+            ModelConstants q{};
+            for (int r = 0; r < 3; r++) {
+                q.clip[r * 4 + r] = out[r][0];
+                q.clip[12 + r] = out[r][1];
+                q.view[r][r] = 1.f;
+            }
+            q.clip[15] = 1.f;
+            const float white[4] = {0.9f, 0.95f, 1.f, opacity};
+            std::memcpy(q.tint, white, sizeof white);
+            q.fx[2] = 2.f;
+            mBlend = kPremultiplied;
+            if (prepare(kModelBlend)) {
+                if (const auto at_gpu = constants(&q, sizeof q)) {
+                    mList->SetGraphicsRootConstantBufferView(0, at_gpu);
+                    const D3D12_VERTEX_BUFFER_VIEW vb{gpu, UINT(n * 4 * sizeof(ui::models::Vertex)),
+                                                      UINT(sizeof(ui::models::Vertex))};
+                    const D3D12_INDEX_BUFFER_VIEW ib{gpu + n * 4 * sizeof(ui::models::Vertex),
+                                                     UINT(n * 6 * sizeof(uint32_t)), DXGI_FORMAT_R32_UINT};
+                    mList->IASetVertexBuffers(0, 1, &vb);
+                    mList->IASetIndexBuffer(&ib);
+                    mList->DrawIndexedInstanced(UINT(n * 6), 1, 0, 0, 0);
+                }
+            }
         }
     }
     mList->SetGraphicsRootDescriptorTable(3, mSrv.gpu(mNullSrv));  // (t1 is the mask filter's otherwise)

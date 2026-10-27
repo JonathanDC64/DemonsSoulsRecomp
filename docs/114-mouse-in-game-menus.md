@@ -52,12 +52,18 @@ Found in the census runs (`DES_MENU_MOUSE_LOG=3`, section 1); nothing here is a 
 - **Hosts the pointer does not name.** Some dialogs hang off an object the rule above does not read (the
   inventory's tabs, in `tab_select`). Their host is the piece with a host pointer of its own and the dialog's rect,
   in a dialog drawn before it.
+- **Hosts with no pointer at all.** When the inventory opens on a category other than the first (it remembers the
+  last one), its pieces' `+0x48` words hold no pointer: `tab_select`'s read `0x00F301FF`, the list's `I02-02`
+  `0xE0000000`. Then only the rect is left: a drawn piece with the dialog's rect is its host. Without that the tabs
+  had no host, so their spots sat at the canvas's top left corner. Being a menu that was not part of the inventory,
+  they also left the inventory's rows out: the sword showed over the inventory, with no glow and no clicks.
 - **Which host wins.** A host always draws before what it holds, so only dialogs drawn earlier are looked at. Best
   first:
   1. a piece whose host word is the dialog;
   2. an object whose first word points just past the dialog, and whose piece has the dialog's rect;
   3. a piece with a host of its own and the dialog's rect;
-  4. an object pointing just past the dialog, whatever its rect.
+  4. an object pointing just past the dialog, whatever its rect;
+  5. a drawn piece with the dialog's rect, whatever its host word holds.
 
   Rule 4 alone used to win, and it named the wrong host after Edit Appearance. Going back makes a new Create
   Profile dialog where an old one was, and the stats panel on its right holds an object that still points there.
@@ -200,7 +206,7 @@ On the pinned regression save, by `DES_UI_MOUSE` (the steps and the shots are in
 | Edit Appearance | glow on a slider; a click on Age's track from the Origin row walks down 3 and slides the thumb there; a drag moves it back; 3 wheel notches over Gender walk there and step it 3 times |
 | Pause menu bar | glow on a tab, click opens its page, ◀ ▶ click and hold, wheel; no glow in the gaps between tabs |
 | Pause menu pages | with a page open, a click on another tab turns to it (R2), right click closes the page |
-| Inventory | glow on a row (its whole width), wheel, click opens the command menu, right click closes it, click on a category |
+| Inventory | glow on a row (its whole width), wheel, click opens the command menu, right click closes it, click on a category; closed on the armor category and opened again (it opens there), glow and clicks on its rows and tabs |
 | Equipment | a click on a slot opens its item list; glow on a row, wheel, right click back |
 | System | a click on the pause bar's last tab walks 3 right to it; a click on Options opens it |
 | Yes/no prompts in play | Auto Sort's "Automatically resort all items?": glow on OK, OK sorts; Quit Game's: CANCEL, and OK goes to the title; Load Profile's "Load profile and exit current game?": CANCEL |

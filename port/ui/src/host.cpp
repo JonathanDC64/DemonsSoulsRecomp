@@ -5,21 +5,20 @@
 // FFCCEOT-Recomp's host.cpp (GL3 in an SDL window).
 #include "host.hpp"
 
+#include "mouse.hpp"
 #include "portable.hpp"
 #include "renderer.hpp"
+#include "souls_model.hpp"
 #include "ui_assets.hpp"
 
 #ifdef _WIN32
 #include "RmlUi_Platform_Win32.h"
 #else
-#include "mouse.hpp"
-
 #include <SDL.h>
-
-#include <chrono>
 #endif
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -54,6 +53,7 @@ bool find_png(const Rml::String& source, std::vector<unsigned char>& file) {
 // renderers there are ----
 
 void* sWindow = nullptr;  // the game's window: an HWND on Windows, an SDL_Window* elsewhere
+Rml::String sCursorName;  // the cursor RmlUi asked for last (the render thread)
 
 #ifdef _WIN32
 
@@ -67,6 +67,7 @@ public:
         return true;
     }
     void SetMouseCursor(const Rml::String& name) override {
+        sCursorName = name;
         HCURSOR cursor = nullptr;
         if (name == "nwse-resize") cursor = LoadCursor(nullptr, IDC_SIZENWSE);
         else if (name == "nesw-resize") cursor = LoadCursor(nullptr, IDC_SIZENESW);
@@ -120,6 +121,7 @@ public:
         return true;
     }
     void SetMouseCursor(const Rml::String& name) override {
+        sCursorName = name;
         int shape = SDL_SYSTEM_CURSOR_ARROW;
         if (name == "pointer") shape = SDL_SYSTEM_CURSOR_HAND;
         else if (name == "text") shape = SDL_SYSTEM_CURSOR_IBEAM;
@@ -208,8 +210,71 @@ struct State {
     float ui_scale = 0.0f;
     bool follow_height = false;
     bool initialised = false;
+    int pointer_x = 0, pointer_y = 0;  // set_pointer
+    bool pointer_inside = false, cursor_wanted = false;
 };
 State s;
+
+float env_float(const char* name, float fallback, float lo, float hi) {
+    const char* v = std::getenv(name);
+    char* end = nullptr;
+    const float f = v && *v ? std::strtof(v, &end) : fallback;
+    return end && *end ? fallback : std::clamp(f, lo, hi);
+}
+
+// The Large Sword of Moonlight as the cursor (docs/112): over everything, its tip at the pointer, while a document is
+// up and RmlUi would show the arrow or the hand there; the system's cursor is hidden meanwhile (mouse.cpp). Knobs:
+// DES_CURSOR3D=0 keeps the system's arrow; DES_CURSOR_SIZE the sword's length in dp (64); DES_CURSOR_SPIN a turn
+// about its blade, in degrees a second (0, still).
+void draw_cursor() {
+    static const bool on = [] {
+        const char* v = std::getenv("DES_CURSOR3D");
+        return !v || std::strcmp(v, "0") != 0;
+    }();
+    static const float size = env_float("DES_CURSOR_SIZE", 64.f, 16.f, 512.f);
+    static const float spin = env_float("DES_CURSOR_SPIN", 0.f, -3600.f, 3600.f);
+    static const auto start = std::chrono::steady_clock::now();
+    const bool arrow = sCursorName.empty() || sCursorName == "default" || sCursorName == "auto" ||
+                       sCursorName == "arrow" || sCursorName == "pointer";
+    bool drawn = false;
+    if (on && s.cursor_wanted && s.pointer_inside && arrow) {
+        if (const ui::models::Model* m = ui::models::get("moonlight")) {
+            float lo[3], hi[3];
+            ui::models::bounds(*m, lo, hi);
+            const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            const ui::models::Look look = ui::models::look("moonlight", float(std::fmod(double(spin) * t, 360.0)));
+            ModelView v;
+            std::memcpy(v.rotation, look.rotation, sizeof v.rotation);
+            v.pivot[1] = lo[1];  // the tip: the blade lies along -Y
+            v.at[0] = float(s.pointer_x);
+            v.at[1] = float(s.pointer_y);
+            v.scale = hi[1] > lo[1] ? size * s.rml->GetDensityIndependentPixelRatio() / (hi[1] - lo[1]) : 0.f;
+            drawn = v.scale > 0.f && s.renderer->draw_model("moonlight", v);
+        }
+    }
+    mouse::set_own_cursor(drawn);
+}
+
+// DES_UI_LIZARD=1, for now: the crystal lizard dancing in the bottom right corner (above the start screen's footer)
+// while a document is up, a box of DES_UI_LIZARD_SIZE dp (160). In a document it is an element's decorator,
+// shader("model:lizard") (docs/112).
+void draw_lizard(int width, int height) {
+    static const bool on = [] {
+        const char* v = std::getenv("DES_UI_LIZARD");
+        return v && *v && std::strcmp(v, "0") != 0;
+    }();
+    static const float size = env_float("DES_UI_LIZARD_SIZE", 160.f, 32.f, 2048.f);
+    static const auto start = std::chrono::steady_clock::now();
+    if (!on || !s.cursor_wanted) return;
+    const float dp = s.rml->GetDensityIndependentPixelRatio(), px = size * dp;
+    ModelView v;
+    std::memcpy(v.rotation, ui::models::look("lizard", 0.f).rotation, sizeof v.rotation);
+    v.at[0] = float(width) - px - 40.f * dp;
+    v.at[1] = float(height) - px - 88.f * dp;
+    v.size[0] = v.size[1] = px;
+    v.time = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    s.renderer->draw_model("lizard", v);
+}
 
 void load_fonts() {
     struct Font {
@@ -360,8 +425,21 @@ void render(void* back_buffer, unsigned index, int width, int height, const char
     s.rml->Update();
     if (!s.renderer->begin_frame(back_buffer, index, width, height)) return;
     s.rml->Render();
+    draw_lizard(width, height);
+    draw_cursor();
     s.renderer->end_frame();
     if (shot_path) shot(back_buffer, index, width, height, shot_path);
+}
+
+void set_pointer(int x, int y, bool inside) {
+    s.pointer_x = x;
+    s.pointer_y = y;
+    s.pointer_inside = inside;
+}
+
+void set_cursor_wanted(bool wanted) {
+    if (wanted && !s.cursor_wanted) s.pointer_inside = false;  // (where it was when the last document closed: not now)
+    s.cursor_wanted = wanted;
 }
 
 void screenshot(void* back_buffer, unsigned index, int width, int height, const char* shot_path) {

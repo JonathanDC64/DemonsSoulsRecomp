@@ -34,9 +34,16 @@ void set_follow_height(bool on);
 // The window's DPI (96 is 100%), 0 if not known.
 unsigned window_dpi();
 
-// Updates the context and draws the documents into the back buffer (D3D12, PRESENT state on entry and on exit). With
-// shot_path, also writes the result (game frame and UI) to that BMP file.
+// Updates the context and draws the documents into the back buffer (D3D12, PRESENT state on entry and on exit), and
+// over them the sword cursor where it shows (set_pointer). With shot_path, also writes the result (game frame and UI)
+// to that BMP file.
 void render(void* back_buffer, unsigned index, int width, int height, const char* shot_path);
+
+// The pointer as the UI's mouse events have it (in the back buffer's pixels; inside false once it has left, and until
+// it moves after a document opens), and whether a document is up to take it: the sword cursor shows there (docs/112).
+// The render thread, before render.
+void set_pointer(int x, int y, bool inside);
+void set_cursor_wanted(bool wanted);
 
 // Before the window's buffers are resized: finishes the work using them and drops the views of them. The next render
 // makes views of the new buffers.

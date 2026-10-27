@@ -35,4 +35,8 @@ void hold_buttons(void* hwnd, bool down);
 void set_cursor(int shape);
 #endif
 
+// The UI drew its own cursor this frame (the sword, host.cpp), or not: while it does, the system's is hidden over the
+// window's picture. The render thread, once a frame; the window's thread acts on a change.
+void set_own_cursor(bool drawn);
+
 }  // namespace ui::mouse

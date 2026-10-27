@@ -14,6 +14,18 @@ namespace ui {
 // An image RmlUi asks for by name (an <img src>): the file's bytes (PNG, TGA or JPEG), or false if there is none.
 using ImageSource = std::function<bool(const Rml::String& source, std::vector<unsigned char>& file)>;
 
+// Where one of the game's models goes (draw_model, docs/112). rotation: model space to the screen's (x right, y down,
+// z toward the viewer), its rows. Then either its point `pivot` at `at`, `scale` pixels to the model's unit, or, with
+// scale 0, the whole model (every frame of its animation) fitted into the box from `at`, `size` pixels.
+struct ModelView {
+    float rotation[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+    float pivot[3] = {0, 0, 0};
+    float at[2] = {0, 0};
+    float size[2] = {0, 0};
+    float scale = 0;
+    double time = 0;  // seconds into its animation (looped)
+};
+
 class Renderer {
 public:
     virtual ~Renderer() = default;
@@ -39,6 +51,15 @@ public:
     virtual void set_hdr(float scale, bool srgb) {
         (void)scale;
         (void)srgb;
+    }
+
+    // One of the game's models (souls_model.hpp: "moonlight", "lizard") over what the frame has so far, between the
+    // context's Render and end_frame, with no scissor or clip. False if it is not drawn: the game's files do not have
+    // it, or this renderer draws none (the D3D11 one).
+    virtual bool draw_model(const char* name, const ModelView& view) {
+        (void)name;
+        (void)view;
+        return false;
     }
 };
 

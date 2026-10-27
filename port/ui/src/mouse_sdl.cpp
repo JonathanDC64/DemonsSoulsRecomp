@@ -34,6 +34,7 @@ namespace {
 
 constexpr UINT WM_DES_MOUSE = WM_APP + 0x5D;         // look again (as mouse.cpp)
 constexpr UINT WM_DES_CURSOR = WM_APP + 0x5E;        // the cursor's shape: wp = an SDL_SystemCursor
+constexpr UINT WM_DES_OWN_CURSOR = WM_APP + 0x5F;    // the UI's own cursor came (wp 1) or went (0): shown or hidden
 constexpr UINT WM_RSX_MOUSE_MOTION = WM_APP + 0x53;  // the runtime's relative motion: wp = x, lp = y (signed)
 
 // Presented frames without a take of the counts after which the game's camera counts as not running (mouse.cpp).
@@ -187,6 +188,10 @@ bool wndproc(void* hwnd, unsigned msg, unsigned long long wp, long long lp, long
         *result = 0;
         return true;
     }
+    case WM_DES_OWN_CURSOR:  // (relative mouse mode, mouse look, hides it whatever this says)
+        SDL_ShowCursor(wp ? SDL_DISABLE : SDL_ENABLE);
+        *result = 0;
+        return true;
     case WM_SETFOCUS:
         update("focus");
         return false;
@@ -207,6 +212,12 @@ bool wndproc(void* hwnd, unsigned msg, unsigned long long wp, long long lp, long
 
 void set_ui_open(bool open) {
     if (sUiOpen.exchange(open) != open) post_look_again();
+}
+
+void set_own_cursor(bool drawn) {
+    if (ui::settings::no_user_input()) drawn = false;  // a test run's: the mouse over the window is the user's
+    static std::atomic<bool> sOwn{false};  // (no window yet: the next frame tells it again)
+    if (sWindowUp.load() && sOwn.exchange(drawn) != drawn) rsx_d3d12_post_message(WM_DES_OWN_CURSOR, drawn ? 1 : 0, 0);
 }
 
 void on_frame() {

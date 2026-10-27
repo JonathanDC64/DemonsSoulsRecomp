@@ -879,6 +879,10 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "After Play, a note says how to open this menu.");
         bool_row(leftPane, rightPane, "Trophy pop-ups", "trophy_popups",
             "Shows a note when you earn a trophy. Off only hides the note.");
+        bool_row(leftPane, rightPane, "Sword cursor", "DES_CURSOR3D",
+            "The cursor in these menus is the Large Sword of Moonlight. Off uses the usual arrow.");
+        bool_row(leftPane, rightPane, "Crystal lizard", "DES_UI_LIZARD",
+            "A crystal lizard dances in the corner of these menus.");
         choice_row(leftPane, rightPane, "Gamepad menu buttons", "pad_menu_chord", {"0", "1"},
             {"L3 + R3", "Select + Start"},
             "The gamepad buttons that open this menu, pressed together. Select + Start also opens the game's menu.");

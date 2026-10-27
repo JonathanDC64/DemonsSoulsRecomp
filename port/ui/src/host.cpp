@@ -8,6 +8,7 @@
 #include "mouse.hpp"
 #include "portable.hpp"
 #include "renderer.hpp"
+#include "settings.hpp"
 #include "souls_model.hpp"
 #include "ui_assets.hpp"
 
@@ -222,15 +223,18 @@ float env_float(const char* name, float fallback, float lo, float hi) {
     return end && *end ? fallback : std::clamp(f, lo, hi);
 }
 
+// An on/off row of Settings > Interface, as it is now (the environment's value when it was set there).
+bool row_on(const char* key) {
+    const std::string v = settings::pinned(key) ? settings::pinned_value(key) : settings::get(key);
+    return !v.empty() && v != "0";
+}
+
 // The Large Sword of Moonlight as the cursor (docs/112): over everything, its tip at the pointer, while a document is
-// up and RmlUi would show the arrow or the hand there; the system's cursor is hidden meanwhile (mouse.cpp). Knobs:
-// DES_CURSOR3D=0 keeps the system's arrow; DES_CURSOR_SIZE the sword's length in dp (64); DES_CURSOR_SPIN a turn
-// about its blade, in degrees a second (0, still).
+// up and RmlUi would show the arrow or the hand there; the system's cursor is hidden meanwhile (mouse.cpp). Its row,
+// Sword cursor (DES_CURSOR3D), off keeps the system's arrow. Knobs: DES_CURSOR_SIZE the sword's length in dp (64);
+// DES_CURSOR_SPIN a turn about its blade, in degrees a second (0, still).
 void draw_cursor() {
-    static const bool on = [] {
-        const char* v = std::getenv("DES_CURSOR3D");
-        return !v || std::strcmp(v, "0") != 0;
-    }();
+    const bool on = row_on("DES_CURSOR3D");
     static const float size = env_float("DES_CURSOR_SIZE", 64.f, 16.f, 512.f);
     static const auto start = std::chrono::steady_clock::now();
     const bool arrow = sCursorName.empty() || sCursorName == "default" || sCursorName == "auto" ||
@@ -255,14 +259,12 @@ void draw_cursor() {
     mouse::set_own_cursor(drawn);
 }
 
-// DES_UI_LIZARD=1, for now: the crystal lizard dancing in the bottom right corner (above the start screen's footer)
-// while a document is up, a box of DES_UI_LIZARD_SIZE dp (160), turning DES_UI_LIZARD_SPIN degrees a second (0). In a
-// document it is an element's decorator, shader("model:lizard") (docs/112).
+// The crystal lizard dancing in the bottom right corner (above the start screen's footer) while a document is up,
+// unless its row, Crystal lizard (DES_UI_LIZARD), is off: a box of DES_UI_LIZARD_SIZE dp (160), turning
+// DES_UI_LIZARD_SPIN degrees a second (0). In a document it is an element's decorator, shader("model:lizard")
+// (docs/112).
 void draw_lizard(int width, int height) {
-    static const bool on = [] {
-        const char* v = std::getenv("DES_UI_LIZARD");
-        return v && *v && std::strcmp(v, "0") != 0;
-    }();
+    const bool on = row_on("DES_UI_LIZARD");
     static const float size = env_float("DES_UI_LIZARD_SIZE", 160.f, 32.f, 2048.f);
     static const auto start = std::chrono::steady_clock::now();
     if (!on || !s.cursor_wanted) return;

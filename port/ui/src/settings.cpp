@@ -90,6 +90,8 @@ constexpr Def kDefs[] = {
     {"rpcs3_dir", "", Apply::UiOnly},          // the RPCS3 setup last imported from (setup_rpcs3.hpp, docs/90 3.2)
     {"menu_hint", "1", Apply::UiOnly},
     {"trophy_popups", "1", Apply::UiOnly},     // trophy_toasts.cpp; off hides the toast, the unlock is still kept
+    {"DES_CURSOR3D", "1", Apply::Live},        // host.cpp, each frame: 0 = the system's arrow, not the sword (docs/112)
+    {"DES_UI_LIZARD", "1", Apply::Live},       // host.cpp, each frame: 0 = no dancing crystal lizard in the corner
     {"trophies_show_hidden", "0", Apply::UiOnly},  // trophies_window.cpp: hidden trophies listed with their names
     {"pad_menu_chord", "0", Apply::UiOnly},    // 0 = L3 + R3, 1 = Select + Start
     {"PAD_MAP", "", Apply::Live},              // cellPad, gamepad buttons (controls_window.cpp)

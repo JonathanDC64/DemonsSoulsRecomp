@@ -16,13 +16,15 @@ using ImageSource = std::function<bool(const Rml::String& source, std::vector<un
 
 // Where one of the game's models goes (draw_model, docs/112). rotation: model space to the screen's (x right, y down,
 // z toward the viewer), its rows. Then either its point `pivot` at `at`, `scale` pixels to the model's unit, or, with
-// scale 0, the whole model (every frame of its animation) fitted into the box from `at`, `size` pixels.
+// scale 0, the whole model (every frame of its animation) fitted into the box from `at`, `size` pixels; `turning`: as
+// it would fit at any turn about its up (model y), so a model that spins keeps its size.
 struct ModelView {
     float rotation[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
     float pivot[3] = {0, 0, 0};
     float at[2] = {0, 0};
     float size[2] = {0, 0};
     float scale = 0;
+    bool turning = false;
     double time = 0;  // seconds into its animation (looped)
 };
 

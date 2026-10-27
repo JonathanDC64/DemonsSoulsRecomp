@@ -1948,12 +1948,15 @@ void RendererImpl::RenderShader(Rml::CompiledShaderHandle shader, Rml::CompiledG
             hi = Rml::Math::Max(hi, px);
         }
         ModelView view;
-        std::memcpy(view.rotation, ui::models::look(s->model, 0.f).rotation, sizeof view.rotation);
+        view.time = std::chrono::duration<double>(std::chrono::steady_clock::now() - mStart).count();
+        const float spin = ui::models::spin(s->model);
+        std::memcpy(view.rotation, ui::models::look(s->model, float(std::fmod(double(spin) * view.time, 360.0))).rotation,
+                    sizeof view.rotation);
+        view.turning = spin != 0.f;
         view.at[0] = lo.x;
         view.at[1] = lo.y;
         view.size[0] = hi.x - lo.x;
         view.size[1] = hi.y - lo.y;
-        view.time = std::chrono::duration<double>(std::chrono::steady_clock::now() - mStart).count();
         render_model(s->model, view, g->alpha);
         return;
     }
@@ -2097,10 +2100,18 @@ bool RendererImpl::render_model(const std::string& name, const ModelView& view, 
     } else {
         for (int k = 0; k < 3; k++) pivot[k] = 0.5f * (lo[k] + hi[k]);
         float ext[2] = {0.f, 0.f};
-        for (int c = 0; c < 8; c++) {
-            const float d[3] = {(c & 1 ? hi[0] : lo[0]) - pivot[0], (c & 2 ? hi[1] : lo[1]) - pivot[1],
-                                (c & 4 ? hi[2] : lo[2]) - pivot[2]};
-            for (int r = 0; r < 2; r++) ext[r] = std::max(ext[r], std::fabs(R[r * 3] * d[0] + R[r * 3 + 1] * d[1] + R[r * 3 + 2] * d[2]));
+        if (view.turning) {
+            // Fitted to the upright cylinder around its box, which looks the same at every turn: the model keeps its
+            // size as it turns.
+            const float r = 0.5f * std::hypot(hi[0] - lo[0], hi[2] - lo[2]), h = 0.5f * (hi[1] - lo[1]);
+            for (int k = 0; k < 2; k++) ext[k] = std::fabs(R[k * 3 + 1]) * h + r * std::hypot(R[k * 3], R[k * 3 + 2]);
+        } else {
+            for (int c = 0; c < 8; c++) {
+                const float d[3] = {(c & 1 ? hi[0] : lo[0]) - pivot[0], (c & 2 ? hi[1] : lo[1]) - pivot[1],
+                                    (c & 4 ? hi[2] : lo[2]) - pivot[2]};
+                for (int k = 0; k < 2; k++)
+                    ext[k] = std::max(ext[k], std::fabs(R[k * 3] * d[0] + R[k * 3 + 1] * d[1] + R[k * 3 + 2] * d[2]));
+            }
         }
         if (!(ext[0] > 0.f) || !(ext[1] > 0.f) || view.size[0] < 1.f || view.size[1] < 1.f) return false;
         scale = std::min(view.size[0] / (2.f * ext[0]), view.size[1] / (2.f * ext[1]));

@@ -993,6 +993,17 @@ void times(const float a[9], const float b[9], float out[9]) {
 
 }  // namespace
 
+float spin(const std::string& name) {
+    const auto knob = [](const char* var) {
+        const char* v = std::getenv(var);
+        char* end = nullptr;
+        const float f = v && *v ? std::strtof(v, &end) : 0.f;
+        return end && !*end && std::isfinite(f) ? std::clamp(f, -3600.f, 3600.f) : 0.f;
+    };
+    static const float sword = knob("DES_CURSOR_SPIN"), lizard = knob("DES_UI_LIZARD_SPIN");
+    return name == "moonlight" ? sword : name == "lizard" ? lizard : 0.f;
+}
+
 Look look(const std::string& name, float turn) {
     // The models have +Y up, the screen y down: turned over about x (which keeps them right-handed).
     static const float kOver[9] = {1, 0, 0, 0, -1, 0, 0, 0, -1};

@@ -17,6 +17,7 @@ Date: 2026-10-27. Status: first version, for the user to try.
 | `DES_CURSOR_SPIN` | `0` | A slow turn about the blade, in degrees a second (`20` is one turn in 18 s). |
 | `DES_UI_LIZARD` | off | `1`: the lizard, dancing, in the bottom right corner while a document is up. |
 | `DES_UI_LIZARD_SIZE` | `160` | Its box, in dp. |
+| `DES_UI_LIZARD_SPIN` | `0` | The lizard turning round as it dances, in degrees a second (`30` is a turn in 12 s). |
 | `DES_UI_LIZARD_ANIM` | `a00_3301` | Another of its animations, by name (`a00_0000` is its idle). |
 
 The sword shows where RmlUi would show the arrow or the hand: over the documents, while one is up, and the mouse is
@@ -108,6 +109,8 @@ The UI's D3D12 renderer has a model shader beside RmlUi's.
   - Its texture's alpha is the translucency, and it is tinted a little blue.
 - The projection is orthographic. The cursor places the sword's tip at the pointer; the lizard is fitted into its
   box, around every frame of its animation, so it stays in place as it moves.
+- A model that spins turns about the upright axis through the middle of its box. Fitted into a box, it is fitted to
+  the upright cylinder around its box, which looks the same at every turn, so it keeps its size as it turns.
 - The view and the light are the ones the feasibility previews used (`ui::models::look`).
 
 Only the D3D12 renderer draws models. With `DES_UI_RENDER=d3d11` the system's arrow stays.

@@ -232,7 +232,6 @@ void draw_cursor() {
         return !v || std::strcmp(v, "0") != 0;
     }();
     static const float size = env_float("DES_CURSOR_SIZE", 64.f, 16.f, 512.f);
-    static const float spin = env_float("DES_CURSOR_SPIN", 0.f, -3600.f, 3600.f);
     static const auto start = std::chrono::steady_clock::now();
     const bool arrow = sCursorName.empty() || sCursorName == "default" || sCursorName == "auto" ||
                        sCursorName == "arrow" || sCursorName == "pointer";
@@ -242,7 +241,8 @@ void draw_cursor() {
             float lo[3], hi[3];
             ui::models::bounds(*m, lo, hi);
             const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-            const ui::models::Look look = ui::models::look("moonlight", float(std::fmod(double(spin) * t, 360.0)));
+            const double turn = std::fmod(double(ui::models::spin("moonlight")) * t, 360.0);
+            const ui::models::Look look = ui::models::look("moonlight", float(turn));
             ModelView v;
             std::memcpy(v.rotation, look.rotation, sizeof v.rotation);
             v.pivot[1] = lo[1];  // the tip: the blade lies along -Y
@@ -256,8 +256,8 @@ void draw_cursor() {
 }
 
 // DES_UI_LIZARD=1, for now: the crystal lizard dancing in the bottom right corner (above the start screen's footer)
-// while a document is up, a box of DES_UI_LIZARD_SIZE dp (160). In a document it is an element's decorator,
-// shader("model:lizard") (docs/112).
+// while a document is up, a box of DES_UI_LIZARD_SIZE dp (160), turning DES_UI_LIZARD_SPIN degrees a second (0). In a
+// document it is an element's decorator, shader("model:lizard") (docs/112).
 void draw_lizard(int width, int height) {
     static const bool on = [] {
         const char* v = std::getenv("DES_UI_LIZARD");
@@ -266,13 +266,15 @@ void draw_lizard(int width, int height) {
     static const float size = env_float("DES_UI_LIZARD_SIZE", 160.f, 32.f, 2048.f);
     static const auto start = std::chrono::steady_clock::now();
     if (!on || !s.cursor_wanted) return;
-    const float dp = s.rml->GetDensityIndependentPixelRatio(), px = size * dp;
+    const float dp = s.rml->GetDensityIndependentPixelRatio(), px = size * dp, spin = ui::models::spin("lizard");
     ModelView v;
-    std::memcpy(v.rotation, ui::models::look("lizard", 0.f).rotation, sizeof v.rotation);
+    v.time = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    std::memcpy(v.rotation, ui::models::look("lizard", float(std::fmod(double(spin) * v.time, 360.0))).rotation,
+                sizeof v.rotation);
+    v.turning = spin != 0.f;
     v.at[0] = float(width) - px - 40.f * dp;
     v.at[1] = float(height) - px - 88.f * dp;
     v.size[0] = v.size[1] = px;
-    v.time = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     s.renderer->draw_model("lizard", v);
 }
 

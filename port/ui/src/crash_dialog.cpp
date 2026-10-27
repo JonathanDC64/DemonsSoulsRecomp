@@ -351,6 +351,7 @@ bool show(const Content& content, const Actions& actions) {
         const char* shot = std::getenv("DES_CRASH_DIALOG_SHOT");
         const char* exit_ms = std::getenv("DES_CRASH_DIALOG_EXIT_MS");
         const char* auto_report = std::getenv("DES_CRASH_DIALOG_REPORT");
+        const char* auto_details = std::getenv("DES_CRASH_DIALOG_DETAILS");
         const auto start = std::chrono::steady_clock::now();
         const long long close_after = exit_ms && *exit_ms ? std::atoll(exit_ms) : 0;
         unsigned long long frame = 0;
@@ -365,6 +366,9 @@ bool show(const Content& content, const Actions& actions) {
             ++frame;
             if (frame == 10 && auto_report && *auto_report && *auto_report != '0' && actions.report) {
                 if (auto* modal = dynamic_cast<Modal*>(top_document())) modal->set_body_text(actions.report());
+            }
+            if (frame == 10 && auto_details && *auto_details && *auto_details != '0') {
+                if (auto* modal = dynamic_cast<Modal*>(top_document())) details(*modal);
             }
             input::update_pad(read_pads(), 0);
             ui::update();

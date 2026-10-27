@@ -28,7 +28,8 @@ struct Actions {
 // Shows the dialog until it is closed. False if it could not be shown.
 //
 // Test knobs (from the crashed game's environment): DES_CRASH_DIALOG_REPORT=1 presses "Report on GitHub" by itself,
-// DES_CRASH_DIALOG_SHOT=<file.bmp> writes the dialog's picture, DES_CRASH_DIALOG_EXIT_MS=<ms> closes it after that long.
+// DES_CRASH_DIALOG_DETAILS=1 presses "Show details" by itself, DES_CRASH_DIALOG_SHOT=<file.bmp> writes the dialog's
+// picture, DES_CRASH_DIALOG_EXIT_MS=<ms> closes it after that long.
 bool show(const Content& content, const Actions& actions);
 
 }  // namespace ui::crash_dialog

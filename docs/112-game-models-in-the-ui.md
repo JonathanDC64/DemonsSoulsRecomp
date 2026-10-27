@@ -3,19 +3,23 @@
 Date: 2026-10-27. Status: first version, for the user to try.
 - While a menu is open, the mouse cursor is the **Large Sword of Moonlight**: the game's own model, drawn live in 3D,
   with its translucent blade. Its tip is the cursor's point.
-- The **crystal lizard** can dance in the UI. For now that is behind a knob, `DES_UI_LIZARD=1`, which puts it in
-  the bottom right corner. In a document it is one line of RCSS (section 5).
+- The **crystal lizard** dances in the bottom right corner while a menu is open. That place is for now. In a
+  document it is one line of RCSS (section 5).
+- Settings > Interface turns each off: **Sword cursor** and **Crystal lizard**, both on by default, at once.
 - Nothing of the game is in the program or in this repository. Both models are read from the player's own copy of
   the game, the first time each is drawn.
 
 ## 1. What shows, and the knobs
 
+The two rows are settings with the knobs' names, so a knob given at start wins over its row (the row shows it as
+set from outside).
+
 | Knob | Default | What it does |
 |---|---|---|
-| `DES_CURSOR3D` | on | `0`: the system's arrow, as before. |
+| `DES_CURSOR3D` | `1` | `0`: the system's arrow, as before. Its row is Sword cursor. |
 | `DES_CURSOR_SIZE` | `64` | The sword's length, in dp (the UI's units: pixels at 96 DPI, times the UI scale). |
 | `DES_CURSOR_SPIN` | `0` | A slow turn about the blade, in degrees a second (`20` is one turn in 18 s). |
-| `DES_UI_LIZARD` | off | `1`: the lizard, dancing, in the bottom right corner while a document is up. |
+| `DES_UI_LIZARD` | `1` | The lizard, dancing, in the bottom right corner while a document is up; `0`: none. Its row is Crystal lizard. |
 | `DES_UI_LIZARD_SIZE` | `160` | Its box, in dp. |
 | `DES_UI_LIZARD_SPIN` | `0` | The lizard turning round as it dances, in degrees a second (`30` is a turn in 12 s). |
 | `DES_UI_LIZARD_ANIM` | `a00_3301` | Another of its animations, by name (`a00_0000` is its idle). |
@@ -127,7 +131,7 @@ Any element can show it:
   box. It follows the element's transform and opacity, and its clip.
 - `model:moonlight` works too.
 
-Where it goes in the UI is still to be decided. Until then `DES_UI_LIZARD=1` shows it in a corner.
+Where it goes in the UI is still to be decided. Until then host.cpp draws it in a corner (`DES_UI_LIZARD`).
 
 ## 6. The cursor: how the system's is hidden
 

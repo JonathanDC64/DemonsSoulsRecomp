@@ -107,13 +107,27 @@ Above 30 fps the player jittered while riding the Palace 1-4 elevator (`o2480_30
 - **Cause.** The elevator is a keyframed rigid body, and the world step moves it. Under the cap it moved only on
   step frames, and the player standing on it moved with it: at 200 fps, a 6 cm jump every 33 ms with still frames
   between. Lifts, turning bridges and opening doors are keyframed bodies too.
-- **Fix.** `des_phys_rate` steps the world every frame, as `DES_PHYS_HZ=0` does, while the player touches a moving
-  keyframed body and for 0.25 s of game time after. The hold keeps a contact that drops for a frame from switching
-  the cap on and off. The player's character proxy (`*(P + 0x34)`, `P = *(*(chr + 0x20) + 0x10)`, vtable
-  `0x018B89F0`) lists the rigid bodies it touches at +0x8C (data, size). A moving keyframed body (vtable
-  `0x018B4810`) has inverse mass 0 (+0x19C) and a linear (+0x1A0) or angular (+0x1B0) velocity. The level's fixed
-  bodies have none, and corpses and debris have mass. On those frames `des_phys_kf` leaves the keyframe's 1/dt as
-  the game set it.
+- **Fix.** `des_phys_rate` steps the world every frame, as `DES_PHYS_HZ=0` does, while the player is in or on a
+  moving keyframed body and for 0.25 s of game time after. The hold keeps a test that misses for a frame from
+  switching the cap on and off. On those frames `des_phys_kf` leaves the keyframe's 1/dt as the game set it.
+- **The test.** It goes by position, against the bodies of the world's active simulation islands:
+  - The world is `*(*(r31 + 0x10) + 4)` in the physics update (vtable `0x018B4F98`). It lists its active islands at
+    +0x28 (data, size); an island lists its bodies at +0x48.
+  - A moving keyframed body (vtable `0x018B4810`) has inverse mass 0 (+0x19C) and a linear (+0x1A0) or angular
+    (+0x1B0) velocity. The level's fixed bodies have none, and corpses and debris have mass.
+  - Characters' own bodies (the bones' hit bodies, keyframed to the animation) are on collision layer 8 (the low 5
+    bits of the filter word at +0x2C), and on layer 6 once the character is dead (the player's after a 40 m fall:
+    `0x01000008` became `0x01000026`). Both are left out. The paternosters' cabins and the big 2-1 lift are on
+    layer 12.
+  - The body's bounding box is held as 32-bit broadphase integers (+0x30 min, +0x40 max). The broadphase
+    (`*(world + 0x54)`) maps them back to metres: `q / scale - offset`, with its offset at +0x70 and scale at +0x90
+    (2500 and about 429,470 per metre in 2-1).
+  - The player is on the body when the player's position (`P + 0x10`, `P = *(*(chr + 0x20) + 0x10)`) is in the box
+    widened by 0.3 m.
+- **Why not the character proxy.** The first version looked at the proxy's list of touched bodies (`*(P + 0x34)`,
+  +0x8C). That caught the 1-4 elevator, but not the Stonefang paternosters: the proxy's contact list (+0x74) stays
+  empty on level ground and in the middle of a cabin's floor. Only a side contact (a rail, a wall) shows, so the
+  fix worked or not depending on where the player stood.
 - Drawing the platform between steps would not help: the player stands on the stepped body, so the player would
   still move in steps.
 - `DES_PHYS_RIDE=0` keeps the cap on a ride too. `DES_PHYS_RIDE_LOG=1` prints each switch with the body.
@@ -129,7 +143,30 @@ that moved less than a fifth of the ride's mean step.
 | Unlocked, cap 30, fix | 196-198 | 1.3 / 1.9 mm | 1% |
 | Unlocked, no cap (`DES_PHYS_HZ=0`) | 186-189 | 1.8 / 1.7 mm | 1% / 0% |
 
+That table is from the first version (the proxy's touched bodies). With the position test, in a second session: before
+15.4 / 15.3 mm and 57% / 54% still frames, fix 1.3 / 1.2 mm and 0%, at 211-217 fps. The elevator ran at 1.78 m/s in
+both.
+
+### Stonefang 2-1 paternosters
+
+2-1 has two paternosters: one by the start (cabins at x 89-92) and one by the gear (`o6140_0000`, entity 1019, cabins
+at x 185-187). Each cabin is three keyframed bodies: the cabin block and two rails. Rides on a copy of a save at the
+2-1 start, standing on the cabin's floor in the middle and 0.7 m / 0.8 m off it both ways, 5-6 s each, measured the
+same way as above:
+
+| Setting | fps | Jitter, start / gear | Still frames | Cabin speed, start / gear |
+|---|---|---|---|---|
+| 30 fps | 30 | 1.6 / 2.4 mm | 0% | 2.57 / 1.78 m/s |
+| Unlocked, cap 30, `DES_PHYS_RIDE=0` (before) | 340-370 | 22.6-22.7 / 15.6-15.7 mm | 77-87% | 2.39-2.46 / 1.63-1.66 m/s |
+| Unlocked, cap 30, fix | 295-331 | 2.4-3.0 / 2.7-5.5 mm | 0-6% | 2.61-2.63 / 1.78-1.79 m/s |
+| Unlocked, no cap (`DES_PHYS_HZ=0`) | 313-345 | 1.6 / 2.8 mm | 0-2% | 2.59 / 1.79 m/s |
+
+Under the cap the cabins also ran about 7% slow. On a ride the fix brings them back to the speed they have at 30 fps.
+
 ## Open
+
+- Under the cap the paternosters' cabins run about 7% slow when the player is not on them (2.39-2.46 m/s against
+  2.57 at 30 fps). The 1-4 elevator does not (1.78 m/s either way). Not looked into.
 
 - Per-body settings (damping, quality type, max speeds) come from the game data and were not read.
 - The Havok inactivity test and TOI code run on the SPU and were not read.

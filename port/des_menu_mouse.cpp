@@ -272,6 +272,7 @@ struct Menu {
 
 int s_on = 0, s_log = 0;
 std::vector<Drawn> s_draws;
+thread_local unsigned t_pad_reads = 0;   /* the pad reads this thread made (des_mm_pad_buttons, each read of pad 0) */
 std::vector<Menu> s_menus;
 std::string s_menu_sig;
 
@@ -1195,15 +1196,17 @@ extern "C" void des_mm_draw_enter(ppu_context* ctx, uint32_t dlg)
     PS3_KNOB(s_on, ps3_env_int("DES_MENU_MOUSE", 0));
     PS3_KNOB(s_log, ps3_env_int("DES_MENU_MOUSE_LOG", 0));
     if (!s_on || !guest_ok(dlg, 4)) return;
-    /* A dialog drawn again: the game has begun its next pass over the menus, and the one before is whole. (Not the
-     * flip: it is counted on another thread, so at a high frame rate it lands in the middle of a pass, and the menus
-     * of half a pass came and went.) */
-    bool again = false;
-    for (const Drawn& d : s_draws)
-        if (d.dlg == dlg) {
-            again = true;
-            break;
-        }
+    /* The first draw after this thread read the pad: the game has begun its next frame, and the pass before is whole.
+     * Each frame it reads the pad once, then draws its own layers (the pause menu, the inventory) and then the
+     * system's (the prompts, over them). Else, where it read none (a loading screen), a dialog drawn again.
+     * (Not the flip: it is counted on another thread, so at a high frame rate it lands in the middle of a pass, and
+     * the menus of half a pass came and went. Nor a dialog drawn again alone: that cuts the frame where the oldest
+     * dialog still drawn is, the system's layer, so the prompts came first, under the menus they are drawn over, and
+     * a click on OK went to the row beneath.) */
+    static thread_local unsigned seen = 0;
+    bool again = t_pad_reads != seen && !s_draws.empty();
+    seen = t_pad_reads;
+    for (size_t k = 0; k < s_draws.size() && !again; k++) again = s_draws[k].dlg == dlg;
     if (again) end_frame(ctx);
     if (s_draws.size() >= 512) return;
     Drawn d{};
@@ -1221,6 +1224,7 @@ extern "C" void des_mm_draw_enter(ppu_context* ctx, uint32_t dlg)
  * for DES_MENU_MOUSE_PRESS frames and as many packets the game took, then let go for as long. */
 extern "C" unsigned des_mm_pad_buttons(void)
 {
+    t_pad_reads++;
     PS3_KNOB(s_press_frames, std::max(1, ps3_env_int("DES_MENU_MOUSE_PRESS", 1)));
     const unsigned flip = des_flip_count();
     const unsigned taken = g_pad0_reads - g_pad0_empty_reads;

@@ -97,7 +97,22 @@ Found in the census runs (`DES_MENU_MOUSE_LOG=3`, section 1); nothing here is a 
 
 The model is made once a pass over the menus, from the pass before's draws, on the game's thread, and only when a
 visible dialog has a piece named `...cursor` (kept per dialog by its list of pieces, so a pass with no menu costs two
-reads a dialog). A pass ends when a dialog is drawn again: each is drawn once a pass.
+reads a dialog). A pass is a frame's draws: it begins with the first draw after the game's thread has read the pad.
+Where it reads none (a loading screen), a pass ends when a dialog is drawn again: each is drawn once a pass.
+
+**Where a frame begins.** Which menu is on top goes by the draw order, so a pass must begin where the game's frame
+does. Each frame the game reads the pad once (cellPad's title hook, `des_mm_pad_buttons`, on the same thread), then
+draws its own layers (0x00192310: the pause menu, the inventory, System) and then the system's (0x0018FEB0: the
+yes/no prompts, the autosave icon) over them. Each layer is a list drawn by 0x00F7F3E0 from 0x0071CA28. Cut where a
+dialog is drawn again, a pass began at the oldest dialog still drawn: the system's first layer, made at boot. Its
+prompts then came first, beneath the menus they are drawn over. They were left out, as spots under a higher
+menu's, and a click on OK went to the row beneath: Load Profile's "Load profile and exit current game?", Quit
+Game's prompt, the inventory's Auto Sort and Drop. Measured at `DES_FPS=unlocked` in the inventory with the Auto Sort
+prompt up:
+- The draws' one long gap, about 15 ms (the rest of the frame), came between the system's last layer and the game's
+  first.
+- The gap before the old pass's first draw was 0.1 to 0.5 ms.
+- The pad was read once a pass, in that long gap.
 
 A pass is not a flip. The first version ended a frame when the flip count changed, and the flip is counted on
 another thread (the flip request). At 30 fps that fell between passes. Unlocked (hundreds of frames a second) it
@@ -188,8 +203,10 @@ On the pinned regression save, by `DES_UI_MOUSE` (the steps and the shots are in
 | Inventory | glow on a row (its whole width), wheel, click opens the command menu, right click closes it, click on a category |
 | Equipment | a click on a slot opens its item list; glow on a row, wheel, right click back |
 | System | a click on the pause bar's last tab walks 3 right to it; a click on Options opens it |
+| Yes/no prompts in play | Auto Sort's "Automatically resort all items?": glow on OK, OK sorts; Quit Game's: CANCEL, and OK goes to the title; Load Profile's "Load profile and exit current game?": CANCEL |
 | Options | glow on a value; a click on Camera Speed's right half walks there and steps it 5 to 6, its left half back to 5; 2 wheel notches over Music walk there and step it 10 to 8; a click on a label selects its row only; right click brings the game's "Cancel option changes and return?" |
 
 Not tried yet: the shops, the blacksmith, storage and the Maiden in Black's level up (they need the Nexus's
-characters). They are built the same way, so they should work; the census (`DES_MENU_MOUSE_LOG=3`) shows what a
+characters), and Drop's "Please select the number of items to drop." with its ▲ ▼ arrows (the Nexus greys Drop
+out). They are built the same way, so they should work; the census (`DES_MENU_MOUSE_LOG=3`) shows what a
 screen has if one does not.

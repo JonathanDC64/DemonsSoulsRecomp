@@ -1288,12 +1288,60 @@ static int phys_hz()
 }
 static std::atomic<double> s_phys_clock{0.0};   /* game seconds, summed frame dts */
 static std::atomic<bool> s_phys_capped{false};  /* this frame was shorter than the step */
+static std::atomic<bool> s_phys_ride{false};    /* this frame steps uncapped: the player rides a moving body */
+
+/* The cap and moving bodies. An elevator, a lift or a turning bridge is a
+ * keyframed body, moved by the world step, so under the cap it moves in 1/n
+ * steps and the player standing on it with it: on the Palace 1-4 elevator at
+ * 200 fps, a 6 cm jump every 33 ms with still frames between. So while the
+ * player touches a moving keyframed body, and for 0.25 s of game time after,
+ * the world steps every frame, as with DES_PHYS_HZ=0. The player's character
+ * proxy (*(P + 0x34), P = *(*(chr + 0x20) + 0x10), vtable 0x018B89F0) lists
+ * the rigid bodies it touches at +0x8C (data, size). A moving keyframed one
+ * (vtable 0x018B4810) has inverse mass 0 (+0x19C) and a linear (+0x1A0) or
+ * angular (+0x1B0) velocity; the level's fixed bodies have none.
+ * DES_PHYS_RIDE=0 keeps the cap there too; DES_PHYS_RIDE_LOG=1 prints each
+ * start and end. */
+static uint32_t player_moving_body()
+{
+    uint32_t p = vm_read32(kChrMan);
+    if (!guest_ptr_ok(p) || !guest_ptr_ok(p = vm_read32(p + 0x1BC)) || !guest_ptr_ok(p = vm_read32(p + 0x20)) ||
+        !guest_ptr_ok(p = vm_read32(p + 0x10)) || !guest_ptr_ok(p = vm_read32(p + 0x34)) ||
+        vm_read32(p) != 0x018B89F0u)
+        return 0;
+    const uint32_t bodies = vm_read32(p + 0x8C), n = vm_read32(p + 0x90);
+    if (!guest_ptr_ok(bodies) || n > 32) return 0;
+    for (uint32_t i = 0; i < n; i++) {
+        const uint32_t b = vm_read32(bodies + 4 * i);
+        if (!guest_ptr_ok(b) || vm_read32(b) != 0x018B4810u || vm_readf(b + 0x19C) != 0.0f) continue;
+        float v = 0.0f, w = 0.0f;
+        for (int k = 0; k < 3; k++) {
+            const float a = vm_readf(b + 0x1A0 + 4 * k), r = vm_readf(b + 0x1B0 + 4 * k);
+            v += a * a; w += r * r;
+        }
+        if (v > 1e-4f || w > 1e-4f) return b;
+    }
+    return 0;
+}
+
 extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
 {
-    const int hz = phys_hz();
-    static double acc = 0.0;
-    const double dt = ctx->fpr[31], h = hz > 0 ? 1.0 / hz : 0.0;
+    static int ride_on = 1, ride_log = 0;
+    PS3_KNOB(ride_on, ps3_env_int("DES_PHYS_RIDE", 1));
+    PS3_KNOB(ride_log, ps3_env_int("DES_PHYS_RIDE_LOG", 0));
+    int hz = phys_hz();
+    static double acc = 0.0, ride_until = 0.0;
+    const double dt = ctx->fpr[31];
     if (dt > 0.0) s_phys_clock.store(s_phys_clock.load() + dt);
+    const uint32_t body = hz > 0 && ride_on && dt > 0.0 && dt < 1.0 / hz ? player_moving_body() : 0;
+    if (body) ride_until = s_phys_clock.load() + 0.25;
+    const bool ride = hz > 0 && ride_on && s_phys_clock.load() < ride_until;
+    if (ride_log && ride != s_phys_ride.load())
+        fprintf(stderr, "[physride] %s at %.2f s (body %08X)\n", ride ? "every frame" : "capped again",
+                s_phys_clock.load(), body);
+    s_phys_ride.store(ride);
+    if (ride) hz = 0;
+    const double h = hz > 0 ? 1.0 / hz : 0.0;
     s_phys_capped.store(hz > 0 && dt > 0.0 && dt < h);
     if (hz <= 0 || ctx->gpr[28] != 0) { acc = 0.0; return; }
     if (!(dt > 0.0) || dt >= h) { acc = 0.0; return; }
@@ -1312,10 +1360,11 @@ extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
  * 0x0131BAF8) set each body's velocity to the distance to the pose times
  * 1/dt. Under the cap the world steps 1/n, so a frame's 1/dt would carry the
  * body n*dt times too far. The hook runs after their fdivs f31, f0, f1 and
- * makes 1/dt n when the frame is shorter than 1/n. */
+ * makes 1/dt n when the frame is shorter than 1/n (not while the world steps
+ * every frame for a ride). */
 extern "C" void des_phys_kf(ppu_context* ctx, uint32_t)
 {
-    const int hz = phys_hz();
+    const int hz = s_phys_ride.load() ? 0 : phys_hz();
     if (hz <= 0 || !(ctx->fpr[1] > 0.0) || ctx->fpr[1] >= 1.0 / hz) return;
     ctx->fpr[31] = (float)(ctx->fpr[0] * hz);
 }

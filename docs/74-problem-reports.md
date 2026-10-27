@@ -29,8 +29,8 @@ Code:
 | `des.log` | the first 120 lines of the log and its last 512 KB |
 | `des.prev.log` | the end of the previous run's log, when that run was in the last 24 h: a freeze or crash the player restarted after |
 
-The crash and hang dialog's **Report on GitHub** zips `crash.txt` or
-`hang.txt`, `system.txt`, `settings.ini`, `environment.txt` (the game's
+The crash and hang dialog's **Report on GitHub** zips `crash.txt`,
+`hang.txt` or `graphics-lost.txt`, `system.txt`, `settings.ini`, `environment.txt` (the game's
 command line, saved with the report) and `des.log`. The dialog runs as a
 process of its own and reads no settings. So the game keeps
 `logs\settings.txt` up to date: the same listing as above, written at
@@ -86,6 +86,22 @@ deadlock, a wait that never ends).
 3. The dialog opens once per freeze by itself (through the 15 s notice's
    wake). After **Keep waiting**, only another F1 or chord opens it again.
 
+**The graphics device is lost** (2026-10-27, issue #205; docs/111 section 8).
+A driver reset (TDR) or a GPU that goes away leaves the game running with
+nothing to draw with. No frame stops and the overlay cannot draw, so neither
+path above sees it.
+1. The watch thread asks `rsx_d3d12_device_lost()` (ps3recomp#142) every
+   250 ms.
+2. Once it says so, the thread writes `crashes\graphics-<time>.txt` (the
+   reason, then the snapshot), `.log` and `.cmdline`. It then starts the
+   dialog in its lost form: "The game can no longer draw", with
+   **Restart game / Report on GitHub / Show details / Close the game**.
+   Restart closes the game first. The report attaches it as
+   `graphics-lost.txt`.
+3. On Windows, every report's `system.txt` also counts the System log's
+   graphics driver resets (`Display` event 4101) of the last 7 days, with the
+   time of the last.
+
 One fix was needed for the first path: a repaint used to wait until the
 previous Present was taken. A window the compositor is not showing (behind
 another window, or covered) never takes it, so the overlay froze there. Once
@@ -121,6 +137,7 @@ All are live: the debug console's `setenv` sets them in a running game.
 |---|---|
 | `DES_HANG_AT_FRAME=n` | the game's flip thread stops for good once n frames were presented (a game hang; not on the render thread) |
 | `DES_HANG_RENDER_AT_FRAME=n` | the render thread stops for good (the hang dialog's case) |
+| `RSX_LOSE_DEVICE_AT_FRAME=n` | the D3D12 device is removed at the n-th frame, as a driver reset would lose it (the lost-graphics dialog's case; read at start, not live) |
 | `DES_REPORT_AT_FRAME=n` | starts Report an issue at frame n, once per value |
 | `DES_UI_PRESS=KEY` | presses F1, ESC, ENTER, UP/DOWN/LEFT/RIGHT, TAB, SPACE as the window procedure would, then clears itself. Test runs set `PS3_NO_USER_INPUT=1`, which drops keys posted to the window. |
 | `DES_REPORT_NO_OPEN=1` | no browser or Explorer; the issue link goes to `<zip>.url.txt` |

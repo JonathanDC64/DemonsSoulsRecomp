@@ -234,10 +234,12 @@ struct Dialog {
     DWORD pid = 0;
     std::string what;
     bool hang = false;  // a hang report (report_hang): the game is still running
+    bool lost = false;  // a lost graphics device (report_graphics_lost): the game is still running, drawing nothing
 };
 
 constexpr const char* kCrashMark = "=== CRASH: ";
 constexpr const char* kHangMark = "=== NOT RESPONDING: ";
+constexpr const char* kLostMark = "=== GRAPHICS LOST: ";
 
 std::string read_text(const std::filesystem::path& path) {
     const auto b = report::read_file(path);
@@ -249,7 +251,7 @@ std::string read_text(const std::filesystem::path& path) {
 // "access violation writing 0000000000000000" or "no new frame for 14 s", from the first line of the report.
 std::string what_happened(const std::string& txt) {
     std::string what = "The game stopped unexpectedly.";
-    for (const char* mark : {kCrashMark, kHangMark}) {
+    for (const char* mark : {kCrashMark, kHangMark, kLostMark}) {
         const size_t a = txt.find(mark);
         if (a == std::string::npos) continue;
         const size_t from = a + std::strlen(mark), b = txt.find(" ===", from);
@@ -304,7 +306,7 @@ std::string make_report(Dialog& d) {
     const std::string txt = report::redact(read_text(d.txt));
     const std::string system = report::redact(report::system_info());
     std::vector<report::File> files;
-    files.push_back({d.hang ? "hang.txt" : "crash.txt", report::bytes(txt)});
+    files.push_back({d.lost ? "graphics-lost.txt" : d.hang ? "hang.txt" : "crash.txt", report::bytes(txt)});
     files.push_back({"system.txt", report::bytes(system)});
     // (their settings: as the game had them, with the defaults and what the environment set; else the file)
     if (auto in_use = report::read_file(d.data / L"logs" / L"settings.txt"); !in_use.empty())
@@ -323,16 +325,22 @@ std::string make_report(Dialog& d) {
     if (const std::string tail = read_text(log); !tail.empty()) files.push_back({"des.log", report::bytes(report::redact(tail))});
     const auto zip = report::write_bundle(report::narrow(d.txt.stem().wstring()), files);
 
+    const bool running = d.hang || d.lost;
     std::string body = std::string("## What happened\n(Please say what you were doing when the game ") +
-                       (d.hang ? "stopped.)\n\n## Not responding\n" : "crashed.)\n\n## Crash\n") + d.what + "\n\n```\n" +
-                       (d.hang ? top_of_stack(txt, 24, "--- guest threads") : top_of_stack(txt, 20)) +
+                       (d.lost   ? "stopped drawing.)\n\n## Graphics device lost\n"
+                        : d.hang ? "stopped.)\n\n## Not responding\n"
+                                 : "crashed.)\n\n## Crash\n") +
+                       d.what + "\n\n```\n" +
+                       (running ? top_of_stack(txt, 24, "--- guest threads") : top_of_stack(txt, 20)) +
                        "```\n\n## System\n```\n" + system + "```\n\n## Attachments\n";
     const std::string name = report::narrow(zip.filename().wstring());
-    const char* holds = d.hang ? "what every thread was doing, your settings and the game's recent messages"
-                               : "the full stack, your settings and the game's recent messages";
+    const char* holds = running ? "what every thread was doing, your settings and the game's recent messages"
+                                : "the full stack, your settings and the game's recent messages";
     body += zip.empty() ? "(The report files could not be saved.)\n"
                         : "Drag `" + name + "` (its folder is open) into this issue: it has " + holds + ".\n";
-    report::open_issue(report::issue_url((d.hang ? "Not responding: " : "Crash: ") + d.what.substr(0, 80), body), zip);
+    report::open_issue(
+        report::issue_url((d.lost ? "Graphics lost: " : d.hang ? "Not responding: " : "Crash: ") + d.what.substr(0, 80), body),
+        zip);
     return zip.empty() ? "The report files could not be saved. The issue form is open in your browser."
                        : "The issue form is open in your browser, with the folder holding " + name +
                              ". Drag that file into the issue to attach the details: " + holds + ". Thank you!";
@@ -377,19 +385,27 @@ int run_dialog(int argc, LPWSTR* argv) {
     const std::string txt = read_text(d.txt);
     d.what = what_happened(txt);
     d.hang = txt.find(kHangMark) != std::string::npos;
+    d.lost = txt.find(kLostMark) != std::string::npos;
 
-    crash_dialog::Content content{d.what, d.hang ? top_of_stack(txt, 30, "--- guest threads") : top_of_stack(txt, 14),
-                                  d.hang};
+    const bool running = d.hang || d.lost;
+    crash_dialog::Content content{d.what, running ? top_of_stack(txt, 30, "--- guest threads") : top_of_stack(txt, 14),
+                                  d.hang, d.lost};
     crash_dialog::Actions actions;
     actions.report = [&d] { return make_report(d); };
-    actions.restart = [&d] { restart(d); };
+    actions.restart = [&d] {
+        if (d.lost) close_game(d);  // (the game is still running, with nothing to draw with)
+        restart(d);
+    };
     actions.close_game = [&d] { close_game(d); };
     if (!crash_dialog::show(content, actions)) {
         // (no window to be had: a plain message box)
         const std::wstring text = report::widen(d.what) + L"\n\nA report was saved in " + d.txt.parent_path().wstring() +
                                   L".\nTo report it, attach the files in that folder to a new issue at " +
                                   report::widen(report::kRepositoryUrl);
-        MessageBoxW(nullptr, text.c_str(), d.hang ? L"Demon's Souls is not responding" : L"Demon's Souls has crashed",
+        MessageBoxW(nullptr, text.c_str(),
+                    d.lost   ? L"Demon's Souls can no longer draw"
+                    : d.hang ? L"Demon's Souls is not responding"
+                             : L"Demon's Souls has crashed",
                     MB_OK | MB_ICONERROR);
     }
     return 0;
@@ -444,29 +460,47 @@ bool hang_dialog_open() {
     return false;
 }
 
-void report_hang(long long ms_since_frame) {
+namespace {
+
+// A report of a game that is still running: <kind>-<time>.txt (`mark`, `what`, then `note` and the runtime's
+// snapshot) with the command line and the end of the log beside it, then the dialog.
+void report_running(const char* kind, const char* mark, const std::string& what, const char* note) {
     if (!g_installed || hang_dialog_open()) return;
     char stem[64];
     {
         const std::time_t t = std::time(nullptr);
         std::tm tm{};
         localtime_s(&tm, &t);
-        std::strftime(stem, sizeof stem, "hang-%Y%m%d-%H%M%S", &tm);
+        char at[32];
+        std::strftime(at, sizeof at, "%Y%m%d-%H%M%S", &tm);
+        std::snprintf(stem, sizeof stem, "%s-%s", kind, at);
     }
     const std::wstring base = std::wstring(g_dir) + report::widen(stem);
     FILE* out = nullptr;
     _wfopen_s(&out, (base + L".txt").c_str(), L"w");
     if (!out) return;
-    std::fprintf(out, "\n%sno new frame for %lld s ===\n", kHangMark, ms_since_frame / 1000);
+    std::fprintf(out, "\n%s%s ===\n", mark, what.c_str());
     std::fprintf(out, "version %s, ps3recomp %s, game dump %s\n", kVersion, kPs3recompVersion,
                  *kDumpSha256 ? kDumpSha256 : "unknown");
-    std::fprintf(out, "The menu could not open: the render thread did not answer.\n\n");
+    std::fprintf(out, "%s\n\n", note);
     ps3_diag_report(out, 2);
     std::fclose(out);
     write_cmdline(base + L".cmdline");
     write_log_tail(base + L".log");
-    std::fprintf(stderr, "[report] hang report: %s.txt (in the data folder's crashes folder)\n", stem);
+    std::fprintf(stderr, "[report] %s report: %s.txt (in the data folder's crashes folder)\n", kind, stem);
     if (g_dialog) g_hang_dialog = start_dialog(base + L".txt");
+}
+
+}  // namespace
+
+void report_hang(long long ms_since_frame) {
+    report_running("hang", kHangMark, "no new frame for " + std::to_string(ms_since_frame / 1000) + " s",
+                   "The menu could not open: the render thread did not answer.");
+}
+
+void report_graphics_lost(const std::string& what) {
+    report_running("graphics", kLostMark, what,
+                   "The graphics device was lost: nothing more can be drawn, while the game runs on.");
 }
 
 void install() {

@@ -9,6 +9,11 @@ Date: 2026-10-26. Status: researched without the reporter's logs, which were ask
   log. The fallback never ran, as on every run here: this PC's flips stay in the command stream.
 - Which way, if either, hit the reporter waits for their `des.log`.
 
+**Update 2026-10-27 (section 8):** the reporter's second report, with logs, is a **lost graphics device**: a
+driver reset (TDR) on their GTX 1070. Neither way above was taken. Nothing in the log said so, so ps3recomp#142
+now logs the loss, and this port shows a dialog (restart, report, close) and counts Windows' driver resets in
+reports. Where the GPU stopped needs a run with `D3D12_DRED=1`.
+
 ## Short answer
 
 - **Issue #205:** about five minutes into play, the picture froze. The game went on: sound, input and the F1 menu
@@ -129,8 +134,9 @@ Date: 2026-10-26. Status: researched without the reporter's logs, which were ask
 
 ## 5. Ruled out or unlikely
 
-- **Lost GPU device (TDR):** the F1 menu presents through the same device and swap chain. On a removed device it
-  could not appear, and the screenshot could not be read back.
+- **Lost GPU device (TDR), for the first report only:** the F1 menu presents through the same device and swap
+  chain. On a removed device it could not appear, and the screenshot could not be read back. The second report
+  is exactly this (section 8): no screenshot, and the menu could make no textures.
 - **Online:** the reporter's game was offline (the "project" server preset has no address yet). The game's 300 s
   rating poll only runs online.
 - **Saves:** they are synchronous on the save thread. A slow write blocks that thread, not the picture.
@@ -148,6 +154,8 @@ Date: 2026-10-26. Status: researched without the reporter's logs, which were ask
     `300 flips in a row with no display draw`.
   - Around the stall: `FIFO resync`, `FIFO walker circling`, `title-ring recycle`, `[gcm-wedge]`,
     `wait_for_gpu STUCK`, `FENCE STUCK`, `pipeline library saved`, `[RT] all 16`.
+  - A lost device (section 8): `[D3D12] the graphics device was lost` (ps3recomp#142), and before it
+    `[ui] could not make a ... texture for the menu`. The report's `system.txt` has `Graphics driver resets`.
 - **A run with `GCM_RATES=1`** separates the cases:
   - `[gcm-rates]` comes from `render_frame` and stops when nothing is drawn;
   - `flips=` above `flipwords=` means flips outside the stream.
@@ -248,3 +256,49 @@ upstream patch in the fork.
     f616c301 (export width), e99cbbf0 (the fork's own 27202ad0), 49eabf32, 88187d11. 24286f4b is equivalent for
     Demon's Souls. f734bbc8 is partly in: a depth-only clear of the display target still goes through
     `d3d12_clear_display`.
+
+## 8. The second report: a lost graphics device (2026-10-27)
+
+The reporter updated to `0.1.0-dev.963` (ps3recomp `99cf694a`, so #132-#134 were in) and it froze again, after
+1 minute in 1-1, shortly after saving Ostrava. This time the zip came with it. Their settings: `DES_FPS=120`,
+`RSX_SCALE=150`, FXAA, 16x anisotropic, online on the project's server.
+
+- **Frame-rate list:** `... 160 152 100 102 100 122 126 222 144 196 0 2 0 100 106 118 112 100 106 102`. The same
+  3 s stall as the first report, then the game near its 120 cap.
+- **`des.log`:**
+  - None of #132's lines (`flips outside the command stream` and the rest), so neither way of section 1 ran.
+    `_cellGcmSetFlipCommand` (`runtime.txt`, 251 calls in 2 s) writes the flip into the stream.
+  - The game kept drawing to the end of the log (`draw_arrays #292000`).
+  - From line 7861 on, 508 lines of `[ui] could not make a 128x256 texture for the menu` (and other sizes). That
+    is `CreateCommittedResource` failing on the device the overlay shares with the game.
+  - No `FENCE STUCK` or `wait_for_gpu STUCK`. A lost device's fences all read as done (`UINT64_MAX`), so no wait
+    times out.
+- **The zip has no `screenshot.png`:** the report reads the picture back from the swap chain, and that failed.
+  The first report had one, so its device was still alive (section 5).
+- **`runtime.txt`:** the vblank ticker thread at 96% of a core in `render_frame`. With every fence done at once,
+  nothing makes it wait.
+
+So the GPU stopped responding, Windows reset the driver (TDR, after about 2 s: the `0 2 0`), and the device was
+lost. From then on nothing can be drawn while the game runs on. The backend never looked at `Present`'s result,
+so the log had no line for it. Whether the first report was the same failure is open: it had a screenshot.
+
+**What changed:**
+- ps3recomp#142: `check_device()` asks `GetDeviceRemovedReason` when `Present` fails, when the frame fence reads
+  `UINT64_MAX`, and when a fence wait times out. It logs the reason once (`[D3D12] the graphics device was lost
+  (seen at ...)`), runs `dred_report`, and `rsx_d3d12_device_lost()` hands the reason to the host.
+- This port's watch thread (`des_ui.cpp`) opens the crash dialog in a new "lost" form: "The game can no longer
+  draw", with Restart game, Report on GitHub, Show details and Close the game. It writes `graphics-<time>.txt` in
+  the crashes folder (the reason, then the runtime's snapshot), which the report attaches as `graphics-lost.txt`.
+- Reports' `system.txt` on Windows: `Graphics driver resets (Windows' log), the last 7 days: N (the last on ...)`,
+  from the System log's `Display` event 4101.
+- **Test:** a scratch switch (`RSX_TEST_LOSE_AT=<frame>`, not committed) calls `ID3D12Device5::RemoveDevice`. At
+  frame 900, with presents off (a locked session), the fence path caught it in the same frame, the watcher wrote
+  the graphics report, and the game ran on. `DES_DATA_DIR` plus `DES_NO_CRASH_DIALOG=1` lets a test run write the
+  report without opening the window.
+
+**Still open: why the GPU hangs.** It may be our commands (a shader that loops too long, or an access out of
+bounds) or the reporter's PC (an overclock, the driver). Asked of the reporter:
+- Event Viewer, System log: `Display` event 4101 at the time of the freeze;
+- whether the GPU is overclocked;
+- one session with `tools/des/play.sh D3D12_DRED=1`. DRED's breadcrumbs name the command the GPU was on, and the
+  page fault its address. Their build already prints these at the next frame submit.

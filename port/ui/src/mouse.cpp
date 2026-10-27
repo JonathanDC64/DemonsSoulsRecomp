@@ -6,7 +6,7 @@
 // not apply). The game has the mouse while all of these hold:
 //   - the window is in front and not minimised;
 //   - no document of the UI is open (the start screen, the menu, settings, the keyboard, a question, the startup
-//     work);
+//     work), and no menu of the game that the mouse can use (game_menu.cpp: it points and clicks there instead);
 //   - the window is not being moved or resized, and its system menu is not open;
 //   - the game's follow camera or the bow's aim view is running: des_mouse_look (des_options.cpp) takes the counts
 //     once a game frame, and after kIdleFrames presented frames without a take (the title screen, a load, a cutscene)
@@ -60,6 +60,7 @@ std::atomic<unsigned> sTakes{0};    // des_mouse_take calls
 std::atomic<bool> sCamera{false};   // the game's camera takes the counts (on_frame)
 std::atomic<bool> sHeld{false};     // the cursor is hidden and clipped (mouse look)
 std::atomic<bool> sUiOpen{false};   // a document of the UI is open
+std::atomic<bool> sGameMenu{false}; // a menu of the game is open (set_game_menu)
 std::atomic<bool> sOwnCursor{false};  // the UI draws its own cursor (set_own_cursor): the system's is hidden
 std::atomic<HWND> sHwnd{nullptr};   // the game's window, for posting to it
 
@@ -69,6 +70,7 @@ bool sFree = false;         // the game has the buttons and the wheel, the curso
 bool sSizeMove = false;     // between WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE
 bool sMenuLoop = false;     // the window's system menu is open
 bool sWaitButtons = false;  // the game would have the mouse, but a button is still held
+bool sTracking = false;     // the window is told when the cursor leaves it (TrackMouseEvent), for a game's menu
 RECT sClip{};               // the clip set last
 bool sAbsValid = false;     // a device that reports positions (remote desktop, tablets): its last one, in pixels
 LONG sAbsX = 0, sAbsY = 0;
@@ -191,6 +193,7 @@ void update(HWND hwnd, const char* why) {
     const char* no = !sRegistered                                       ? "no raw mouse input"
                      : GetForegroundWindow() != hwnd || IsIconic(hwnd) ? "window in the background"
                      : sUiOpen.load(std::memory_order_acquire)          ? "a menu of the UI is open"
+                     : sGameMenu.load(std::memory_order_acquire)        ? "a menu of the game is open"
                      : sSizeMove                                        ? "window moving or resizing"
                      : sMenuLoop                                        ? "system menu"
                      : !sCamera.load(std::memory_order_acquire)         ? "the game's camera is not running"
@@ -350,6 +353,16 @@ bool wndproc(void* hwnd_, unsigned msg, unsigned long long wp, long long lp, lon
     case WM_DESTROY:
         let_go(hwnd, "window closing");
         return false;
+    case WM_MOUSEMOVE:  // over a menu of the game: WM_MOUSELEAVE when the cursor leaves (game_menu.cpp hides it)
+        if (sGameMenu.load(std::memory_order_relaxed) && !sTracking) {
+            TRACKMOUSEEVENT t{sizeof t, TME_LEAVE, hwnd, 0};
+            sTracking = TrackMouseEvent(&t) != FALSE;
+        }
+        if (sWaitButtons && !buttons_down()) update(hwnd, "buttons up");
+        return false;
+    case WM_MOUSELEAVE:
+        sTracking = false;
+        return false;
     default:
         if (sWaitButtons && is_mouse_message(msg) && !buttons_down()) update(hwnd, "buttons up");
         return false;
@@ -358,6 +371,10 @@ bool wndproc(void* hwnd_, unsigned msg, unsigned long long wp, long long lp, lon
 
 void set_ui_open(bool open) {
     if (sUiOpen.exchange(open) != open) post_look_again();
+}
+
+void set_game_menu(bool open) {
+    if (sGameMenu.exchange(open) != open) post_look_again();
 }
 
 void set_own_cursor(bool drawn) {

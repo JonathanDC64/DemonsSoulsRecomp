@@ -229,6 +229,22 @@ ticker ticker-text {
     color: var(--color-text);
 }
 
+/* The glow round the part of the game's menu under the pointer (docs/114; overlay.cpp sets its place and size in
+   px). A thin pale outline with a soft glow, fading in quickly. */
+game-glow {
+    position: absolute;
+    border-width: 1.5dp;
+    border-color: rgba(240, 236, 222, 90%);
+    border-radius: 3dp;
+    box-shadow: rgba(240, 236, 222, 45%) 0 0 12dp 2dp, rgba(240, 236, 222, 18%) 0 0 6dp 0 inset;
+    opacity: 0;
+    transition: opacity 0.12s quadratic-out;
+}
+
+game-glow[open] {
+    opacity: 1;
+}
+
 @media (max-height: 640dp) {
     toast {
         top: 20dp;

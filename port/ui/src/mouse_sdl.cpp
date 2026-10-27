@@ -45,6 +45,7 @@ std::atomic<unsigned> sTakes{0};    // des_mouse_take calls
 std::atomic<bool> sCamera{false};   // the game's camera takes the counts (on_frame)
 std::atomic<bool> sHeld{false};     // relative mouse mode is on (mouse look)
 std::atomic<bool> sUiOpen{false};   // a document of the UI is open
+std::atomic<bool> sGameMenu{false}; // a menu of the game is open (set_game_menu)
 std::atomic<bool> sWindowUp{false}; // the window's thread has handed this a message: posts have somewhere to go
 
 // The window's thread only.
@@ -113,6 +114,7 @@ void update(const char* why) {
     const char* no = !sWindow || SDL_GetKeyboardFocus() != sWindow ? "window in the background"
                      : sMinimised                                   ? "window minimised"
                      : sUiOpen.load(std::memory_order_acquire)      ? "a menu of the UI is open"
+                     : sGameMenu.load(std::memory_order_acquire)    ? "a menu of the game is open"
                      : !sCamera.load(std::memory_order_acquire)     ? "the game's camera is not running"
                                                                     : nullptr;
     if (no) {
@@ -212,6 +214,10 @@ bool wndproc(void* hwnd, unsigned msg, unsigned long long wp, long long lp, long
 
 void set_ui_open(bool open) {
     if (sUiOpen.exchange(open) != open) post_look_again();
+}
+
+void set_game_menu(bool open) {
+    if (sGameMenu.exchange(open) != open) post_look_again();
 }
 
 void set_own_cursor(bool drawn) {

@@ -636,7 +636,7 @@ void note_seen(ppu_context* ctx, uint32_t dlg, uint32_t arr, uint32_t n, const W
         if (box_known(box[p.group])) memcpy(s_seen.box[p.group], box[p.group], sizeof box[p.group]);
 }
 
-void dialog_draw(ppu_context* ctx)   /* for 0x00F60BD0 */
+void dialog_draw_inner(ppu_context* ctx)
 {
     const uint32_t dlg = (uint32_t)ctx->gpr[3];
     const uint32_t vt = guest_ok(dlg, 4) ? vm_read32(dlg) : 0u;
@@ -750,6 +750,14 @@ void dialog_draw(ppu_context* ctx)   /* for 0x00F60BD0 */
     }
 }
 
+extern "C" void des_mm_draw_enter(ppu_context* ctx, uint32_t dlg);   /* des_menu_mouse.cpp */
+
+void dialog_draw(ppu_context* ctx)   /* for 0x00F60BD0; the menus' mouse sees each dialog drawn too */
+{
+    des_mm_draw_enter(ctx, (uint32_t)ctx->gpr[3]);
+    dialog_draw_inner(ctx);
+}
+
 /* The text state the drawer's commands play back into: +0x24 in the object at
  * +0x38 of the list's owner (+0x14). */
 uint32_t text_state(uint32_t list)
@@ -822,6 +830,12 @@ void spacing_play(ppu_context* ctx)   /* for 0x000B14C8 */
 }
 
 } // namespace
+
+/* A piece's rect in its dialog's layout, for des_menu_mouse.cpp: 0 if it has none. */
+extern "C" int des_hud_obj_rect(ppu_context* ctx, uint32_t obj, float out[4])
+{
+    return obj_rect(ctx, obj, out) ? 1 : 0;
+}
 
 /* From ps3_title_options_init, before the guest runs. Wrapped whatever the
  * knobs say at start, so the settings window can change them while playing. */

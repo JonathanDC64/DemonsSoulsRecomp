@@ -213,6 +213,7 @@ struct State {
     bool initialised = false;
     int pointer_x = 0, pointer_y = 0;  // set_pointer
     bool pointer_inside = false, cursor_wanted = false;
+    int game_mode = 0, game_x = 0, game_y = 0;  // set_game_pointer
 };
 State s;
 
@@ -230,7 +231,8 @@ bool row_on(const char* key) {
 }
 
 // The Large Sword of Moonlight as the cursor (docs/112): over everything, its tip at the pointer, while a document is
-// up and RmlUi would show the arrow or the hand there; the system's cursor is hidden meanwhile (mouse.cpp). Its row,
+// up and RmlUi would show the arrow or the hand there, or over a menu of the game (set_game_pointer, docs/114); the
+// system's cursor is hidden meanwhile (mouse.cpp), and while the game's menu has hidden the pointer. Its row,
 // Sword cursor (DES_CURSOR3D), off keeps the system's arrow. Knobs: DES_CURSOR_SIZE the sword's length in dp (64);
 // DES_CURSOR_SPIN a turn about its blade, in degrees a second (0, still).
 void draw_cursor() {
@@ -240,7 +242,8 @@ void draw_cursor() {
     const bool arrow = sCursorName.empty() || sCursorName == "default" || sCursorName == "auto" ||
                        sCursorName == "arrow" || sCursorName == "pointer";
     bool drawn = false;
-    if (on && s.cursor_wanted && s.pointer_inside && arrow) {
+    const bool game = s.game_mode == 1 && !s.cursor_wanted;
+    if (on && ((s.cursor_wanted && s.pointer_inside && arrow) || game)) {
         if (const ui::models::Model* m = ui::models::get("moonlight")) {
             float lo[3], hi[3];
             ui::models::bounds(*m, lo, hi);
@@ -250,13 +253,13 @@ void draw_cursor() {
             ModelView v;
             std::memcpy(v.rotation, look.rotation, sizeof v.rotation);
             v.pivot[1] = lo[1];  // the tip: the blade lies along -Y
-            v.at[0] = float(s.pointer_x);
-            v.at[1] = float(s.pointer_y);
+            v.at[0] = float(game ? s.game_x : s.pointer_x);
+            v.at[1] = float(game ? s.game_y : s.pointer_y);
             v.scale = hi[1] > lo[1] ? size * s.rml->GetDensityIndependentPixelRatio() / (hi[1] - lo[1]) : 0.f;
             drawn = v.scale > 0.f && s.renderer->draw_model("moonlight", v);
         }
     }
-    mouse::set_own_cursor(drawn);
+    mouse::set_own_cursor(drawn || (s.game_mode == 2 && !s.cursor_wanted));
 }
 
 // The crystal lizard dancing in the bottom right corner (above the start screen's footer) while a document is up,
@@ -439,6 +442,12 @@ void set_pointer(int x, int y, bool inside) {
     s.pointer_x = x;
     s.pointer_y = y;
     s.pointer_inside = inside;
+}
+
+void set_game_pointer(int mode, int x, int y) {
+    s.game_mode = mode;
+    s.game_x = x;
+    s.game_y = y;
 }
 
 void set_cursor_wanted(bool wanted) {

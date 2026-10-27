@@ -11,6 +11,10 @@
 
 namespace ui {
 
+// Where the backend shows the game's picture in a window of W x H pixels: the largest rect of its shape (RSX_ASPECT,
+// else 16:9) in the middle, as left, top, right, bottom. Any thread.
+void picture_rect_of(float W, float H, float out[4]);
+
 class HudEditor : public Document {
 public:
     HudEditor();

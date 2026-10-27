@@ -9,8 +9,11 @@
 // with its own allocator and its own ring for constants and quads; what RmlUi lets go of (geometry, textures, the
 // targets after a resize) is released once the GPU is past the frames that used it.
 //
-// Not here: RmlUi's "shader" decorator demo ("creation"), which the UI does not use.
+// Also two of the game's own models (souls_model.hpp, docs/112), lit and textured with the layer's depth buffer: the
+// sword cursor (draw_model) and RmlUi's "shader" decorator with the value "model:<name>". Not here: RmlUi's own
+// "shader" decorator demo ("creation"), which the UI does not use.
 #include "renderer.hpp"
+#include "souls_model.hpp"
 
 #ifdef _WIN32
 #include <d3d12.h>
@@ -37,9 +40,11 @@
 #include <cstring>
 #include <deque>
 #include <map>
+#include <string>
 #include <thread>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace ui::d3d12 {
 namespace {
@@ -202,15 +207,60 @@ float4 main(PS_IN i) : SV_Target {
 }
 )";
 
+// The game's models (docs/112), shaded as the previews were: the diffuse texture under a light from the upper left
+// (ambient plus Lambert, both sides of a face lit as the side toward the viewer), the specular texture's colour as a
+// highlight. View space: x right, y down, z toward the viewer. An opaque mesh drops its texels under the alpha test;
+// a blended one (the blade) keeps only its faces toward the viewer, as a single sheet of glass, premultiplied.
+#define DES_UI_HLSL_MODEL                                                                                  \
+    "struct MODEL_IN { float3 position : POSITION; float3 normal : NORMAL; float2 uv : TEXCOORD; };\n"     \
+    "struct MODEL_PS { float4 position : SV_Position; float3 normal : NORMAL; float2 uv : TEXCOORD; };\n"  \
+    "Texture2D t0 : register(t0);\n"                                                                       \
+    "Texture2D t1 : register(t1);\n"                                                                       \
+    "SamplerState s_wrap : register(s0);\n"                                                                \
+    "cbuffer Model : register(b0) { float4x4 m_clip; float4 m_view[3]; float4 m_light; float4 m_tint;\n"   \
+    "                                float4 m_flags; };\n"
+
+const char kVsModel[] = DES_UI_HLSL_MODEL R"(
+MODEL_PS main(MODEL_IN v) {
+    MODEL_PS o;
+    o.position = mul(m_clip, float4(v.position, 1.0));
+    o.normal = float3(dot(m_view[0].xyz, v.normal), dot(m_view[1].xyz, v.normal), dot(m_view[2].xyz, v.normal));
+    o.uv = v.uv;
+    return o;
+}
+)";
+
+// m_light: toward the light, and the ambient part. m_tint: a colour, and the opacity. m_flags: x faces toward the
+// viewer only, y opaque, z the alpha test.
+const char kPsModel[] = DES_UI_HLSL_MODEL R"(
+float4 main(MODEL_PS i) : SV_Target {
+    float4 d = t0.Sample(s_wrap, i.uv);
+    float3 s = t1.Sample(s_wrap, i.uv).rgb;
+    float len = length(i.normal);
+    float3 n = len > 0.000001 ? i.normal / len : float3(0.0, 0.0, 1.0);
+    if (m_flags.x > 0.5 && n.z <= 0.0) discard;
+    if (m_flags.y > 0.5 && d.a < m_flags.z) discard;
+    if (n.z < 0.0) n = -n;
+    float3 L = normalize(m_light.xyz);
+    float3 H = normalize(L + float3(0.0, 0.0, 1.0));
+    float3 rgb = d.rgb * (m_light.w + (1.0 - m_light.w) * saturate(dot(n, L)));
+    rgb = saturate((rgb + s * pow(saturate(dot(n, H)), 24.0) * 0.9) * m_tint.rgb);
+    float a = (m_flags.y > 0.5 ? 1.0 : d.a) * m_tint.a;
+    return float4(rgb * a, a);
+}
+)";
+
 enum Program {
-    kColor, kTexture, kGradient, kPassthrough, kColorMatrix, kBlendMask, kBlur, kDropShadow, kHdrOut, kProgramCount
+    kColor, kTexture, kGradient, kPassthrough, kColorMatrix, kBlendMask, kBlur, kDropShadow, kHdrOut,
+    kModel, kModelBlend,  // (the model shaders: their own vertices, and the depth buffer)
+    kProgramCount
 };
 const char* const kProgramPs[kProgramCount] = {kPsColor,       kPsTexture,   kPsGradient, kPsPassthrough,
                                                kPsColorMatrix, kPsBlendMask, kPsBlur,     kPsDropShadow,
-                                               kPsHdrOut};
+                                               kPsHdrOut,      kPsModel,     kPsModel};
 const char* const kProgramName[kProgramCount] = {"color",        "texture",    "gradient", "passthrough",
                                                  "color matrix", "blend mask", "blur",     "drop shadow",
-                                                 "hdr out"};
+                                                 "hdr out",      "model",      "model blend"};
 
 enum Blend { kPremultiplied, kReplace, kFactor, kNoColor };
 enum Stencil { kStencilOff, kStencilTest, kStencilSet, kStencilIntersect, kStencilAuto };
@@ -244,6 +294,13 @@ struct DropShadowConstants {
     float max[2];
     float color[4];
 };
+struct ModelConstants {
+    float clip[16];     // model space to clip space (column major)
+    float view[3][4];   // model space to view space, the rows (the normals)
+    float light[4];
+    float tint[4];
+    float flags[4];
+};
 
 // A Matrix4f as HLSL reads it (column major).
 void store(const Rml::Matrix4f& m, float* out) {
@@ -275,6 +332,7 @@ struct CompiledShader {
     Rml::Vector2f p, v;
     std::vector<float> stop_positions;
     std::vector<Rml::Colourf> stop_colors;
+    std::string model;  // decorator: shader("model:<name>"): one of the game's models, fitted into the element
 };
 
 // SigmaToParameters and SetBlurWeights, RmlUi's.
@@ -320,12 +378,27 @@ struct Geometry {
     D3D12_VERTEX_BUFFER_VIEW vbv{};
     D3D12_INDEX_BUFFER_VIEW ibv{};
     UINT count = 0;
+    Rml::Vector2f lo, hi;  // its vertices' box, and the first one's alpha (a decorator's: the element's opacity)
+    float alpha = 1.f;
 };
 
 struct Texture {
     ID3D12Resource* res = nullptr;
     UINT srv = kNone;
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COPY_DEST;
+};
+
+// A model's GPU side: its textures, and one block with every mesh's indices and then its vertices as they rest (an
+// animated model's vertices are posed into the frame's ring instead).
+struct GpuModel {
+    const ui::models::Model* model = nullptr;  // null: not there (said once)
+    std::vector<Texture*> textures;            // as models::textures (null where one could not be made)
+    Block block;
+    struct Part {
+        size_t indices = 0, vertices = 0;  // where, in the block
+        UINT index_count = 0, vertex_count = 0;
+    };
+    std::vector<Part> parts;
 };
 
 struct Target {
@@ -402,6 +475,7 @@ public:
         mHdrScale = scale;
         mHdrSrgb = srgb;
     }
+    bool draw_model(const char* name, const ModelView& view) override;
 
     // ---- Rml::RenderInterface ----
     Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex> vertices, Rml::Span<const int> indices) override;
@@ -485,6 +559,11 @@ private:
     void render_filters(Rml::Span<const Rml::CompiledFilterHandle> filters);
     void render_blur(float sigma, Target& source_destination, Target& temp, Rml::Rectanglei window);
 
+    // The game's models
+    Texture* make_block_texture(const ui::models::Texture& src);
+    GpuModel* gpu_model(const std::string& name);
+    bool render_model(const std::string& name, const ModelView& view, float opacity);
+
     ID3D12Device* mDevice;
     ID3D12CommandQueue* mQueue;
     ImageSource mImages;
@@ -498,7 +577,7 @@ private:
     std::deque<Retired> mRetired;
 
     ID3D12RootSignature* mRoot = nullptr;
-    ID3DBlob* mVs[2] = {};  // main, quad
+    ID3DBlob* mVs[3] = {};  // main, quad, model
     ID3DBlob* mPs[kProgramCount] = {};
     std::map<uint64_t, ID3D12PipelineState*> mPipelines;
     Descriptors mSrv, mRtv, mDsv;
@@ -536,6 +615,10 @@ private:
     // HDR output (set_hdr)
     float mHdrScale = 1.f;
     bool mHdrSrgb = false;
+    // The game's models, by name, and an animated one's vertices this frame
+    std::map<std::string, GpuModel> mModels;
+    std::vector<std::vector<ui::models::Vertex>> mPosed;
+    const std::chrono::steady_clock::time_point mStart = std::chrono::steady_clock::now();
 };
 
 // ---- Set-up ----
@@ -630,6 +713,7 @@ bool RendererImpl::init() {
     };
     mVs[0] = compile(kVsMain, "vs_5_0", "main");
     mVs[1] = compile(kVsQuad, "vs_5_0", "quad");
+    mVs[2] = compile(kVsModel, "vs_5_0", "model");
     for (int p = 0; p < kProgramCount; p++) mPs[p] = compile(kProgramPs[p], "ps_5_0", kProgramName[p]);
     // What the menu cannot do without; the effects only fall away if theirs are missing.
     if (!mVs[0] || !mVs[1] || !mPs[kColor] || !mPs[kTexture] || !mPs[kPassthrough]) return false;
@@ -651,6 +735,15 @@ bool RendererImpl::init() {
 RendererImpl::~RendererImpl() {
     if (mList) finish();
     reclaim(true);
+    for (auto& [name, g] : mModels) {
+        for (Texture* t : g.textures) {
+            if (!t) continue;
+            release(t->res);
+            mSrv.free(t->srv);
+            delete t;
+        }
+        free_block(g.block);
+    }
     for (auto& t : mLayers) drop(t);
     for (auto& t : mPost) drop(t);
     release(mStencil);
@@ -863,7 +956,8 @@ bool RendererImpl::back_buffer(ID3D12Resource* res, Target& out) {
 }
 
 ID3D12PipelineState* RendererImpl::pipeline(Program p, Blend b, Stencil s, const Target& t) {
-    if (!mPs[p]) return nullptr;
+    const bool model = p == kModel || p == kModelBlend;
+    if (!mPs[p] || (model && (!mVs[2] || !t.layer))) return nullptr;
     const uint64_t key = uint64_t(p) | uint64_t(b) << 4 | uint64_t(s) << 8 | uint64_t(t.format) << 12 |
                          uint64_t(t.samples) << 24 | uint64_t(t.layer) << 32;
     if (const auto it = mPipelines.find(key); it != mPipelines.end()) return it->second;
@@ -873,9 +967,15 @@ ID3D12PipelineState* RendererImpl::pipeline(Program p, Blend b, Stencil s, const
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     };
     static_assert(sizeof(Rml::Vertex) == 20, "the input layout above");
+    const D3D12_INPUT_ELEMENT_DESC model_layout[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    };
+    static_assert(sizeof(ui::models::Vertex) == 32, "the model input layout above");
     D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
     d.pRootSignature = mRoot;
-    ID3DBlob* vs = mVs[p < kPassthrough ? 0 : 1];
+    ID3DBlob* vs = mVs[model ? 2 : p < kPassthrough ? 0 : 1];
     d.VS.pShaderBytecode = vs->GetBufferPointer();
     d.VS.BytecodeLength = vs->GetBufferSize();
     d.PS.pShaderBytecode = mPs[p]->GetBufferPointer();
@@ -899,9 +999,9 @@ ID3D12PipelineState* RendererImpl::pipeline(Program p, Blend b, Stencil s, const
     d.RasterizerState.DepthClipEnable = FALSE;
     d.RasterizerState.MultisampleEnable = t.samples > 1;
     D3D12_DEPTH_STENCIL_DESC& ds = d.DepthStencilState;
-    ds.DepthEnable = FALSE;
-    ds.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-    ds.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    ds.DepthEnable = model ? TRUE : FALSE;  // (the models only: the rest of the UI keeps to the stencil)
+    ds.DepthWriteMask = p == kModel ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+    ds.DepthFunc = model ? D3D12_COMPARISON_FUNC_LESS_EQUAL : D3D12_COMPARISON_FUNC_ALWAYS;
     if (t.layer && s != kStencilOff) {
         ds.StencilEnable = TRUE;
         ds.StencilReadMask = 0xFF;
@@ -913,7 +1013,7 @@ ID3D12PipelineState* RendererImpl::pipeline(Program p, Blend b, Stencil s, const
         if (s == kStencilIntersect) op.StencilPassOp = D3D12_STENCIL_OP_INCR_SAT;
         ds.FrontFace = ds.BackFace = op;
     }
-    d.InputLayout.pInputElementDescs = layout;
+    d.InputLayout.pInputElementDescs = model ? model_layout : layout;
     d.InputLayout.NumElements = 3;
     d.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     d.NumRenderTargets = 1;
@@ -1289,6 +1389,12 @@ Rml::CompiledGeometryHandle RendererImpl::CompileGeometry(Rml::Span<const Rml::V
             g->ibv = {g->block.gpu + vb, UINT(ib), DXGI_FORMAT_R32_UINT};
             g->count = UINT(indices.size());
         }
+        g->lo = g->hi = vertices[0].position;
+        for (const Rml::Vertex& v : vertices) {
+            g->lo = Rml::Math::Min(g->lo, v.position);
+            g->hi = Rml::Math::Max(g->hi, v.position);
+        }
+        g->alpha = float(vertices[0].colour.alpha) / 255.f;
     }
     return reinterpret_cast<Rml::CompiledGeometryHandle>(g);
 }
@@ -1789,6 +1895,15 @@ void RendererImpl::render_blur(float sigma, Target& source_destination, Target& 
 Rml::CompiledShaderHandle RendererImpl::CompileShader(const Rml::String& name, const Rml::Dictionary& parameters) {
     CompiledShader shader;
     const bool repeating = Rml::Get(parameters, "repeating", false);
+    if (name == "shader") {  // decorator: shader("model:lizard"), one of the game's models (docs/112)
+        const Rml::String value = Rml::Get(parameters, "value", Rml::String());
+        if (value.rfind("model:", 0) != 0 || value.size() <= 6) {
+            Rml::Log::Message(Rml::Log::LT_WARNING, "Unsupported shader '%s'.", value.c_str());
+            return {};
+        }
+        shader.model = value.substr(6);
+        return reinterpret_cast<Rml::CompiledShaderHandle>(new CompiledShader(std::move(shader)));
+    }
     if (name == "linear-gradient") {
         shader.function = repeating ? GradientFunction::RepeatingLinear : GradientFunction::Linear;
         shader.p = Rml::Get(parameters, "p0", Rml::Vector2f(0.f));
@@ -1822,6 +1937,29 @@ void RendererImpl::RenderShader(Rml::CompiledShaderHandle shader, Rml::CompiledG
                                 Rml::Vector2f translation, Rml::TextureHandle) {
     const auto* s = reinterpret_cast<const CompiledShader*>(shader);
     const auto* g = reinterpret_cast<const Geometry*>(geometry);
+    if (s && g && !s->model.empty()) {
+        // The element's box on the target, through the transform, and the model fitted into it.
+        Rml::Vector2f lo(1e9f), hi(-1e9f);
+        for (const Rml::Vector2f c : {g->lo, Rml::Vector2f(g->hi.x, g->lo.y), g->hi, Rml::Vector2f(g->lo.x, g->hi.y)}) {
+            const Rml::Vector4f q = mTransform * Rml::Vector4f(c.x + translation.x, c.y + translation.y, 0.f, 1.f);
+            if (q.w <= 0.f) return;
+            const Rml::Vector2f px((q.x / q.w + 1.f) * 0.5f * float(mWidth), (1.f - q.y / q.w) * 0.5f * float(mHeight));
+            lo = Rml::Math::Min(lo, px);
+            hi = Rml::Math::Max(hi, px);
+        }
+        ModelView view;
+        view.time = std::chrono::duration<double>(std::chrono::steady_clock::now() - mStart).count();
+        const float spin = ui::models::spin(s->model);
+        std::memcpy(view.rotation, ui::models::look(s->model, float(std::fmod(double(spin) * view.time, 360.0))).rotation,
+                    sizeof view.rotation);
+        view.turning = spin != 0.f;
+        view.at[0] = lo.x;
+        view.at[1] = lo.y;
+        view.size[0] = hi.x - lo.x;
+        view.size[1] = hi.y - lo.y;
+        render_model(s->model, view, g->alpha);
+        return;
+    }
     if (!s || !g || !g->count || !prepare(kGradient)) return;
     GradientConstants c{};
     store(mTransform, c.transform);
@@ -1847,6 +1985,237 @@ void RendererImpl::RenderShader(Rml::CompiledShaderHandle shader, Rml::CompiledG
 
 void RendererImpl::ReleaseShader(Rml::CompiledShaderHandle shader) {
     delete reinterpret_cast<CompiledShader*>(shader);
+}
+
+// ---- The game's models (docs/112) ----
+
+// One of a model's textures: its BC1/2/3 blocks as they are, with the mip levels it has.
+Texture* RendererImpl::make_block_texture(const ui::models::Texture& src) {
+    if (src.width <= 0 || src.height <= 0 || src.width % 4 || src.height % 4 || src.levels < 1 || !mOpen) return nullptr;
+    const DXGI_FORMAT format = src.format == ui::models::TexFormat::BC1   ? DXGI_FORMAT_BC1_UNORM
+                               : src.format == ui::models::TexFormat::BC2 ? DXGI_FORMAT_BC2_UNORM
+                                                                          : DXGI_FORMAT_BC3_UNORM;
+    const size_t block = src.format == ui::models::TexFormat::BC1 ? 8 : 16;
+    const UINT levels = UINT(src.levels);
+    ID3D12Resource* res = make_texture(src.width, src.height, levels, format, 1, D3D12_RESOURCE_FLAG_NONE,
+                                       D3D12_RESOURCE_STATE_COPY_DEST, nullptr);
+    if (!res) return nullptr;
+    auto* t = new Texture{res, mSrv.alloc(), D3D12_RESOURCE_STATE_COPY_DEST};
+    if (t->srv == kNone) {
+        res->Release();
+        delete t;
+        return nullptr;
+    }
+    D3D12_SHADER_RESOURCE_VIEW_DESC sd{};
+    sd.Format = format;
+    sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sd.Shader4ComponentMapping = kDefaultMapping;
+    sd.Texture2D.MipLevels = levels;
+    mDevice->CreateShaderResourceView(res, &sd, mSrv.cpu(t->srv));
+
+    const D3D12_RESOURCE_DESC desc = res->GetDesc();
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> fp(levels);
+    std::vector<UINT> rows(levels);
+    std::vector<UINT64> row_bytes(levels);
+    UINT64 total = 0;
+    mDevice->GetCopyableFootprints(&desc, 0, levels, 0, fp.data(), rows.data(), row_bytes.data(), &total);
+    const Block b = alloc_block(std::max<size_t>(size_t(total), kPlacementAlign));
+    if (b.buffer) {
+        size_t from = 0;  // each level's rows of blocks, one level after the other
+        int lw = src.width, lh = src.height;
+        for (UINT m = 0; m < levels; m++) {
+            const size_t row = size_t(std::max(1, (lw + 3) / 4)) * block, nrows = size_t(std::max(1, (lh + 3) / 4));
+            if (from + row * nrows > src.data.size() || row > row_bytes[m] || nrows > rows[m]) break;
+            for (size_t y = 0; y < nrows; y++)
+                std::memcpy(b.cpu + fp[m].Offset + size_t(fp[m].Footprint.RowPitch) * y, src.data.data() + from + row * y, row);
+            from += row * nrows;
+            D3D12_TEXTURE_COPY_LOCATION dst{}, from_buffer{};
+            dst.pResource = res;
+            dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            dst.SubresourceIndex = m;
+            from_buffer.pResource = b.buffer;
+            from_buffer.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            from_buffer.PlacedFootprint = fp[m];
+            from_buffer.PlacedFootprint.Offset += b.offset;
+            mList->CopyTextureRegion(&dst, 0, 0, 0, &from_buffer, nullptr);
+            lw = std::max(1, lw / 2);
+            lh = std::max(1, lh / 2);
+        }
+        retire([this, b] { free_block(b); });
+    }
+    transition(t->res, t->state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    return t;
+}
+
+// The model's GPU side, made the first time it is drawn (its files read then, souls_model.cpp).
+GpuModel* RendererImpl::gpu_model(const std::string& name) {
+    if (const auto it = mModels.find(name); it != mModels.end()) return &it->second;
+    GpuModel& g = mModels[name];
+    g.model = ui::models::get(name);
+    if (!g.model) return &g;
+    size_t size = 0;
+    for (const ui::models::Mesh& mesh : ui::models::meshes(*g.model)) {
+        GpuModel::Part part;
+        part.indices = size;
+        part.index_count = UINT(mesh.indices.size());
+        size = (size + mesh.indices.size() * sizeof(uint32_t) + 15) & ~size_t(15);
+        part.vertices = size;
+        part.vertex_count = UINT(mesh.vertices.size());
+        size += mesh.vertices.size() * sizeof(ui::models::Vertex);
+        g.parts.push_back(part);
+    }
+    g.block = alloc_block(std::max<size_t>(size, 256));
+    if (!g.block.buffer) {
+        g.model = nullptr;
+        return &g;
+    }
+    const auto& meshes = ui::models::meshes(*g.model);
+    for (size_t i = 0; i < meshes.size(); i++) {
+        std::memcpy(g.block.cpu + g.parts[i].indices, meshes[i].indices.data(), meshes[i].indices.size() * sizeof(uint32_t));
+        std::memcpy(g.block.cpu + g.parts[i].vertices, meshes[i].vertices.data(),
+                    meshes[i].vertices.size() * sizeof(ui::models::Vertex));
+    }
+    for (const ui::models::Texture& t : ui::models::textures(*g.model)) g.textures.push_back(make_block_texture(t));
+    return &g;
+}
+
+// The model into the bound layer, under the scissor and clip as they are: its opaque meshes with the depth buffer, then
+// its blended ones over them. The depth is cleared first in the square the model can reach.
+bool RendererImpl::render_model(const std::string& name, const ModelView& view, float opacity) {
+    if (!mOpen || !mBound || !mBound->layer || !mStencil || !(opacity > 0.f)) return false;
+    GpuModel* g = gpu_model(name);
+    if (!g || !g->model) return false;
+    const ui::models::Model& m = *g->model;
+    const ui::models::Look look = ui::models::look(name, 0.f);
+    float lo[3], hi[3];
+    ui::models::bounds(m, lo, hi);
+    const float* R = view.rotation;
+
+    // Where: the pivot at a point, or the middle of the model's box at the middle of the box given, fitted into it.
+    float pivot[3], at[2], scale = view.scale;
+    if (scale > 0.f) {
+        std::memcpy(pivot, view.pivot, sizeof pivot);
+        at[0] = view.at[0];
+        at[1] = view.at[1];
+    } else {
+        for (int k = 0; k < 3; k++) pivot[k] = 0.5f * (lo[k] + hi[k]);
+        float ext[2] = {0.f, 0.f};
+        if (view.turning) {
+            // Fitted to the upright cylinder around its box, which looks the same at every turn: the model keeps its
+            // size as it turns.
+            const float r = 0.5f * std::hypot(hi[0] - lo[0], hi[2] - lo[2]), h = 0.5f * (hi[1] - lo[1]);
+            for (int k = 0; k < 2; k++) ext[k] = std::fabs(R[k * 3 + 1]) * h + r * std::hypot(R[k * 3], R[k * 3 + 2]);
+        } else {
+            for (int c = 0; c < 8; c++) {
+                const float d[3] = {(c & 1 ? hi[0] : lo[0]) - pivot[0], (c & 2 ? hi[1] : lo[1]) - pivot[1],
+                                    (c & 4 ? hi[2] : lo[2]) - pivot[2]};
+                for (int k = 0; k < 2; k++)
+                    ext[k] = std::max(ext[k], std::fabs(R[k * 3] * d[0] + R[k * 3 + 1] * d[1] + R[k * 3 + 2] * d[2]));
+            }
+        }
+        if (!(ext[0] > 0.f) || !(ext[1] > 0.f) || view.size[0] < 1.f || view.size[1] < 1.f) return false;
+        scale = std::min(view.size[0] / (2.f * ext[0]), view.size[1] / (2.f * ext[1]));
+        at[0] = view.at[0] + 0.5f * view.size[0];
+        at[1] = view.at[1] + 0.5f * view.size[1];
+    }
+    // How far the model reaches from the pivot, in pixels: the depth's range, and the square whose depth is cleared.
+    float reach = 0.f;
+    for (int c = 0; c < 8; c++) {
+        const float d[3] = {(c & 1 ? hi[0] : lo[0]) - pivot[0], (c & 2 ? hi[1] : lo[1]) - pivot[1],
+                            (c & 4 ? hi[2] : lo[2]) - pivot[2]};
+        reach = std::max(reach, std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
+    }
+    reach = reach * scale + 1.f;
+    if (!(reach < 100000.f)) return false;
+    const D3D12_RECT square{Rml::Math::Clamp(int(std::floor(at[0] - reach)), 0, mBound->w),
+                            Rml::Math::Clamp(int(std::floor(at[1] - reach)), 0, mBound->h),
+                            Rml::Math::Clamp(int(std::ceil(at[0] + reach)), 0, mBound->w),
+                            Rml::Math::Clamp(int(std::ceil(at[1] + reach)), 0, mBound->h)};
+    if (square.right <= square.left || square.bottom <= square.top) return true;  // (all of it off the target)
+    mList->ClearDepthStencilView(mDsv.cpu(mStencilDsv), D3D12_CLEAR_FLAG_DEPTH, 1.f, 0, 1, &square);
+
+    // Model space to pixels: R (p - pivot) scale + (at, 0); then x and y to clip space, and z (toward the viewer, within
+    // +-reach) to a depth from 0 at the front to 1 at the back.
+    ModelConstants k{};
+    const float W = float(mBound->w), H = float(mBound->h);
+    const float out[3][2] = {{2.f / W, -1.f}, {-2.f / H, 1.f}, {-0.5f / reach, 0.5f}};  // (pixels to clip: a scale, an offset)
+    const float origin[3] = {at[0], at[1], 0.f};
+    for (int r = 0; r < 3; r++) {
+        float row[4];
+        for (int c = 0; c < 3; c++) row[c] = R[r * 3 + c] * scale;
+        row[3] = origin[r] - (row[0] * pivot[0] + row[1] * pivot[1] + row[2] * pivot[2]);
+        for (int c = 0; c < 4; c++) k.clip[c * 4 + r] = row[c] * out[r][0] + (c == 3 ? out[r][1] : 0.f);
+        for (int c = 0; c < 3; c++) k.view[r][c] = R[r * 3 + c];
+    }
+    k.clip[15] = 1.f;
+    std::memcpy(k.light, look.light, sizeof look.light);
+    k.light[3] = look.ambient;
+
+    // The vertices: an animated model's, posed now, in the ring; a rigid one's, in its block.
+    const auto& meshes = ui::models::meshes(m);
+    std::vector<D3D12_GPU_VIRTUAL_ADDRESS> vertices(meshes.size());
+    if (ui::models::duration(m) > 0 && ui::models::pose(m, view.time, mPosed) && mPosed.size() == meshes.size()) {
+        size_t total = 0;
+        for (const auto& p : mPosed) total += p.size() * sizeof(ui::models::Vertex);
+        const auto [cpu, gpu] = ring(std::max<size_t>(total, 16), 16);
+        if (!cpu) return false;
+        size_t used = 0;
+        for (size_t i = 0; i < mPosed.size(); i++) {
+            std::memcpy(cpu + used, mPosed[i].data(), mPosed[i].size() * sizeof(ui::models::Vertex));
+            vertices[i] = gpu + used;
+            used += mPosed[i].size() * sizeof(ui::models::Vertex);
+        }
+    } else {
+        for (size_t i = 0; i < meshes.size(); i++) vertices[i] = g->block.gpu + g->parts[i].vertices;
+    }
+
+    const Blend saved = mBlend;
+    mBlend = kPremultiplied;
+    for (const bool blended : {false, true}) {
+        k.flags[0] = blended ? 1.f : 0.f;  // a blended mesh: its faces toward the viewer only
+        k.flags[1] = blended ? 0.f : 1.f;
+        k.flags[2] = look.alpha_test;
+        for (int c = 0; c < 3; c++) k.tint[c] = blended ? look.tint[c] : 1.f;
+        k.tint[3] = opacity;
+        D3D12_GPU_VIRTUAL_ADDRESS constants_at = 0;
+        for (size_t i = 0; i < meshes.size(); i++) {
+            const ui::models::Mesh& mesh = meshes[i];
+            const GpuModel::Part& part = g->parts[i];
+            if (mesh.blend != blended || !part.index_count || !part.vertex_count) continue;
+            if (!prepare(blended ? kModelBlend : kModel)) break;
+            if (!constants_at && !(constants_at = constants(&k, sizeof k))) break;
+            mList->SetGraphicsRootConstantBufferView(0, constants_at);
+            const auto srv = [&](int t) {
+                return mSrv.gpu(t >= 0 && size_t(t) < g->textures.size() && g->textures[size_t(t)] ? g->textures[size_t(t)]->srv
+                                                                                               : mNullSrv);
+            };
+            mList->SetGraphicsRootDescriptorTable(2, srv(mesh.texture));
+            mList->SetGraphicsRootDescriptorTable(3, srv(mesh.specular));
+            const D3D12_VERTEX_BUFFER_VIEW vb{vertices[i], UINT(part.vertex_count * sizeof(ui::models::Vertex)),
+                                              UINT(sizeof(ui::models::Vertex))};
+            const D3D12_INDEX_BUFFER_VIEW ib{g->block.gpu + part.indices, UINT(part.index_count * sizeof(uint32_t)),
+                                             DXGI_FORMAT_R32_UINT};
+            mList->IASetVertexBuffers(0, 1, &vb);
+            mList->IASetIndexBuffer(&ib);
+            mList->DrawIndexedInstanced(part.index_count, 1, 0, 0, 0);
+        }
+    }
+    mList->SetGraphicsRootDescriptorTable(3, mSrv.gpu(mNullSrv));  // (t1 is the mask filter's otherwise)
+    mBlend = saved;
+    return true;
+}
+
+// From host.cpp, after the context's Render: on the base layer, with no scissor or clip.
+bool RendererImpl::draw_model(const char* name, const ModelView& view) {
+    if (!name || !mOpen) return false;
+    const Rml::Rectanglei scissor = mScissor;
+    const bool clip = mClip;
+    set_scissor(Rml::Rectanglei::MakeInvalid());
+    mClip = false;
+    const bool drawn = render_model(name, view, 1.f);
+    set_scissor(scissor);
+    mClip = clip;
+    return drawn;
 }
 
 }  // namespace

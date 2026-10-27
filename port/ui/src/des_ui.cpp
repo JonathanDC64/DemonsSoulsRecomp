@@ -587,6 +587,7 @@ void process_queue() {
             break;
         case InputEvent::MouseMove:
             ctx->ProcessMouseMove(e.a, e.b, e.mods);
+            ui::host::set_pointer(e.a, e.b, true);  // (the sword cursor's place)
             break;
         case InputEvent::MouseDown:
             if (ui::input::binding_capture()) break;  // a mouse button for a binding (controls_window.cpp reads it)
@@ -606,6 +607,7 @@ void process_queue() {
         case InputEvent::Leave:
             ctx->ProcessMouseLeave();
             ui::input::reset_input_state();
+            ui::host::set_pointer(0, 0, false);
             break;
         }
     }
@@ -987,6 +989,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         rsx_d3d12_hdr(&scale, &srgb);
         ui::host::set_hdr(scale, srgb != 0);
     }
+    ui::host::set_cursor_wanted(visible);
     ui::host::render(back_buffer, index, int(width), int(height), shot);
 
     auto* overlay = static_cast<ui::Overlay*>(ui::find_document(ui::DocumentScope::Overlay));

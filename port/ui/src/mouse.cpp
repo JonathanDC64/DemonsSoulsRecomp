@@ -48,6 +48,8 @@ namespace {
 
 // Look again (posted from other threads). The D3D12 backend's own message is WM_APP + 0x52.
 constexpr UINT WM_DES_MOUSE = WM_APP + 0x5D;
+// The UI's own cursor came or went (set_own_cursor): the cursor over the window is set again.
+constexpr UINT WM_DES_OWN_CURSOR = WM_APP + 0x5F;
 
 // Presented frames without a take of the counts after which the game's camera counts as not running. The camera
 // takes them once a game frame, and the game presents once a game frame.
@@ -58,6 +60,7 @@ std::atomic<unsigned> sTakes{0};    // des_mouse_take calls
 std::atomic<bool> sCamera{false};   // the game's camera takes the counts (on_frame)
 std::atomic<bool> sHeld{false};     // the cursor is hidden and clipped (mouse look)
 std::atomic<bool> sUiOpen{false};   // a document of the UI is open
+std::atomic<bool> sOwnCursor{false};  // the UI draws its own cursor (set_own_cursor): the system's is hidden
 std::atomic<HWND> sHwnd{nullptr};   // the game's window, for posting to it
 
 // The window's thread only.
@@ -280,10 +283,21 @@ bool wndproc(void* hwnd_, unsigned msg, unsigned long long wp, long long lp, lon
         on_input(hwnd, WPARAM(wp), LPARAM(lp));
         return false;  // DefWindowProc frees the input
     case WM_SETCURSOR:
-        if (!sHeld.load(std::memory_order_relaxed) || LOWORD(lp) != HTCLIENT) return false;
+        if (LOWORD(lp) != HTCLIENT ||
+            !(sHeld.load(std::memory_order_relaxed) || sOwnCursor.load(std::memory_order_relaxed)))
+            return false;
         SetCursor(nullptr);
         *result = TRUE;
         return true;
+    case WM_DES_OWN_CURSOR: {  // set again now, not at the next move, if the cursor is over the window
+        POINT p{};
+        if (GetCursorPos(&p) && WindowFromPoint(p) == hwnd) {
+            const LRESULT hit = SendMessageW(hwnd, WM_NCHITTEST, 0, MAKELPARAM(p.x, p.y));
+            SendMessageW(hwnd, WM_SETCURSOR, WPARAM(hwnd), MAKELPARAM(LOWORD(hit), WM_MOUSEMOVE));
+        }
+        *result = 0;
+        return true;
+    }
     case WM_DES_MOUSE:
         update(hwnd, "menu closed, camera running or setting changed");
         *result = 0;
@@ -344,6 +358,12 @@ bool wndproc(void* hwnd_, unsigned msg, unsigned long long wp, long long lp, lon
 
 void set_ui_open(bool open) {
     if (sUiOpen.exchange(open) != open) post_look_again();
+}
+
+void set_own_cursor(bool drawn) {
+    if (ui::settings::no_user_input()) drawn = false;  // a test run's: the mouse over the window is the user's
+    const HWND hwnd = sHwnd.load();  // (none yet: the next frame tells it again)
+    if (hwnd && sOwnCursor.exchange(drawn) != drawn) PostMessageW(hwnd, WM_DES_OWN_CURSOR, 0, 0);
 }
 
 void on_frame() {

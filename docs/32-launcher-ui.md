@@ -70,6 +70,8 @@ and on every change.
 | Start screen (Interface) | `show_start_screen` | 1 / 0 | next start |
 | Menu hint (Interface) | `menu_hint` | 1 / 0 | at once |
 | Trophy pop-ups (Interface) | `trophy_popups` | 1 / 0 (off hides the toast; the unlock is still kept) | at once |
+| Sword cursor (Interface) | `DES_CURSOR3D` | 1 / 0 (off: the system's arrow, not the Large Sword of Moonlight; docs/112) | at once |
+| Crystal lizard (Interface) | `DES_UI_LIZARD` | 1 / 0 (off: no lizard dancing in the corner of the menus; docs/112) | at once |
 | Show hidden trophies (the Trophies window) | `trophies_show_hidden` | 0 / 1 (1 lists hidden trophies with their names before they are unlocked) | at once |
 | Gamepad menu buttons (Interface) | `pad_menu_chord` | 0 = L3 + R3, 1 = Select + Start | at once |
 
@@ -315,6 +317,8 @@ issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
 | `DES_UI_RENDER=d3d11` | The menus and the crash dialog draw through D3D11On12, as before the D3D12 renderer (Windows; kept for one release, with no settings row). |
 | `RSX_OVERLAY_REPAINT=0` | The UI moves only with the game's frames, not at the display's refresh rate (live; "The UI's frame rate" below). |
 | `DES_UI_SOUND=0` | No UI sounds. |
+| `DES_CURSOR3D=0` | The system's arrow over the menus, not the Large Sword of Moonlight (its row is Sword cursor). `DES_CURSOR_SIZE=<dp>` (64) is the sword's length, `DES_CURSOR_SPIN=<degrees a second>` (0) turns it about its blade (docs/112). |
+| `DES_UI_LIZARD=0` | No crystal lizard dancing in the bottom right corner while a menu is up (its row is Crystal lizard); `DES_UI_LIZARD_SIZE=<dp>` (160), `DES_UI_LIZARD_SPIN=<degrees a second>` (0) turns it round, `DES_UI_LIZARD_ANIM=<a00_NNNN>` another of its animations (docs/112). |
 | `DES_PRECOMPILE=0` / `force` | No startup shader pass / one whatever the stamp says (above). |
 | `DES_TROPHY_TEST=<id>` | Unlock trophy `<id>` (0-127) through the sceNpTrophy HLE as the game would (unlock file, platinum rule, pop-up), once the game has registered its trophies. Also live: the debug console's `setenv DES_TROPHY_TEST=<id>`; each new value unlocks once. It is a real unlock in the unlock file, so point `PS3_TROPHY_DIR=<folder>` at a scratch folder. |
 | `DES_TROPHY_HIDDEN=<id>[,<id>...]` | The Trophies window treats these trophies as hidden, as if the trophy set said so (Demon's Souls has none), so a hidden row and revealing it can be seen and tested. UI only: the HLE, the pop-ups and the unlock file don't see it. Read when the window opens. |

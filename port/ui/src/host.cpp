@@ -5,21 +5,21 @@
 // FFCCEOT-Recomp's host.cpp (GL3 in an SDL window).
 #include "host.hpp"
 
+#include "mouse.hpp"
 #include "portable.hpp"
 #include "renderer.hpp"
+#include "settings.hpp"
+#include "souls_model.hpp"
 #include "ui_assets.hpp"
 
 #ifdef _WIN32
 #include "RmlUi_Platform_Win32.h"
 #else
-#include "mouse.hpp"
-
 #include <SDL.h>
-
-#include <chrono>
 #endif
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -54,6 +54,7 @@ bool find_png(const Rml::String& source, std::vector<unsigned char>& file) {
 // renderers there are ----
 
 void* sWindow = nullptr;  // the game's window: an HWND on Windows, an SDL_Window* elsewhere
+Rml::String sCursorName;  // the cursor RmlUi asked for last (the render thread)
 
 #ifdef _WIN32
 
@@ -67,6 +68,7 @@ public:
         return true;
     }
     void SetMouseCursor(const Rml::String& name) override {
+        sCursorName = name;
         HCURSOR cursor = nullptr;
         if (name == "nwse-resize") cursor = LoadCursor(nullptr, IDC_SIZENWSE);
         else if (name == "nesw-resize") cursor = LoadCursor(nullptr, IDC_SIZENESW);
@@ -120,6 +122,7 @@ public:
         return true;
     }
     void SetMouseCursor(const Rml::String& name) override {
+        sCursorName = name;
         int shape = SDL_SYSTEM_CURSOR_ARROW;
         if (name == "pointer") shape = SDL_SYSTEM_CURSOR_HAND;
         else if (name == "text") shape = SDL_SYSTEM_CURSOR_IBEAM;
@@ -208,8 +211,74 @@ struct State {
     float ui_scale = 0.0f;
     bool follow_height = false;
     bool initialised = false;
+    int pointer_x = 0, pointer_y = 0;  // set_pointer
+    bool pointer_inside = false, cursor_wanted = false;
 };
 State s;
+
+float env_float(const char* name, float fallback, float lo, float hi) {
+    const char* v = std::getenv(name);
+    char* end = nullptr;
+    const float f = v && *v ? std::strtof(v, &end) : fallback;
+    return end && *end ? fallback : std::clamp(f, lo, hi);
+}
+
+// An on/off row of Settings > Interface, as it is now (the environment's value when it was set there).
+bool row_on(const char* key) {
+    const std::string v = settings::pinned(key) ? settings::pinned_value(key) : settings::get(key);
+    return !v.empty() && v != "0";
+}
+
+// The Large Sword of Moonlight as the cursor (docs/112): over everything, its tip at the pointer, while a document is
+// up and RmlUi would show the arrow or the hand there; the system's cursor is hidden meanwhile (mouse.cpp). Its row,
+// Sword cursor (DES_CURSOR3D), off keeps the system's arrow. Knobs: DES_CURSOR_SIZE the sword's length in dp (64);
+// DES_CURSOR_SPIN a turn about its blade, in degrees a second (0, still).
+void draw_cursor() {
+    const bool on = row_on("DES_CURSOR3D");
+    static const float size = env_float("DES_CURSOR_SIZE", 64.f, 16.f, 512.f);
+    static const auto start = std::chrono::steady_clock::now();
+    const bool arrow = sCursorName.empty() || sCursorName == "default" || sCursorName == "auto" ||
+                       sCursorName == "arrow" || sCursorName == "pointer";
+    bool drawn = false;
+    if (on && s.cursor_wanted && s.pointer_inside && arrow) {
+        if (const ui::models::Model* m = ui::models::get("moonlight")) {
+            float lo[3], hi[3];
+            ui::models::bounds(*m, lo, hi);
+            const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            const double turn = std::fmod(double(ui::models::spin("moonlight")) * t, 360.0);
+            const ui::models::Look look = ui::models::look("moonlight", float(turn));
+            ModelView v;
+            std::memcpy(v.rotation, look.rotation, sizeof v.rotation);
+            v.pivot[1] = lo[1];  // the tip: the blade lies along -Y
+            v.at[0] = float(s.pointer_x);
+            v.at[1] = float(s.pointer_y);
+            v.scale = hi[1] > lo[1] ? size * s.rml->GetDensityIndependentPixelRatio() / (hi[1] - lo[1]) : 0.f;
+            drawn = v.scale > 0.f && s.renderer->draw_model("moonlight", v);
+        }
+    }
+    mouse::set_own_cursor(drawn);
+}
+
+// The crystal lizard dancing in the bottom right corner (above the start screen's footer) while a document is up,
+// unless its row, Crystal lizard (DES_UI_LIZARD), is off: a box of DES_UI_LIZARD_SIZE dp (160), turning
+// DES_UI_LIZARD_SPIN degrees a second (0). In a document it is an element's decorator, shader("model:lizard")
+// (docs/112).
+void draw_lizard(int width, int height) {
+    const bool on = row_on("DES_UI_LIZARD");
+    static const float size = env_float("DES_UI_LIZARD_SIZE", 160.f, 32.f, 2048.f);
+    static const auto start = std::chrono::steady_clock::now();
+    if (!on || !s.cursor_wanted) return;
+    const float dp = s.rml->GetDensityIndependentPixelRatio(), px = size * dp, spin = ui::models::spin("lizard");
+    ModelView v;
+    v.time = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    std::memcpy(v.rotation, ui::models::look("lizard", float(std::fmod(double(spin) * v.time, 360.0))).rotation,
+                sizeof v.rotation);
+    v.turning = spin != 0.f;
+    v.at[0] = float(width) - px - 40.f * dp;
+    v.at[1] = float(height) - px - 88.f * dp;
+    v.size[0] = v.size[1] = px;
+    s.renderer->draw_model("lizard", v);
+}
 
 void load_fonts() {
     struct Font {
@@ -360,8 +429,21 @@ void render(void* back_buffer, unsigned index, int width, int height, const char
     s.rml->Update();
     if (!s.renderer->begin_frame(back_buffer, index, width, height)) return;
     s.rml->Render();
+    draw_lizard(width, height);
+    draw_cursor();
     s.renderer->end_frame();
     if (shot_path) shot(back_buffer, index, width, height, shot_path);
+}
+
+void set_pointer(int x, int y, bool inside) {
+    s.pointer_x = x;
+    s.pointer_y = y;
+    s.pointer_inside = inside;
+}
+
+void set_cursor_wanted(bool wanted) {
+    if (wanted && !s.cursor_wanted) s.pointer_inside = false;  // (where it was when the last document closed: not now)
+    s.cursor_wanted = wanted;
 }
 
 void screenshot(void* back_buffer, unsigned index, int width, int height, const char* shot_path) {

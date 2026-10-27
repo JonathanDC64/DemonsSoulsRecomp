@@ -100,6 +100,35 @@ The breaks were replayed from a player's recording: the frame log with the camer
 every enemy, warps to where the player stood before each roll, and rolls along the same world direction (stick angle =
 heading minus camera yaw).
 
+## Moving platforms (2026-10-26)
+
+Above 30 fps the player jittered while riding the Palace 1-4 elevator (`o2480_3000` in `m02_03_00_00.msb`).
+
+- **Cause.** The elevator is a keyframed rigid body, and the world step moves it. Under the cap it moved only on
+  step frames, and the player standing on it moved with it: at 200 fps, a 6 cm jump every 33 ms with still frames
+  between. Lifts, turning bridges and opening doors are keyframed bodies too.
+- **Fix.** `des_phys_rate` steps the world every frame, as `DES_PHYS_HZ=0` does, while the player touches a moving
+  keyframed body and for 0.25 s of game time after. The hold keeps a contact that drops for a frame from switching
+  the cap on and off. The player's character proxy (`*(P + 0x34)`, `P = *(*(chr + 0x20) + 0x10)`, vtable
+  `0x018B89F0`) lists the rigid bodies it touches at +0x8C (data, size). A moving keyframed body (vtable
+  `0x018B4810`) has inverse mass 0 (+0x19C) and a linear (+0x1A0) or angular (+0x1B0) velocity. The level's fixed
+  bodies have none, and corpses and debris have mass. On those frames `des_phys_kf` leaves the keyframe's 1/dt as
+  the game set it.
+- Drawing the platform between steps would not help: the player stands on the stepped body, so the player would
+  still move in steps.
+- `DES_PHYS_RIDE=0` keeps the cap on a ride too. `DES_PHYS_RIDE_LOG=1` prints each switch with the body.
+
+One session on the deep Palace save, elevator up and down (38 s each way) at each setting. Jitter is how far the
+player's height strays from a straight line fitted over the 0.2 s around each frame (rms); still frames are frames
+that moved less than a fifth of the ride's mean step.
+
+| Setting | fps | Jitter, up / down | Still frames |
+|---|---|---|---|
+| 30 fps | 30 | 0.5 / 1.5 mm | 0% |
+| Unlocked, cap 30, `DES_PHYS_RIDE=0` (before) | 185-190 | 15.1 / 14.9 mm | 44% / 42% |
+| Unlocked, cap 30, fix | 196-198 | 1.3 / 1.9 mm | 1% |
+| Unlocked, no cap (`DES_PHYS_HZ=0`) | 186-189 | 1.8 / 1.7 mm | 1% / 0% |
+
 ## Open
 
 - Per-body settings (damping, quality type, max speeds) come from the game data and were not read.

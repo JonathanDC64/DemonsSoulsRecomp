@@ -38,7 +38,7 @@
  * The presses go in through cellPad's title hook (des_mm_pad_buttons, from
  * des_options.cpp), so the game sees them exactly as a pad's, sounds and all.
  *
- * DES_MENU_MOUSE=0 turns it all off (Settings, Controls). DES_MENU_MOUSE_LOG=1
+ * Experimental: off unless DES_MENU_MOUSE=1 (Settings, Controls). DES_MENU_MOUSE_LOG=1
  * prints the menus each time they change, and each walk and slide; 2 the arrow
  * pieces too; 3 every visible dialog with its pieces. DES_MENU_MOUSE_PRESS is
  * the frames a press is held. A test run clicks with the UI's DES_UI_MOUSE
@@ -270,7 +270,7 @@ struct Menu {
 
 /* ---- The game's thread: the frame's draws and the menus in them. ---- */
 
-int s_on = 1, s_log = 0;
+int s_on = 0, s_log = 0;
 std::vector<Drawn> s_draws;
 std::vector<Menu> s_menus;
 std::string s_menu_sig;
@@ -350,18 +350,30 @@ void build_menus(ppu_context* ctx)
             memcpy(out, it->second.data(), 4 * sizeof(float));
             return it->second[4] != 0.0f;
         };
-        /* Each dialog's host: the dialog and piece that name it. */
-        std::vector<int> parent(n, -1), via(n, -1);
-        for (size_t i = 0; i < n; i++) {
+        /* Each dialog's host: a piece of a dialog drawn before it (a host draws before what it holds), best first:
+         * 1. its host word is the dialog;
+         * 2. it is an object whose first word points just past the dialog, and the piece has the dialog's rect;
+         * 3. it has a host of its own and the dialog's rect (the inventory's tabs, held through another object);
+         * 4. an object whose first word points just past the dialog, whatever its rect.
+         * (4 alone named the stats panel the host of a new Create Profile dialog: the game made it where an old one
+         * was, and the panel holds an object that still points there. Its spots were then 777 px off.) */
+        std::vector<int> parent(n, -1), via(n, -1), loose(n, -1), loose_via(n, -1);
+        auto has_rect = [&](size_t j, size_t k, size_t i) {
+            float r[4];
+            return rect_of(pcs[j][k].obj, r) && same_box(r, ds[i].cur);
+        };
+        for (size_t i = 0; i < n; i++) {   /* 1 and 2, and the first 4 */
             if (!ds[i].vis) continue;
-            for (size_t j = 0; j < n && parent[i] < 0; j++) {
-                if (j == i) continue;
+            for (size_t j = 0; j < i && parent[i] < 0; j++)
                 for (size_t k = 0; k < pcs[j].size(); k++) {
                     const uint32_t h = pcs[j][k].host;
                     bool hit = h == ds[i].dlg;
                     if (!hit && guest_ok(h, 4) && h != ds[j].dlg) {
                         const uint32_t w = vm_read32(h);
-                        hit = w > ds[i].dlg && w <= ds[i].dlg + 0x200u;
+                        if (w > ds[i].dlg && w <= ds[i].dlg + 0x200u) {
+                            hit = has_rect(j, k, i);
+                            if (!hit && loose[i] < 0) loose[i] = (int)j, loose_via[i] = (int)k;
+                        }
                     }
                     if (hit) {
                         parent[i] = (int)j;
@@ -369,21 +381,19 @@ void build_menus(ppu_context* ctx)
                         break;
                     }
                 }
-            }
         }
-        /* A dialog no piece names that way (the inventory's tabs, held through another object): the piece with a
-         * host of its own and the dialog's rect, in a dialog drawn before it (a host draws before what it holds). */
-        for (size_t i = 0; i < n; i++) {
+        for (size_t i = 0; i < n; i++) {   /* 3 */
             if (!ds[i].vis || parent[i] >= 0) continue;
             for (size_t j = 0; j < i && parent[i] < 0; j++)
                 for (size_t k = 0; k < pcs[j].size(); k++) {
-                    float r[4];
-                    if (!guest_ok(pcs[j][k].host, 4) || !rect_of(pcs[j][k].obj, r) || !same_box(r, ds[i].cur)) continue;
+                    if (!guest_ok(pcs[j][k].host, 4) || !has_rect(j, k, i)) continue;
                     parent[i] = (int)j;
                     via[i] = (int)k;
                     break;
                 }
         }
+        for (size_t i = 0; i < n; i++)   /* 4 */
+            if (ds[i].vis && parent[i] < 0 && loose[i] >= 0) parent[i] = loose[i], via[i] = loose_via[i];
         /* Each dialog's layout in the canvas: its own map after its host's. */
         std::vector<std::array<float, 4>> xf(n);
         std::vector<char> done(n, 0);
@@ -1182,7 +1192,7 @@ void end_frame(ppu_context* ctx)
 /* For each dialog the game draws (des_hud.cpp's wrapper of 0x00F60BD0), on the game's thread. */
 extern "C" void des_mm_draw_enter(ppu_context* ctx, uint32_t dlg)
 {
-    PS3_KNOB(s_on, ps3_env_int("DES_MENU_MOUSE", 1));
+    PS3_KNOB(s_on, ps3_env_int("DES_MENU_MOUSE", 0));
     PS3_KNOB(s_log, ps3_env_int("DES_MENU_MOUSE_LOG", 0));
     if (!s_on || !guest_ok(dlg, 4)) return;
     /* A dialog drawn again: the game has begun its next pass over the menus, and the one before is whole. (Not the

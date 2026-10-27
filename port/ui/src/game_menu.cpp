@@ -19,6 +19,7 @@
 
 #include "host.hpp"
 #include "hud_editor.hpp"
+#include "keys.hpp"
 #include "mouse.hpp"
 #include "settings.hpp"
 
@@ -95,6 +96,19 @@ bool poll() {
 void frame(bool pads_neutral, bool ui_visible, int width, int height) {
     sW.store(width, std::memory_order_relaxed);
     sH.store(height, std::memory_order_relaxed);
+    // The left button let go where its message did not reach the menu (another window, the menu closing): an arrow
+    // held down would hold the game's button, and every press after it, for good. Only once the button has been seen
+    // down (a platform that does not report the mouse's buttons here leaves it to the messages).
+    static bool sSeenDown = false;
+    if (!sLeft.load() || ui::settings::no_user_input()) {
+        sSeenDown = false;
+    } else if (ui::keys::key_down(0x01)) {  // VK_LBUTTON
+        sSeenDown = true;
+    } else if (sSeenDown) {
+        sSeenDown = false;
+        sLeft.store(false);
+        des_menu_mouse_release();
+    }
     if (!pads_neutral && !ui::settings::no_user_input()) sShown.store(false);
     const int mode = ui_visible || !sOpen.load() ? 0 : sShown.load() ? 1 : 2;
     sMode = mode;

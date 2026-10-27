@@ -581,9 +581,10 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         bool_row(leftPane, rightPane, "Mouse look", "DES_MOUSE_LOOK",
             "Turn the camera with the mouse, and use the mouse buttons and wheel in the game. Smoothest at 60 fps "
             "or more.<br/><br/>(DES_MOUSE_LOOK)");
-        bool_row(leftPane, rightPane, "Mouse in game menus", "DES_MENU_MOUSE",
+        bool_row(leftPane, rightPane, "Mouse in game menus (experimental)", "DES_MENU_MOUSE",
             "Point and click in the game's own menus: left click picks, right click goes back, the wheel scrolls. "
-            "A key or gamepad button hides the pointer.<br/><br/>(DES_MENU_MOUSE)");
+            "A key or gamepad button hides the pointer. Experimental: some screens may not take the mouse.<br/><br/>"
+            "(DES_MENU_MOUSE)");
         auto& mouseSens = leftPane.add_child<NumberButton>(NumberButton::Props{
             .key = "Mouse sensitivity",
             .getValue = mouse_sens_percent,

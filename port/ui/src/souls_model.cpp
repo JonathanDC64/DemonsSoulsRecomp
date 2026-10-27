@@ -1057,13 +1057,14 @@ void times(const float a[9], const float b[9], float out[9]) {
 }  // namespace
 
 float spin(const std::string& name) {
-    const auto knob = [](const char* var) {
+    const auto knob = [](const char* var, float fallback) {
         const char* v = std::getenv(var);
         char* end = nullptr;
-        const float f = v && *v ? std::strtof(v, &end) : 0.f;
-        return end && !*end && std::isfinite(f) ? std::clamp(f, -3600.f, 3600.f) : 0.f;
+        const float f = v && *v ? std::strtof(v, &end) : fallback;
+        return end && !*end && std::isfinite(f) ? std::clamp(f, -3600.f, 3600.f) : fallback;
     };
-    static const float sword = knob("DES_CURSOR_SPIN"), lizard = knob("DES_UI_LIZARD_SPIN");
+    // The sword keeps still; the lizard turns round once in 12 s as it dances.
+    static const float sword = knob("DES_CURSOR_SPIN", 0.f), lizard = knob("DES_UI_LIZARD_SPIN", 30.f);
     return name == "moonlight" ? sword : name == "lizard" ? lizard : 0.f;
 }
 

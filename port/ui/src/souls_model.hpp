@@ -85,8 +85,8 @@ struct Look {
 };
 Look look(const std::string& name, float turn);
 
-// The model's slow turn, in degrees a second (0: none): DES_CURSOR_SPIN for the sword, about its blade,
-// DES_UI_LIZARD_SPIN for the lizard, about its up. turn = spin * seconds, for look.
+// The model's slow turn, in degrees a second (0: none): DES_CURSOR_SPIN for the sword, about its blade (0),
+// DES_UI_LIZARD_SPIN for the lizard, about its up (30). turn = spin * seconds, for look.
 float spin(const std::string& name);
 
 }  // namespace ui::models

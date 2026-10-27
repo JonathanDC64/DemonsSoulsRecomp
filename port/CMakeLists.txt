@@ -417,6 +417,23 @@ if(WIN32)
 endif()
 add_dependencies(des_boot des_version)
 
+# --- FFmpeg beside the exe (Windows) -------------------------------------------
+# A Windows runtime build downloads FFmpeg's MPEG-2 video decoder into <its build
+# folder>/ffmpeg-win64/bin (ps3recomp's cmake/ffmpeg_download.cmake). The runtime
+# opens the DLLs by name, so each link copies them beside the exe; without them
+# the movies use Windows' own decoder, which needs the Microsoft Store's MPEG-2
+# Video Extension (docs/110). CI's runtime has its own FFmpeg and no such folder,
+# so nothing is copied there.
+function(des_copy_ffmpeg_dlls target runtime_dir)
+    if(WIN32)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" "-DFROM=${runtime_dir}/ffmpeg-win64/bin" "-DTO=$<TARGET_FILE_DIR:${target}>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyFfmpegDlls.cmake"
+            VERBATIM)
+    endif()
+endfunction()
+des_copy_ffmpeg_dlls(des_boot "${PS3RECOMP_BUILD_DIR}")
+
 # --- The exe's icon ------------------------------------------------------------
 # Made at configure time from the game's own PS3_GAME/ICON0.PNG (copy it to
 # work/game/ next to EBOOT.ELF, or point DES_ICON0 at it) by scripts/make_icon.py,
@@ -668,6 +685,8 @@ if(DES_SPLIT)
             COMMAND "${CMAKE_COMMAND}" -E echo "des_host: DEVELOPER BUILD (DES_DEV=ON), the cheats are compiled in. Never share it."
             VERBATIM)
     endif()
+    get_filename_component(_des_split_dir "${PS3RECOMP_SPLIT_LIB}" DIRECTORY)
+    des_copy_ffmpeg_dlls(des_host "${_des_split_dir}")
     # A freestanding des_game.dll: the same targets, changed in place (not with DES_HOST_ONLY: there is no des_game).
     option(DES_SPLIT_FREESTANDING "Build des_game.dll freestanding: no C runtime, SDK or C++ library (docs/84)" OFF)
     if(DES_SPLIT_FREESTANDING AND NOT DES_HOST_ONLY)

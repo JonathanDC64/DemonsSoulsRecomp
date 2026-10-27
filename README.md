@@ -49,6 +49,8 @@ This is the technical part. The full notes are in [`docs/`](docs/).
 |---|---|
 | Visual Studio 2022 Build Tools, LLVM (clang), CMake, Ninja, Python 3, Git Bash | clang or GCC, CMake, Ninja, Python 3, SDL2, Vulkan and FFmpeg development files, vkd3d ([details](docs/76-native-linux.md#building)) |
 
+On Windows, the game's movies also need Microsoft's free [MPEG-2 Video Extension](https://apps.microsoft.com/detail/9n95q1zzpmh4) from the Microsoft Store. Without it, the movies play their sound with no picture. (A paid app called "MPEG-2 Video Extensions", from another publisher, is a different thing; you don't need it.)
+
 **From your copy of the game**
 
 - The game disc's files (`PS3_GAME`)

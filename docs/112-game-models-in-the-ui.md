@@ -3,8 +3,9 @@
 Date: 2026-10-27. Status: first version, for the user to try.
 - While a menu is open, the mouse cursor is the **Large Sword of Moonlight**: the game's own model, drawn live in 3D,
   with its translucent blade and a soft blue glow about it. Its tip is the cursor's point.
-- The **crystal lizard** dances in the bottom right corner while a menu is open, and it twinkles: its gems flash
-  and star glints come and go on it. That place is for now. In a document it is one line of RCSS (section 5).
+- The **crystal lizard** dances in the bottom right corner while a menu is open, turning round slowly (once in
+  12 s), and it twinkles: its gems flash and star glints come and go on it. That place is for now. In a document it
+  is one line of RCSS (section 5).
 - Settings > Interface turns each off: **Sword cursor** and **Crystal lizard**, both on by default, at once.
 - Nothing of the game is in the program or in this repository. Both models are read from the player's own copy of
   the game, the first time each is drawn.
@@ -22,7 +23,7 @@ set from outside).
 | `DES_CURSOR_GLOW` | `1` | `0`: no glow about the blade (section 4.1). |
 | `DES_UI_LIZARD` | `1` | The lizard, dancing, in the bottom right corner while a document is up; `0`: none. Its row is Crystal lizard. |
 | `DES_UI_LIZARD_SIZE` | `160` | Its box, in dp. |
-| `DES_UI_LIZARD_SPIN` | `0` | The lizard turning round as it dances, in degrees a second (`30` is a turn in 12 s). |
+| `DES_UI_LIZARD_SPIN` | `30` | The lizard turning round as it dances, in degrees a second (`30` is a turn in 12 s; `0` keeps it facing the front left). |
 | `DES_UI_LIZARD_ANIM` | `a00_3301` | Another of its animations, by name (`a00_0000` is its idle). |
 | `DES_UI_LIZARD_TWINKLE` | `1` | `0`: no twinkle, neither the gems' flashes nor the star glints (section 4.1). |
 
@@ -139,8 +140,9 @@ their files are not read here. These are stand-ins, drawn with the model shader.
     they grow and shrink as they brighten and fade.
   - Each turn a glint goes to another gem: one of 64 vertices on gems, spread over its body when it loads.
   - A glint sits where its gem is in the pose, a little in front of it, so the lizard's depth hides those behind
-    it. None shows on a gem turned well away. The dance keeps its back, where most gems are, away from the viewer,
-    so most glints show on its tail and at its outline.
+    it. None shows on a gem turned well away. The dance keeps its back, where most gems are, away from its front
+    left, so the glints show most while its turn brings its back round (with `DES_UI_LIZARD_SPIN=0`, on its tail and
+    at its outline only).
 
 ## 5. The lizard in a document
 

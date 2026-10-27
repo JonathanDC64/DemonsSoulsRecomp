@@ -17,6 +17,7 @@
 
 #include "app.hpp"
 #include "crash_report.hpp"
+#include "game_menu.hpp"
 #include "host.hpp"
 #include "input.hpp"
 #include "keys.hpp"
@@ -311,6 +312,7 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
             *result = 0;
             return 1;
         }
+        if (down && ui::game_menu::active()) ui::game_menu::on_key();  // (the game's: the pointer hides)
         return 0;
     }
     case WM_CHAR:  // typing, for the on-screen keyboard
@@ -325,6 +327,21 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
     case WM_RBUTTONUP:
     case WM_MBUTTONDOWN:
     case WM_MBUTTONUP: {
+        if (!capturing && ui::game_menu::active()) {  // a menu of the game: the pointer and its clicks (docs/114)
+            int x, y;
+            map_mouse(hwnd, lp, x, y);
+            if (msg == WM_MOUSEMOVE) {
+                ui::game_menu::on_move(x, y);
+                return 0;
+            }
+            const bool down = msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN;
+            ui::game_menu::on_button((msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP)   ? 0
+                                     : (msg == WM_RBUTTONDOWN || msg == WM_RBUTTONUP) ? 1
+                                                                                      : 2,
+                                     down, x, y);
+            *result = 0;
+            return 1;
+        }
         if (!capturing) return 0;
         int x, y;
         map_mouse(hwnd, lp, x, y);
@@ -342,6 +359,11 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
         return 1;
     }
     case WM_MOUSEWHEEL: {
+        if (!capturing && ui::game_menu::active()) {  // (its position is the screen's: the pointer's last one counts)
+            ui::game_menu::on_wheel(GET_WHEEL_DELTA_WPARAM(wp));
+            *result = 0;
+            return 1;
+        }
         if (!capturing) return 0;
         InputEvent e{InputEvent::Wheel, 0, 0, ui::keys::modifiers()};
         e.wheel = -float(GET_WHEEL_DELTA_WPARAM(wp)) / float(WHEEL_DELTA);
@@ -352,6 +374,7 @@ int wndproc(void*, void* hwnd_, unsigned msg, unsigned long long wp, long long l
     case WM_MOUSELEAVE:
     case WM_KILLFOCUS:
         if (capturing) push_event({InputEvent::Leave});
+        else if (ui::game_menu::active()) ui::game_menu::on_leave();
         return 0;
     default:
         return 0;
@@ -784,18 +807,29 @@ void watch_thread() {
             ps3_setenv("DES_UI_SHOT_NOW", "");
         }
         // DES_UI_MOUSE=x,y[,down|up][;x,y[,down|up]...] (a test, likewise): the mouse moves to each point (back
-        // buffer pixels) in turn, the left button going down or up there; one setenv is one drag.
+        // buffer pixels) in turn, the left button going down or up there; one setenv is one drag. Over a menu of the
+        // game (no document up) it is that menu's, as the window's messages would be, with rdown and rup for the
+        // right button and wheelup and wheeldown for a notch.
         if (const char* v = std::getenv("DES_UI_MOUSE"); v && *v) {
             const std::string steps = v;
             ps3_setenv("DES_UI_MOUSE", "");
+            const bool game = !sCapturing.load() && ui::game_menu::open();
             for (const std::string& step : split(steps, ';')) {
                 int x = 0, y = 0;
-                char act[8] = {};
-                const int got = std::sscanf(step.c_str(), "%d,%d,%7s", &x, &y, act);
+                char act[12] = {};
+                const int got = std::sscanf(step.c_str(), "%d,%d,%11s", &x, &y, act);
                 if (got < 2) continue;
+                const std::string a = got == 3 ? act : "";
+                if (game) {
+                    ui::game_menu::on_move(x, y);
+                    if (a == "down" || a == "up") ui::game_menu::on_button(0, a == "down", x, y);
+                    if (a == "rdown" || a == "rup") ui::game_menu::on_button(1, a == "rdown", x, y);
+                    if (a == "wheelup" || a == "wheeldown") ui::game_menu::on_wheel(a == "wheelup" ? 120 : -120);
+                    continue;
+                }
                 push_event({InputEvent::MouseMove, x, y});
-                if (got == 3 && !std::strcmp(act, "down")) push_event({InputEvent::MouseDown, 0});
-                if (got == 3 && !std::strcmp(act, "up")) push_event({InputEvent::MouseUp, 0});
+                if (a == "down") push_event({InputEvent::MouseDown, 0});
+                if (a == "up") push_event({InputEvent::MouseUp, 0});
             }
         }
         if (const unsigned long long at = sWakeAt.load()) {
@@ -874,6 +908,8 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     ui::trophies::poll_test_knob();  // DES_TROPHY_TEST
     ui::net_notices::poll();          // what the online sign-in has to tell the player
 
+    // A menu of the game with the pointer over it (game_menu.cpp) keeps the UI running too.
+    const bool gameMenu = ui::game_menu::poll();
     // Fast path: nothing showing, nothing queued (input, a trophy pop-up), no chord pressed.
     const unsigned mask = sChordMask;
     const bool chordDown = (g_pad0_buttons & mask) == mask;
@@ -885,7 +921,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     static bool sPrivacyShown = false;
     const bool prework = ui::prework_running();
     const bool privacy = ui::privacy::asking() && !sPrivacyShown;
-    if (!sActive && !sStartScreen && !chordEdge && !shot && !sQueued.load(std::memory_order_acquire) &&
+    if (!sActive && !sStartScreen && !gameMenu && !chordEdge && !shot && !sQueued.load(std::memory_order_acquire) &&
         !sOpenPending && !sReportCountdown && !(prework && !sPreworkShown) && !privacy && !sCloseRequested.load() &&
         !sOskPending.load(std::memory_order_acquire) && !ui::trophies::pending() && !ui::net_notices::pending() &&
         !sHangNotice.load(std::memory_order_relaxed) &&
@@ -990,11 +1026,12 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         ui::host::set_hdr(scale, srgb != 0);
     }
     ui::host::set_cursor_wanted(visible);
+    ui::game_menu::frame(padNeutral, visible, int(width), int(height));
     ui::host::render(back_buffer, index, int(width), int(height), shot);
 
     auto* overlay = static_cast<ui::Overlay*>(ui::find_document(ui::DocumentScope::Overlay));
     const bool busy = overlay && overlay->busy();
-    if (!visible && !sHold && !busy && !sReportCountdown && now - sLastVisible > kGrace) {
+    if (!visible && !sHold && !busy && !sReportCountdown && !gameMenu && now - sLastVisible > kGrace) {
         // Asleep until F1 or the chord. The chord may still read as held from before: only a new press counts.
         sActive = false;
         ui::input::reset_input_state();

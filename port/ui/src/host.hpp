@@ -44,6 +44,9 @@ void render(void* back_buffer, unsigned index, int width, int height, const char
 // The render thread, before render.
 void set_pointer(int x, int y, bool inside);
 void set_cursor_wanted(bool wanted);
+// The pointer over a menu of the game (game_menu.hpp): mode 0 none, 1 shown at (x, y) in the back buffer's pixels
+// (the sword, while no document is up), 2 hidden (the system's cursor too). The render thread, before render.
+void set_game_pointer(int mode, int x, int y);
 
 // Before the window's buffers are resized: finishes the work using them and drops the views of them. The next render
 // makes views of the new buffers.

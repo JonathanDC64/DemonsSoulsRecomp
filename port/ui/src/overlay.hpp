@@ -21,6 +21,7 @@ protected:
 
 private:
     void update_ticker();
+    void update_glow();
 
     Rml::Element* mCurrentToast = nullptr;
     Rml::Element* mMenuNotification = nullptr;
@@ -36,6 +37,10 @@ private:
     float mTickerPassSeconds = 0.0f;  // one pass of a long text: hold, scroll to its end, hold
     int mTickerPasses = 0;
     float mTickerSeconds = 0.0f;      // how long it stays (before it slides away)
+
+    // The glow round the part of a menu of the game under the pointer (game_menu.hpp).
+    Rml::Element* mGlow = nullptr;
+    clock::time_point mGlowGone;  // when it lost its part (it fades, then goes)
 };
 
 }  // namespace ui

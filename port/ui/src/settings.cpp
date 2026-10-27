@@ -104,6 +104,7 @@ constexpr Def kDefs[] = {
     {"DES_MOUSE_INVERT_X", "0", Apply::Live},
     {"DES_MOUSE_INVERT_Y", "0", Apply::Live},
     {"DES_MOUSE_FLICK", "15", Apply::Live},    // lock-on switching: degrees of mouse movement for a flick, 0 = off
+    {"DES_MENU_MOUSE", "1", Apply::Live},      // des_menu_mouse.cpp, each frame: 0 = no mouse in the game's menus
 };
 
 std::map<std::string, std::string, std::less<>> sValues;

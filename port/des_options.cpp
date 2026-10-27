@@ -704,6 +704,13 @@ unsigned auto_continue_buttons()
     return 0;
 }
 
+extern "C" unsigned des_mm_pad_buttons(void);   /* des_menu_mouse.cpp: the clicks in the game's menus */
+
+unsigned title_buttons()
+{
+    return auto_continue_buttons() | des_mm_pad_buttons();
+}
+
 void auto_continue_on_open(const char* path)
 {
     if (!s_auto_done && strstr(path, "/script/m") && strstr(path, ".luabnd")) {
@@ -2769,6 +2776,8 @@ int mouse_aim(uint32_t cam, uint32_t chr, float yaw_turn, float pitch_turn)
 }
 } // namespace
 
+extern "C" unsigned des_flip_count(void) { return s_flips.load(std::memory_order_relaxed); }
+
 extern "C" void des_mouse_look(ppu_context* ctx, uint32_t addr)
 {
     if (addr == kMouseAtStickTest) {
@@ -2969,7 +2978,7 @@ extern "C" void ps3_title_options_init(void)
             fprintf(stderr, "[des] DES_FRAMELOG: cannot open %s\n", f);
         }
     }
-    g_pad_title_hook = auto_continue_buttons;
+    g_pad_title_hook = title_buttons;
     g_fs_open_hook = auto_continue_on_open;
     if (auto_continue_on())
         fprintf(stderr, "[des] DES_AUTO_CONTINUE: pressing through the menus to the last save\n");

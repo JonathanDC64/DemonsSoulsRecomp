@@ -79,19 +79,10 @@ float picture_aspect() {
     return 16.f / 9.f;
 }
 
-// Where the backend shows the picture in the window: the largest rect of its shape, in the middle.
+// Where the backend shows the picture in the window (picture_rect_of).
 void picture_rect(Rml::Context* context, float out[4]) {
     const Rml::Vector2i d = context->GetDimensions();
-    const float W = float(d.x), H = float(d.y), A = picture_aspect();
-    float w = W, h = W / A;
-    if (h > H) {
-        h = H;
-        w = H * A;
-    }
-    out[0] = (W - w) * 0.5f;
-    out[1] = (H - h) * 0.5f;
-    out[2] = out[0] + w;
-    out[3] = out[1] + h;
+    picture_rect_of(float(d.x), float(d.y), out);
 }
 
 void set_px(Rml::Element* el, Rml::PropertyId id, float v) {
@@ -109,6 +100,19 @@ std::string size_text(float size) {
 }
 
 }  // namespace
+
+void picture_rect_of(float W, float H, float out[4]) {
+    const float A = picture_aspect();
+    float w = W, h = W / A;
+    if (h > H) {
+        h = H;
+        w = H * A;
+    }
+    out[0] = (W - w) * 0.5f;
+    out[1] = (H - h) * 0.5f;
+    out[2] = out[0] + w;
+    out[3] = out[1] + h;
+}
 
 HudEditor::HudEditor() : Document(kDocumentSource) {
     if (mDocument == nullptr) {

@@ -2,6 +2,7 @@
 // and the "open the menu" hint (no spell radial).
 #include "overlay.hpp"
 
+#include "game_menu.hpp"
 #include "host.hpp"
 #include "input.hpp"
 #include "settings.hpp"
@@ -78,6 +79,11 @@ Rml::Element* create_toast(Rml::Element* parent, const Toast& toast) {
     }
     return elem;
 }
+
+// The glow's fade out (overlay.rcss), and a little more.
+constexpr auto kGlowFade = std::chrono::milliseconds(200);
+// The glow reaches this far round the part's box (px of the window: the game's boxes are its pieces' own).
+constexpr float kGlowPad = 3.0f;
 
 // The bar at the top: ticker > (ticker-label, ticker-track > ticker-text). The server's words, as text.
 Rml::Element* create_ticker(Rml::Element* parent, const Rml::String& text) {
@@ -209,6 +215,27 @@ void Overlay::update() {
         }
     }
     update_ticker();
+    update_glow();
+}
+
+void Overlay::update_glow() {
+    float box[4];
+    if (game_menu::glow(box)) {
+        if (mGlow == nullptr) mGlow = append(mDocument, "game-glow");
+        auto px = [](float v) { return Rml::Property(std::round(v), Rml::Unit::PX); };
+        mGlow->SetProperty(Rml::PropertyId::Left, px(box[0] - kGlowPad));
+        mGlow->SetProperty(Rml::PropertyId::Top, px(box[1] - kGlowPad));
+        mGlow->SetProperty(Rml::PropertyId::Width, px(box[2] - box[0] + 2.0f * kGlowPad));
+        mGlow->SetProperty(Rml::PropertyId::Height, px(box[3] - box[1] + 2.0f * kGlowPad));
+        mGlow->SetAttribute("open", "");
+        mGlowGone = clock::now();
+    } else if (mGlow != nullptr) {
+        if (!host::animations_enabled() || clock::now() >= mGlowGone + kGlowFade) {
+            remove_element(mGlow);
+        } else {
+            mGlow->RemoveAttribute("open");
+        }
+    }
 }
 
 void Overlay::update_ticker() {
@@ -287,7 +314,7 @@ void Overlay::update_ticker() {
 // Something is on screen, or still animating away.
 bool Overlay::busy() const {
     return mCurrentToast != nullptr || mMenuNotification != nullptr || !get_toasts().empty() || mTicker != nullptr ||
-           !get_tickers().empty();
+           !get_tickers().empty() || mGlow != nullptr;
 }
 
 bool Overlay::handle_nav_command(Rml::Event&, NavCommand) {

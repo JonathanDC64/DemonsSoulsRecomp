@@ -35,6 +35,10 @@ void hold_buttons(void* hwnd, bool down);
 void set_cursor(int shape);
 #endif
 
+// A menu of the game opened or closed (game_menu.cpp, the render thread). While one is open the mouse is the menu's:
+// no mouse look, and the buttons and wheel do not go to the keyboard layout.
+void set_game_menu(bool open);
+
 // The UI drew its own cursor this frame (the sword, host.cpp), or not: while it does, the system's is hidden over the
 // window's picture. The render thread, once a frame; the window's thread acts on a change.
 void set_own_cursor(bool drawn);

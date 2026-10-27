@@ -137,6 +137,7 @@ All are live: the debug console's `setenv` sets them in a running game.
 |---|---|
 | `DES_HANG_AT_FRAME=n` | the game's flip thread stops for good once n frames were presented (a game hang; not on the render thread) |
 | `DES_HANG_RENDER_AT_FRAME=n` | the render thread stops for good (the hang dialog's case) |
+| `RSX_LOSE_DEVICE_AT_FRAME=n` | the D3D12 device is removed at the n-th frame, as a driver reset would lose it (the lost-graphics dialog's case; read at start, not live) |
 | `DES_REPORT_AT_FRAME=n` | starts Report an issue at frame n, once per value |
 | `DES_UI_PRESS=KEY` | presses F1, ESC, ENTER, UP/DOWN/LEFT/RIGHT, TAB, SPACE as the window procedure would, then clears itself. Test runs set `PS3_NO_USER_INPUT=1`, which drops keys posted to the window. |
 | `DES_REPORT_NO_OPEN=1` | no browser or Explorer; the issue link goes to `<zip>.url.txt` |

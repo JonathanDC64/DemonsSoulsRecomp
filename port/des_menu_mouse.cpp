@@ -39,10 +39,10 @@
  * des_options.cpp), so the game sees them exactly as a pad's, sounds and all.
  *
  * Experimental: off unless DES_MENU_MOUSE=1 (Settings, Controls). DES_MENU_MOUSE_LOG=1
- * prints the menus each time they change, and each walk and slide; 2 the arrow
- * pieces too; 3 every visible dialog with its pieces. DES_MENU_MOUSE_PRESS is
- * the frames a press is held. A test run clicks with the UI's DES_UI_MOUSE
- * (des_ui.cpp). */
+ * prints the menus each time they change (and those left out, and why), and
+ * each walk and slide; 2 the arrow pieces too; 3 every visible dialog with its
+ * pieces. DES_MENU_MOUSE_PRESS is the frames a press is held. A test run clicks
+ * with the UI's DES_UI_MOUSE (des_ui.cpp). */
 
 #include "ps3emu/ppu_lift.h"
 #include "des_game_calls.h"
@@ -297,7 +297,34 @@ std::vector<Piece> pieces_of(uint32_t dlg)
     return v;
 }
 
-void log_menus(const std::vector<Menu>& menus)
+/* A menu the rules below left out (logged only): why, and the menu it went for. */
+struct LeftOut {
+    Menu m;
+    const char* why;   /* "under" its spots, or "beneath" a menu over it */
+    uint32_t by;
+};
+
+void log_spots(const Menu& m)
+{
+    for (size_t k = 0; k < m.spots.size() && k < 32; k++) {
+        const Spot& s = m.spots[k];
+        if (s.arrow)
+            fprintf(stderr, " arrow%+d@%.0f,%.0f,%.0f,%.0f", s.arrow, s.box[0], s.box[1], s.box[2], s.box[3]);
+        else if (s.slider)
+            fprintf(stderr, " slider@%.0f,%.0f,%.0f,%.0f(%.0f..%.0f)", s.box[0], s.box[1], s.box[2], s.box[3],
+                    s.track0, s.track1);
+        else if (s.field)
+            fprintf(stderr, " field@%.0f,%.0f,%.0f,%.0f", s.box[0], s.box[1], s.box[2], s.box[3]);
+        else
+            fprintf(stderr, " %s%d_%d@%.0f,%.0f,%.0f,%.0f", (int)k == m.cur ? "*" : "", s.r, s.c, s.box[0],
+                    s.box[1], s.box[2], s.box[3]);
+    }
+    fprintf(stderr, "\n");
+}
+
+/* The menus each time they change, and those left out (a menu over the one the player looks at shows here), with
+ * the pass's draws. A left-out line reads "vt 0x...," so a test's "vt 0x... z" finds only the menus kept. */
+void log_menus(const std::vector<Menu>& menus, const std::vector<LeftOut>& left, size_t draws)
 {
     std::string sig;
     char b[160];
@@ -305,26 +332,23 @@ void log_menus(const std::vector<Menu>& menus)
         snprintf(b, sizeof b, "%08X/%d/%zu/%d ", m.owner, m.stay, m.spots.size(), m.cur);
         sig += b;
     }
+    for (const LeftOut& l : left) {
+        snprintf(b, sizeof b, "-%08X/%zu/%s/%08X ", l.m.owner, l.m.spots.size(), l.why, l.by);
+        sig += b;
+    }
     if (sig == s_menu_sig) return;
     s_menu_sig = sig;
-    fprintf(stderr, "[mm] f%u menus: %zu\n", des_flip_count(), menus.size());
+    fprintf(stderr, "[mm] f%u menus: %zu (%zu left out; %zu draws)\n", des_flip_count(), menus.size(), left.size(),
+            draws);
     for (const Menu& m : menus) {
         fprintf(stderr, "[mm]   0x%08X vt 0x%08X%s%s z %d, %zu spots, on %d:", m.owner, vm_read32(m.owner),
                 m.stay ? " (stay)" : "", m.tabs ? " (tabs)" : "", m.z, m.spots.size(), m.cur);
-        for (size_t k = 0; k < m.spots.size() && k < 32; k++) {
-            const Spot& s = m.spots[k];
-            if (s.arrow)
-                fprintf(stderr, " arrow%+d@%.0f,%.0f,%.0f,%.0f", s.arrow, s.box[0], s.box[1], s.box[2], s.box[3]);
-            else if (s.slider)
-                fprintf(stderr, " slider@%.0f,%.0f,%.0f,%.0f(%.0f..%.0f)", s.box[0], s.box[1], s.box[2], s.box[3],
-                        s.track0, s.track1);
-            else if (s.field)
-                fprintf(stderr, " field@%.0f,%.0f,%.0f,%.0f", s.box[0], s.box[1], s.box[2], s.box[3]);
-            else
-                fprintf(stderr, " %s%d_%d@%.0f,%.0f,%.0f,%.0f", (int)k == m.cur ? "*" : "", s.r, s.c, s.box[0],
-                        s.box[1], s.box[2], s.box[3]);
-        }
-        fprintf(stderr, "\n");
+        log_spots(m);
+    }
+    for (const LeftOut& l : left) {
+        fprintf(stderr, "[mm]   (left out: %s 0x%08X) 0x%08X vt 0x%08X, z %d, %zu spots, on %d:", l.why, l.by,
+                l.m.owner, vm_read32(l.m.owner), l.m.z, l.m.spots.size(), l.m.cur);
+        log_spots(l.m);
     }
 }
 
@@ -333,6 +357,7 @@ void build_menus(ppu_context* ctx)
     const std::vector<Drawn>& ds = s_draws;
     const size_t n = ds.size();
     std::vector<Menu> menus;
+    std::vector<LeftOut> left;   /* (logged only) */
     bool any_cursor = false;
     for (const Drawn& d : ds) any_cursor |= d.vis && (d.vt == kTitleVt || has_cursor_piece(d.dlg));
     if (any_cursor || s_log >= 3) {
@@ -533,11 +558,13 @@ void build_menus(ppu_context* ctx)
         std::sort(menus.begin(), menus.end(), [](const Menu& a, const Menu& b) { return a.z > b.z; });
         std::vector<Menu> top;
         for (Menu& m : menus) {
-            bool under = false;
+            uint32_t under = 0;   /* the owner of the menu over it */
             for (const Menu& t : top)
                 for (const Spot& a : m.spots)
-                    for (const Spot& b : t.spots) under |= overlap(a.box, b.box);
+                    for (const Spot& b : t.spots)
+                        if (!under && overlap(a.box, b.box)) under = t.owner;
             if (!under) top.push_back(std::move(m));
+            else if (s_log) left.push_back({std::move(m), "under", under});
         }
         menus.swap(top);
         /* A menu over another that is not part of it (a prompt over the profile, the command menu over the
@@ -550,9 +577,11 @@ void build_menus(ppu_context* ctx)
         };
         top.clear();
         for (Menu& m : menus) {
-            bool beneath = false;
-            for (const Menu& t : top) beneath |= !m.stay && !t.stay && !holds(t.z, m.z) && !holds(m.z, t.z);
+            uint32_t beneath = 0;   /* the owner of the menu over it */
+            for (const Menu& t : top)
+                if (!beneath && !m.stay && !t.stay && !holds(t.z, m.z) && !holds(m.z, t.z)) beneath = t.owner;
             if (!beneath) top.push_back(std::move(m));
+            else if (s_log) left.push_back({std::move(m), "beneath", beneath});
         }
         menus.swap(top);
         /* The title before Start: its line, the one spot. */
@@ -647,7 +676,7 @@ void build_menus(ppu_context* ctx)
             owner->spots.push_back(s);
         }
     }
-    if (s_log) log_menus(menus);
+    if (s_log) log_menus(menus, left, n);
     s_menus.swap(menus);
 }
 

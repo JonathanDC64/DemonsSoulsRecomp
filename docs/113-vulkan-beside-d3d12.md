@@ -17,8 +17,10 @@ inferred.
 - **Size:** about 50–80 days to reach parity, including the menu, HDR and the pipeline caches (inferred). docs/75
   said 30–45 days for the renderer alone. The backend has grown 14% since then, and that figure left out the menu
   and HDR.
-- **Measure vkd3d first (1–2 days).** If vkd3d costs little, a native Vulkan renderer mostly buys Linux HDR, a path
-  to macOS, and dropping a dependency, not speed. If it costs a lot, the Linux gain is large.
+- **Measured on 10-27 (section 5.1): vkd3d-proton costs about 2.5%.** On this PC it read 466 fps against native
+  D3D12's 476 at the pinned save, about 45 µs a frame (0.3% at 60 fps, 0.7% at 144). So on Windows a native Vulkan
+  renderer buys almost no speed. Its gains are Linux HDR, a path to macOS, and dropping a dependency. Wine's vkd3d,
+  which the Linux build uses, is not measured yet.
 - **Defaults once it works:**
   - Windows keeps D3D12, with Vulkan as a choice (Settings > Display > Renderer, after a restart).
   - Linux moves to native Vulkan. The vkd3d build stays for one release as a fallback.
@@ -151,6 +153,47 @@ inferred.
   - Native Vulkan then waits for HDR or macOS.
 - **If it's slow, or Wine's vkd3d is much slower than vkd3d-proton:** native Vulkan pays on Linux first.
 
+### 5.1 Measured on this PC (2026-10-27)
+
+**Setup:**
+- RTX 5070 Ti, the same driver on both sides.
+- The same `des_host.exe` and `des_game.dll` on both sides. B also has vkd3d-proton 3.0.1's `d3d12.dll` and
+  `d3d12core.dll`, and DXVK 3.1.1's `dxgi.dll`, beside them. B's log names vkd3d-proton.
+- `exeab.sh`, 6 rounds of alternating boots, plain windows, at the pinned save (m08), uncapped (`DES_FPS=unlocked`,
+  `RSX_VSYNC=0`), presenting.
+- Each side has its own copy of the shader cache, and B its own vkd3d-proton cache.
+- One warm-up round first, so B's pipeline library and caches were built before the batch.
+
+**Results:**
+
+| | Boot means | Median | Spread |
+|---|---|---|---|
+| A, native D3D12 | 465.6–483.7 fps | 476.6 | sd 6.1 |
+| B, vkd3d-proton | 461.4–470.1 fps | 466.4 | sd 2.9 |
+
+- B was slower in 5 of 6 rounds. The median was −11.7 fps (−2.45%); paired t p = 0.026.
+- That is inside exeab's noise bar of 4.5%, but consistent.
+- Per frame, that's 2.10 ms against 2.15 ms: about 45 µs more. As a fixed cost per frame it's 0.3% at 60 fps and
+  0.7% at 144 fps.
+- B's frame rate was steadier than A's (sd 2.9 against 6.1 fps).
+
+**On a first start:** the warm-up boot on vkd3d-proton read −9%. Its pipeline library, which a native driver had
+written, didn't fit and was rebuilt (2,471 pipelines), and vkd3d-proton filled its own cache. After that, each B boot
+loaded all of them.
+
+**Not measured yet:**
+- a heavier scene: the deep Palace, with more draws a frame, which is where a cost per draw would show;
+- Wine's vkd3d, which the native Linux build ships;
+- AMD and Intel drivers.
+
+**What it means:** on Windows, vkd3d-proton is close to native. The cheaper first step in the list above holds:
+- a "Vulkan" choice that loads vkd3d-proton beside the exe;
+- on Linux, a check of the native vkd3d-proton build against Wine's vkd3d.
+
+Native Vulkan can wait until HDR on Linux or macOS asks for it.
+
+**Licences:** vkd3d-proton is LGPL-2.1 and DXVK is zlib, so both can ship as separate DLLs.
+
 ## 6. macOS and the rest
 
 - **MoltenVK** lacks some things the RSX path uses:
@@ -162,7 +205,8 @@ inferred.
 
 ## 7. Plan
 
-0. Measure vkd3d (section 5): 1–2 days, before deciding.
+0. Measure vkd3d (section 5). Done on Windows (5.1): vkd3d-proton costs about 2.5% at 470 fps. Still to do: the deep
+   Palace, and Linux hardware.
 1. Split the backend, with D3D12 only and no change in behaviour: regression A/B, then merge (10–15 days).
 2. Bring up the Vulkan layer and shaders on Linux first, against the vkd3d build, behind `RSX_BACKEND=vulkan`
    (20–30 days).

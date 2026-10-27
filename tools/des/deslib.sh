@@ -93,13 +93,20 @@ des_env_defaults() {
 # while a test is still running. The copy keeps
 # the name des_boot.exe (des_kill_own and des_running match on it). For
 # sym.py against a staged run, pass --map "$DES_BIN/des_boot.map".
+# A DLL an earlier staging left that this exe has none of beside it goes first:
+# in an A/B whose sides differ in DLLs (one side with vkd3d-proton's d3d12.dll),
+# it would otherwise load with the other side's exe too.
 des_stage_exe() {
   local src="${DES_EXE:-$DES_ROOT/port/build/des_boot.exe}"
   local dir; dir="$(dirname "$src")"
   local bin="$DES_BIN"; mkdir -p "$bin"
+  local f
+  for f in "$bin"/*.dll; do
+    [ -f "$f" ] && [ ! -f "$dir/$(basename "$f")" ] || continue
+    rm -f "$f" || { echo "[des] cannot remove $f from the last staging" >&2; return 1; }
+  done
   cp -f "$src" "$bin/des_boot.exe" || return 1
   : > "$bin/$DES_OWN_MARK"   # des_kill_own: this copy is ours
-  local f
   for f in "${src%.exe}.pdb" "${src%.exe}.map" "$dir"/*.dll; do
     [ -f "$f" ] || continue
     case "$f" in *.pdb) cp -f "$f" "$bin/des_boot.pdb" ;;

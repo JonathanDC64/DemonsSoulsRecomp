@@ -24,7 +24,7 @@ The repository is written as `<owner>/DemonsSoulsRecomp`.
 - **Signing.** Sign `des_host.exe` and the stub. Options: Azure Artifact Signing (about $9.99 a month, where eligible), SignPath Foundation (free for open-source projects) or an OV certificate ($150 to $300 a year) (read). The DLL built on the player's PC cannot be signed. It is never downloaded, so SmartScreen does not judge it, but Defender scans it (inferred).
 - **Found while reading (read and measured).**
   - The exe needs the Visual C++ runtime DLLs, which are not part of Windows.
-  - It imports Media Foundation directly, which Windows N editions lack.
+  - It imports Media Foundation directly, which Windows N editions lack. *(Since ps3recomp#143 the runtime looks it up at run time instead: docs/110 section 3.)*
   - The run defaults (LIBSRE_LLE and others) live in `tools/des/deslib.sh`, not in the exe. *(Since 10-22 the exe sets the ones a start needs itself; see 1.3.)*
   - The game's /dev_hdd1 cache is written into the disc folder.
   - Several paths are relative to the working folder.

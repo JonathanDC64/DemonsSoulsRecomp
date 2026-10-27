@@ -154,19 +154,17 @@ at x 185-187). Each cabin is three keyframed bodies: the cabin block and two rai
 2-1 start, standing on the cabin's floor in the middle and 0.7 m / 0.8 m off it both ways, 5-6 s each, measured the
 same way as above:
 
-| Setting | fps | Jitter, start / gear | Still frames | Cabin speed, start / gear |
-|---|---|---|---|---|
-| 30 fps | 30 | 1.6 / 2.4 mm | 0% | 2.57 / 1.78 m/s |
-| Unlocked, cap 30, `DES_PHYS_RIDE=0` (before) | 340-370 | 22.6-22.7 / 15.6-15.7 mm | 77-87% | 2.39-2.46 / 1.63-1.66 m/s |
-| Unlocked, cap 30, fix | 295-331 | 2.4-3.0 / 2.7-5.5 mm | 0-6% | 2.61-2.63 / 1.78-1.79 m/s |
-| Unlocked, no cap (`DES_PHYS_HZ=0`) | 313-345 | 1.6 / 2.8 mm | 0-2% | 2.59 / 1.79 m/s |
+| Setting | fps | Jitter, start / gear | Still frames |
+|---|---|---|---|
+| 30 fps | 30 | 1.6 / 2.4 mm | 0% |
+| Unlocked, cap 30, `DES_PHYS_RIDE=0` (before) | 340-370 | 22.6-22.7 / 15.6-15.7 mm | 77-87% |
+| Unlocked, cap 30, fix | 295-331 | 2.4-3.0 / 2.7-5.5 mm | 0-6% |
+| Unlocked, no cap (`DES_PHYS_HZ=0`) | 313-345 | 1.6 / 2.8 mm | 0-2% |
 
-Under the cap the cabins also ran about 7% slow. On a ride the fix brings them back to the speed they have at 30 fps.
+The cabins move at the same speed in every setting, ridden or not: 2.57 m/s by the start and 1.78 m/s by the gear.
+That was measured in a later session from the cabin body's own position against real time, 3 s per setting.
 
 ## Open
-
-- Under the cap the paternosters' cabins run about 7% slow when the player is not on them (2.39-2.46 m/s against
-  2.57 at 30 fps). The 1-4 elevator does not (1.78 m/s either way). Not looked into.
 
 - Per-body settings (damping, quality type, max speeds) come from the game data and were not read.
 - The Havok inactivity test and TOI code run on the SPU and were not read.

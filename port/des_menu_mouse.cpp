@@ -271,7 +271,6 @@ struct Menu {
 /* ---- The game's thread: the frame's draws and the menus in them. ---- */
 
 int s_on = 1, s_log = 0;
-unsigned s_frame_flip = ~0u;
 std::vector<Drawn> s_draws;
 std::vector<Menu> s_menus;
 std::string s_menu_sig;
@@ -650,6 +649,8 @@ struct PubSpot {
 std::mutex s_pub_mu;
 std::vector<PubSpot> s_pub;   /* the menus' spots, the top menu's first */
 bool s_pub_open;
+unsigned s_pub_flip;   /* the flip it was made at: none drawn for long, no menu */
+constexpr unsigned kStaleFlips = 30;
 
 void publish()
 {
@@ -668,6 +669,7 @@ void publish()
     std::lock_guard<std::mutex> lk(s_pub_mu);
     s_pub.swap(pub);
     s_pub_open = !s_menus.empty();
+    s_pub_flip = des_flip_count();
 }
 
 /* The spot under (x, y), the top menu's first: false if none. */
@@ -711,7 +713,7 @@ struct Press {
 };
 std::mutex s_pad_mu;
 std::deque<Press> s_presses;
-int s_press_frames = 2;   /* DES_MENU_MOUSE_PRESS: frames (and packets) a press is held, and let go after */
+int s_press_frames = 1;   /* DES_MENU_MOUSE_PRESS: frames (and packets) a press is held, and let go after */
 
 void press(unsigned mask, int times = 1, bool held = false)
 {
@@ -1183,11 +1185,16 @@ extern "C" void des_mm_draw_enter(ppu_context* ctx, uint32_t dlg)
     PS3_KNOB(s_on, ps3_env_int("DES_MENU_MOUSE", 1));
     PS3_KNOB(s_log, ps3_env_int("DES_MENU_MOUSE_LOG", 0));
     if (!s_on || !guest_ok(dlg, 4)) return;
-    const unsigned flip = des_flip_count();
-    if (flip != s_frame_flip) {
-        if (s_frame_flip != ~0u) end_frame(ctx);
-        s_frame_flip = flip;
-    }
+    /* A dialog drawn again: the game has begun its next pass over the menus, and the one before is whole. (Not the
+     * flip: it is counted on another thread, so at a high frame rate it lands in the middle of a pass, and the menus
+     * of half a pass came and went.) */
+    bool again = false;
+    for (const Drawn& d : s_draws)
+        if (d.dlg == dlg) {
+            again = true;
+            break;
+        }
+    if (again) end_frame(ctx);
     if (s_draws.size() >= 512) return;
     Drawn d{};
     d.dlg = dlg;
@@ -1204,7 +1211,7 @@ extern "C" void des_mm_draw_enter(ppu_context* ctx, uint32_t dlg)
  * for DES_MENU_MOUSE_PRESS frames and as many packets the game took, then let go for as long. */
 extern "C" unsigned des_mm_pad_buttons(void)
 {
-    PS3_KNOB(s_press_frames, std::max(1, ps3_env_int("DES_MENU_MOUSE_PRESS", 2)));
+    PS3_KNOB(s_press_frames, std::max(1, ps3_env_int("DES_MENU_MOUSE_PRESS", 1)));
     const unsigned flip = des_flip_count();
     const unsigned taken = g_pad0_reads - g_pad0_empty_reads;
     const unsigned n = (unsigned)s_press_frames;
@@ -1231,7 +1238,7 @@ extern "C" unsigned des_mm_pad_buttons(void)
 extern "C" int des_menu_mouse_open(void)
 {
     std::lock_guard<std::mutex> lk(s_pub_mu);
-    return s_pub_open && s_on ? 1 : 0;
+    return s_pub_open && s_on && des_flip_count() - s_pub_flip < kStaleFlips ? 1 : 0;
 }
 
 /* The canvas the picture shows: left, top, right, bottom. */
@@ -1248,7 +1255,7 @@ extern "C" void des_menu_mouse_view(float view[4])
 extern "C" int des_menu_mouse_hit(float x, float y, float box[4])
 {
     std::lock_guard<std::mutex> lk(s_pub_mu);
-    if (!s_pub_open) return 0;
+    if (!s_pub_open || des_flip_count() - s_pub_flip >= kStaleFlips) return 0;
     for (const PubSpot& p : s_pub)
         if (inside(p.box, x, y)) {
             memcpy(box, p.box, sizeof p.box);

@@ -28,7 +28,7 @@ Date: 2026-10-27. Status: first version, for the user to try.
 | Knob | Default | What it does |
 |---|---|---|
 | `DES_MENU_MOUSE` | `1` | `0`: the game's menus take no mouse (the buttons and wheel are the keyboard layout's again, as before). Its row is Mouse in game menus. Live. |
-| `DES_MENU_MOUSE_PRESS` | `2` | Frames (and pad packets) each of the clicks' presses is held, and let go after (section 3). |
+| `DES_MENU_MOUSE_PRESS` | `1` | Frames (and pad packets) each of the clicks' presses is held, and let go after (section 3). |
 | `DES_MENU_MOUSE_LOG` | `0` | `1`: the menus found, each time they change, and each walk. `2`: also the arrow pieces on screen. `3`: also every visible dialog with its pieces, each time the set changes (the census used to learn a screen). |
 
 Tests click with the UI's `DES_UI_MOUSE` (des_ui.cpp): over a menu of the game, `x,y` moves the pointer there (back
@@ -84,9 +84,25 @@ Found in the census runs (`DES_MENU_MOUSE_LOG=3`, section 1); nothing here is a 
 - **The title.** PRESS START BUTTON has no cursor: while the title dialog (vtable `0x0186A968`) draws
   `text_press_start_button` and no menu is up, that line is the one spot, and a click anywhere is Start.
 
-The model is made once a frame from the frame before's draws, on the game's thread, and only when a visible dialog
-has a piece named `...cursor` (kept per dialog by its list of pieces, so a frame with no menu costs two reads a
-dialog).
+The model is made once a pass over the menus, from the pass before's draws, on the game's thread, and only when a
+visible dialog has a piece named `...cursor` (kept per dialog by its list of pieces, so a pass with no menu costs two
+reads a dialog). A pass ends when a dialog is drawn again: each is drawn once a pass.
+
+A pass is not a flip. The first version ended a frame when the flip count changed, and the flip is counted on
+another thread (the flip request). At 30 fps that fell between passes. Unlocked (hundreds of frames a second) it
+fell in the middle of one, about 2 frames in 5 on the title's screens: a dialog showed up twice in a frame, or the
+top menu was missing. Measured over 500 frames at a time with `DES_FPS=unlocked`, the number of menus changed 200 to
+280 times on the title's screens, against 0 to 3 times (real changes only) by passes. The menus coming and going was
+behind four reports:
+- The pointer flickered between the system's and the sword.
+- The pointer and the glow went away while the mouse stood still. A frame without the menu hid them until the next
+  move.
+- With mouse look on, the cursor was pulled to the middle of the window while the pause menu was up. Each frame
+  without a menu gave the mouse back to mouse look, which holds the cursor there.
+- Two menus fought over the glow: a pass without the top menu kept the one under it.
+
+If no pass is drawn for 30 flips, the menu counts as gone (`des_menu_mouse_open`): nothing is left up after the game
+stops drawing its menus.
 
 ## 3. A click: walking the game's cursor
 
@@ -95,7 +111,14 @@ does, so every screen keeps its own rules, sounds and help text.
 
 - The presses go in through cellPad's title hook (`des_mm_pad_buttons`, beside DES_AUTO_CONTINUE's in
   des_options.cpp). Each is held for `DES_MENU_MOUSE_PRESS` frames *and* as many pad packets the game took
-  (`g_pad0_reads - g_pad0_empty_reads`), then let go for as long: one press each, at any frame rate.
+  (`g_pad0_reads - g_pad0_empty_reads`), then let go for as long: one press each, at any frame rate. The default,
+  one frame down and one up, is the fastest the game counts: a row every 2 frames (66 ms at 30 fps, a few ms
+  unlocked). A walk of 10 rows on the Options page took one round at 30 fps. (It was 2 frames each, a row every 4.)
+- A walk is the game's cursor stepping, row by row, with the game's tick each time. Going straight to the row would
+  mean writing the selection. Each class keeps it in its own place: the pause menu's bar at owner +0x184, the
+  inventory at +0x100 and +0x134 (with the item at +0x14C). The profile list, System and Options keep it in none of
+  the owner (0x1000 bytes), the cursor's dialog or the dialogs above. So the walk stays, made as quick as the game
+  takes it.
 - A walk goes in rounds. A round presses down or up as many times as the rows differ, then the column buttons as
   many times as the columns differ, then waits until the cursor has stayed on one spot for 3 frames. Then it looks
   again. It ends on the spot (Cross, unless it is a tab or a stay menu), after 8 rounds, or when nothing moves the
@@ -119,7 +142,9 @@ does, so every screen keeps its own rules, sounds and help text.
 ## 4. The UI's side (port/ui/src/game_menu.cpp)
 
 - Each presented frame `game_menu::poll` asks the game's side whether a menu is up (`des_menu_mouse_open`). While
-  one is and the pointer shows, the UI runs every frame (no fast path) to draw the sword and the glow.
+  one is and the pointer shows, the UI runs every frame (no fast path) to draw the sword and the glow. A menu counts
+  as closed only once the game's side has said so for 4 presented frames running. So one frame without it neither
+  hides the pointer nor gives the mouse back to mouse look.
 - **Pointer to canvas.** The window's position goes to back buffer pixels (des_ui.cpp, `map_mouse`), then through
   the picture's rect (hud_editor.hpp, `picture_rect_of`: RSX_ASPECT's shape, in the middle) to the canvas the
   picture shows (`des_menu_mouse_view`: 1280x720, wider by the HUD's side width on a wider picture).

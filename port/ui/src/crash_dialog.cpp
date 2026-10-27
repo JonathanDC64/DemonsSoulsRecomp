@@ -235,6 +235,7 @@ bool show(const Content& content, const Actions& actions) {
                 .bodyRml = escape_lines(content.details),
                 .actions = {ModalAction{.label = "Close", .onPressed = [](Modal& d) { d.pop(); }}},
                 .onDismiss = [](Modal& d) { d.pop(); },
+                .variant = "long-body",  // (window.rcss: the thread list scrolls, Close stays in view)
             }));
         };
         if (content.lost) push_document(std::make_unique<Modal>(Modal::Props{

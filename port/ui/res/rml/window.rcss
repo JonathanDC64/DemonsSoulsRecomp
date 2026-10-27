@@ -239,6 +239,14 @@ modal-body {
     font-weight: normal;
 }
 
+/* A body taller than the window (the crash dialog's Details: every guest thread) scrolls, so the buttons stay in
+   view. Other modals keep a body that never shrinks. */
+window.modal.long-body modal-body {
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow: hidden auto;
+}
+
 modal-body modal-tip {
     font-size: var(--font-size-sm);
     color: var(--color-border);

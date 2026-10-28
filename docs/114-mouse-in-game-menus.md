@@ -96,7 +96,11 @@ Found in the census runs (`DES_MENU_MOUSE_LOG=3`, section 1); nothing here is a 
   (`cursor`, `list_cursor`, `tab_cursor`, `stay_cursor`). The cursor dialog takes the selected spot's rect: a
   `DsMenuDlgCursor` (vtable `0x01867F50`, 32x32 layout), a plain dialog with the same 32x32 layout (the profile
   list), or one of the spot's own size (the title's NEW GAME / LOAD GAME, 500x35). Where no piece holds the cursor
-  dialog (the inventory's `list_cursor`), the spot it sits on names its menu.
+  dialog (the inventory's `list_cursor`), or a hidden one does, the spot it sits on names its menu, with the drawn
+  `...cursor` piece of the spots' name or its `stay_` one. A pause menu that the game makes anew (after Use Item
+  closes it) has one cursor dialog, held by the bar's `cursor` piece. With a page open that piece is hidden and
+  `stay_cursor` is shown, so before this the bar had no menu in a page. The tabs of the bar drawn behind it
+  (`0x01883208`, four 64 px spots from 768) then took the glow and the clicks, 31 px off the icons.
 - **Spots.** The spots are the drawn pieces of the cursor's host dialog named after the host piece and their place:
   `cursor0_0`, `cursor1_0`, `list_cursor2_0`, `tab_cursor0_3`, `cursor_button0_0` (row, then column). The spot whose
   rect is the cursor dialog's is the selected one.
@@ -228,14 +232,14 @@ On the pinned regression save, by `DES_UI_MOUSE` (the steps and the shots are in
 | Create Profile | click on Class ▶ walks to Class then steps it; wheel over Gender; the gender prompt's OK / CANCEL; a click on the profile under the prompt does nothing |
 | Edit Appearance | glow on a slider; a click on Age's track from the Origin row walks down 3 and slides the thumb there; a drag moves it back; 3 wheel notches over Gender walk there and step it 3 times |
 | Pause menu bar | glow on a tab, click opens its page, ◀ ▶ click and hold, wheel; no glow in the gaps between tabs |
-| Pause menu pages | with a page open, a click on another tab turns to it (R2), right click closes the page |
+| Pause menu pages | with a page open, a click on another tab turns to it (R2), right click closes the page; the same after Use Item, when the game has made the pause menu anew (in a level, from a copy of a player's save) |
 | Inventory | glow on a row (its whole width), wheel, click opens the command menu, right click closes it, click on a category; closed on the armor category and opened again (it opens there), glow and clicks on its rows and tabs |
 | Equipment | a click on a slot opens its item list; glow on a row, wheel, right click back |
 | System | a click on the pause bar's last tab walks 3 right to it; a click on Options opens it |
 | Yes/no prompts in play | Auto Sort's "Automatically resort all items?": glow on OK, OK sorts; Quit Game's: CANCEL, and OK goes to the title; Load Profile's "Load profile and exit current game?": CANCEL |
 | Options | glow on a value; a click on Camera Speed's right half walks there and steps it 5 to 6, its left half back to 5; 2 wheel notches over Music walk there and step it 10 to 8; a click on a label selects its row only; right click brings the game's "Cancel option changes and return?" |
 
-Not tried yet: the shops, the blacksmith, storage and the Maiden in Black's level up (they need the Nexus's
-characters), and Drop's "Please select the number of items to drop." with its ▲ ▼ arrows (the Nexus greys Drop
-out). They are built the same way, so they should work; the census (`DES_MENU_MOUSE_LOG=3`) shows what a
-screen has if one does not.
+Drop's "Please select the number of items to drop." with its ▲ ▼ arrows was tried by hand in play: the
+arrows step the number. Not tried yet: the shops, the blacksmith, storage and the Maiden in Black's level up
+(they need the Nexus's characters). They are built the same way, so they should work; the census
+(`DES_MENU_MOUSE_LOG=3`) shows what a screen has if one does not.

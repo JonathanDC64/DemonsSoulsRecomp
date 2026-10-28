@@ -568,8 +568,11 @@ void build_menus(ppu_context* ctx)
             if (o >= 0 && pcs[o][via[i]].drawn) host = name_of(pcs[o][via[i]].obj);
             if (!ends_with(host, "cursor")) {
                 if (!cursor_like(ds[i])) continue;
-                /* No piece holds it (the inventory's list_cursor): the menu whose spot it sits on, in a dialog drawn
-                 * before it, with a drawn "...cursor" piece of the spots' name. */
+                /* No piece holds it (the inventory's list_cursor), or one hidden: the menu whose spot it sits on, in a
+                 * dialog drawn before it, with a drawn "...cursor" piece of the spots' name, or its stay_ one. (A
+                 * pause menu made anew, after Use Item, has one cursor dialog, held by the bar's "cursor" piece. With
+                 * a page open that piece is hidden and "stay_cursor" shown, so the bar had no menu, and the tabs of
+                 * the bar behind it, 31 px off the icons, took the glow and the clicks.) */
                 o = -1;
                 host.clear();
                 for (size_t j = 0; j < i && o < 0; j++)
@@ -583,7 +586,8 @@ void build_menus(ppu_context* ctx)
                             continue;
                         for (const Piece& q : pcs[j]) {
                             const std::string& qn = name_of(q.obj);
-                            if (q.drawn && ends_with(qn, "cursor") && (prefix == qn || starts_with(prefix, qn + "_"))) {
+                            const std::string bare = starts_with(qn, "stay_") ? qn.substr(5) : qn;
+                            if (q.drawn && ends_with(qn, "cursor") && (prefix == bare || starts_with(prefix, bare + "_"))) {
                                 host = qn;
                                 break;
                             }

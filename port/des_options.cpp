@@ -2279,6 +2279,35 @@ extern "C" void des_roll_tie(ppu_context* ctx, uint32_t)
     if (cur) ctx->fpr[27] = 0.0;
 }
 
+/* The game's error report, 0x00A9DD58(file, line, message), from paths such as
+ * the sound streams' loader (docs/116). It prints through the game's debug
+ * print, which a retail build drops, and then stops the game: on a PS3 a write
+ * to address 0 crashes, but here that write lands and the game goes on with
+ * the part that failed. So each report goes to the log, the first 32 and then
+ * every 100th. The lifter calls this after the report's first instruction
+ * (0x00A9DD58), with its arguments still in r3-r5 and the caller in lr. */
+static void guest_text(uint32_t a, char* out, size_t n)
+{
+    size_t i = 0;
+    for (; a >= 0x00010000u && a < 0x50000000u && i + 1 < n; i++, a++) {
+        const uint8_t c = vm_read8(a);
+        if (!c) break;
+        out[i] = c >= 0x20 && c < 0x7F ? (char)c : '?';
+    }
+    out[i] = 0;
+}
+extern "C" void des_game_error(ppu_context* ctx, uint32_t)
+{
+    static std::atomic<unsigned> s_count{0};
+    const unsigned k = ++s_count;
+    if (k > 32 && k % 100) return;
+    char file[160], msg[256];
+    guest_text((uint32_t)ctx->gpr[3], file, sizeof file);
+    guest_text((uint32_t)ctx->gpr[5], msg, sizeof msg);
+    fprintf(stderr, "[des] game error #%u: %s:%d: %s (called from %08X)\n", k, file, (int)(int32_t)ctx->gpr[4], msg,
+            (uint32_t)ctx->lr);
+}
+
 /* The character creation screen's previews turn with the right stick: the
  * whole body (0x008DB170, from Create Profile on) and the face in Edit
  * Appearance (0x008DA0E0). Each step gets r3 = the preview and f1, f2 = the

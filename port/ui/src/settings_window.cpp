@@ -290,6 +290,9 @@ constexpr Credit kCredits[] = {
     {"Material Symbols", "The icons of the menus.", "Apache-2.0", "https://fonts.google.com/icons"},
     {"Mbed TLS", "The secure connection to the online server.", "Apache-2.0",
      "https://www.trustedfirmware.org/projects/mbed-tls/"},
+    {"SMAA", "The SMAA anti-aliasing setting. By Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro "
+             "and Diego Gutierrez.",
+     "MIT", "https://www.iryoku.com/smaa/"},
     {"RPCS3", "A behavioural reference for the PS3 system libraries. No RPCS3 code is copied.", "", "https://rpcs3.net"},
 };
 
@@ -411,8 +414,10 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             {"Original (4x)", "Off", "2x", "4x", "8x", "16x"},
             "Keeps floors and walls sharp into the distance. Original is the game's own, 4x on most surfaces."
             "<br/><br/>(RSX_ANISO)");
-        choice_row(leftPane, rightPane, "Anti-aliasing", "RSX_AA", {"0", "1"}, {"Off (original)", "FXAA"},
-            "Smooths jagged edges. FXAA keeps the HUD sharp but softens textures a little.<br/><br/>(RSX_AA)");
+        choice_row(leftPane, rightPane, "Anti-aliasing", "RSX_AA", {"0", "1", "2"},
+            {"Off (original)", "FXAA", "SMAA"},
+            "Smooths jagged edges and keeps the HUD sharp. FXAA softens textures a little; SMAA keeps them sharper "
+            "and costs a little more.<br/><br/>(RSX_AA)");
         bool_row(leftPane, rightPane, "Depth of field", "DES_DOF",
             "The game's blur on distant scenery. Off keeps it sharp.<br/><br/>(DES_DOF)");
         choice_row(leftPane, rightPane, "Frame rate", "DES_FPS", kFpsValues,

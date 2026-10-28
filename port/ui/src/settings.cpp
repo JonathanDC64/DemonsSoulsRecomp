@@ -40,6 +40,7 @@ constexpr Def kDefs[] = {
     {"DES_AUTO_CONTINUE", "0", Apply::Live},   // read at each pad poll, until the first level loads
     {"AUDIO_MUTE", "0", Apply::Live},
     {"DES_SOULS_AT_ONCE", "0", Apply::Live},   // des_souls_use.cpp, at each Use: 1 = Use on soul items asks how many
+    {"DES_RESPEC", "0", Apply::Live},          // des_respec.cpp, each frame: 1 = the Nexus statue offers a stat respec
     {"DES_DOF", "1", Apply::Live},             // des_dof, read each frame
     {"RSX_AA", "0", Apply::Live},              // 0 = none, as on the PS3; 1 = FXAA before the HUD; per batch
     {"RSX_SCALE", "100", Apply::Live},         // the D3D12 backend remakes its render targets at the next batch

@@ -705,6 +705,7 @@ unsigned auto_continue_buttons()
 }
 
 extern "C" unsigned des_mm_pad_buttons(void);   /* des_menu_mouse.cpp: the clicks in the game's menus */
+extern "C" void des_respec_on_open(const char* path);   /* des_respec.cpp: the map that is loading */
 
 unsigned title_buttons()
 {
@@ -713,6 +714,7 @@ unsigned title_buttons()
 
 void auto_continue_on_open(const char* path)
 {
+    des_respec_on_open(path);
     if (!s_auto_done && strstr(path, "/script/m") && strstr(path, ".luabnd")) {
         s_auto_done = true;   /* on or not: from the first level on there is nothing left to press through */
         if (auto_continue_on()) fprintf(stderr, "[des] DES_AUTO_CONTINUE: level loading (%s), pad released\n", path);

@@ -486,6 +486,11 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "The game's sound and music.<br/><br/>(AUDIO_MUTE)",
             true);
 
+        leftPane.add_section("Items");
+        bool_row(leftPane, rightPane, "Use several souls at once", "DES_SOULS_AT_ONCE",
+            "Use on a soul item, such as an Unknown Soldier's Soul, asks how many to use, like Drop does. Boss "
+            "souls are not affected.<br/><br/>(DES_SOULS_AT_ONCE)");
+
         leftPane.add_section("HUD");
         leftPane.register_control(
             leftPane.add_group_button({.text = "Edit HUD"}).on_pressed([this] {

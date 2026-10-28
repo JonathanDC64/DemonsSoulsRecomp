@@ -53,7 +53,7 @@ Settings preset_settings(Preset preset, int displayHeight) {
     return {
         {"DES_FPS", e ? "60" : ""},
         {"RSX_SCALE", std::to_string(e ? matched_scale(displayHeight) : 100)},
-        {"RSX_AA", "0"},  // (Enhanced too: FXAA softens the picture, and many players turn it off; Settings has it)
+        {"RSX_AA", e ? "2" : "0"},  // SMAA: smooth edges without FXAA's soft textures
         {"RSX_ANISO", e ? "16" : "0"},
         {"RSX_OUTFILTER", e ? "1" : "0"},
         {"DES_FULLSCREEN", e ? "1" : "0"},
@@ -73,6 +73,7 @@ std::vector<Change> preset_changes(int displayHeight) {
         {"Frame rate", "30 fps", "60 fps"},
         {"Render resolution", scale_name(100), scale_name(matched, displayHeight > 0 ? ", your display" : "")},
         {"Anisotropic filtering", "The game's own (4x)", "16x"},
+        {"Anti-aliasing", "Off", "SMAA"},
         {"Scaling filter", "Bilinear", "Sharp"},
         {"Display mode", "Window", "Fullscreen"},
         {"Motion blur, depth of field", "On", "On"},

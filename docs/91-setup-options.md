@@ -30,10 +30,10 @@ Code: the port branch `feat/setup-options`, on the start screens (docs/88). Labe
 | Card | What it says | What it writes |
 |---|---|---|
 | Original | The game exactly as it was on the PS3. No enhancements at all. | 30 fps, 100% (720p), the game's own texture and anisotropic filtering, bilinear scaling, a window, 16:9 |
-| Enhanced (Recommended) | Sharper and smoother, the same game. | 60 fps, the render resolution matched to the display (at most 200%), 16x anisotropic filtering, sharp scaling, fullscreen, 16:9 |
+| Enhanced (Recommended) | Sharper and smoother, the same game. | 60 fps, the render resolution matched to the display (at most 200%), 16x anisotropic filtering, SMAA, sharp scaling, fullscreen, 16:9 |
 | Custom | Starts from the settings you have now. | Nothing of its own: "A few choices" starts from the settings in use |
 
-Both presets also set anti-aliasing off, motion blur and depth of field on, texture filtering, the HUD, the cutscene
+Original sets anti-aliasing off. Both presets also set motion blur and depth of field on, texture filtering, the HUD, the cutscene
 frame rate and V-sync to their defaults. So picking one after the other leaves nothing of the first (read:
 `setup_options.cpp`, `preset_settings`).
 
@@ -41,7 +41,7 @@ The matched resolution is the largest of 100%, 150% and 200% whose picture (720 
 display's height: 200% (1440p) on a 1440p or 4K display, 150% on a 1080p one. 300% is left to Settings: on a 4K
 display it costs much more GPU time for a picture few can tell from 200%.
 
-"What changes" lists the rows where Original and Enhanced differ (frame rate, render resolution, anisotropic filtering, scaling filter, display mode), the Enhanced values in the accent colour. The rows that are the same (motion blur and depth of field, aspect ratio) are left out, so the page fits 720 dp (docs/89 section 2).
+"What changes" lists the rows where Original and Enhanced differ (frame rate, render resolution, anisotropic filtering, anti-aliasing, scaling filter, display mode), the Enhanced values in the accent colour. The rows that are the same (motion blur and depth of field, aspect ratio) are left out, so the page fits 720 dp (docs/89 section 2).
 
 The pad: Left and Right move between the cards, Cross picks one, Down goes to Continue (not to the button under the
 card), Up comes back to the picked card. The page opens with the focus on the picked card: Enhanced the first
@@ -124,7 +124,7 @@ says this in one line.
 
 | The design | The build | Why |
 |---|---|---|
-| Enhanced lists FXAA | Enhanced leaves anti-aliasing off | The user's decision: many players dislike FXAA's soft picture. It stays in Settings. |
+| Enhanced lists FXAA | Enhanced turns on SMAA | First the user left anti-aliasing off, because many players dislike FXAA's soft picture. Since SMAA came (2026-10-28, docs/43 section 3.7), Enhanced uses it: it smooths edges and keeps textures sharp. FXAA stays in Settings. |
 | The picked card's left bar renders grey (a CSS order slip in the demo) | Soul-white, like the rail's current step | What the design meant |
 | Custom: "Starts from your RPCS3 settings." | "Starts from the settings you have now." | The RPCS3 route (docs/90) is not built yet. When it imports RPCS3's settings, Custom will start from them. |
 | No aspect ratio on "A few choices" | Aspect ratio: 16:9 or Match the display | The user asked for it |

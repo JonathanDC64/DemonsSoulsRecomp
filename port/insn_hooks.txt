@@ -217,3 +217,8 @@
 # diagonal when not locked on goes forward (toward the stick), as the game's
 # tie rule means, instead of the side its turn's rounding picks.
 0x0030F2BC=des_roll_tie   # lfs f27, 0xB0(r1): the turn's last load; f30, f31 and f26, f27 = forward, side
+
+# des_game_error (port/des_options.cpp): the game's error report goes to the log.
+# On a PS3 it stops the game; here the game goes on with the part that failed
+# (docs/116: NPC talks that end at once when no sound stream starts).
+0x00A9DD58=des_game_error   # stdu r1, -0x80(r1): the report's first instruction; r3 file, r4 line, r5 message

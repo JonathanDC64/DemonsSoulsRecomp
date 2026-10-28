@@ -288,6 +288,10 @@ jobs:
           [ -f ps3recomp/third_party/mbedtls/LICENSE ] || { echo "::error::no licence file for mbedTLS"; exit 1; }
           mkdir -p dist/host/licenses/mbedtls
           cp ps3recomp/third_party/mbedtls/LICENSE dist/host/licenses/mbedtls/
+          # SMAA (RSX_AA=2) is compiled into the runtime too, under MIT: its licence goes along.
+          [ -f ps3recomp/third_party/smaa/LICENSE.txt ] || { echo "::error::no licence file for SMAA"; exit 1; }
+          mkdir -p dist/host/licenses/smaa
+          cp ps3recomp/third_party/smaa/LICENSE.txt dist/host/licenses/smaa/
           ls -laR dist/host
           find dist/host -type f -exec sha256sum {} +
 
@@ -600,6 +604,10 @@ jobs:
           [ -f ps3recomp/third_party/mbedtls/LICENSE ] || { echo "::error::no licence file for mbedTLS"; exit 1; }
           mkdir -p dist/host-linux/licenses/mbedtls
           cp ps3recomp/third_party/mbedtls/LICENSE dist/host-linux/licenses/mbedtls/
+          # SMAA (RSX_AA=2) is compiled into the runtime too, under MIT: its licence goes along.
+          [ -f ps3recomp/third_party/smaa/LICENSE.txt ] || { echo "::error::no licence file for SMAA"; exit 1; }
+          mkdir -p dist/host-linux/licenses/smaa
+          cp ps3recomp/third_party/smaa/LICENSE.txt dist/host-linux/licenses/smaa/
           ls -laR dist/host-linux
           find dist/host-linux -type f -exec sha256sum {} +
 

@@ -42,7 +42,7 @@ constexpr Def kDefs[] = {
     {"DES_SOULS_AT_ONCE", "0", Apply::Live},   // des_souls_use.cpp, at each Use: 1 = Use on soul items asks how many
     {"DES_RESPEC", "0", Apply::Live},          // des_respec.cpp, each frame: 1 = the Nexus statue and the Maiden in Black offer a stat respec
     {"DES_DOF", "1", Apply::Live},             // des_dof, read each frame
-    {"RSX_AA", "0", Apply::Live},              // 0 = none, as on the PS3; 1 = FXAA before the HUD; per batch
+    {"RSX_AA", "0", Apply::Live},              // 0 = none, as on the PS3; 1 = FXAA, 2 = SMAA, before the HUD; per batch
     {"RSX_SCALE", "100", Apply::Live},         // the D3D12 backend remakes its render targets at the next batch
     {"RSX_OUTFILTER", "0", Apply::Live},       // 0 = bilinear, as before; 1 = area down, bicubic up; next present
     {"RSX_HDR", "0", Apply::Live},             // 1 = HDR output while Windows has HDR on for the display; next frame

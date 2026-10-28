@@ -2,6 +2,8 @@
 
 Date: 2026-10-18. Status: research only. Nothing was built or run, and nothing was measured.
 
+Update 2026-10-28: options 2 and 3 are built. FXAA is `RSX_AA=1` and SMAA 1x is `RSX_AA=2`, both on the hook before the HUD. Section 3.7 describes the SMAA pass and what was measured.
+
 Code references are to ps3recomp's fork master at `f15a4f0` (RSX_SCALE merged, PR #50). The local ps3recomp checkout is older than that. "The backend" means `ps3recomp/libs/video/rsx_d3d12_backend.c` at that commit, and `BE:1102` is a line in it. The live draw engine (`rsx_live_draw.c`, opt-in with `RSX_LIVE_DRAW`) is not the Demon's Souls path and is out of scope.
 
 Two labels are used below:
@@ -166,6 +168,29 @@ For scale: a frame is 16.7 ms at 60 fps and 4.2 ms at 240 fps.
 - **Edges changed.** A short Python check on the same two dumps. Changed pixels should sit on scene edges. None in flat areas or in the black bars.
 - **Scale.** RSX_SCALE at 150, 200 and 300%, and switching scale and AA live: the same op, no size mismatch, no device removal.
 - **Visual.** The user looks at the Palace gate and the Nexus stairs at 100%, with AA off, FXAA and SMAA.
+
+### 3.7 SMAA 1x as built (2026-10-28)
+
+`RSX_AA=2` runs SMAA 1x where FXAA runs: after the post chain, before the HUD, chosen by the same rule (aa_pick). It is live, and the settings show it as a third choice under Anti-aliasing. Off stays the default.
+
+How it is made (ps3recomp, read):
+- The reference implementation is vendored unmodified in `third_party/smaa` (iryoku/smaa at `71c806a8`, MIT): `SMAA.hlsl` and the two lookup textures `AreaTex.h` and `SearchTex.h`. Its README lists each file's SHA-256.
+- `tools/smaa_embed.py` turns `SMAA.hlsl` into a C string (`libs/video/rsx_smaa_src.h`). The backend compiles it at run time with our glue (`libs/video/rsx_smaa.h`). `tools/test_smaa_embed.py` checks that the header matches the file.
+- Three passes at T's host size: luma edges into an R8G8 target, blending weights into an RGBA8 target, then the blend back into T. The blend writes RGB only, so the DoF mask in alpha stays. The preset is SMAA_PRESET_HIGH, with no predication.
+- The lookup textures are uploaded once. The two targets are made again when T's size changes (RSX_SCALE). T in FP16 (HDR) has its own blend pipeline. `RSX_AA_AT=present` works with SMAA too.
+- If the SMAA shaders or pipelines cannot be made, FXAA runs instead and the log says so. Linux (vkd3d's HLSL compiler) has not been tried.
+
+Measured (Tutorial, regression save, RTX 5070 Ti):
+- The shaders compile in 63 to 70 ms on the render thread the first time SMAA runs, and in 207 ms on a cold start.
+- Cost, from `knobab.sh` (plain windows, two boots, 6 pairs a knob, uncapped at about 460 fps):
+
+| RSX_SCALE | FXAA against off | SMAA against off |
+|---|---|---|
+| 100 (1280x720) | -0.71 %, +0.016 ms (p 0.47, no verdict) | -0.57 %, +0.013 ms (p 0.31, no verdict) |
+| 200 (2560x1440) | -0.60 %, +0.014 ms (p 0.15, no verdict) | -2.12 %, +0.051 ms (p 0.02, slower) |
+
+- Picture: one captured frame, replayed with each filter on the finished frame (`RSX_AA_AT=present`; in the replayer the display copy lands in another batch than in the game, so the in-frame rule finds none there). FXAA changes 3.8 % of the pixels by 8.5 on average. SMAA changes 1.1 % by 13.8. SMAA smooths the outlines (the hat brim, the arch, the HUD's frames) and leaves texture detail (ivy, armour studs) as it is, where FXAA softens it.
+- In the game: the `[AA] SMAA on T=0x007A0000 1280x720 before op 715 of 793` line sits at the same op as FXAA's. SMAA also runs on the FP16 T with HDR on. Switching RSX_SCALE live between 100, 150 and 200 % gave no errors and no black frames.
 
 ## 4. Supersampling with RSX_SCALE, and the output filter
 

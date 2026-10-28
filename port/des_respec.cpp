@@ -1,4 +1,4 @@
-/* Stat respec at the Nexus statue (docs/47 section 1).
+/* Stat respec at the Nexus statue and the Maiden in Black (docs/47 section 1).
  *
  * DES_RESPEC=1 (Settings, Game; off by default): Cross in front of the statue
  * that a save which quit in the Nexus starts facing opens the shop's command
@@ -9,6 +9,10 @@
  * class's, gives back the souls the levels cost, and opens the game's level-up
  * screen to spend them again. The screen only raises stats, so nothing goes
  * below the class's values.
+ *
+ * The Maiden in Black's menu (Seek Soul Power, Talk, Leave) gets the same
+ * Respecialization after Seek Soul Power. Its YES ends in her own Seek Soul
+ * Power, so she opens the level-up screen; NO puts her menu back.
  *
  * The game's pieces, all called from here (no hook in the lift):
  * - The talk scripts' commands (0x004CC3A8, ids as the scripts number them):
@@ -25,6 +29,11 @@
  *   (levels bought) to 0, every spell unattuned. Souls and items stay.
  * - 0x007E4248(), what the level-up screen runs after a raise: the live
  *   character's HP, MP and stamina from the new stats.
+ * - The Maiden's talk script (t0615.esd, her entity id) builds her menu with
+ *   {15000025 Seek Soul Power, row 1}, the menu's request, {15000000 Talk, 3}
+ *   and {15000005 Leave, 4}, all in one of its updates. It then waits for the
+ *   list's result (function 23: menus+0xABC): 1 her level-up screen, 3 Talk,
+ *   4 Leave, 0 Circle. Another row keeps it waiting.
  *
  * The texts the game does not have go in its own tables: a row's into an
  * unused id of the talk menu's FMG (category 0x1E), the menu's title in place
@@ -70,7 +79,15 @@ constexpr int32_t  kTalkAnswered = 4, kDialogYesNo = 2, kDialogOk = 1;
 
 /* The texts in the talk menu's FMG (category 0x1E). */
 constexpr int32_t kFmgTalk = 0x1E;
-constexpr int32_t kTextYes = 10020000, kTextNo = 10020001, kTextLeave = 15000005;
+constexpr int32_t kTextYes = 10020000, kTextNo = 10020001, kTextLeave = 15000005, kTextSeekSoulPower = 15000025;
+
+/* The talk list (menus+0xAB4): *(+4) a vector, its entries {text id, row} from *(+4) to *(+8). */
+constexpr uint32_t kTalkList = 0xAB4u;
+constexpr int kMaxEntries = 16;
+
+/* The Maiden's Seek Soul Power row, and ours in her menu: one her script has no use for. */
+constexpr int32_t kMaidenSeekRow = 1, kMaidenRespecRow = 70;
+const char kRespecText[] = "Respecialization";
 
 /* The statue, in the Nexus (map m01): a save that quit there starts at (0, 479.46, -41.69), facing it (-z); the
  * player stops against it at z -41.8. Cross from in front of it, within kReach of (kStatueX, kStatueZ). */
@@ -238,17 +255,59 @@ void ask_respec(ppu_context* ctx);
  * else game: the game's text id. choose: what the row does, nullptr to close (Leave). */
 struct Row { const char* own; int32_t game; void (*choose)(ppu_context*); };
 constexpr Row kRows[] = {
-    {"Respecialization", 0, ask_respec},
+    {kRespecText, 0, ask_respec},
     {nullptr, kTextLeave, nullptr},
 };
 constexpr int kRowCount = (int)(sizeof kRows / sizeof kRows[0]);
+
+/* An own text in the guest heap, one copy per text for good, so the statue and the Maiden share its id. */
+uint32_t own_text(ppu_context* ctx, const char* s)
+{
+    static const char* s_keys[4];
+    static uint32_t s_vals[4];
+    for (int i = 0; i < 4; i++) {
+        if (s_keys[i] == s) return s_vals[i];
+        if (!s_keys[i]) {
+            if ((s_vals[i] = guest_text(ctx, s))) s_keys[i] = s;
+            return s_vals[i];
+        }
+    }
+    return 0;
+}
+
+/* AddTalkListData's entry {text id, row}, then command 10's argument {0, -1, 0} 8 bytes on. */
+uint32_t talk_entry(ppu_context* ctx)
+{
+    static uint32_t s_entry = 0;
+    return s_entry ? s_entry : (s_entry = guest_alloc(ctx, 32));
+}
+
+void add_row(ppu_context* ctx, int32_t id, int32_t row)
+{
+    const uint32_t e = talk_entry(ctx);
+    vm_write32(e, (uint32_t)id);
+    vm_write32(e + 4, (uint32_t)row);
+    call_game(ctx, func_00723498, {e});
+}
+
+void show_menu(ppu_context* ctx)
+{
+    const uint32_t e = talk_entry(ctx);
+    vm_write8(e + 8, 0);
+    vm_write32(e + 12, 0xFFFFFFFFu);
+    vm_write32(e + 16, 0);
+    call_game(ctx, func_007212A8, {e + 8});    /* talk command 10's */
+}
 
 const char kTitle[] = "Statue";
 const char kAsk[] = "Return to your class's starting stats?\nThe souls of every level come back,\n"
                     "and every spell must be remembered again.";
 const char kCapped[] = "Not now: with the souls back,\nyou would hold more than 999,999,999.";
 
-enum class Phase { idle, menu, confirm, notice };
+/* idle; menu, the statue's open; confirm, its question; notice, the cap's; maiden, her menu open with our row;
+ * maiden_ask, our row answered, her menu closing; maiden_confirm and maiden_notice, the question and the cap's
+ * notice while her script waits; maiden_again, the dialog closing before her menu comes back. */
+enum class Phase { idle, menu, confirm, notice, maiden, maiden_ask, maiden_confirm, maiden_notice, maiden_again };
 Phase s_phase = Phase::idle;
 bool s_here = false;              /* the player was at the statue last frame (for the log) */
 unsigned s_cross_prev = 0x4000u;  /* Cross as last seen, held at the start: a press must begin near the statue */
@@ -276,8 +335,14 @@ void title_off()
     s_title = false;
 }
 
-/* The player stands in front of the statue, in the Nexus, facing it, alive, with no menu or dialog open (talk
- * command 10's test, 0x00720F80, masked as it masks it). */
+/* No menu or dialog open (talk command 10's test, 0x00720F80, masked as it masks it). */
+bool menus_clear(ppu_context* ctx, uint32_t m)
+{
+    if (slot(m, kSlotTalk) || slot(m, kSlotDialog) || slot(m, kSlotLevelUp)) return false;
+    return (call_game(ctx, func_00720F80, {}) & 0xDEFFFF7Fu) == 0;
+}
+
+/* The player stands in front of the statue, in the Nexus, facing it, alive, with no menu or dialog open. */
 bool at_statue(ppu_context* ctx, uint32_t m)
 {
     if (s_map.load(std::memory_order_relaxed) != kNexus) return false;
@@ -291,33 +356,70 @@ bool at_statue(ppu_context* ctx, uint32_t m)
     /* The facing: the yaw at +4, the bearing + pi (des_options.cpp's roll turn), so it faces (-sin, -cos). */
     const float yaw = readf(xf + 4), fx = -std::sin(yaw), fz = -std::cos(yaw);
     if (fx * dx + fz * dz < 0.5f * std::sqrt(dx * dx + dz * dz)) return false;   /* within 60 degrees */
-    if (slot(m, kSlotTalk) || slot(m, kSlotDialog) || slot(m, kSlotLevelUp)) return false;
-    return (call_game(ctx, func_00720F80, {}) & 0xDEFFFF7Fu) == 0;
+    return menus_clear(ctx, m);
 }
 
 void open_menu(ppu_context* ctx)
 {
-    static uint32_t s_entry = 0, s_texts[kRowCount];
-    if (!s_entry && !(s_entry = guest_alloc(ctx, 32))) return;
+    if (!talk_entry(ctx)) return;
     call_game(ctx, func_00723450, {});
     for (int i = 0, own = 0; i < kRowCount; i++) {
-        int32_t id = kRows[i].game;
-        if (kRows[i].own) {
-            if (!s_texts[i]) s_texts[i] = guest_text(ctx, kRows[i].own);
-            id = own_text_id(ctx, own++, s_texts[i]);
-        }
-        if (id < 0) continue;
-        vm_write32(s_entry, (uint32_t)id);
-        vm_write32(s_entry + 4, (uint32_t)(i + 1));
-        call_game(ctx, func_00723498, {s_entry});
+        const int32_t id = kRows[i].own ? own_text_id(ctx, own++, own_text(ctx, kRows[i].own)) : kRows[i].game;
+        if (id >= 0) add_row(ctx, id, i + 1);
     }
     title_on();
     call_game(ctx, func_00721490, {-1});             /* no talk partner: the title is the missing name's */
-    vm_write8(s_entry + 8, 0);
-    vm_write32(s_entry + 12, 0xFFFFFFFFu);
-    vm_write32(s_entry + 16, 0);
-    call_game(ctx, func_007212A8, {s_entry + 8});    /* talk command 10's */
+    show_menu(ctx);
     s_phase = Phase::menu;
+}
+
+/* ---- The Maiden's menu ---- */
+
+int32_t s_her[kMaxEntries][2];   /* her menu's entries, as her script added them */
+int s_her_count = 0;
+
+/* Her script has just asked for her menu (slot 9 at 1, the list holding Seek Soul Power and not our row): her
+ * entries go to s_her. The menus' update has not read the list yet: her script adds it all in one of its updates,
+ * and this tick comes before the menus' next update. */
+bool maiden_menu_asked(uint32_t m)
+{
+    if (slot(m, kSlotTalk) != 1) return false;
+    const uint32_t v = vm_read32(m + kTalkList + 4);
+    if (!guest_ok(v)) return false;
+    const uint32_t b = vm_read32(v + 4), e = vm_read32(v + 8);
+    if (!guest_ok(b) || e < b || e - b > 8u * kMaxEntries || (e - b) % 8) return false;
+    bool seek = false;
+    for (uint32_t a = b; a < e; a += 8) {
+        if ((int32_t)vm_read32(a + 4) == kMaidenRespecRow) return false;
+        seek = seek || (int32_t)vm_read32(a) == kTextSeekSoulPower;
+    }
+    if (!seek) return false;
+    s_her_count = (int)((e - b) / 8);
+    for (int i = 0; i < s_her_count; i++) {
+        s_her[i][0] = (int32_t)vm_read32(b + 8 * i);
+        s_her[i][1] = (int32_t)vm_read32(b + 8 * i + 4);
+    }
+    return true;
+}
+
+/* Her entries again, ours after Seek Soul Power. */
+void maiden_list(ppu_context* ctx)
+{
+    const int32_t own = own_text_id(ctx, 0, own_text(ctx, kRespecText));
+    call_game(ctx, func_00723450, {});
+    for (int i = 0; i < s_her_count; i++) {
+        add_row(ctx, s_her[i][0], s_her[i][1]);
+        if (s_her[i][0] == kTextSeekSoulPower && own >= 0) add_row(ctx, own, kMaidenRespecRow);
+    }
+}
+
+/* Her menu again, as her script showed it (the talk partner is still hers). */
+void maiden_menu_again(ppu_context* ctx)
+{
+    maiden_list(ctx);
+    show_menu(ctx);
+    s_phase = Phase::maiden;
+    if (logging()) fprintf(stderr, "[des] respec: the Maiden's menu again\n");
 }
 
 void dialog(ppu_context* ctx, int32_t kind, const char* text, Phase next)
@@ -344,18 +446,42 @@ void ask_respec(ppu_context* ctx) { dialog(ctx, kDialogYesNo, kAsk, Phase::confi
 
 /* ---- The respec ---- */
 
+/* The respec's numbers: the class's stat sum and the souls the levels above it cost. false if the game's state is
+ * not there. */
+bool plan(ppu_context* ctx, uint32_t p, uint32_t chr, int32_t* floor_sum, int64_t* back)
+{
+    const uint32_t row = p ? class_row(ctx, p) : 0;
+    if (!row || !chr || vm_read32(chr + 0x49C) != p) return false;
+    *floor_sum = 0;
+    for (uint32_t i = 0; i < 8; i++) *floor_sum += (int32_t)vm_read32(row + 4 * i);
+    const int32_t sum = stat_sum(p);
+    *back = sum > *floor_sum ? refund(ctx, *floor_sum, sum) : 0;
+    return true;
+}
+
+/* The souls held plus those the respec gives back would pass the cap. */
+bool capped_now(ppu_context* ctx)
+{
+    const uint32_t p = pgd();
+    int32_t floor_sum;
+    int64_t back;
+    if (!plan(ctx, p, player_chr(), &floor_sum, &back)) return false;
+    const int32_t souls = (int32_t)vm_read32(p + kPgdSouls);
+    if (souls >= 0 && souls + back <= kSoulsCap) return false;
+    fprintf(stderr, "[des] respec: refused, %d souls and %lld back would pass the cap\n", souls, (long long)back);
+    return true;
+}
+
 /* false (and nothing changed) if the souls would pass the cap or the game's state is not there. */
 bool respec(ppu_context* ctx, bool* capped)
 {
     *capped = false;
     const uint32_t p = pgd();
-    const uint32_t row = p ? class_row(ctx, p) : 0;
     const uint32_t chr = player_chr();
-    if (!row || !chr || vm_read32(chr + 0x49C) != p) return false;
-    int32_t floor_sum = 0;
-    for (uint32_t i = 0; i < 8; i++) floor_sum += (int32_t)vm_read32(row + 4 * i);
+    int32_t floor_sum;
+    int64_t back;
+    if (!plan(ctx, p, chr, &floor_sum, &back)) return false;
     const int32_t sum = stat_sum(p), souls = (int32_t)vm_read32(p + kPgdSouls), levels = (int32_t)vm_read32(p + kPgdLevels);
-    const int64_t back = sum > floor_sum ? refund(ctx, floor_sum, sum) : 0;
     if (souls < 0 || souls + back > kSoulsCap) {
         fprintf(stderr, "[des] respec: refused, %d souls and %lld back would pass the cap\n", souls, (long long)back);
         *capped = true;
@@ -409,6 +535,12 @@ extern "C" void des_respec_tick(ppu_context* ctx)
     s_cross_prev = cross;
     switch (s_phase) {
     case Phase::idle: {
+        if (on() && maiden_menu_asked(m)) {
+            maiden_list(ctx);
+            s_phase = Phase::maiden;
+            if (logging()) fprintf(stderr, "[des] respec: the Maiden's menu, with Respecialization\n");
+            break;
+        }
         const bool here = on() && at_statue(ctx, m);
         if (here != s_here && logging()) fprintf(stderr, "[des] respec: %s the statue\n", here ? "at" : "away from");
         s_here = here;
@@ -444,6 +576,47 @@ extern "C" void des_respec_tick(ppu_context* ctx)
     }
     case Phase::notice:
         if (!slot(m, kSlotDialog)) s_phase = Phase::idle;
+        break;
+    case Phase::maiden: {   /* her menu with our row: hers are her script's to act on */
+        if (maiden_menu_asked(m)) {   /* her script asked for it again, without our row */
+            maiden_list(ctx);
+            break;
+        }
+        const int32_t talk = slot(m, kSlotTalk), row = (int32_t)vm_read32(m + kMenuRow);
+        if (row == kMaidenRespecRow) {
+            if (!talk) s_phase = Phase::maiden_ask;   /* closed on ours: her script waits, as for no row of hers */
+        } else if (!talk || (talk == kTalkAnswered && row >= 0)) {
+            s_phase = Phase::idle;
+            if (logging()) fprintf(stderr, "[des] respec: the Maiden's menu row %d, hers\n", row);
+        }
+        break;
+    }
+    case Phase::maiden_ask:   /* as the statue's question, once her menu's page is gone */
+        if (!menus_clear(ctx, m)) break;
+        if (logging()) fprintf(stderr, "[des] respec: the Maiden's Respecialization\n");
+        if (capped_now(ctx)) dialog(ctx, kDialogOk, kCapped, Phase::maiden_notice);
+        else dialog(ctx, kDialogYesNo, kAsk, Phase::maiden_confirm);
+        break;
+    case Phase::maiden_confirm: {
+        if (slot(m, kSlotDialog)) break;
+        bool capped = false;
+        const int32_t answer = (int32_t)vm_read32(m + kDialogAnswer);
+        if (logging()) fprintf(stderr, "[des] respec: answer %d (the Maiden's)\n", answer);
+        if (answer == 1 && respec(ctx, &capped)) {
+            /* Her Seek Soul Power: her script opens the level-up screen (talk command 31), whose page the menus' next
+             * update opens, after this respec. */
+            vm_write32(m + kMenuRow, (uint32_t)kMaidenSeekRow);
+            s_phase = Phase::idle;
+        } else {
+            s_phase = Phase::maiden_again;
+        }
+        break;
+    }
+    case Phase::maiden_notice:
+        if (!slot(m, kSlotDialog)) s_phase = Phase::maiden_again;
+        break;
+    case Phase::maiden_again:   /* NO, Circle or the cap: her menu again, once the dialog's page is gone */
+        if (menus_clear(ctx, m)) maiden_menu_again(ctx);
         break;
     }
 }

@@ -12,13 +12,13 @@ Two labels are used below:
 >
 > **Built (2026-10-27): several soul items at once**, `DES_SOULS_AT_ONCE`, off by default (section 2.5). It is approach C: Use asks how many, in Drop's own count picker.
 >
-> **Built (2026-10-28): stat respec at the Nexus statue**, `DES_RESPEC`, off by default (section 1.9). The statue in front of the Nexus spawn opens a shop-style menu; Respecialization puts the class's stats back, refunds the levels' souls and opens the game's level-up screen.
+> **Built (2026-10-28): stat respec at the Nexus statue and the Maiden in Black**, `DES_RESPEC`, off by default (section 1.9). The statue in front of the Nexus spawn opens a shop-style menu, and the Maiden's menu gets the same row after Seek Soul Power; Respecialization puts the class's stats back, refunds the levels' souls and opens the game's level-up screen.
 
 ## Summary
 
 | Feature | Verdict | Effort |
 |---|---|---|
-| Stat respec | **Built** (section 1.9): `DES_RESPEC` makes the statue in front of the Nexus spawn open a menu whose Respecialization resets to the class, refunds the levels and opens the level-up screen. | Done. No on-screen prompt at the statue yet. |
+| Stat respec | **Built** (section 1.9): `DES_RESPEC` makes the statue in front of the Nexus spawn open a menu whose Respecialization resets to the class, refunds the levels and opens the level-up screen. The Maiden in Black's menu has the same row after Seek Soul Power. | Done. No on-screen prompt at the statue yet. |
 | Use several souls at once | **Built** (section 2.5): `DES_SOULS_AT_ONCE` makes Use on a soul stack ask how many, in Drop's count picker. | Done. |
 | 8-direction rolls while locked on | **Built** (section 3.7): `DES_ROLLDIR` plays the roll the game picks and turns the character toward the stick, so a roll goes where the stick points. | Done. True diagonal roll animations: not feasible (new animation content). |
 | 8-direction walking while locked on | **Probably nothing to do.** The walk already twists the legs toward the movement (inferred). | 0, unless the run shows otherwise. |
@@ -173,9 +173,11 @@ Tests:
 
 ### 1.9 Built: `DES_RESPEC` (2026-10-28)
 
-Not approach A or B: at the user's choice, the respec is at the statue in the Nexus, in a menu like a shop's, and the points are spent again in the game's own level-up screen. Off by default. Settings > Game > Items > Stat respec at the Nexus statue turns it on (`DES_RESPEC=1`), live.
+Not approach A or B: at the user's choice, the respec is at the statue in the Nexus, in a menu like a shop's, and the points are spent again in the game's own level-up screen. Off by default. Settings > Game > Items > Stat respec in the Nexus turns it on (`DES_RESPEC=1`), live. Later, at the user's suggestion, the Maiden in Black's menu got the same row, so either place works.
 
 **What the player sees.** A save that quit in the Nexus starts facing a statue. With the knob on, Cross in front of it opens the shop's command menu (the one with Upgrade Weapon, Repair Equipment, Buy Item, Talk and Leave), titled "Statue", with two rows: Respecialization and Leave. Respecialization asks "Return to your class's starting stats? The souls of every level come back, and every spell must be remembered again." with YES and NO. YES puts the eight stats back to the starting class's, gives back the souls every bought level cost, and opens the level-up screen (the Maiden's) to spend them again. The screen only raises stats, so nothing goes below the class's values. Leave, Circle and NO change nothing. A character still at the class's stats gets the screen alone, with the spells kept.
+
+**At the Maiden in Black.** Once her leveling is unlocked, her menu is Seek Soul Power, Talk and Leave. With the knob on it is Seek Soul Power, Respecialization, Talk and Leave. Respecialization asks the same question. YES respecs and then goes on as her Seek Soul Power does, so she opens the level-up screen. NO, Circle and the cap's notice put her menu back. Her other rows, and her question before the menu ("Seek Soul Power?", YES or NO, on the first talk), are the game's own.
 
 **No prompt.** The statue shows no "Examine" prompt. The HUD draws the action prompt only for a target that the game's action search found, and the statue is not one (see below).
 
@@ -191,6 +193,10 @@ Not approach A or B: at the user's choice, the respec is at the statue in the Ne
 - **The screen** is talk command 31's 0x007DC7A0 (slot 0x17 to 1). 0x007DC1E0 only shows the screen's help text.
 - **The cap.** If the souls held plus the refund would pass 999,999,999, nothing changes and a dialog with one button (slot 0x11 = 1) says "Not now: with the souls back, you would hold more than 999,999,999." The talk texts have no "OK", so its button is our own text: 0x007216F0 takes the texts as pointers.
 - **The log.** `DES_RESPEC_LOG=1` logs the steps. Each respec logs one line: `[des] respec: stat sum 89 to 86 (class 86), 3 levels, souls 47674 + 2326 = 50000`.
+- **The Maiden.** She is event entity 615 (model c7150). The Nexus script's `Lua_SetPos` warps her to one of about 17 spots at random on each load. Her talk script is t0615.esd in `script/talk/m01.talkesdbnd`, in the older DLSE format. In one of its updates, her menu state adds {15000025 Seek Soul Power, row 1}, asks for the menu (command 10: slot 9 to 1), and adds {15000000 Talk, 3} and {15000005 Leave, 4}. It then waits for the list's result (function 23, menus+0xABC): 0 for Circle, 1 her level-up screen (command 31), 3 Talk, 4 Leave. Any other row matches none of its transitions, so it waits. Leaving that state clears the list (command 20).
+- **Her row.** `des_respec_tick` comes before the menus' next update, so it sees her request before the menu reads the list. When slot 9 is 1 and the list (menus+0xAB4; *(+4) a vector, its {text id, row} entries from *(+4) to *(+8)) holds Seek Soul Power and not our row, it keeps her entries, clears the list and adds them again, with {Respecialization, row 70} after Seek Soul Power. The text id is the statue's. The menu's title is still hers: the talk partner (menus+0xAC0) is 615.
+- **Her answer.** On row 70 her script keeps waiting, and the question comes once the menu's page has gone, as at the statue. The cap is checked before the question, since YES ends in her level-up screen. YES respecs, then sets menus+0xABC to 1, her Seek Soul Power. Her script then runs command 31. That only sets slot 0x17 (and menus+0xDF4 to +0xE00), and the menus' next update opens the screen, after the respec. NO, Circle and the cap's notice re-add her list with our row and show the menu again (command 10's 0x007212A8). She has not left her menu state, so she goes on from there.
+- **Her question.** On the first talk after a load she first asks "Seek Soul Power?" (command 17: kind 8, text 10020070, YES 10020000, NO 10020001). Her script reads the answer at menus+0x82C (function 22, 0x00721690): 1 "So be it." and the menu, 2 "I understand.", 0 the talk ends. This is left as it is.
 
 **The missing prompt** (tried, not solved). The game's action search 0x004EF840, called from the menus' update at 0x00724B18, shows the nearest target's prompt through 0x00723360(text id, flag, 1): menus+0x80C the text id, +0x814 the flag, +0x818. With no target it takes the prompt down every frame (0x007233E0(-1), 0x00723360(-1, 1, -1)). An instruction hook after that call put ours up the same way. The fields then matched the game's own Talk prompt at Boldwin field for field, but nothing drew. The flag byte made no difference (0 or 1), and neither did the text id: the game's own Talk id (10010200) did not draw at the statue either. The HUD's prompt update (0x007B8F18, through vtable 0x01869D2C) reads +0x80C and +0x800 (another HUD's timed message, set by 0x00721590), slot 0xAD, the menus' flags, slot 9 (at +0x38), and the search object's bytes +0x14 to +0x17 (`*(*(*(TOC - 0x72F0) - 0x7F88))`, the same object the HUD finds through `*(TOC - 0x71D4)`). All of them matched. The one difference seen was the search object's +0x10, the target found (a pointer at Boldwin, 0 at the statue). Showing the prompt would mean giving the statue a real action target in the search's list. The hook was taken out, so the build needs no re-lift.
 
@@ -208,6 +214,22 @@ Not approach A or B: at the user's choice, the respec is at the statue in the Ne
 | Knob off, Cross at the statue | Nothing opens |
 
 Not tested: the other classes' floors, a character with attuned spells (the reset unattunes them, section 1.6), a high SL, co-op or invasion (online is not working), and `DES_FPS=unlocked`.
+
+**Tests at the Maiden** (2026-10-28). The runs used copies of the user's Big Boss save in the Nexus, past Phalanx, at its class's stats. The test reached her with the dev build's `DES_WARP`, found through her entity id (ChrMan+0x190, {entity id, index} sorted, count at +0x18C). Most runs were at 30 fps. Souls and Vitality were set through the console, test only.
+
+| Test | Result |
+|---|---|
+| Talk, YES to her question | Her menu, titled Maiden in Black: Seek Soul Power, Respecialization, Talk, Leave |
+| Seek Soul Power | Her Take Soul screen, as without the knob |
+| Talk; Leave; Circle | Her line ("As for me..."); her own Leave; the talk ends |
+| Vitality +3 (stat sum 87), 1,000,000 souls, Respecialization, YES | Sum 87 to 84 (the class's), souls 1,000,000 + 2,223 = 1,002,223, then her Take Soul screen with Vitality 11 and 1,002,223 souls |
+| Respecialization, NO | Her menu again, the same four rows |
+| Vitality +3, 999,999,999 souls, Respecialization | The cap's OK notice, nothing changed, then her menu again |
+| The statue in the same session | As before; both menus show the same text id |
+| `DES_FPS=unlocked`: Respecialization YES and NO, Seek Soul Power | The same results |
+| Knob off | Her own three rows |
+
+Not tested at the Maiden: the mouse in the game's menus, and her menu before her leveling is unlocked (no Seek Soul Power, so no row is added).
 
 ## 2. Use several souls at once
 

@@ -490,10 +490,11 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         bool_row(leftPane, rightPane, "Use several souls at once", "DES_SOULS_AT_ONCE",
             "Use on a soul item, such as an Unknown Soldier's Soul, asks how many to use, like Drop does. Boss "
             "souls are not affected.<br/><br/>(DES_SOULS_AT_ONCE)");
-        bool_row(leftPane, rightPane, "Stat respec at the Nexus statue", "DES_RESPEC",
-            "Press Cross facing the statue in front of where you wake in the Nexus. It can put your stats back to "
-            "your class's and give back the souls your levels cost, to spend again. Spells must be remembered "
-            "again. No prompt shows.<br/><br/>(DES_RESPEC)");
+        bool_row(leftPane, rightPane, "Stat respec in the Nexus", "DES_RESPEC",
+            "Pick Respecialization in the Maiden in Black's menu, or press Cross facing the statue in front of "
+            "where you wake in the Nexus (no prompt shows there). It can put your stats back to your class's and "
+            "give back the souls your levels cost, to spend again. Spells must be remembered again."
+            "<br/><br/>(DES_RESPEC)");
 
         leftPane.add_section("HUD");
         leftPane.register_control(

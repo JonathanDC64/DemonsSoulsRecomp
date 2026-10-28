@@ -121,12 +121,14 @@ int s_test_i;
 #if DES_DEV
 extern "C" void des_debug_tick(ppu_context* ctx);   /* des_dev.cpp: the warp (developer builds) */
 #endif
+extern "C" void des_souls_menu_tick(ppu_context* ctx);   /* des_souls_use.cpp: the Use after the count picker */
 
 extern "C" void des_menu_tick(ppu_context* ctx)
 {
 #if DES_DEV
     des_debug_tick(ctx);
 #endif
+    des_souls_menu_tick(ctx);
     if (s_test) {
         const int64_t now = now_ms();
         if (now >= s_test_next) {

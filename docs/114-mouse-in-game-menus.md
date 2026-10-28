@@ -29,7 +29,7 @@ Date: 2026-10-27. Status: experimental, off by default (Settings > Controls > Mo
 |---|---|---|
 | `DES_MENU_MOUSE` | `0` | `1`: the mouse in the game's menus (experimental). `0`: the game's menus take no mouse, and the buttons and wheel are the keyboard layout's. Its row is Mouse in game menus (experimental). Live. |
 | `DES_MENU_MOUSE_PRESS` | `1` | Frames (and pad packets) each of the clicks' presses is held, and let go after (section 3). |
-| `DES_MENU_MOUSE_LOG` | `0` | `1`: the menus found, each time they change, and each walk. It also lists the menus left out, with why (`under` a higher menu's spots, `beneath` a menu over it) and the menu they went for, and the pass's draws. When the mouse stops in a menu, that tells a menu over it from one not found. `2`: also the arrow pieces on screen. `3`: also every visible dialog with its pieces, each time the set changes (the census used to learn a screen). |
+| `DES_MENU_MOUSE_LOG` | `0` | `1`: the menus found, each time they change and once their spots come to rest after a slide, and each walk. It also lists the menus left out, with why (`under` a higher menu's spots, `beneath` a menu over it) and the menu they went for, and the pass's draws. When the mouse stops in a menu, that tells a menu over it from one not found. `2`: also the arrow pieces on screen. `3`: also every visible dialog with its pieces, each time the set changes (the census used to learn a screen). |
 
 Tests click with the UI's `DES_UI_MOUSE` (des_ui.cpp): over a menu of the game, `x,y` moves the pointer there (back
 buffer pixels), `down`/`up` are the left button, `rdown`/`rup` the right one, `wheelup`/`wheeldown` a notch. They go
@@ -43,8 +43,16 @@ Found in the census runs (`DES_MENU_MOUSE_LOG=3`, section 1); nothing here is a 
 - **Dialogs.** Every menu screen is a tree of EzMenu dialogs, all drawn flat through one function, `0x00F60BD0`
   (des_hud.cpp already wraps it for the HUD). A dialog's children are at `+0x0C` (array) and `+0x10` (count), its
   rect at `+0x74` (left, top, right, bottom), its layout at `+0x84` (the space its pieces are in), and `+0x94` is
-  set while it is visible. A dialog's rect is in its host's layout, so the canvas place of anything comes from
-  composing the layout-to-rect maps up the chain. The roots are in the 1280x720 menu canvas.
+  set while it is visible. A dialog's rect is in its host's layout. The roots are in the 1280x720 menu canvas.
+- **Where a dialog is drawn.** The dialogs are drawn one after another, never one inside another's draw. The place
+  comes from the renderer the draw is given (`r4`): its current matrix, at `+0x30` (4x4 floats by rows, read by
+  its vtable `+0x4C`, `0x00717E30`), maps the dialog's host's layout to the canvas as the draw begins. For a root
+  it is the identity; for the inventory's tabs it is the inventory's offset, 78,148. It includes the host piece's
+  slide: while the inventory slides in, the tabs' matrix runs from about -400 to 78 on x, though no rect in either
+  dialog moves. So the canvas place of a dialog's pieces is that matrix, then the dialog's own layout-to-rect
+  map. (Before, it was composed from the hosts up the chain, and a wrong host put a whole menu somewhere else.)
+  Nothing else in the dialog holds its place: `+0x04` is a set of eight animation channels, empty in the menus
+  seen.
 - **Pieces.** A piece's name (UTF-16, at `*(*(piece+0x1C))`) is the layout file's, bit `0x40000000` of `+0x18` is
   set while it is drawn, and `+0x48` points at the dialog it hosts (or at an object whose first word points just
   past that dialog). Its rect in its dialog's layout comes from the game's own `0x00F62E68` (des_hud.cpp,
@@ -64,6 +72,21 @@ Found in the census runs (`DES_MENU_MOUSE_LOG=3`, section 1); nothing here is a 
   3. a piece with a host of its own and the dialog's rect;
   4. an object pointing just past the dialog, whatever its rect;
   5. a drawn piece with the dialog's rect, whatever its host word holds.
+
+  The rules run twice. The first time each one takes only a piece at the dialog's place in the canvas: the piece's
+  rect through its dialog's canvas map is the dialog's rect through the dialog's own matrix. The second time, for
+  the dialogs still without a host, any piece. Host words go stale and the same rect is in many dialogs. Before
+  the place check:
+  - rule 3 gave the inventory's ◀ ▶ arrows to the pause menu's arrow guides, and a list's second row to its first;
+  - rule 1 gave a row's grey-out to another row's icon;
+  - rule 4 gave a pause menu that the game had made anew, after a while in play, to one of its bar's small arrow
+    guides.
+
+  The second pass is for the frames of a slide: then the host piece's rect stays put while its dialog moves, so the
+  place misses.
+
+  The host is still what makes a menu (the cursor's host piece) and what tells a menu part of another from one over
+  it (**Which menus count**, below). The place no longer depends on it.
 
   Rule 4 alone used to win, and it named the wrong host after Edit Appearance. Going back makes a new Create
   Profile dialog where an old one was, and the stats panel on its right holds an object that still points there.

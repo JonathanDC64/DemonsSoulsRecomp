@@ -73,6 +73,10 @@ constexpr uint32_t kDlgChildren = 0x0Cu, kDlgChildCount = 0x10u;
 constexpr uint32_t kDlgRect = 0x74u, kDlgLayout = 0x84u, kDlgVisible = 0x94u;
 constexpr uint32_t kObjFlags = 0x18u, kObjRecord = 0x1Cu, kObjHosted = 0x48u;
 constexpr uint32_t kObjDrawn = 0x40000000u;
+/* The renderer a dialog is drawn with (0x00F60BD0's r4) keeps its current matrix here (4x4 floats, by rows; its get,
+ * vtable +0x4C, is 0x00717E30). As a dialog's draw begins, it maps the space the dialog's rect is in (its host's
+ * layout) to the canvas, with the host piece's slide: identity for a root. */
+constexpr uint32_t kRendMatrix = 0x30u;
 constexpr uint32_t kCursorVt = 0x01867F50u;   /* DsMenuDlgCursor */
 constexpr float kCursorLayout = 32.0f;         /* a cursor dialog's layout: 0,0,32,32 (the class or a plain dialog) */
 constexpr uint32_t kMaxKids = 256;
@@ -160,6 +164,8 @@ struct Drawn {
     uint32_t dlg, vt;
     float cur[4], lay[4];
     bool vis;
+    float at[4];   /* the renderer's matrix as its draw began (kRendMatrix), as a map: scale x, y, then offset x, y */
+    bool at_ok;    /* (a plain scale and offset) */
 };
 
 /* A dialog that looks like a menu's cursor where no piece holds it (build_menus then finds its menu by the spot it
@@ -336,8 +342,20 @@ void log_menus(const std::vector<Menu>& menus, const std::vector<LeftOut>& left,
         snprintf(b, sizeof b, "-%08X/%zu/%s/%08X ", l.m.owner, l.m.spots.size(), l.why, l.by);
         sig += b;
     }
-    if (sig == s_menu_sig) return;
+    /* Also once the spots have come to rest in new places (the menus slide in, and the spots with them). */
+    std::string at;
+    for (const Menu& m : menus)
+        for (const Spot& s : m.spots) {
+            snprintf(b, sizeof b, "%.0f,%.0f ", s.box[0], s.box[1]);
+            at += b;
+        }
+    static std::string at_logged, at_before;
+    static unsigned at_still = 0;
+    at_still = at == at_before ? at_still + 1 : 0;
+    at_before = at;
+    if (sig == s_menu_sig && (at == at_logged || at_still < 3)) return;
     s_menu_sig = sig;
+    at_logged = at;
     fprintf(stderr, "[mm] f%u menus: %zu (%zu left out; %zu draws)\n", des_flip_count(), menus.size(), left.size(),
             draws);
     for (const Menu& m : menus) {
@@ -386,61 +404,90 @@ void build_menus(ppu_context* ctx)
          * was, and the panel holds an object that still points there. Its spots were then 777 px off.)
          * (5 is for the inventory opened on a tab other than the first: then its pieces' host words hold no pointer,
          * so its tabs and the rows' icons had no host. The tabs then sat at the canvas's corner, and as a menu not
-         * part of the inventory they left the inventory out.) */
-        std::vector<int> parent(n, -1), via(n, -1), loose(n, -1), loose_via(n, -1);
-        std::vector<char> rule(n, 0);   /* the rule that named it (the census shows it) */
+         * part of the inventory they left the inventory out.)
+         * Each rule first takes only a piece at the dialog's place in the canvas, by the game's matrices (Drawn::at),
+         * and then, for a dialog still without a host, any piece. Host words go stale, and the same rect is in many
+         * dialogs: by rule 3 the inventory's arrows were held by the pause menu's, a list's second row by its first;
+         * by rule 4 a pause menu made anew (after a while in play) was held by one of the bar's small arrow guides.
+         * (While a host piece slides its rect stays put, so the place can miss for those frames.) */
+        std::vector<int> parent(n, -1), via(n, -1);
+        std::vector<char> rule(n, 0);    /* the rule that named it (the census shows it) */
+        std::vector<char> placed(n, 0);  /* (named in the first pass, at its place) */
+        /* Each dialog's layout in the canvas by the game's matrix: its own map after the renderer's. */
+        std::vector<std::array<float, 4>> game(n);
+        for (size_t i = 0; i < n; i++)
+            if (ds[i].at_ok) {
+                float m[4];
+                own_map(ds[i], m);
+                compose(ds[i].at, m, game[i].data());
+            }
         auto has_rect = [&](size_t j, size_t k, size_t i) {
             float r[4];
             return rect_of(pcs[j][k].obj, r) && same_box(r, ds[i].cur);
         };
-        for (size_t i = 0; i < n; i++) {   /* 1 and 2, and the first 4 */
-            if (!ds[i].vis) continue;
-            for (size_t j = 0; j < i && parent[i] < 0; j++)
-                for (size_t k = 0; k < pcs[j].size(); k++) {
-                    const uint32_t h = pcs[j][k].host;
-                    bool hit = h == ds[i].dlg;
-                    if (!hit && guest_ok(h, 4) && h != ds[j].dlg) {
-                        const uint32_t w = vm_read32(h);
-                        if (w > ds[i].dlg && w <= ds[i].dlg + 0x200u) {
-                            hit = has_rect(j, k, i);
-                            if (!hit && loose[i] < 0) loose[i] = (int)j, loose_via[i] = (int)k;
+        auto at_place = [&](size_t j, size_t k, size_t i) {
+            float r[4], box[4], want[4];
+            if (!ds[i].at_ok || !ds[j].at_ok || !rect_of(pcs[j][k].obj, r)) return false;
+            apply(game[j].data(), r, box);
+            apply(ds[i].at, ds[i].cur, want);
+            return same_box(box, want);
+        };
+        for (int first = 1; first >= 0; first--) {
+            auto fits = [&](size_t j, size_t k, size_t i) { return !first || at_place(j, k, i); };
+            std::vector<int> loose(n, -1), loose_via(n, -1);
+            auto name = [&](size_t i, size_t j, size_t k, int r) {
+                parent[i] = (int)j;
+                via[i] = (int)k;
+                rule[i] = (char)r;
+                placed[i] = (char)first;
+            };
+            for (size_t i = 0; i < n; i++) {   /* 1 and 2, and the first 4 */
+                if (!ds[i].vis || parent[i] >= 0) continue;
+                for (size_t j = 0; j < i && parent[i] < 0; j++)
+                    for (size_t k = 0; k < pcs[j].size(); k++) {
+                        const uint32_t h = pcs[j][k].host;
+                        int r = h == ds[i].dlg ? 1 : 0;
+                        if (!r && guest_ok(h, 4) && h != ds[j].dlg) {
+                            const uint32_t w = vm_read32(h);
+                            if (w > ds[i].dlg && w <= ds[i].dlg + 0x200u) {
+                                if (has_rect(j, k, i)) r = 2;
+                                else if (loose[i] < 0 && fits(j, k, i)) loose[i] = (int)j, loose_via[i] = (int)k;
+                            }
+                        }
+                        if (r && fits(j, k, i)) {
+                            name(i, j, k, r);
+                            break;
                         }
                     }
-                    if (hit) {
-                        parent[i] = (int)j;
-                        via[i] = (int)k;
-                        rule[i] = h == ds[i].dlg ? 1 : 2;
+            }
+            for (size_t i = 0; i < n; i++) {   /* 3 */
+                if (!ds[i].vis || parent[i] >= 0) continue;
+                for (size_t j = 0; j < i && parent[i] < 0; j++)
+                    for (size_t k = 0; k < pcs[j].size(); k++) {
+                        if (!guest_ok(pcs[j][k].host, 4) || !has_rect(j, k, i) || !fits(j, k, i)) continue;
+                        name(i, j, k, 3);
                         break;
                     }
-                }
+            }
+            for (size_t i = 0; i < n; i++)   /* 4 */
+                if (ds[i].vis && parent[i] < 0 && loose[i] >= 0) name(i, (size_t)loose[i], (size_t)loose_via[i], 4);
+            for (size_t i = 0; i < n; i++) {   /* 5 */
+                if (!ds[i].vis || parent[i] >= 0) continue;
+                for (size_t j = 0; j < i && parent[i] < 0; j++)
+                    for (size_t k = 0; k < pcs[j].size(); k++) {
+                        if (!pcs[j][k].drawn || !has_rect(j, k, i) || !fits(j, k, i)) continue;
+                        name(i, j, k, 5);
+                        break;
+                    }
+            }
         }
-        for (size_t i = 0; i < n; i++) {   /* 3 */
-            if (!ds[i].vis || parent[i] >= 0) continue;
-            for (size_t j = 0; j < i && parent[i] < 0; j++)
-                for (size_t k = 0; k < pcs[j].size(); k++) {
-                    if (!guest_ok(pcs[j][k].host, 4) || !has_rect(j, k, i)) continue;
-                    parent[i] = (int)j;
-                    via[i] = (int)k;
-                    rule[i] = 3;
-                    break;
-                }
-        }
-        for (size_t i = 0; i < n; i++)   /* 4 */
-            if (ds[i].vis && parent[i] < 0 && loose[i] >= 0) parent[i] = loose[i], via[i] = loose_via[i], rule[i] = 4;
-        for (size_t i = 0; i < n; i++) {   /* 5 */
-            if (!ds[i].vis || parent[i] >= 0) continue;
-            for (size_t j = 0; j < i && parent[i] < 0; j++)
-                for (size_t k = 0; k < pcs[j].size(); k++) {
-                    if (!pcs[j][k].drawn || !has_rect(j, k, i)) continue;
-                    parent[i] = (int)j;
-                    via[i] = (int)k;
-                    rule[i] = 5;
-                    break;
-                }
-        }
-        /* Each dialog's layout in the canvas: its own map after its host's. */
+        /* Each dialog's layout in the canvas: the game's (above), with the host piece's slide; else (no renderer) its
+         * own map after its host's. (Placed by its hosts alone, a dialog with a wrong host was drawn somewhere else:
+         * the pause menu made anew had its tabs squeezed into slivers 12 px wide under the bar's arrow guide.) */
         std::vector<std::array<float, 4>> xf(n);
         std::vector<char> done(n, 0);
+        for (size_t i = 0; i < n; i++)
+            if (ds[i].at_ok) xf[i] = game[i], done[i] = 1;
         for (size_t i = 0; i < n; i++) {
             std::vector<int> chain;
             for (int k = (int)i; k >= 0 && !done[k] && chain.size() < 16; k = parent[k]) chain.push_back(k);
@@ -471,8 +518,11 @@ void build_menus(ppu_context* ctx)
                             ds[i].dlg, ds[i].vt, ds[i].cur[0], ds[i].cur[1], ds[i].cur[2], ds[i].cur[3], ds[i].lay[0],
                             ds[i].lay[1], ds[i].lay[2], ds[i].lay[3], p);
                     if (p >= 0)
-                        fprintf(stderr, " (0x%08X via %s, rule %d)", ds[p].dlg, name_of(pcs[p][via[i]].obj).c_str(),
-                                rule[i]);
+                        fprintf(stderr, " (0x%08X via %s, rule %d%s)", ds[p].dlg, name_of(pcs[p][via[i]].obj).c_str(),
+                                rule[i], placed[i] ? ", at its place" : "");
+                    if (ds[i].at_ok)
+                        fprintf(stderr, " drawn at x%.3g,%.3g %+.1f,%+.1f", ds[i].at[0], ds[i].at[1], ds[i].at[2],
+                                ds[i].at[3]);
                     fprintf(stderr, "\n");
                     for (const Piece& p : pcs[i]) {
                         float lay[4] = {0, 0, 0, 0}, box[4] = {0, 0, 0, 0};
@@ -1269,6 +1319,14 @@ extern "C" void des_mm_draw_enter(ppu_context* ctx, uint32_t dlg)
         d.lay[k] = rdf(dlg + kDlgLayout + 4 * k);
     }
     d.vis = vm_read8(dlg + kDlgVisible) != 0;
+    const uint32_t rend = (uint32_t)ctx->gpr[4];
+    if (guest_ok(rend, 4)) {
+        float m[16];
+        for (uint32_t k = 0; k < 16; k++) m[k] = rdf(rend + kRendMatrix + 4 * k);
+        d.at[0] = m[0], d.at[1] = m[5], d.at[2] = m[12], d.at[3] = m[13];
+        d.at_ok = m[0] > 0.0f && m[5] > 0.0f && std::fabs(m[1]) < 1e-4f && std::fabs(m[4]) < 1e-4f &&
+                  std::fabs(m[15] - 1.0f) < 1e-4f;
+    }
     s_draws.push_back(d);
 }
 

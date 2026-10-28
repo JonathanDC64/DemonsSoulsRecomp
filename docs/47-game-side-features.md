@@ -9,13 +9,15 @@ Two labels are used below:
 > **Run r4 (2026-10-19) did section 6's steps 2 to 4** (section 3.6). Section 3.2's stick-to-slot reading is right. Its slot-to-move columns are wrong for all five slots. chr+0x310's bit 0x800 is not the lock flag. The sprint timer runs while locked on.
 >
 > **Built (2026-10-25): rolls toward the stick while locked on**, `DES_ROLLDIR`, on by default (section 3.7).
+>
+> **Built (2026-10-27): several soul items at once**, `DES_SOULS_AT_ONCE`, off by default (section 2.5). It is approach C: Use asks how many, in Drop's own count picker.
 
 ## Summary
 
 | Feature | Verdict | Effort |
 |---|---|---|
 | Stat respec | **Cheap.** The game already has a "reset stats to the class" function, and the level cost is one game function. | 2-2.5 days for a wrapper button that works while the level-up screen is open. 4-6 days to lower stats inside the game's own level-up screen instead. |
-| Use several souls at once | **Cheap.** Each soul item adds a fixed number of souls through one function. | 2-2.5 days for "use all" on the eight soul items. |
+| Use several souls at once | **Built** (section 2.5): `DES_SOULS_AT_ONCE` makes Use on a soul stack ask how many, in Drop's count picker. | Done. |
 | 8-direction rolls while locked on | **Built** (section 3.7): `DES_ROLLDIR` plays the roll the game picks and turns the character toward the stick, so a roll goes where the stick points. | Done. True diagonal roll animations: not feasible (new animation content). |
 | 8-direction walking while locked on | **Probably nothing to do.** The walk already twists the legs toward the movement (inferred). | 0, unless the run shows otherwise. |
 | PvP arena | **Not feasible as a new mode.** The game has no arena. Online duels and invasions come with docs/46 stage 2. | 8-16 days through docs/46, after its stages 0 and 1. A new arena mode: weeks, high risk. |
@@ -234,6 +236,40 @@ Tests:
 - Other items and their order unchanged.
 - Quit to the title and continue: souls and inventory persist, with no ghost entry.
 - Near the cap: the warning shows, and souls stop at 999,999,999.
+
+### 2.5 Built: `DES_SOULS_AT_ONCE` (2026-10-27)
+
+Approach C, at the user's choice: the game's own count picker, the one Drop opens, with its question changed to "Please select the number of items to use." Off by default. Settings > Game > Items > Use several souls at once turns it on (`DES_SOULS_AT_ONCE=1`), live.
+
+**What the player sees.** Use on a stack of two or more soul items (goods 1025-1032) opens the picker at the whole stack, with OK and CANCEL. ▲ ▼ (or a click on the arrows with the mouse in the game's menus) change the number. OK closes the menus as Use does: one crush animation, and the HUD counts up the souls of all of them in one gain. CANCEL goes back to the inventory with nothing used. Every other item, a single soul item and boss souls use as before.
+
+**How it works** (`port/des_souls_use.cpp`). Three game functions are wrapped with `ppu_register_function`. All three are reached through vtables, so there is no re-lift.
+
+- 0x0081E110, the command menu's choice (vtable +0x7C). Use sends message 2004 to the inventory and then writes -2 to menu slots 0x4F and 0x4E (the close). Drop sets slot 0x95 (0x85 in menu mode 1), sends 2001 and plays sound 100. For Use on a soul stack the wrapper takes Drop's steps instead, those of the inventory's 2001 for goods: slots 0x89 and 0x68, then `0x007731F0(11000, 1, 2, n, 1, n, 0xEAC4)` (the picker), then slot 2 = 9. The question's text pointer is then replaced at +0x820 of the menus' shared object, `*(*(*(TOC - 0x72F0) - 0x8000))`. The picker's number is at +0x830 of the same object.
+- 0x008219E0, the inventory's message handler (vtable +0x6C). 2000 is the picker's OK, and the handler would drop the items. For our picker the wrapper never lets 2000 through: it only sets 2000's flags +0x140 and +0x141 and keeps the number.
+- The Use itself waits for the menus' next update. `des_menu_tick` (des_menu_sfx.cpp, lifted in place of 0x00724E40) runs once a frame just before the menu system's update, and there the inventory gets 2004 as the command menu sends it, followed by the close. The Use cannot run inside the OK. The picker's way back to the inventory comes after the OK and writes the inventory's page (11001) to slots 0x4E and 0x4F. The close was lost, and the Use's page close (0x00723708) had already run, so the inventory came back without its title bar, under the HUD. Measured (menu slots, see below): after the deferred Use the slots match a plain Use's (slot 2 = 0, 0x4E and 0x4F = -1, 0x89 = 0).
+- 0x002DD368, the character's use of an item (reached only through its function descriptor, from the character's vtable). It applies the item's effect (0x00278E90) and then 0x008FDB00 takes one item off the stack at the index Use left at PGD+0x2CC and sets that to -1. When that index was ours and is now -1, the wrapper takes the rest off the stack with the game's count change 0x008FD2A8(PGD+0x128, index, -(n-1), 0). Their souls go through the character's own gain 0x002D8978(character, souls, 0, 0): AddSoul, and the HUD's counter 0x00723E30, which adds to the gain already showing.
+- The souls of one item come from the params the way 0x00278E90 finds the effect: goods row +0x14 is a behavior id, the behavior row (getter 0x00595B80, param table 10) +0x14 is the SpEffect id, and the SpEffect row's +0xE8 is the souls. The SpEffect table is found by the type name `SP_EFFECT_PARAM_ST` at +0x0C of each table's file (0x005A5920(table, 0) + 0x20). Its rows are the file's {id, data offset, name offset} at +0x30. The getters' table numbers do not follow the param bundle's order: none of the 18 getters tried returned the SpEffect row.
+- The cap: the picker offers no more than fit under 999,999,999 souls. At the use the rest is clamped again, keeping room for the one item's own souls, which may come later with its SpEffect. Items that would not fit stay in the stack.
+- No picker while a Use still waits for the character (PGD+0x2CC is not -1). A second Use would take its place.
+
+**The menu slots.** `0x00720F50(n, v)` stores v at +0x14 + 4n of the menus' shared object, and 0x00720F20 reads it. A test run dumped them with the debug console (`mem`) around a plain Use and around the picker. Slot 2 is the inventory's sub-mode: 9 with the command menu or a picker open, 2 browsing, 0 closed. 0x4E and 0x4F hold the page shown (23008 the command menu, 11001 the inventory, -1 none). A -2 asks for the close, which the menus honor only in sub-mode 9: in sub-mode 2 they write 11001 back every frame. Forcing slot 2 to 9 there made the slots read closed, but the inventory stayed drawn. The menu script, not code, reads these slots: only two code sites read slot 0x4F.
+
+**Tests** (2026-10-27): copies of the play session's save, in Boletarian Palace, `DES_FPS=unlocked`, the mouse in the game's menus on. Counts were set with the console's `poke32` on the run's own copy.
+
+| Test | Result |
+|---|---|
+| 2 of 2 Unknown Soldier's Souls, pad | Picker at 02 with Use's question; menus closed, crush, +400 in one gain; souls 18 to 418; the row is gone |
+| 7 of 10, pad (▼ three times) | +1,400, souls 1,418, 3 left |
+| 3 of 5, mouse (▼ clicked twice, OK clicked) | +600, 2 left |
+| CANCEL | Back in the inventory, nothing used |
+| Drop after a cancelled Use | Drop's own question, 1 dropped, 9 left |
+| Souls at 999,999,000, stack of 10 | Picker at most 04; 4 used, souls 999,999,800 |
+| Grass with the knob on | No picker, the game's Use (16 to 15) |
+| Knob off | The game's Use, one soul |
+| Continue from the save | 3 left and 1,418 souls after the next autosave. The game saves at Use, before the item leaves, so the save made at a Use holds the state before it (as without the knob) |
+
+Not tested: menu mode 1 (0x85), the storage box, and a co-op phantom's use.
 
 ## 3. 8-direction movement while locked on
 
@@ -544,7 +580,18 @@ All are read in code unless marked.
 | 0x002284F0, 0x0081FBD0 | CanUseGoods; usable gate in the menu |
 | 0x0081DEC0 | inventory command menu |
 | 0x00900920, 0x00900A40, 0x00900B28, 0x008FB4F0 | item list find, remove, insert, add |
-| 0x008FD2A8, 0x008F50A8 | item consume candidates (inferred) |
+| 0x008FD2A8 | item count change (inventory, index, delta, flag); Use's consume (0x008FDB00) passes -1, Drop -n |
+| 0x008F50A8 | removes an equipment item (Drop's path for weapons) |
+| 0x0081E110 | command menu choice (vtable +0x7C): Use sends 2004, Drop 2001 |
+| 0x008219E0 | inventory message handler (vtable +0x6C): 2000 picker OK (drop), 2001 Drop, 2004 Use |
+| 0x00821010 | Drop's drop of the picker's number (from 2000) |
+| 0x007731F0 | opens the count picker or a yes/no prompt: (message, 1, 2, n, 1 for a count, n, page); Drop passes the stack for both n |
+| 0x00720F50, 0x00720F20 | menu slot set and get (+0x14 + 4n of the menus' shared object) |
+| 0x00723708 | closes the menu pages (Use's) |
+| 0x002DD368 | character: use an item (effect 0x00278E90, then consume 0x008FDB00 at PGD+0x2CC) |
+| 0x002D8978 | character: gain souls (AddSoul and the HUD's counter) |
+| 0x00595B80 | behavior param getter (table 10) |
+| 0x005A5920 | param table by number (+0x20: the file as loaded) |
 | 0x0059E3A8 | goods param getter (param index 3) |
 | 0x005A0030 | MoveParam getter (param index 17) |
 | 0x0059FF98 | escape getter: k 0-3 = F, B, L, R; 4 = stepMove (jump table 0x0059FFE0) |

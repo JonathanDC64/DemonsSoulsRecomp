@@ -1,4 +1,7 @@
 # Exceptions to .github/scripts/check_game_files.py (docs/54): files the check would flag that are ours,
 # not made from the game or the firmware. One glob per line, matched against the path from the repository
 # root ("*" also crosses folders), each with a comment saying what the file is and where it comes from.
-# Nothing needs an exception today.
+
+# SMAA's reference shader (iryoku/smaa, MIT), in the ps3recomp source the release package carries: vendored
+# as published for the D3D12 backend's anti-aliasing (RSX_AA=2), not a dumped shader. ps3recomp allows it too.
+*/ps3recomp/third_party/smaa/SMAA.hlsl

@@ -11,12 +11,14 @@ Two labels are used below:
 > **Built (2026-10-25): rolls toward the stick while locked on**, `DES_ROLLDIR`, on by default (section 3.7).
 >
 > **Built (2026-10-27): several soul items at once**, `DES_SOULS_AT_ONCE`, off by default (section 2.5). It is approach C: Use asks how many, in Drop's own count picker.
+>
+> **Built (2026-10-28): stat respec at the Nexus statue**, `DES_RESPEC`, off by default (section 1.9). The statue in front of the Nexus spawn opens a shop-style menu; Respecialization puts the class's stats back, refunds the levels' souls and opens the game's level-up screen.
 
 ## Summary
 
 | Feature | Verdict | Effort |
 |---|---|---|
-| Stat respec | **Cheap.** The game already has a "reset stats to the class" function, and the level cost is one game function. | 2-2.5 days for a wrapper button that works while the level-up screen is open. 4-6 days to lower stats inside the game's own level-up screen instead. |
+| Stat respec | **Built** (section 1.9): `DES_RESPEC` makes the statue in front of the Nexus spawn open a menu whose Respecialization resets to the class, refunds the levels and opens the level-up screen. | Done. No on-screen prompt at the statue yet. |
 | Use several souls at once | **Built** (section 2.5): `DES_SOULS_AT_ONCE` makes Use on a soul stack ask how many, in Drop's count picker. | Done. |
 | 8-direction rolls while locked on | **Built** (section 3.7): `DES_ROLLDIR` plays the roll the game picks and turns the character toward the stick, so a roll goes where the stick points. | Done. True diagonal roll animations: not feasible (new animation content). |
 | 8-direction walking while locked on | **Probably nothing to do.** The walk already twists the legs toward the movement (inferred). | 0, unless the run shows otherwise. |
@@ -168,6 +170,44 @@ Tests:
 - Status screen after the reset: SL, HP, MP, stamina, slots and load match a fresh character of that class.
 - A SL 620+ save refuses.
 - Quit to the title and continue: everything persists.
+
+### 1.9 Built: `DES_RESPEC` (2026-10-28)
+
+Not approach A or B: at the user's choice, the respec is at the statue in the Nexus, in a menu like a shop's, and the points are spent again in the game's own level-up screen. Off by default. Settings > Game > Items > Stat respec at the Nexus statue turns it on (`DES_RESPEC=1`), live.
+
+**What the player sees.** A save that quit in the Nexus starts facing a statue. With the knob on, Cross in front of it opens the shop's command menu (the one with Upgrade Weapon, Repair Equipment, Buy Item, Talk and Leave), titled "Statue", with two rows: Respecialization and Leave. Respecialization asks "Return to your class's starting stats? The souls of every level come back, and every spell must be remembered again." with YES and NO. YES puts the eight stats back to the starting class's, gives back the souls every bought level cost, and opens the level-up screen (the Maiden's) to spend them again. The screen only raises stats, so nothing goes below the class's values. Leave, Circle and NO change nothing. A character still at the class's stats gets the screen alone, with the spells kept.
+
+**No prompt.** The statue shows no "Examine" prompt. The HUD draws the action prompt only for a target that the game's action search found, and the statue is not one (see below).
+
+**How it works** (`port/des_respec.cpp`). No hook in the lift, so no re-lift. `des_respec_tick` runs once a frame from `des_menu_tick` (des_menu_sfx.cpp), just before the menus' update, and calls the game's functions from there.
+
+- **Where.** The map number comes from the level's script archive as it opens (`/script/m01.luabnd...`, through des_options.cpp's file-open hook): m01 is the Nexus. The player is at the statue when alive, on its floor (y within 1.5 of 479.5), within 2.2 of (0, -43) and on the near side (the spawn is at (0, 479.46, -41.69)), facing it within 60°, and with no menu open: slots 9, 0x11 and 0x17 at 0, and the menus' flags 0x00720F80 at 0 under the mask talk command 10 uses (0xDEFFFF7F). A Cross press must begin there; Cross held from before does not count.
+- **The menu** is the talk scripts' own, from their commands (0x004CC3A8): 20 ClearTalkListData (0x00723450), 19 AddTalkListData (0x00723498, an entry {text id, row}) for each row, then command 10's 0x00721490(-1) (no talk partner) and 0x007212A8. Slot 9 goes to 1 while it is open and to 4 when it is answered. menus+0xABC holds the row (0 for Circle) once slot 9 is back at 0. The work waits for that and for the flags to clear: a dialog opened earlier was wiped by the closing menu.
+- **The rows** are a table, `kRows`: each is a text of ours or a game text id, and the function the row runs (none for Leave). A new row is one line.
+- **Texts.** The game has no "Respecialization", so the row's text goes into the talk menu's FMG (category 0x1E): an id of Leave's group (15000005 up) that has no text gets its offset pointed at our UTF-16 string in the guest heap. The lookup is 0x005C2848(fmg, id): groups {offset index, first id, last id} from +0x1C (count at +0x0C), offsets at *(+0x14), each from the FMG's start, modulo 2^32. The title: with no talk partner the menu shows the missing-name text "?NpcName?" (UTF-16 at 0x016EBB98). It is overwritten with "Statue" while the menu is open and put back after. Changing the pointer to it did not work: five tables hold it.
+- **The question** is talk command 17's dialog: 0x007216D0(-1, -1), slot 0x11 = 2 (YES/NO; 1 is OK only), slot 0x54 = 0, 0x007216F0(text, YES, NO) with the texts 10020000 and 10020001, slots 0x4E and 0x4F = -1. The answer is at menus+0x82C (1 for YES) once slot 0x11 is back at 0.
+- **The respec.** The floor is the class's CharaInitParam row (0x00597108 maps PGD+0xB6 to the row, 0x00597388 finds it). The refund is the sum of 0x00226778(x) for x from the floor's stat sum + 1 to the current sum. Then 0x0090FCD0(0, pgd), the souls written to PGD+0x78, and the character's own updates 0x002802E0, 0x002737A0 and 0x00273620, then 0x007E4248 (section 1.5).
+- **The bars.** 0x007E4248 was made for raises. It moves each bar by the change from PGD's old max to the character's new max. After a respec the character's update has already cut the current value to the lower max, so the cut would count twice, and a soul form's HP could reach 0. So before 0x007E4248, each bar's PGD current is set to the character's, and its PGD max to the value that makes the bar end at its old share of the new max (at least 1). Measured: HP 341/341 before, 329/329 after.
+- **The screen** is talk command 31's 0x007DC7A0 (slot 0x17 to 1). 0x007DC1E0 only shows the screen's help text.
+- **The cap.** If the souls held plus the refund would pass 999,999,999, nothing changes and a dialog with one button (slot 0x11 = 1) says "Not now: with the souls back, you would hold more than 999,999,999." The talk texts have no "OK", so its button is our own text: 0x007216F0 takes the texts as pointers.
+- **The log.** `DES_RESPEC_LOG=1` logs the steps. Each respec logs one line: `[des] respec: stat sum 89 to 86 (class 86), 3 levels, souls 47674 + 2326 = 50000`.
+
+**The missing prompt** (tried, not solved). The game's action search 0x004EF840, called from the menus' update at 0x00724B18, shows the nearest target's prompt through 0x00723360(text id, flag, 1): menus+0x80C the text id, +0x814 the flag, +0x818. With no target it takes the prompt down every frame (0x007233E0(-1), 0x00723360(-1, 1, -1)). An instruction hook after that call put ours up the same way. The fields then matched the game's own Talk prompt at Boldwin field for field, but nothing drew. The flag byte made no difference (0 or 1), and neither did the text id: the game's own Talk id (10010200) did not draw at the statue either. The HUD's prompt update (0x007B8F18, through vtable 0x01869D2C) reads +0x80C and +0x800 (another HUD's timed message, set by 0x00721590), slot 0xAD, the menus' flags, slot 9 (at +0x38), and the search object's bytes +0x14 to +0x17 (`*(*(*(TOC - 0x72F0) - 0x7F88))`, the same object the HUD finds through `*(TOC - 0x71D4)`). All of them matched. The one difference seen was the search object's +0x10, the target found (a pointer at Boldwin, 0 at the statue). Showing the prompt would mean giving the statue a real action target in the search's list. The hook was taken out, so the build needs no re-lift.
+
+**Tests** (2026-10-28): copies of a Soldier's save that quit in the Nexus (SL 6, 0 souls), 30 fps, the pad. The souls were set with a test-only knob.
+
+| Test | Result |
+|---|---|
+| Cross at the statue | The menu, titled "Statue", with Respecialization and Leave |
+| Leave; Circle | The menu closes, nothing changes |
+| Respecialization, NO | Nothing changes |
+| Respecialization, YES, at the class's stats (50,000 souls) | The level-up screen at once; stats and souls as they were |
+| Three levels bought there (Vitality 15, Strength 14), then Respecialization, YES | Stats 89 to 86 (14 9 12 12 11 8 10 10), levels 3 to 0, souls 47,674 + 2,326 = 50,000, the exact round trip. HP 329/329. The screen opens with 50,000 souls |
+| Quit Game, then continue from that save | Stats 86, souls 50,000, levels 0, HP 329/329 |
+| Souls set to 999,999,000 with the console after the three levels, then Respecialization, YES | The OK notice; stats 89, souls 999,999,000 and levels 3 unchanged |
+| Knob off, Cross at the statue | Nothing opens |
+
+Not tested: the other classes' floors, a character with attuned spells (the reset unattunes them, section 1.6), a high SL, co-op or invasion (online is not working), and `DES_FPS=unlocked`.
 
 ## 2. Use several souls at once
 

@@ -271,6 +271,14 @@ At the Tutorial spot each round's delta swings by 4 to 9% either way, so the 95%
 - **A play session** with `DES_EXE=<build>/des_host.exe`: the menus, the pad, the keyboard and the mouse. The screenshot route walks with the `PAD_STICK` knob, not with real input.
 - **Setup's next step**: the freestanding game DLL (6.2, docs/52 section 7.8). The host then builds in the Visual C++ runtime and the C++ library and uses the UCRT that Windows includes (docs/81, decided 10-22).
 
+## 8. The SPU hooks and the host list (2026-10-29)
+
+Port #249 lifts image 2's 16-entry scan as a native block (ps3recomp #170). The lifted SPU code then calls a runtime function by name, `spu_hook_entry_scan`, which was not in `PS3_GAME_HOST_FUNCS`. The module links no runtime library, so the link of `des_game.dll` (and of `des_game.so`) stops on that name. Only a build with the lift links the module: setup's compile, not CI. No release shipped with it.
+
+- ps3recomp #171 puts the name at the end of the list and raises `PS3_GAME_ABI` to 3. The port's pin and the two build descriptions follow it.
+- The port's configure now checks the list (`port/CMakeLists.txt`, after the title functions). Every `ADDR=SYMBOL` and `ADDR-END=SYMBOL` in `scripts/build_spu.py` has to be an `X(SYMBOL)` in `game_module.h`, or configure stops and names the missing ones. CI configures the split build in its two build-description jobs, so a new hook without its list entry now fails the port's pull request. Against the old header, the check names exactly `spu_hook_entry_scan`.
+- `llvm-nm` on the 73 lifted objects of a local build found no other uncovered name. The lifted code reads globals too, but those belong to the module (3.3). That build also had `spu_hook_table_skip`, from a branch not yet merged. Its pull request has to add the name to the list the same way.
+
 ## Decisions
 
 These need the user's call. The milestone works without any of them.

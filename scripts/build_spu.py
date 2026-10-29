@@ -66,9 +66,12 @@ NATIVE_BLOCKS = {
     # while the buffer has room. SPU_NATIVE_POST=0 turns it off. And the table
     # compare-and-copy loop of ring commands 31-34 (0x8E18-0x8F60, 32 passes
     # over two pairs of 2 KB tables), the largest block of the image's lifted
-    # code. SPU_NATIVE_DIFF=0 turns it off.
+    # code. SPU_NATIVE_DIFF=0 turns it off. And the 16-entry scan of the same
+    # commands (0x7348-0x7440), up to the next entry that goes to a handler.
+    # SPU_NATIVE_SCAN=0 turns it off.
     "spu_0001_at_0176C200": (0x4FBCAB40231BF72B, ["0x4618-0x4730=spu_hook_ring_fetch", "0x4808-0x4818=spu_hook_ring_post",
-                                                  "0x8E18-0x8F60=spu_hook_state_diff"]),
+                                                  "0x8E18-0x8F60=spu_hook_state_diff",
+                                                  "0x7348-0x7440=spu_hook_entry_scan"]),
 }
 
 

@@ -2,7 +2,7 @@
  "about": "des_game.so's build, as CMake does it on Linux with DES_SPLIT=ON DES_SPLIT_FREESTANDING=ON (docs/87). Written by scripts/game_build_desc.py; read by tools/setup/des_setup/compile.py.",
  "version": 1,
  "system": "linux",
- "abi": 2,
+ "abi": 3,
  "objects": [
   {
    "name": "ppu",

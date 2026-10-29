@@ -603,6 +603,32 @@ if(DES_SPLIT)
     string(APPEND _des_tf "\n")
     _des_split_write("${DES_SPLIT_GEN}/des_game_title_funcs.h" "${_des_tf}")
 
+    # The SPU native hooks and blocks (scripts/build_spu.py) are runtime
+    # functions the lifted SPU code calls by name, so each has to be one the exe
+    # hands the DLL (PS3_GAME_HOST_FUNCS in ps3recomp's ps3emu/game_module.h).
+    # A name missing there fails only the DLL's link, which needs the lift (on
+    # the player's PC, at setup), so it is checked here, where CI configures.
+    set(DES_BUILD_SPU "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/build_spu.py")
+    set(DES_GAME_MODULE_H "${PS3RECOMP_DIR}/include/ps3emu/game_module.h")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${DES_BUILD_SPU}" "${DES_GAME_MODULE_H}")
+    file(READ "${DES_BUILD_SPU}" _des_bspu)
+    file(READ "${DES_GAME_MODULE_H}" _des_gm_h)
+    # "ADDR=SYMBOL" and "ADDR-END=SYMBOL" (a BI_SWITCH entry's value is an address).
+    string(REGEX MATCHALL "\"0x[0-9A-Fa-f]+(-0x[0-9A-Fa-f]+)?=[A-Za-z_][A-Za-z0-9_]*\"" _des_hs "${_des_bspu}")
+    set(_des_missing "")
+    foreach(_h IN LISTS _des_hs)
+        string(REGEX REPLACE "^.*=([A-Za-z0-9_]+)\"$" "\\1" _h "${_h}")
+        if(NOT _des_gm_h MATCHES "X\\(${_h}\\)")
+            list(APPEND _des_missing "${_h}")
+        endif()
+    endforeach()
+    if(_des_missing)
+        list(REMOVE_DUPLICATES _des_missing)
+        message(FATAL_ERROR "DES_SPLIT: scripts/build_spu.py's native hooks call ${_des_missing}, which "
+            "PS3_GAME_HOST_FUNCS (${DES_GAME_MODULE_H}) does not list: des_game's link would fail. Add each at "
+            "the end of that list in ps3recomp, with PS3_GAME_ABI raised, and pin it.")
+    endif()
+
     # des_boot's own settings, for both targets.
     foreach(_p SOURCES INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS LINK_LIBRARIES)
         get_target_property(_des_boot_${_p} des_boot ${_p})

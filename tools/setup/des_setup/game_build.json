@@ -1,7 +1,7 @@
 {
  "about": "des_game.dll's build, as CMake does it with DES_SPLIT=ON DES_SPLIT_FREESTANDING=ON. Written by scripts/game_build_desc.py; read by tools/setup/des_setup/compile.py.",
  "version": 1,
- "abi": 2,
+ "abi": 3,
  "objects": [
   {
    "name": "ppu",

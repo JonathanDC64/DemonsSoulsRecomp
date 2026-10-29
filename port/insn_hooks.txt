@@ -222,3 +222,8 @@
 # On a PS3 it stops the game; here the game goes on with the part that failed
 # (docs/116: NPC talks that end at once when no sound stream starts).
 0x00A9DD58=des_game_error   # stdu r1, -0x80(r1): the report's first instruction; r3 file, r4 line, r5 message
+
+# des_viewport_room (port/des_options.cpp): the viewport command waits for room
+# in HighGraphics' command ring, as the ring's other writers do. The game sleeps
+# 30 us once when the ring is full and then writes anyway (docs/117).
+0x00D229A4=des_viewport_room   # nop after bl usleep(30) in 0x00D22670, then the write; r28 = the ring's control, r31 = put

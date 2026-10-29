@@ -2310,6 +2310,44 @@ extern "C" void des_game_error(ppu_context* ctx, uint32_t)
             (uint32_t)ctx->lr);
 }
 
+/* HighGraphics, the render thread, writes its commands to a 1 MB ring
+ * (0x45A4B280) that SPU image 2 reads. The ring's control is at 0x01B51000:
+ * +0 the get image 2 publishes, +0x10 the start, +0x14 the wrap slot, +0x80
+ * put. The ring is full with get 16 bytes past put, and each writer waits in
+ * usleep(30) until its command fits, except the viewport command (9, 32 bytes)
+ * in 0x00D22670: with get 16 or 32 bytes past put it sleeps once (0x00D2299C)
+ * and writes. On a PS3 image 2 frees that room within 30 us; here its thread
+ * can stall for milliseconds, and the write took put to get or 16 bytes past
+ * it. Image 2 then saw an empty ring or read the command's second half as a
+ * command, every writer's check passed, and HighGraphics wrote a lap over
+ * commands image 2 had not read: image 2 halts and the world stops drawing
+ * (docs/117). The lifter calls this after that sleep (0x00D229A4), with r28 =
+ * the control and r31 = put; it sleeps on until the command fits, as the other
+ * writers do. Each wait goes to the log (the first 8, then every 100th).
+ * DES_RINGFIX=0 turns it off. */
+extern "C" int64_t sys_timer_usleep(ppu_context* ctx);   /* sys_timer.c: syscall 141, r3 = the microseconds */
+extern "C" void des_viewport_room(ppu_context* ctx, uint32_t)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_RINGFIX", 1) != 0);
+    const uint32_t ctl = (uint32_t)ctx->gpr[28], put = (uint32_t)ctx->gpr[31];
+    auto full = [&] {
+        const uint32_t get = vm_read32(ctl);
+        return get == put + 0x10 || get == put + 0x20;
+    };
+    if (!on || !full()) return;
+    const auto t0 = std::chrono::steady_clock::now();
+    const uint64_t r3 = ctx->gpr[3];
+    ctx->gpr[3] = 30;
+    while (full()) sys_timer_usleep(ctx);
+    ctx->gpr[3] = r3;
+    static std::atomic<unsigned> s_count{0};
+    const unsigned k = ++s_count;
+    if (k > 8 && k % 100) return;
+    fprintf(stderr, "[des] viewport command #%u waited %.2f ms for room in the render ring\n", k,
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+}
+
 /* The character creation screen's previews turn with the right stick: the
  * whole body (0x008DB170, from Create Profile on) and the face in Edit
  * Appearance (0x008DA0E0). Each step gets r3 = the preview and f1, f2 = the

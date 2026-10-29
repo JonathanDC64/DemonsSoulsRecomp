@@ -18,6 +18,13 @@ build_one() {  # $1=build dir  $2=target
   powershell -NoProfile -Command "cmd /c '\"$VCVARS\" >nul 2>&1 && cmake --build \"$1\" --target $2'"
 }
 W="$(cygpath -m "$ROOT" 2>/dev/null || echo "$ROOT")"
-[ "$target" = rt ] || [ "$target" = all ] && build_one "$W/ps3recomp/build" ps3recomp_runtime
-[ "$target" = boot ] || [ "$target" = all ] && build_one "$W/port/build" des_boot
+# Stop at the first failure, with a non-zero status. A runtime that failed to
+# compile used to be followed by a des_boot linked against the old library and
+# "build.sh done", so a test of a change ran without it.
+if [ "$target" = rt ] || [ "$target" = all ]; then
+  build_one "$W/ps3recomp/build" ps3recomp_runtime || { echo "build.sh: ps3recomp_runtime FAILED (target=$target)"; exit 1; }
+fi
+if [ "$target" = boot ] || [ "$target" = all ]; then
+  build_one "$W/port/build" des_boot || { echo "build.sh: des_boot FAILED (target=$target)"; exit 1; }
+fi
 echo "build.sh done (target=$target)"

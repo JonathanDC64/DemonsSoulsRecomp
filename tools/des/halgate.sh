@@ -164,15 +164,15 @@ TMO=${HALGATE_TIMEOUT:-900}
 echo "[gate] $(date '+%F %T') $WHAT on $(basename "$CS"): $(printf '%s\n' "$SEL" | grep -c .) capture(s)$([ "$TIME" = 1 ] || echo ", $F frame(s) each")"
 echo "[gate] replay md5 $HAVE_MD5  RSX_PRESENT=$RSX_PRESENT  cache seed $SEED  out $OUT"
 
-# new_cache <dir>: a pass's shader cache (empty with --cold), and its listing.
+# new_cache <dir>: a pass's shader cache (empty with --cold), and its listing, in whole-line order for comm.
 new_cache() {
   mkdir -p "$1"
   if [ "$COLD" = 0 ] && [ -d "$SEED" ]; then cp -r "$SEED/." "$1/" || return 1; fi
-  ( cd "$1" && find . -type f \( -name '*.dxbc' -o -name '*.hlsl' \) -exec md5sum {} + | LC_ALL=C sort -k2 ) > "$1.before"
+  ( cd "$1" && find . -type f \( -name '*.dxbc' -o -name '*.hlsl' \) -exec md5sum {} + | LC_ALL=C sort ) > "$1.before"
 }
-cache_added() {   # cache_added <dir>: "<md5> <file>" the passes added or changed
-  ( cd "$1" && find . -type f \( -name '*.dxbc' -o -name '*.hlsl' \) -exec md5sum {} + | LC_ALL=C sort -k2 ) |
-    LC_ALL=C comm -13 "$1.before" -
+cache_added() {   # cache_added <dir>: "<md5> <file>" the passes added or changed, by file name
+  ( cd "$1" && find . -type f \( -name '*.dxbc' -o -name '*.hlsl' \) -exec md5sum {} + | LC_ALL=C sort ) |
+    LC_ALL=C comm -13 "$1.before" - | LC_ALL=C sort -k2
 }
 
 # replay <pass dir> <route> <name> <knobs> <frames> <diag 0|1> <capture>...

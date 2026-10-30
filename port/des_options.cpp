@@ -137,6 +137,7 @@
 #include "des_game_calls.h"     /* the lifted functions below (the game DLL's with DES_SPLIT) */
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include "ui/include/des_ui.h"  /* the wrapper UI: settings.ini and the overlay (docs/32) */
+#include "des_rsx_route.h"      /* the renderer calls below: through rsx_out in a PS3RECOMP_RSX_HAL build */
 #include <algorithm>
 #include <atomic>
 #include <chrono>

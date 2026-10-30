@@ -733,3 +733,77 @@ if(DES_SPLIT)
     endif()
     message(STATUS "des_boot: split build ON: ${_des_split_what} (runtime ${PS3RECOMP_SPLIT_LIB}, ${_des_nfns} port functions for the lift)")
 endif()
+
+# --- The renderer's route switch (PS3RECOMP_RSX_HAL, docs/120) -----------------
+# A runtime built with ps3recomp's PS3RECOMP_RSX_HAL has a route switch, rsx_out
+# (libs/video/rsx_out.h): it runs today's D3D12 renderer or the portable
+# renderer's new path, as RSX_BACKEND says. With such a runtime the port calls
+# the renderer through it: boot_main.cpp's branch, and des_rsx_route.h in the
+# files listed below (a new file that includes it goes in the list). The runtime
+# is an imported library, so its PUBLIC definition does not reach these sources.
+# DES_RSX_HAL=AUTO (the default) reads the option from the CMakeCache.txt of each
+# runtime build linked here (PS3RECOMP_BUILD_DIR, and PS3RECOMP_SPLIT_LIB's
+# folder with DES_SPLIT); ON or OFF overrides it. Off, no compile line changes.
+# This comes after the split build: des_host compiles the same source files, so
+# it gets these source properties too.
+set(DES_RSX_HAL "AUTO" CACHE STRING "The runtime has the renderer's route switch (PS3RECOMP_RSX_HAL): AUTO, ON or OFF")
+set_property(CACHE DES_RSX_HAL PROPERTY STRINGS AUTO ON OFF)
+string(TOUPPER "${DES_RSX_HAL}" _des_hal)
+if(_des_hal STREQUAL "AUTO")
+    set(_des_hal_dirs "")
+    if(NOT DES_HOST_ONLY)
+        list(APPEND _des_hal_dirs "${PS3RECOMP_BUILD_DIR}")
+    endif()
+    if(DES_SPLIT)
+        get_filename_component(_d "${PS3RECOMP_SPLIT_LIB}" DIRECTORY)
+        list(APPEND _des_hal_dirs "${_d}")
+    endif()
+    set(_des_hal_has "")
+    foreach(_d IN LISTS _des_hal_dirs)
+        set(_v OFF)
+        if(EXISTS "${_d}/CMakeCache.txt")
+            file(STRINGS "${_d}/CMakeCache.txt" _l REGEX "^PS3RECOMP_RSX_HAL:[A-Z]+=")
+            string(REGEX REPLACE "^[^=]*=" "" _l "${_l}")
+            if(_l)
+                set(_v ON)
+            endif()
+        endif()
+        list(APPEND _des_hal_has ${_v})
+    endforeach()
+    list(REMOVE_DUPLICATES _des_hal_has)
+    list(LENGTH _des_hal_has _n)
+    if(_n GREATER 1)
+        string(REPLACE ";" " and " _des_hal_dirs "${_des_hal_dirs}")
+        message(FATAL_ERROR "DES_RSX_HAL=AUTO: of the runtimes in ${_des_hal_dirs}, one is built with "
+            "PS3RECOMP_RSX_HAL and one without. Build them the same way, or set DES_RSX_HAL.")
+    endif()
+    set(_des_hal ${_des_hal_has})
+elseif(_des_hal)
+    set(_des_hal ON)
+else()
+    set(_des_hal OFF)
+endif()
+# Off Windows the switch is built only with the D3D12 backend on vkd3d (rsx_out.c).
+if(_des_hal AND NOT WIN32 AND NOT DES_VKD3D)
+    message(STATUS "des_boot: the runtime's route switch needs vkd3d (DES_VKD3D); the renderer calls stay direct")
+    set(_des_hal OFF)
+endif()
+if(_des_hal)
+    set_property(SOURCE
+        "${PS3RECOMP_DIR}/runtime/ppu/tests/boot_main.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/des_options.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/des_prework.cpp"
+        APPEND PROPERTY COMPILE_DEFINITIONS PS3RECOMP_RSX_HAL=1)
+    if(TARGET des_ui)
+        # The UI's files, which also need rsx_out.h's folder (des_boot's sources have it).
+        set(_des_ui_route
+            "${CMAKE_CURRENT_SOURCE_DIR}/ui/src/des_ui.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/ui/src/report.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/ui/src/mouse_sdl.cpp")
+        set_property(SOURCE ${_des_ui_route} TARGET_DIRECTORY des_ui
+            APPEND PROPERTY COMPILE_DEFINITIONS PS3RECOMP_RSX_HAL=1)
+        set_property(SOURCE ${_des_ui_route} TARGET_DIRECTORY des_ui
+            APPEND PROPERTY INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/libs/video")
+    endif()
+endif()
+message(STATUS "des_boot: renderer calls through the route switch (DES_RSX_HAL=${DES_RSX_HAL}): ${_des_hal}")

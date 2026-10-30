@@ -16,6 +16,7 @@
 #include "des_ui.h"
 #include "platform.hpp"
 #include "settings.hpp"
+#include "../../des_rsx_route.h"  // the renderer calls below: through rsx_out in a PS3RECOMP_RSX_HAL build
 
 #include <SDL.h>
 

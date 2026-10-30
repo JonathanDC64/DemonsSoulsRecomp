@@ -42,6 +42,14 @@ SHARED = "rpcs3_shared.txt"   # in setup/: the RPCS3 programs that ignored the r
 OUTPUT = "rpcs3-output.txt"   # in the unlock folder: what RPCS3 printed before it took the console
 # Qt then prints "Unknown option" on stderr instead of showing a message box (Windows).
 NO_MESSAGE_BOXES = {"QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES": "1"}
+# Windows refuses to start a program that asks for administrator rights (rpcs3.exe set to "Run this program as an
+# administrator") from one that has none: CreateProcess fails with this, and no RPCS3 runs.
+ERROR_ELEVATION_REQUIRED = 740
+NEEDS_ADMIN = ("Your RPCS3 is set to run as administrator, so setup cannot start it. In rpcs3.exe's Properties, "
+               "Compatibility, untick \"Run this program as an administrator\".")
+# The PS3 system software Sony offers now, whose libsre.prx firmware.py makes into the table's (a tester's run, 10-30).
+# 4.90's cannot be (docs/90 9.2).
+FIRMWARE_WORKS = "4.93"
 
 
 class UnlockFailed(journal.StepFailed):
@@ -58,6 +66,7 @@ class Job:
     copy: Path = None   # its copy in the unlock folder, and the output RPCS3 writes beside it (Unlock sets them)
     out: Path = None
     kind: str = "decrypted"     # or "firmware"
+    version: str = ""           # the firmware's: the PS3 system software RPCS3 has ("4.93"), or ""
 
     @property
     def name(self) -> str:
@@ -74,21 +83,24 @@ def usrdir(path: str) -> str:
     return path.split("USRDIR/", 1)[-1]
 
 
-def different(name: str, kind="decrypted") -> str:
-    """The sentence for an output that is not the known good one."""
-    if kind == "firmware":
-        return (f"{name} came out different from the known good version: your RPCS3's PS3 system software may be "
-                f"another version.")
+def different(name: str, kind="decrypted", version="") -> str:
+    """The sentence for an output that is not the known good one. version: for the firmware's file, the PS3 system
+    software RPCS3 has ("4.90"), or "" when not known."""
+    if kind == "firmware" and version != FIRMWARE_WORKS:
+        has = (f"Your RPCS3 has PS3 system software {version}" if version else
+               "Your RPCS3's PS3 system software may be another version")
+        return (f"{name} came out different from the known good version. {has}; setup works with {FIRMWARE_WORKS}, "
+                f"the one Sony offers now. Install it in RPCS3 (File, then Install Firmware), then try again.")
     return f"{name} came out different from the known good version."
 
 
-def firmware_job(sprx: Path, entry: dict) -> Job:
+def firmware_job(sprx: Path, entry: dict, version="") -> Job:
     """The firmware's file as a job: a copy of the player's libsre.sprx in, and the libsre.prx RPCS3 writes beside it
     out (decrypt_binaries.cpp: a .sprx gives <name>.prx). Its own size and SHA-256, taken now, check the copy."""
     sprx = Path(sprx)
     out = sprx.name[:sprx.name.rfind(".")] + ".prx"
     orig = {"path": sprx.name, "size": sprx.stat().st_size, "sha256": gamefiles.sha256_file(sprx)}
-    return Job(sprx, orig, dict(entry, path=out), kind="firmware")
+    return Job(sprx, orig, dict(entry, path=out), kind="firmware", version=version)
 
 
 # ---- the player's RPCS3 (read only) ----
@@ -449,7 +461,7 @@ class Unlock:
             if not j.out.is_file():
                 self._fail(f"RPCS3 could not unlock {j.name}.")
             if not self._good(j):
-                self._fail(different(j.out_name, j.kind))
+                self._fail(different(j.out_name, j.kind, j.version))
         for j in self.jobs:
             self._note(f"{j.out_name}: {j.out.stat().st_size} bytes, matches")
         return {"files": len(self.jobs), "redirect": "ignored" if self.ignored else "shared" if self.shared else "ok"}
@@ -491,7 +503,12 @@ class Unlock:
             self._note(f"  {k}={env[k]}")
         out = self.work / OUTPUT
         with open(out, "wb") as f:
-            child = _Child(cmd, env, self.work, f)
+            try:
+                child = _Child(cmd, env, self.work, f)
+            except OSError as e:
+                self._note(f"RPCS3 did not start: {e}")
+                self._fail(NEEDS_ADMIN if getattr(e, "winerror", None) == ERROR_ELEVATION_REQUIRED
+                           else "RPCS3 could not start.")
         try:
             code, stalled = self._watch(child, jobs)
         finally:

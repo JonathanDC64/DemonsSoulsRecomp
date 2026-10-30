@@ -698,8 +698,20 @@ class FirmwareUnlockTest(Base):
         put(self.t.base / "fixtures" / "libsre.sprx", b"\x7fELF" + b"O" * 36)
         rc, lines = self.run_route(phases=("check", "unlock"))
         self.assertEqual(rc, 1)
-        self.assertIn("@error rpcs3 unlock libsre.prx came out different from the known good version: your RPCS3's "
-                      "PS3 system software may be another version.", lines)
+        self.assertIn("@error rpcs3 unlock libsre.prx came out different from the known good version. Your RPCS3's "
+                      "PS3 system software may be another version; setup works with 4.93, the one Sony offers now. "
+                      "Install it in RPCS3 (File, then Install Firmware), then try again.", lines)
+        put(self.lib.root / "dev_flash" / "vsh" / "etc" / "version.txt",
+            b"release:04.9000:\nbuild:00000,20230101:x\n")        # (made up beyond the first line)
+        rc, lines = self.run_route(phases=("check", "unlock"))
+        self.assertEqual(rc, 1)
+        self.assertIn("@error rpcs3 unlock libsre.prx came out different from the known good version. Your RPCS3 "
+                      "has PS3 system software 4.90; setup works with 4.93, the one Sony offers now. Install it in "
+                      "RPCS3 (File, then Install Firmware), then try again.", lines)
+        put(self.lib.root / "dev_flash" / "vsh" / "etc" / "version.txt", b"release:04.9300:\n")
+        rc, lines = self.run_route(phases=("check", "unlock"))
+        self.assertEqual(rc, 1)
+        self.assertIn("@error rpcs3 unlock libsre.prx came out different from the known good version.", lines)
 
     def test_a_good_copy_beside_the_game_needs_no_unlock(self):
         self.lib.firmware()

@@ -159,6 +159,8 @@ These are the first sentences of `@error rpcs3 unlock ...` (section 3.4) and `@e
 | RPCS3's log says `Failed to create` | "RPCS3 could not write in setup's folder. Your antivirus may be blocking it." |
 | An output's size or SHA-256 is wrong | "EBOOT.elf came out different from the known good version." |
 | RPCS3 ended on an abort (exit status 3 or 0xC0000409) | "RPCS3 could not start." |
+| Windows will not start rpcs3.exe because it is set to run as administrator (WinError 740) | "Your RPCS3 is set to run as administrator, so setup cannot start it. In rpcs3.exe's Properties, Compatibility, untick "Run this program as an administrator"." |
+| libsre.prx does not match, and RPCS3's system software is not 4.93 | "libsre.prx came out different from the known good version. Your RPCS3 has PS3 system software 4.90; setup works with 4.93, the one Sony offers now. Install it in RPCS3 (File, then Install Firmware), then try again." (section 9.2) |
 | Import: RPCS3's save changed during the copy | "RPCS3 saved the game while setup was copying it." |
 | Import: a copy, conversion or rename failed | "Bringing your save across failed." |
 
@@ -751,6 +753,12 @@ The first real unlock failed on `libsre.prx`: "came out different from the known
 - It applies only to the firmware's item. A decrypted game file is never changed this way.
 
 Only 4.86 and 4.89 have been measured. Inferred: other 4.x versions differ the same way, and if one does not, it fails the sum as before.
+
+**Reported by the first tester (10-30):**
+- 4.90 fails the sum every time. A likely reason, not measured: its version, 0x00490000, has a zero low half, so its code has no `ori` at those places and the file is laid out differently.
+- 4.93, the version Sony offers now, works.
+
+So when libsre.prx fails the sum, the sentence names the version from RPCS3's `dev_flash/vsh/etc/version.txt` ("release:04.9000:") and says to install 4.93. Setup keeps working with 4.86 and 4.89 as before.
 
 ### 9.3 The host's pages
 

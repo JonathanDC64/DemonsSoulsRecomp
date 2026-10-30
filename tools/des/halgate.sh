@@ -20,6 +20,9 @@
 #   --no-rtcap     no RSX_CAP render-target snapshots (they are large)
 #   --out <dir>    results (default $DES_SCRATCH/halgate/<set>_<what>_<date>;
 #                  a folder that exists is never reused)
+#   --any-replay   use an rsx_replay other than the one the set names (a
+#                  rebuild during a conversion step); the replay's own check
+#                  of the capture's state sizes still applies
 #
 # Each replay (rsx_replay <capture> F, run from a staged copy of the exe)
 # writes into <out>/<pass>/<capture>/: shots/ (CELLMARK_DUMP=F, every present;
@@ -49,8 +52,8 @@
 # .hlsl files each pass added, by name and bytes.
 #
 # Same build only: capset.json names the rsx_replay that matches the game
-# build that took the captures (its md5); any other is refused, and a replay
-# that says "captured by another build" fails.
+# build that took the captures (its md5); any other is refused unless
+# --any-replay, and a replay that says "captured by another build" fails.
 #
 # --time (G4): the captures without knobs, on a staged exe with no
 # diagnostics, after one warm-up replay per route. For HALGATE_TIME_RUNS
@@ -76,7 +79,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/perflib.sh"
 cd "$DES_ROOT" || exit 1
-A=d3d12; B=hal-d3d12; REPEAT=0; TIME=0; F=4; CHAIN=0; ONLY='*'; IMG=; TOL=1; COLD=0; RTCAP=1; OUTD=
+A=d3d12; B=hal-d3d12; REPEAT=0; TIME=0; F=4; CHAIN=0; ONLY='*'; IMG=; TOL=1; COLD=0; RTCAP=1; OUTD=; ANY=0
 CS=
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -92,6 +95,7 @@ while [ $# -gt 0 ]; do
     --cold) COLD=1 ;;
     --no-rtcap) RTCAP=0 ;;
     --out) OUTD=${2:?--out needs a folder}; shift ;;
+    --any-replay) ANY=1 ;;
     -h|--help) sed -n '2,/^set -uo/p' "$HERE/halgate.sh" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     -*) echo "[gate] unknown option $1"; exit 2 ;;
     *) [ -z "$CS" ] || { echo "[gate] one capture set only"; exit 2; }; CS=$1 ;;
@@ -126,7 +130,9 @@ EOF
 ) || { echo "[gate] cannot read $JSON"; exit 2; }
 WANT_MD5=$(printf '%s\n' "$CAPS" | awk -F '|' '$1 == "#replay_md5" {print $2}')
 HAVE_MD5=$(md5sum < "$REPLAY" | cut -d' ' -f1)
-if [ "$WANT_MD5" != "$HAVE_MD5" ]; then
+if [ "$WANT_MD5" != "$HAVE_MD5" ] && [ "$ANY" = 1 ]; then
+  echo "[gate] note: $REPLAY (md5 $HAVE_MD5) is not the rsx_replay these captures were taken with (${WANT_MD5:-none}); --any-replay"
+elif [ "$WANT_MD5" != "$HAVE_MD5" ]; then
   echo "[gate] refused: $REPLAY (md5 $HAVE_MD5) is not the rsx_replay these captures were taken with (${WANT_MD5:-none})."
   echo "[gate] Captures are same-build only: take a new set with capset.sh on the build that matches this replay."
   exit 3

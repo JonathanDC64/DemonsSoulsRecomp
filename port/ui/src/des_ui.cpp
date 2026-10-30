@@ -45,6 +45,7 @@
 #include "updates.hpp"
 #include "update_window.hpp"
 #include "version.hpp"
+#include "../../des_rsx_route.h"  // the renderer calls below: through rsx_out in a PS3RECOMP_RSX_HAL build
 
 #ifdef _WIN32
 #include <xinput.h>  // (read_xinput)

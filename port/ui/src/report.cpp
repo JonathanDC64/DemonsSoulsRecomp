@@ -6,6 +6,7 @@
 #include "portable.hpp"
 #include "settings.hpp"
 #include "version.hpp"
+#include "../../des_rsx_route.h"  // the renderer calls below: through rsx_out in a PS3RECOMP_RSX_HAL build
 
 #include <stb_image_write.h>
 

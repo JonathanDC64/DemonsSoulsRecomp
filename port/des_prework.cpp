@@ -46,6 +46,7 @@
 #include "ps3emu/ps3_knob.h"
 #include "ui/include/des_ui.h"  /* des_ui_privacy_wait */
 #include "rsx_shader_precompile.h"
+#include "des_rsx_route.h"  /* the renderer calls below: through rsx_out in a PS3RECOMP_RSX_HAL build */
 
 #ifdef _WIN32
 #include <windows.h>

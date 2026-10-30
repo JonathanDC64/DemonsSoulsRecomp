@@ -25,7 +25,7 @@
 #                  of the capture's state sizes still applies
 #
 # Each replay (rsx_replay <capture> F, run from a staged copy of the exe)
-# writes into <out>/<pass>/<capture>/: shots/ (CELLMARK_DUMP=F, every present;
+# writes into <out>/<pass>/<capture>/: shots/ (CELLMARK_DUMP: every present;
 # with RSX_HDR=1 among the knobs also shots/hdr.hdrp, RSX_HDR_SNAP), dp/
 # (RSX_DRAWPRINT, 8 batches a frame), zpass.txt (the [ZPASS] lines,
 # ZPASS_LOG), rsxcap/ (RSX_CAP=<F-1>:1: the per-op manifest and every
@@ -184,7 +184,9 @@ replay() {
   E=(RSX_BACKEND="$route" PS3_SHADER_CACHE="$(cygpath -m "$p/cache")")
   if [ "$diag" = 1 ]; then
     mkdir -p "$d/shots" "$d/dp"
-    E+=(CELLMARK_DUMP="$fr" CELLMARK_DUMP_DIR="$(cygpath -m "$d/shots")"
+    # Every present of the run: a replayed frame can present more than once,
+    # and a chain plays several captures.
+    E+=(CELLMARK_DUMP=100000 CELLMARK_DUMP_DIR="$(cygpath -m "$d/shots")"
         RSX_DRAWPRINT="$(cygpath -m "$d/dp")/dp" RSX_DRAWPRINT_N=$((fr * 8)) ZPASS_LOG=100000000)
     [ "$RTCAP" = 1 ] && [ "$fr" -ge 2 ] && E+=(RSX_CAP="$((fr - 1)):1" RSX_CAP_DIR="$(cygpath -m "$d/rsxcap")")
     [ "$COLD" = 1 ] && E+=(PS3_SHADER_CACHE_HLSL=1)

@@ -16,8 +16,10 @@ Where things are (Windows; on Linux the .yml files sit in <R> itself):
   <hdd0>game/NPUB30910/       the PlayStation Store version, which the port does not support
   <R>config/config.yml, custom_configs/config_BLUS30443.yml, patch_config.yml   the settings and patches
   <dev_flash>sys/external/libsre.sprx     the PS3 system software's file the build lifts
+  <dev_flash>vsh/etc/version.txt          its version
 """
 import os
+import re
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,6 +33,7 @@ TROPHY_COUNT = 38                   # the trophies the set has
 STORE_ID = "NPUB30910"              # the US PlayStation Store version
 DEFAULT_USER = "00000001"
 SPRX = "sys/external/libsre.sprx"   # under dev_flash
+VERSION_TXT = "vsh/etc/version.txt" # under dev_flash: the system software's version
 # A save's own files, which are not game data (cellSaveData's content types and its system files).
 CONTENT = {"PARAM.SFO", "PARAM.PFD", "ICON0.PNG", "ICON1.PAM", "PIC1.PNG", "SND0.AT3"}
 TROPUSR_MAGIC = 0x818F54AD
@@ -142,6 +145,16 @@ def folders(exe) -> Folders:
 def firmware(f: Folders):
     p = f.flash / SPRX
     return p if p.is_file() else None
+
+
+def firmware_version(f: Folders) -> str:
+    """The PS3 system software version RPCS3 has, as "4.93" (its version.txt's "release:04.9300:"), or ""."""
+    try:
+        text = (f.flash / VERSION_TXT).read_text(encoding="ascii", errors="replace")
+    except OSError:
+        return ""
+    m = re.search(r"^release:(\d+)\.(\d\d)", text, re.M)
+    return f"{int(m.group(1))}.{m.group(2)}" if m else ""
 
 
 # ---- the library ----

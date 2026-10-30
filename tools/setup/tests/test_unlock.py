@@ -281,6 +281,22 @@ class UnlockTest(unittest.TestCase):
                 self.assertEqual(rc, 1)
                 self.assertIn(f"@error rpcs3 unlock {sentence}", lines)
 
+    def test_rpcs3_set_to_run_as_administrator(self):
+        """Windows will not start it (WinError 740): the player is told why, not that copying failed."""
+        def refused(*_a, **_k):
+            e = OSError("The requested operation requires elevation")
+            e.winerror = rpcs3.ERROR_ELEVATION_REQUIRED
+            raise e
+        child, rpcs3._Child = rpcs3._Child, refused
+        try:
+            rc, lines = self.t.run(unlock_only=True)
+        finally:
+            rpcs3._Child = child
+        self.assertEqual(rc, 1)
+        self.assertIn(f"@error rpcs3 unlock {rpcs3.NEEDS_ADMIN}", lines)
+        self.assertEqual(self.t.calls(), [])
+        self.assertIn("RPCS3 did not start", self.t.log())
+
     def test_rpcs3_folder_and_dump_stay_the_same(self):
         """The whole build, the lift too: neither the player's RPCS3 folder nor the dump changes, byte for byte."""
         tree = FakeTree()

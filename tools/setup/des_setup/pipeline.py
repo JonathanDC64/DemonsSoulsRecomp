@@ -435,7 +435,8 @@ def _unlock(rep, req, data, jr, emit, total, table, kw):
             rpcs3.remember_shared(data, exe)
     left = _made_by_unlock(rep)
     if left:
-        raise rpcs3.UnlockFailed("unlock", rpcs3.different(rpcs3.usrdir(left[0].name), left[0].kind), u.log)
+        ver = next((j.version for j in jobs if j.kind == left[0].kind == "firmware"), "")
+        raise rpcs3.UnlockFailed("unlock", rpcs3.different(rpcs3.usrdir(left[0].name), left[0].kind, ver), u.log)
     emit.text(f"ok   {len(jobs)} file(s) unlocked by RPCS3 and checked" if ran else
               f"ok   the {len(jobs)} file(s) RPCS3 unlocked last time are unchanged")
     return rep, not ran
@@ -443,10 +444,12 @@ def _unlock(rep, req, data, jr, emit, total, table, kw):
 
 def _firmware_job(exe, t, item):
     """The unlock of libsre.prx from the player's <dev_flash>/sys/external/libsre.sprx."""
-    sprx = rpcs3_library.firmware(rpcs3_library.folders(exe))
+    f = rpcs3_library.folders(exe)
+    sprx = rpcs3_library.firmware(f)
     if sprx is None:
         raise rpcs3.UnlockFailed("unlock", gamefiles.NO_FIRMWARE)
-    return rpcs3.firmware_job(sprx, next(e for e in t["firmware"] if e["name"] == item.name))
+    return rpcs3.firmware_job(sprx, next(e for e in t["firmware"] if e["name"] == item.name),
+                              rpcs3_library.firmware_version(f))
 
 
 def _drop_unlock(data):

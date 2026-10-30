@@ -17,7 +17,8 @@
 # (__real@, __xmm@, __ymm@, __zmm@), the UCRT's inline stdio functions
 # (printf, snprintf, sscanf, _vsnprintf_l ...: defined, COMDAT, wherever
 # they are called), __local_stdio_*_options, _fltused, @feat.00, the
-# knob header's ps3_env_gen, and C++ symbols of the standard library (std::,
+# knob header's ps3_env_gen, dwmapi.h's selectany c_DwmMax* constants, and
+# C++ symbols of the standard library (std::,
 # type_info, __cxxabiv). A C++ symbol of our own passes when its name or class
 # starts with a prefix (?gpu_x@@..., ?f@gpu_vk@@..., _ZN6gpu_vk...).
 # HAL_SYMBOLS_ALLOW=<regex> allows more.
@@ -95,7 +96,7 @@ for a in "${ARGS[@]}"; do
 done > "$TMP/all.tsv" || exit 2
 
 OK_PREFIX='^_?(rsxc_|gpu_|rsx_out_)'
-GEN='^_?(\?\?_C@|__real@|__xmm@|__ymm@|__zmm@|__local_stdio_(printf|scanf)_options$|_fltused$|@feat\.00$|ps3_env_gen$|_?v?(f|s|sn|w|fw|sw|snw)?(printf|scanf)(_s)?(_c)?(_p)?(_l)?$)'
+GEN='^_?(\?\?_C@|__real@|__xmm@|__ymm@|__zmm@|__local_stdio_(printf|scanf)_options$|_fltused$|@feat\.00$|ps3_env_gen$|c_DwmMax(QueuedBuffers|Monitors|Adapters)$|_?v?(f|s|sn|w|fw|sw|snw)?(printf|scanf)(_s)?(_c)?(_p)?(_l)?$)'
 CXX_STD='@std@@|@stdext@@|type_info@@|^_?_ZN?K?St|^_?_ZT[VIS]St|__cxxabiv|^_?_ZT[VIS]N10__cxxabiv'
 CXX_OURS='(^|[?@$]|\?A[VU]|[0-9])(rsxc_|gpu_|rsx_out_)'
 EXTRA=${HAL_SYMBOLS_ALLOW:-}

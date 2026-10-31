@@ -268,7 +268,7 @@ check=skipped
 first=$(awk -F '\t' 'NR == 1 {print $2}' "$W/captures.tsv")
 if [ "${CAPSET_VERIFY:-1}" != 0 ] && [ -n "$first" ] && [ -f "$REPLAY" ] && [ $ec != 5 ]; then
   # One frame of one capture: the replay says so when its structs differ.
-  ( des_env_defaults; cd "$W" && timeout 600 "$REPLAY" "$(cygpath -m "$D/$first")" 1 ) > "$W/replay_check.txt" 2>&1
+  ( des_env_defaults; des_window_launch; cd "$W" && timeout 600 "${DES_LAUNCH[@]}" "$REPLAY" "$(cygpath -m "$D/$first")" 1 ) > "$W/replay_check.txt" 2>&1
   rc=$?
   if grep -aq 'captured by another build' "$W/replay_check.txt"; then check="other build: $(grep -a 'captured by another build' "$W/replay_check.txt" | head -1)"
   elif [ $rc != 0 ]; then check="replay exit $rc ($(tail -1 "$W/replay_check.txt"))"

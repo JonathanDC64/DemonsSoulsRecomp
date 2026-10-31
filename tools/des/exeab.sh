@@ -52,6 +52,7 @@
 # locked under a presenting batch, 5 the user's save changed.
 set -uo pipefail
 . "$(dirname "$0")/perflib.sh"
+export DES_WINDOW=${DES_WINDOW:-normal}   # (the window is saved with PrintWindow; deslib.sh des_window_launch)
 cd "$DES_ROOT" || exit 1
 TAG=${1:?tag}; A=${2:?exeA}; B=${3:?exeB}; R=${4:-6}; shift $(( $# < 4 ? $# : 4 ))
 D=$DES_SCRATCH/$TAG

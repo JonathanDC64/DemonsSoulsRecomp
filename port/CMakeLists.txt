@@ -833,6 +833,29 @@ if(_des_hal)
             APPEND PROPERTY INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/libs/video/gpu")
     endif()
 endif()
+# prework_check (port/tests): des_prework.cpp's shaders pass as setup runs it, in a program that runs no game, for
+# the pass's targets and their stamps. With the route switch; built only when asked for. des_prework.cpp keeps the
+# source properties above (PS3RECOMP_RSX_HAL); the rest of des_boot's compile line it does not need.
+if(_des_hal)
+    add_executable(prework_check EXCLUDE_FROM_ALL
+        tests/prework_check.cpp
+        des_prework.cpp
+        "${PS3RECOMP_DIR}/runtime/host/host_stubs.c")   # (what the runtime's modules take from the PPU loader)
+    target_include_directories(prework_check PRIVATE
+        "${PS3RECOMP_DIR}/include" "${PS3RECOMP_DIR}/runtime/ppu" "${PS3RECOMP_DIR}/libs/video")
+    if(MSVC)
+        target_compile_options(prework_check PRIVATE /EHsc /Zc:__cplusplus)
+        target_compile_definitions(prework_check PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
+    target_link_libraries(prework_check PRIVATE ps3recomp_runtime)
+    if(WIN32)
+        target_link_libraries(prework_check PRIVATE ws2_32 xinput ole32 bcrypt d3d12 dxgi d3dcompiler uuid dxguid)
+    else()
+        find_package(Threads REQUIRED)
+        target_link_libraries(prework_check PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)
+    endif()
+endif()
+
 message(STATUS "des_boot: renderer calls through the route switch (DES_RSX_HAL=${DES_RSX_HAL}): ${_des_hal}")
 
 # ui_render_compare (port/ui/tests): render_gpu.cpp's proof, the menus drawn by it and by render_d3d12.cpp on one

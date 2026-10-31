@@ -42,6 +42,14 @@
  * index. DES_PSO_INDEX=<file> takes another index, =0 none.
  *
  * DES_PRECOMPILE=0 skips it at a start; =force runs it whatever the stamp says.
+ *
+ * With ps3recomp's portable renderer (PS3RECOMP_RSX_HAL) the pass runs once
+ * for each target the runtime has (rsx_shader_precompile.h): d3d12, today's
+ * renderer's, as above; dxbc, the new D3D12 path's, into the same .dxbc
+ * files; spv, Vulkan's, into <cache>/gpu/spv/. Each later target has its own
+ * stamp, <cache>/gpu/precompile_<target>.stamp, which also records its
+ * compiler; a target whose stamp is up to date is skipped. It runs off
+ * Windows too, where only spv is.
  */
 #include "ps3emu/ps3_knob.h"
 #include "ui/include/des_ui.h"  /* des_ui_privacy_wait */
@@ -365,13 +373,38 @@ namespace {
 /* What a pass ended with (des_prework_shaders prints it). */
 enum class Pass { Off, NoArchives, UpToDate, NotStarted, Skipped, Done, Failed };
 
+#if defined(PS3RECOMP_RSX_HAL)
+/* The target of the pass that runs (rsx_shader_precompile.h's RSX_PRECOMPILE_*). */
+int s_target = RSX_PRECOMPILE_D3D12;
+
+/* The pass's stamp file: today's for d3d12. Another target has its own in <cache>/gpu, and its stamp also names
+ * the target and what its files depend on (its compiler, flags and text edits). */
+std::string target_stamp(const char* cache, std::string& stamp)
+{
+    if (s_target == RSX_PRECOMPILE_D3D12) return std::string(cache) + kSep + "precompile.stamp";
+    const rsx_shader_precompile_sink* k = rsx_shader_precompile_current();
+    char tag[512] = "";
+    if (k->tag) k->tag(tag, sizeof tag);
+    stamp += std::string("target ") + k->name + " " + tag + "\n";
+    const std::string dir = std::string(cache) + kSep + "gpu";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    return dir + kSep + "precompile_" + k->name + ".stamp";
+}
+#endif
+
 /* One pass over the shader archives of the game folder `root` and the
  * programs in its executable `elf` (may be empty), into the cache: at a start
  * (ps3_title_prework) or in setup (des_prework_shaders). `poll`, if given,
  * runs on this thread every 100 ms while the shaders compile. */
 Pass run_pass(const char* root, const std::string& elf, bool force, void (*poll)(void), rsx_shader_precompile_stats& s)
 {
+#if defined(PS3RECOMP_RSX_HAL)
+    const char* cache = s_target == RSX_PRECOMPILE_D3D12 ? rsx_d3d12_shader_cache_path()
+                                                         : rsx_shader_precompile_current()->shader_cache_path();
+#else
     const char* cache = rsx_d3d12_shader_cache_path();
+#endif
     if (!cache || !cache[0] || !root || !root[0]) return Pass::Off;   /* the cache is off */
     const std::string dir = std::string(root) + kSep + "PS3_GAME" + kSep + "USRDIR" + kSep + "shader";
     s_state.store(1);
@@ -382,7 +415,11 @@ Pass run_pass(const char* root, const std::string& elf, bool force, void (*poll)
     if (elf.empty()) stamp += "eboot none\n";
     else stamp_file(stamp, "eboot", elf);
     stamp_file(stamp, "fp_variants", std::string(cache) + kSep + "fp_variants.txt");
+#if defined(PS3RECOMP_RSX_HAL)
+    const std::string stamp_path = target_stamp(cache, stamp);
+#else
     const std::string stamp_path = std::string(cache) + kSep + "precompile.stamp";
+#endif
     std::vector<uint8_t> old;
     if (names.empty()) {
         std::fprintf(stderr, "[des] shaders: no archives in %s; shaders compile as the game draws them\n", dir.c_str());
@@ -459,6 +496,45 @@ void print_progress(void)
     std::fflush(stdout);
 }
 
+#if defined(PS3RECOMP_RSX_HAL)
+/* A worse pass's result wins when the targets' results are put together. */
+int pass_rank(Pass p)
+{
+    switch (p) {
+    case Pass::Failed: return 6;
+    case Pass::Skipped: return 5;
+    case Pass::NotStarted: return 4;
+    case Pass::Done: return 3;
+    case Pass::UpToDate: return 2;
+    case Pass::NoArchives: return 1;
+    default: return 0;
+    }
+}
+
+/* run_pass once for each target the runtime has, d3d12 first; a skip stops the rest. The result is the worst of
+ * theirs, the counts and seconds their sums. */
+Pass run_passes(const char* root, const std::string& elf, bool force, void (*poll)(void), rsx_shader_precompile_stats& s)
+{
+    Pass all = Pass::Off;
+    for (int t = 0; t < RSX_PRECOMPILE_TARGETS && !s_skip.load(); ++t) {
+        const rsx_shader_precompile_sink* k = rsx_shader_precompile_sink_of(t);
+        if (!k) continue;
+        rsx_shader_precompile_reset();
+        rsx_shader_precompile_use(k);
+        s_target = t;
+        if (t != RSX_PRECOMPILE_D3D12) std::fprintf(stderr, "[des] shaders: the %s target\n", k->name);
+        rsx_shader_precompile_stats one{};
+        const Pass p = run_pass(root, elf, force, poll, one);
+        s.built += one.built;
+        s.cached += one.cached;
+        s.failed += one.failed;
+        s.seconds += one.seconds;
+        if (pass_rank(p) > pass_rank(all)) all = p;
+    }
+    return all;
+}
+#endif
+
 }  // namespace
 
 /* The game's executable for the pass at a start: main's ELF, as
@@ -475,7 +551,11 @@ extern "C" void ps3_title_prework(void)
     const char* knob = std::getenv("DES_PRECOMPILE");
     if (knob && std::strcmp(knob, "0") == 0) return;
     rsx_shader_precompile_stats s{};
+#if defined(PS3RECOMP_RSX_HAL)
+    run_passes(ppu_vfs_root, s_elf, knob && same_nocase(knob, "force"), nullptr, s);
+#else
     run_pass(ppu_vfs_root, s_elf, knob && same_nocase(knob, "force"), nullptr, s);
+#endif
 }
 
 /* Setup's shaders phase (docs/52 section 5): tools/setup's pipeline.py runs
@@ -495,7 +575,11 @@ extern "C" void ps3_title_prework(void)
 extern "C" int des_prework_shaders(const char* game, const char* eboot)
 {
     rsx_shader_precompile_stats s{};
-#ifdef _WIN32
+#if defined(PS3RECOMP_RSX_HAL)
+    /* As below, one pass per target (on every OS: the spv target needs no FXC). */
+    cellGame_init_from_paramsfo((std::string(game ? game : "") + kSep + "PS3_GAME" + kSep + "PARAM.SFO").c_str());
+    const Pass p = run_passes(game, eboot ? eboot : "", false, print_progress, s);
+#elif defined(_WIN32)
     /* The game's version, for its pipeline index: no boot reads PARAM.SFO in this process. */
     cellGame_init_from_paramsfo((std::string(game ? game : "") + kSep + "PS3_GAME" + kSep + "PARAM.SFO").c_str());
     const Pass p = run_pass(game, eboot ? eboot : "", false, print_progress, s);

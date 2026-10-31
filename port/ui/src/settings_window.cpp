@@ -381,6 +381,10 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "<br/><br/>(DES_FULLSCREEN)");
         bool_row(leftPane, rightPane, "Start maximized", "DES_MAXIMIZED",
             "The window opens maximized, and comes back maximized from Fullscreen.<br/><br/>(DES_MAXIMIZED)");
+#if DES_RSX_VULKAN  // (with a runtime that has the Vulkan renderer: port/CMakeLists.txt)
+        choice_row(leftPane, rightPane, "Renderer", "RSX_BACKEND", {"d3d12", "vulkan"}, {"D3D12", "Vulkan"},
+            "Vulkan or D3D12. Restart to apply.<br/><br/>(RSX_BACKEND)");
+#endif
         choice_row(leftPane, rightPane, "Aspect ratio", "DES_ASPECT",
             {"", "2560:1080", "3440:1440", "3840:1600", "32:9", "auto"},
             {"16:9 (original)", "21:9 (2560x1080)", "21:9 (3440x1440)", "21:9 (3840x1600)", "32:9", "Match the display"},

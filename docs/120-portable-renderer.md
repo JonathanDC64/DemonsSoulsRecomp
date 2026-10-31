@@ -87,6 +87,17 @@ estimates no run has checked.
   - **A vertex-shader HUD clamp** where geometry shaders are missing (Mac).
   
   Both can be forced on this PC with knobs (`RSX_DEPTH_FORMAT`, `RSX_CLAMP_FORM`) and compared.
+- **Settings > Display > Renderer:** D3D12 (the default) or Vulkan, after a restart. It is the `RSX_BACKEND` row in
+  settings.ini, applied at start as every restart row is, and an `RSX_BACKEND` from the environment wins. It shows only
+  when the runtime has the Vulkan route (`PS3RECOMP_RSX_HAL_VULKAN` and `_SPV`, read from its CMakeCache.txt). `hal-d3d12`
+  stays an environment value for developers.
+- **When Vulkan does not start,** the game starts on D3D12 and says why: in the log
+  (`[rsx_out] route d3d12 (...)`) and in a report's `system.txt` (`Renderer: d3d12 (...)`).
+  - A start that fails at a step the renderer sees (loader, instance, adapter, features, device, window, swap chain,
+    targets, shaders, rings) is undone, and D3D12 starts in the same process. `RSX_FAIL_START_AT=<step>` forces one.
+  - A start that dies in the driver: a Vulkan start writes `renderer_starting` in the data folder (`RSX_STATE_DIR`, which
+    the port sets) and removes it at its first frame. A start that finds it uses D3D12; the start after that tries
+    Vulkan again. Test runs have no data folder, so no mark.
 
 ## Shaders
 

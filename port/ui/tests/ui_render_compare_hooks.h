@@ -17,7 +17,7 @@ enum {
     URC_COPY_TEXTURE, URC_COPY_RESOURCE, URC_COPY_BUFFER, URC_RESOLVE,
     URC_COUNT
 };
-#define URC_RENDERERS 4
+#define URC_RENDERERS 5
 
 /* The renderer whose calls count now (an index below URC_RENDERERS), or -1 for none. */
 extern int g_urc_who;

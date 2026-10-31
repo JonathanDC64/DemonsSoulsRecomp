@@ -16,9 +16,15 @@ path under the folder, subfolders included; a file on one side only fails.
              and channels, in 0-255 steps) is above 1.0; edge blocks are
              averaged over the pixels they have;
            - at most 0.01% of pixels more than 8/255 off on any channel.
-         An HDRP pair is held to the hdr rule instead.
+         An HDRP pair is held to the hdr rule instead, with outliers: a
+         channel outside it passes when it is within 8/255 of the other
+         (relative to the larger of 1 and its value), and at most 0.01% of
+         the pixels have such a channel: the same bound as the 8-bit rule's
+         spikes. These are pixels that sampled the next texel of an 8-bit
+         texture across an edge (seen: 25 pixels, up to 4.4/255).
   hdr    HDRP pairs: every channel within 1e-3 of the other, relative to the
-         larger of 1 and its value (--hdr-tol). Other images as vk.
+         larger of 1 and its value (--hdr-tol), with no outliers. Other images
+         as vk.
 
 One line per image: its size, the pixels that differ, the share within
 tolerance, the worst block mean, the share over 8/255, the largest difference,
@@ -44,6 +50,8 @@ from PIL import Image
 
 EXTS = ('.bmp', '.png', '.hdrp')
 BLOCK = 16
+HDR_OUTLIER_TOL = 8 / 255  # vk: an HDRP channel this far off (relative above 1) passes as an outlier
+HDR_OUTLIERS = 0.01       # vk: at most this share of the pixels, in percent
 
 
 class BadImage(Exception):
@@ -92,10 +100,15 @@ def compare(a, b, mode, tol, hdr_tol):
         if mode == 'exact':
             r['ok'] = r['differ'] == 0
         else:
-            lim = hdr_tol * np.maximum(1.0, np.maximum(np.abs(a), np.abs(b)))
-            over = (diff > lim).any(axis=2)
-            r['within'] = 100.0 - 100.0 * float(over.mean())
-            r['ok'] = not over.any()
+            scale = np.maximum(1.0, np.maximum(np.abs(a), np.abs(b)))
+            over = diff > hdr_tol * scale
+            opix = over.any(axis=2)
+            r['within'] = 100.0 - 100.0 * float(opix.mean())
+            if mode == 'vk':
+                far = (diff > HDR_OUTLIER_TOL * scale) | np.isnan(diff)
+                r['ok'] = not far.any() and 100.0 - r['within'] <= HDR_OUTLIERS
+            else:
+                r['ok'] = not opix.any()
         return r
     d = np.abs(a.astype(np.int16) - b.astype(np.int16))
     dmax = d.max(axis=2)
@@ -203,10 +216,7 @@ def run(a, b, mode, tol, hdr_tol, out, quiet, show=print):
             failed += 1
             show(line(n, {'error': 'shape %s vs %s' % (ia.shape, ib.shape)}))
             continue
-        m = mode
-        if ia.dtype == np.float32 and mode == 'vk':
-            m = 'hdr'
-        r = compare(ia, ib, m, tol, hdr_tol)
+        r = compare(ia, ib, mode, tol, hdr_tol)   # (an HDRP pair under vk: the hdr rule with outliers)
         if not r['ok']:
             failed += 1
         if not quiet or not r['ok']:
@@ -280,6 +290,15 @@ def selftest():
     e = np.zeros((20, 20, 3), np.uint8); f = e.copy(); f[17:20, 17:20] = 3
     check('edge block averaged over its own pixels', abs(block_means(np.abs(
         e.astype(np.int16) - f.astype(np.int16)).mean(axis=2))[1, 1] - 3 * 9 / 16) < 1e-9, True)
+    # HDRP outliers (vk only): a few pixels up to 8/255 off pass, more pixels or a bigger step fail.
+    h = (rng.random((720, 1280, 4)) * 3).astype(np.float16).astype(np.float32)
+    def hdr_off(k, d):
+        o = h.copy(); o.reshape(-1, 4)[np.arange(k) * 997, 1] += d
+        return o
+    check('hdrp: 16 pixels 2/255 off / vk', compare(h, hdr_off(16, 2 / 255), 'vk', 1, 1e-3)['ok'], True)
+    check('hdrp: 16 pixels 2/255 off / hdr', compare(h, hdr_off(16, 2 / 255), 'hdr', 1, 1e-3)['ok'], False)
+    check('hdrp: 200 pixels 2/255 off / vk', compare(h, hdr_off(200, 2 / 255), 'vk', 1, 1e-3)['ok'], False)
+    check('hdrp: one pixel 0.05 off / vk', compare(h, hdr_off(1, 0.05), 'vk', 1, 1e-3)['ok'], False)
 
     with tempfile.TemporaryDirectory(prefix='halimg') as t:
         da, db, ho = os.path.join(t, 'a'), os.path.join(t, 'b'), os.path.join(t, 'heat')

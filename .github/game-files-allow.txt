@@ -5,3 +5,7 @@
 # SMAA's reference shader (iryoku/smaa, MIT), in the ps3recomp source the release package carries: vendored
 # as published for the D3D12 backend's anti-aliasing (RSX_AA=2), not a dumped shader. ps3recomp allows it too.
 */ps3recomp/third_party/smaa/SMAA.hlsl
+
+# The Vulkan backend's test shaders, in the ps3recomp source the release package carries: written for
+# test_gpu_vk.c (test_gpu_vk_spv.h holds them compiled), not a dumped shader. ps3recomp allows it too.
+*/ps3recomp/libs/video/tests/test_gpu_vk_shaders.hlsl

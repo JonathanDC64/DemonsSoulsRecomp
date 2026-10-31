@@ -62,9 +62,11 @@ function(des_runtime_deps target lib)
         return()
     endif()
     set(PS3RECOMP_RUNTIME_DEPS "")
+    # include() alone makes a change to the file re-run the configure. Naming it in
+    # CMAKE_CONFIGURE_DEPENDS too fails under Ninja when the path has a "..":
+    # the same file is then listed under two spellings.
     include("${_file}")
     set_property(TARGET ${target} APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${PS3RECOMP_RUNTIME_DEPS})
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_file}")
     list(LENGTH PS3RECOMP_RUNTIME_DEPS _n)
     message(STATUS "des_boot: ${target} brings ${_n} static libraries (${_file})")
 endfunction()

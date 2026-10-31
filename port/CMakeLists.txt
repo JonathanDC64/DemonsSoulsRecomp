@@ -807,3 +807,38 @@ if(_des_hal)
     endif()
 endif()
 message(STATUS "des_boot: renderer calls through the route switch (DES_RSX_HAL=${DES_RSX_HAL}): ${_des_hal}")
+
+# prework_check (port/tests): des_prework.cpp's shaders pass as setup runs it, in a program that runs no game, for
+# the pass's targets and their stamps. With the route switch; built only when asked for. des_prework.cpp keeps the
+# source properties above (PS3RECOMP_RSX_HAL); the rest of des_boot's compile line it does not need.
+if(_des_hal)
+    add_executable(prework_check EXCLUDE_FROM_ALL
+        tests/prework_check.cpp
+        des_prework.cpp
+        "${PS3RECOMP_DIR}/runtime/host/host_stubs.c")   # (what the runtime's modules take from the PPU loader)
+    target_include_directories(prework_check PRIVATE
+        "${PS3RECOMP_DIR}/include" "${PS3RECOMP_DIR}/runtime/ppu" "${PS3RECOMP_DIR}/libs/video")
+    if(MSVC)
+        target_compile_options(prework_check PRIVATE /EHsc /Zc:__cplusplus)
+        target_compile_definitions(prework_check PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
+    # The runtime's SPIR-V compiler (PS3RECOMP_RSX_HAL_SPV), which the spv target calls: the libraries its build made.
+    set(_des_spv_libs "")
+    foreach(_l glslang-build/glslang/glslang glslang-build/glslang/glslang-default-resource-limits
+               spirv_tools-build/source/opt/SPIRV-Tools-opt spirv_tools-build/source/SPIRV-Tools)
+        get_filename_component(_d "${PS3RECOMP_BUILD_DIR}/_deps/${_l}" DIRECTORY)
+        get_filename_component(_n "${_l}" NAME)
+        foreach(_f "${_d}/${_n}.lib" "${_d}/lib${_n}.a")
+            if(EXISTS "${_f}")
+                list(APPEND _des_spv_libs "${_f}")
+            endif()
+        endforeach()
+    endforeach()
+    target_link_libraries(prework_check PRIVATE ps3recomp_runtime ${_des_spv_libs})
+    if(WIN32)
+        target_link_libraries(prework_check PRIVATE ws2_32 xinput ole32 bcrypt d3d12 dxgi d3dcompiler uuid dxguid)
+    else()
+        find_package(Threads REQUIRED)
+        target_link_libraries(prework_check PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)
+    endif()
+endif()

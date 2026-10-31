@@ -168,6 +168,14 @@ clock_type::time_point sHangNoticeUntil{};  // repaints stay on while it shows (
 int sReportCountdown = 0;     // "Report an issue": frames until the game's picture is taken (report.cpp)
 bool sInitFailed = false;
 bool sOpenPending = false;     // DES_UI_OPEN, until the documents exist
+#if defined(PS3RECOMP_RSX_HAL)
+// The menus on the renderer's own GPU device (rsx_out.h's overlay v2, render_gpu.cpp's create_core): on the new
+// path's vulkan route always, on hal-d3d12 with DES_UI_RENDER=gpu (else today's D3D12 renderer on its native objects,
+// as on d3d12). Picked in des_ui_privacy_wait.
+bool sOnCore = false;
+ui::gpu::CoreFrame sCore;  // frame_gpu's frame, for the renderer (begin_frame's and read_back's back_buffer)
+bool on_core();
+#endif
 std::atomic<unsigned> sChordMask{kL3 | kR3};  // the menu chord, refreshed while the UI is awake
 
 // DES_UI_SHOT=path[,frame][;path[,frame]...]: write the back buffer after the UI draws, at that presented frame.
@@ -560,7 +568,20 @@ void push_documents() {
 bool ensure_init(int width, int height) {
     if (ui::host::is_initialized()) return true;
     if (sInitFailed) return false;
-    if (!ui::host::init(rsx_d3d12_device(), rsx_d3d12_queue(), rsx_d3d12_hwnd(), width, height) || !ui::initialize()) {
+    bool started = false;
+#if defined(PS3RECOMP_RSX_HAL)
+    sOnCore = sOnCore && on_core();  // (a route that fell back to d3d12 since: today's renderer's objects)
+    if (sOnCore) {
+        const auto make = [](ui::ImageSource images) {
+            std::unique_ptr<ui::Renderer> r = ui::gpu::create_core(rsx_out_gpu_device(), std::move(images));
+            if (r) std::fprintf(stderr, "[ui] the menus draw on the renderer's own GPU device (%s)\n", rsx_out_renderer());
+            return r;
+        };
+        started = ui::host::init(make, rsx_d3d12_hwnd(), width, height);
+    } else
+#endif
+        started = ui::host::init(rsx_d3d12_device(), rsx_d3d12_queue(), rsx_d3d12_hwnd(), width, height);
+    if (!started || !ui::initialize()) {
         std::fprintf(stderr, "[ui] the UI could not start; it stays off for this run\n");
         sInitFailed = true;
         return false;
@@ -1040,6 +1061,31 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     }
 }
 
+#if defined(PS3RECOMP_RSX_HAL)
+gpu_cmd* core_flush(void*) { return rsx_out_overlay_gpu_flush(); }
+
+// The frame on the renderer's own device (overlay v2): frame's work, with the recorder and the window's image the
+// core gives (sCore), for this call only.
+void frame_gpu(void* user, gpu_cmd* cmd, uint32_t target, uint32_t format, unsigned index, unsigned width,
+               unsigned height) {
+    sCore.cmd = cmd;
+    sCore.target = target;
+    sCore.format = format;
+    sCore.width = int(width);
+    sCore.height = int(height);
+    sCore.serial++;
+    sCore.flush = core_flush;
+    frame(user, &sCore, index, width, height);
+    sCore.cmd = nullptr;  // (the core's again: it submits it)
+}
+
+bool on_core() {
+    const char* route = rsx_out_renderer();
+    const char* v = std::getenv("DES_UI_RENDER");
+    return !std::strcmp(route, "vulkan") || (!std::strcmp(route, "hal-d3d12") && v && ui::same_name(v, "gpu"));
+}
+#endif
+
 int vk_from_name(const std::string& name) {
     static const struct {
         const char* name;
@@ -1243,6 +1289,13 @@ extern "C" void des_ui_early_init(void) {
 
     static const rsx_d3d12_overlay kOverlay = {nullptr, wndproc, frame, [](void*) { ui::host::release_buffers(); }};
     rsx_d3d12_set_overlay(&kOverlay);
+#if defined(PS3RECOMP_RSX_HAL)
+    sOnCore = on_core();
+    if (sOnCore) {
+        static const rsx_out_overlay_gpu kOverlayGpu = {nullptr, frame_gpu};
+        rsx_out_set_overlay_gpu(&kOverlayGpu);
+    }
+#endif
     static const CellOskDialogHost kOsk = {osk_open, osk_close};
     cellOskDialog_set_host(&kOsk);
     if (sSetupOnly) return;  // (no game: no trophies, and no frames to watch)

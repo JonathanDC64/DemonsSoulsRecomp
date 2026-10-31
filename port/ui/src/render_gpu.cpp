@@ -10,6 +10,12 @@
 // buffer. A frame's work is one recording, submitted ahead of the Present. Up to three frames are in flight, each on
 // its own recorder slot with its own ring for constants and quads; what RmlUi lets go of is freed once the GPU is past
 // the frames that used it.
+//
+// create_core (overlay v2, rsx_out.h): on the renderer's own device, D3D12 or Vulkan. The core hands in its recorder
+// and the frame's swap image each frame (a CoreFrame as the back buffer), and ends and submits the recording after the
+// frame; a read back runs the recording through the core's flush. Fences are gpu_signal's, taken a frame later. Images
+// made with no recorder of the core's wait for the next one (the deferred uploads). On Vulkan the shaders go through
+// the compile service's spv target, with the vertex inputs at the locations of their order (vk_inputs).
 #if defined(PS3RECOMP_RSX_HAL)
 
 #include "renderer.hpp"
@@ -52,7 +58,8 @@ constexpr int kMinClass = 8, kMaxClass = 22;   // 256 bytes to 4 MB; larger ones
 constexpr uint64_t kPlacementAlign = 512;      // a texture upload's (D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT)
 constexpr uint32_t kPitchAlign = 256;          // a read back's rows (D3D12_TEXTURE_DATA_PITCH_ALIGNMENT)
 constexpr gpu_format kColorFormat = GPU_FORMAT_R8G8B8A8_UNORM;
-constexpr gpu_format kStencilFormat = GPU_FORMAT_D24_UNORM_S8_UINT;
+constexpr gpu_format kStencilFormat = GPU_FORMAT_D24_UNORM_S8_UINT;  // (D32S8 on a device without it: Vulkan on AMD)
+constexpr gpu_format kStencilFormat32 = GPU_FORMAT_D32_FLOAT_S8X24_UINT;
 constexpr uint32_t kLayerSamples = 2;          // RmlUi's NUM_MSAA_SAMPLES
 constexpr int kMaxStops = 16;
 // Upload memory: vertices, indices, constants and texture uploads.
@@ -467,8 +474,9 @@ gpu_view_desc view_of(gpu_texture t, uint8_t kind, uint32_t samples) {
 
 class RendererImpl final : public Renderer, public Rml::RenderInterface {
 public:
-    RendererImpl(gpu_device* device, bool own, unsigned first_slot, BackBuffers back_buffers, ImageSource images)
-        : mDev(device), mOwn(own), mFirstSlot(first_slot), mBackBuffers(std::move(back_buffers)),
+    RendererImpl(gpu_device* device, bool own, unsigned first_slot, BackBuffers back_buffers, ImageSource images,
+                 bool core = false)
+        : mDev(device), mOwn(own), mCore(core), mFirstSlot(first_slot), mBackBuffers(std::move(back_buffers)),
           mImages(std::move(images)) {}
     ~RendererImpl() override;
     bool init();
@@ -544,12 +552,14 @@ private:
 
     // Recording and the GPU's progress
     bool open();
+    bool begin_recording(gpu_cmd* c);
     void submit();
     void finish();
     void wait(gpu_fence value);
     void reclaim(bool all);
     // Freed once the GPU is past the next submission (render_d3d12's mFenceNext): it takes the fence then.
     void retire(std::function<void()> fn) { mPending.push_back(std::move(fn)); }
+    void settle();
 
     // Drawing
     void transition(gpu_texture t, gpu_state& state, gpu_state to);
@@ -575,6 +585,7 @@ private:
 
     gpu_device* const mDev;
     const bool mOwn;              // the device is this renderer's (create_d3d12): destroyed with it
+    const bool mCore;             // the core's recorders (create_core): CoreFrame's, which the core submits
     const unsigned mFirstSlot;    // the first of its kFrames recorder slots
     BackBuffers mBackBuffers;     // empty: back buffers are D3D12 resources, taken in (gpu_d3d12_texture_on)
     ImageSource mImages;
@@ -586,6 +597,19 @@ private:
     bool mOpen = false;
     std::deque<Retired> mRetired;
     std::vector<std::function<void()>> mPending;  // retired since the last submission
+    // create_core: the caller's CoreFrame, and a recording handed back to the core (end_frame) that has no fence yet:
+    // the core submits it after the frame (mHandedSerial's), and settle takes a fence past it in a later one.
+    CoreFrame* mCF = nullptr;
+    bool mHanded = false;
+    uint64_t mHandedSerial = 0;
+    // create_core: images made with no recorder of the core's (RmlUi's update before the frame, or outside any): their
+    // pixels already in their upload blocks, the copies recorded first thing in the next recording.
+    struct Deferred {
+        Texture* texture;
+        Block block;
+        std::function<void()> record;
+    };
+    std::vector<Deferred> mDeferred;
 
     gpu_layout mLayout{};
     gpu_shader mVs[3] = {};       // main, quad, model
@@ -603,6 +627,7 @@ private:
     size_t mPageUsed = kPageSize;
 
     uint32_t mSamples = 1;
+    gpu_format mStencilFormat = kStencilFormat;
     int mWidth = 0, mHeight = 0;
     void* mFrameBuffer = nullptr;  // the frame's back buffer and its index, from begin_frame to end_frame
     unsigned mFrameBufferIndex = 0;
@@ -636,6 +661,29 @@ private:
 };
 
 // ---- Set-up ----
+
+// The text for Vulkan's spv target: a vertex input's location there is its attribute's number (gpu.h), so the members
+// of the vertex shaders' input structs take the semantics ATTR0, ATTR1, ... in order, which the compile service's E1
+// places at locations 0, 1, ... as the game's (by their own names, POSITION and NORMAL would have no place, and COLOR
+// and TEXCOORD the varyings'). The varyings keep their names, and E1's places, the same in both stages.
+std::string vk_inputs(const char* source) {
+    std::string s = source;
+    for (const char* head : {"struct VS_IN {", "struct MODEL_IN {"}) {
+        size_t at = s.find(head);
+        if (at == std::string::npos) continue;
+        size_t end = s.find("};", at);
+        for (int k = 0;; k++) {
+            const size_t colon = s.find(" : ", at);
+            const size_t semi = colon == std::string::npos ? colon : s.find(';', colon);
+            if (semi == std::string::npos || semi > end) break;
+            const std::string attr = "ATTR" + std::to_string(k);
+            s.replace(colon + 3, semi - colon - 3, attr);
+            end = s.find("};", at);
+            at = colon + 3 + attr.size() + 1;
+        }
+    }
+    return s;
+}
 
 bool RendererImpl::init() {
     if (!mDev) return false;
@@ -689,7 +737,9 @@ bool RendererImpl::init() {
     const auto compile = [&](const char* source, gpu_sc_stage stage, uint32_t kind, const char* name) -> gpu_shader {
         gpu_sc_blob blob{};
         char log[2048];
-        const int r = gpu_sc_compile_layout(spv ? GPU_SC_SPV : GPU_SC_DXBC, stage, source, std::strlen(source), name,
+        const std::string text = spv ? vk_inputs(source) : std::string();
+        const char* const src = spv ? text.c_str() : source;
+        const int r = gpu_sc_compile_layout(spv ? GPU_SC_SPV : GPU_SC_DXBC, stage, src, std::strlen(src), name,
                                             nullptr, &ld, GPU_SC_NO_CACHE, &blob, log, sizeof log);
         if (r != GPU_SC_OK) {
             std::fprintf(stderr, "[ui] the menu's %s shader did not compile (%d)%s%s\n", name, r, *log ? ": " : "", log);
@@ -714,9 +764,10 @@ bool RendererImpl::init() {
         !GPU_VALID(mPs[kPassthrough]))
         return false;
 
+    if (!(gpu_format_support(mDev, kStencilFormat, 1) & GPU_FMT_DS)) mStencilFormat = kStencilFormat32;
     // RmlUi's two samples to a pixel (smooth edges for rounded and turned shapes), if the device has them.
     const bool msaa = (gpu_format_support(mDev, kColorFormat, kLayerSamples) & GPU_FMT_MSAA) &&
-                      (gpu_format_support(mDev, kStencilFormat, kLayerSamples) & GPU_FMT_MSAA);
+                      (gpu_format_support(mDev, mStencilFormat, kLayerSamples) & GPU_FMT_MSAA);
     mSamples = msaa ? kLayerSamples : 1;
     return true;
 }
@@ -1033,7 +1084,7 @@ gpu_pipeline RendererImpl::pipeline(Program p, Blend b, Stencil s, const Target&
     d.topology_type = GPU_TOPOLOGY_TYPE_TRIANGLE;
     d.nrt = 1;
     d.rt_format[0] = t.format;
-    d.ds_format = t.layer ? kStencilFormat : GPU_FORMAT_UNKNOWN;
+    d.ds_format = t.layer ? mStencilFormat : GPU_FORMAT_UNKNOWN;
     d.samples = t.samples;
     const gpu_pipeline pso = gpu_pipeline_create(mDev, &d, 0, nullptr);
     if (!pso.v) std::fprintf(stderr, "[ui] the menu's %s pipeline failed\n", kProgramName[p]);
@@ -1045,18 +1096,36 @@ gpu_pipeline RendererImpl::pipeline(Program p, Blend b, Stencil s, const Target&
 
 bool RendererImpl::open() {
     if (mOpen) return true;
+    gpu_cmd* c = nullptr;
+    if (mCore) {
+        if (!mCF || !mCF->cmd) return false;  // (outside the core's frame: no recorder)
+        if (mHanded && mHandedSerial == mCF->serial) {
+            // More of this frame's recording, still the core's to submit (a read back after end_frame): the same
+            // recorder and ring, the state set again.
+            mHanded = false;
+            return begin_recording(mCF->cmd);
+        }
+        settle();
+        c = mCF->cmd;
+    }
     const int next = (mFrameIndex + 1) % kFrames;
     Frame& f = mFrame[next];
     wait(f.fence);
     reclaim(false);
-    gpu_cmd* const c = gpu_cmd_begin(mDev, mFirstSlot + unsigned(next));
+    if (!mCore) c = gpu_cmd_begin(mDev, mFirstSlot + unsigned(next));
     if (!c) {
         std::fprintf(stderr, "[ui] could not start the menu's commands\n");
         return false;
     }
-    mCmd = c;
     mFrameIndex = next;
     f.used = 0;
+    return begin_recording(c);
+}
+
+// The recording's state, as each frame starts it.
+bool RendererImpl::begin_recording(gpu_cmd* c) {
+    Frame& f = mFrame[mFrameIndex];
+    mCmd = c;
     mOpen = true;
     gpu_cmd_set_table_pools(c, mPool, gpu_table_pool{});
     gpu_cmd_set_layout(c, mLayout);
@@ -1070,6 +1139,9 @@ bool RendererImpl::open() {
     mPso = {};
     mRefSet = kNone;
     mFactorSet = -1.f;
+    std::vector<Deferred> deferred;
+    deferred.swap(mDeferred);
+    for (Deferred& d : deferred) d.record();
     return true;
 }
 
@@ -1077,6 +1149,12 @@ void RendererImpl::submit() {
     if (!mOpen) return;
     mOpen = false;
     mBound = nullptr;
+    if (mCore) {  // (the core ends and submits it after frame_gpu; settle takes its fence)
+        mHanded = true;
+        mHandedSerial = mCF->serial;
+        mCmd = nullptr;
+        return;
+    }
     gpu_cmd_end(mDev, mCmd);
     gpu_submit_desc how;
     std::memset(&how, 0, sizeof how);
@@ -1091,8 +1169,26 @@ void RendererImpl::submit() {
 
 void RendererImpl::finish() {
     submit();
+    // create_core: a recording still in the core's recorder this frame is run now (the core's flush, which opens
+    // the recorder again), so the fence settle takes is past it.
+    if (mCore && mHanded) {
+        if (mCF && mCF->cmd && mHandedSerial == mCF->serial) mCF->cmd = mCF->flush ? mCF->flush(mCF->ctx) : nullptr;
+        settle();
+    }
     wait(mLastFence);
     reclaim(false);
+}
+
+// create_core: the recording handed back last has gone to the GPU (the core submitted it once frame_gpu returned,
+// or flushed it): a fence past it for its frame and what was retired with it.
+void RendererImpl::settle() {
+    if (!mHanded) return;
+    mHanded = false;
+    const gpu_fence f = gpu_signal(mDev);
+    mFrame[mFrameIndex].fence = f;
+    mLastFence = f;
+    for (auto& fn : mPending) mRetired.push_back({f, std::move(fn)});
+    mPending.clear();
 }
 
 // Bounded waits (a lost device's fence reads past every value), until the GPU is there or the device is lost.
@@ -1258,6 +1354,7 @@ void RendererImpl::resolve(Target& from, Target& to) {
 // Always a frame: if the recording or the stencil buffer could not be made, the drawing calls and end_frame skip
 // their work.
 bool RendererImpl::begin_frame(void* back_buffer, unsigned index, int width, int height) {
+    if (mCore) mCF = static_cast<CoreFrame*>(back_buffer);
     mFrameBuffer = back_buffer;
     mFrameBufferIndex = index;
     width = std::max(width, 1);
@@ -1272,8 +1369,8 @@ bool RendererImpl::begin_frame(void* back_buffer, unsigned index, int width, int
     mStencilRef = 0;
     mLayerCount = 0;
     if (!GPU_VALID(mStencil)) {
-        gpu_texture_desc d = texture_desc(width, height, 1, kStencilFormat, mSamples, GPU_USE_DS, GPU_STATE_DEPTH_WRITE);
-        d.clear_format = kStencilFormat;
+        gpu_texture_desc d = texture_desc(width, height, 1, mStencilFormat, mSamples, GPU_USE_DS, GPU_STATE_DEPTH_WRITE);
+        d.clear_format = mStencilFormat;
         d.clear_depth = 1.f;
         mStencil = make_texture(d);
         if (!GPU_VALID(mStencil)) return true;
@@ -1336,6 +1433,7 @@ unsigned char RendererImpl::hdr_to_byte(const uint8_t* half, bool alpha) const {
 
 bool RendererImpl::read_back(void* back_buffer, unsigned index, int width, int height, std::vector<unsigned char>& rgba) {
     Target src;
+    if (mCore && back_buffer) mCF = static_cast<CoreFrame*>(back_buffer);
     if (!back_buffer || width <= 0 || height <= 0 || !open() || !this->back_buffer(back_buffer, index, src)) return false;
     width = std::min(width, src.w);
     height = std::min(height, src.h);
@@ -1436,7 +1534,9 @@ void RendererImpl::ReleaseGeometry(Rml::CompiledGeometryHandle geometry) {
 // A texture from RGBA (premultiplied) with its mip levels, or without pixels, for SaveLayerAsTexture (one level, in
 // the copy destination state).
 Texture* RendererImpl::make_image(const uint8_t* rgba, int w, int h) {
-    if (w <= 0 || h <= 0 || w > 16384 || h > 16384 || !open()) return nullptr;
+    if (w <= 0 || h <= 0 || w > 16384 || h > 16384) return nullptr;
+    const bool recording = open();
+    if (!recording && (!mCore || !rgba)) return nullptr;  // (create_core: the upload waits for the next recording)
     uint32_t levels = 1;
     if (rgba)
         while ((w >> levels) || (h >> levels)) levels++;
@@ -1463,6 +1563,7 @@ Texture* RendererImpl::make_image(const uint8_t* rgba, int w, int h) {
     std::vector<uint64_t> row_bytes(levels);
     const uint64_t total = gpu_texture_footprints(mDev, &desc, 0, levels, 0, fp.data(), rows.data(), row_bytes.data());
     const Block b = alloc_block(std::max<size_t>(size_t(total), kPlacementAlign));
+    std::vector<gpu_footprint> from;
     if (GPU_VALID(b.buffer)) {
         // Level 0 as given, each next level the 2x2 average of the one before (premultiplied, so a plain average).
         std::vector<uint8_t> level(rgba, rgba + size_t(w) * size_t(h) * 4), next;
@@ -1471,9 +1572,8 @@ Texture* RendererImpl::make_image(const uint8_t* rgba, int w, int h) {
             for (int y = 0; y < lh; y++)
                 std::memcpy(b.cpu + fp[m].offset + size_t(fp[m].row_pitch) * size_t(y),
                             level.data() + size_t(lw) * 4 * size_t(y), size_t(lw) * 4);
-            gpu_footprint from = fp[m];
-            from.offset += b.offset;
-            gpu_cmd_copy_buf_to_tex(mCmd, tex, m, 0, 0, 0, b.buffer, &from);
+            from.push_back(fp[m]);
+            from.back().offset += b.offset;
             if (m + 1 == levels) break;
             const int nw = std::max(1, lw / 2), nh = std::max(1, lh / 2);
             next.resize(size_t(nw) * size_t(nh) * 4);
@@ -1492,9 +1592,15 @@ Texture* RendererImpl::make_image(const uint8_t* rgba, int w, int h) {
             lw = nw;
             lh = nh;
         }
-        retire([this, b] { free_block(b); });
     }
-    transition(t->tex, t->state, GPU_STATE_PIXEL_SHADER_RESOURCE);
+    auto record = [this, t, b, from = std::move(from)] {
+        for (uint32_t m = 0; m < uint32_t(from.size()); m++)
+            gpu_cmd_copy_buf_to_tex(mCmd, t->tex, m, 0, 0, 0, b.buffer, &from[m]);
+        if (GPU_VALID(b.buffer)) retire([this, b] { free_block(b); });
+        transition(t->tex, t->state, GPU_STATE_PIXEL_SHADER_RESOURCE);
+    };
+    if (recording) record();
+    else mDeferred.push_back({t, b, std::move(record)});
     return t;
 }
 
@@ -1529,6 +1635,13 @@ Rml::TextureHandle RendererImpl::GenerateTexture(Rml::Span<const Rml::byte> sour
 void RendererImpl::ReleaseTexture(Rml::TextureHandle texture) {
     auto* t = reinterpret_cast<Texture*>(texture);
     if (!t) return;
+    for (auto d = mDeferred.begin(); d != mDeferred.end(); ++d)
+        if (d->texture == t) {  // (its upload never recorded)
+            const Block b = d->block;
+            if (GPU_VALID(b.buffer)) retire([this, b] { free_block(b); });
+            mDeferred.erase(d);
+            break;
+        }
     const gpu_texture tex = t->tex;
     const uint32_t srv = t->srv;
     delete t;
@@ -2335,6 +2448,18 @@ bool RendererImpl::draw_model(const char* name, const ModelView& view) {
 std::unique_ptr<Renderer> create(gpu_device* device, unsigned first_slot, BackBuffers back_buffers, ImageSource images) {
     if (!device || !back_buffers) return nullptr;
     auto r = std::make_unique<RendererImpl>(device, false, first_slot, std::move(back_buffers), std::move(images));
+    if (!r->init()) return nullptr;
+    return r;
+}
+
+// (The back buffers by their CoreFrame: the core's swap chain images, made views of once by the device.)
+std::unique_ptr<Renderer> create_core(gpu_device* device, ImageSource images) {
+    if (!device) return nullptr;
+    const auto frame_image = [](void* back_buffer, unsigned) -> BackBuffer {
+        const auto* cf = static_cast<const CoreFrame*>(back_buffer);
+        return {cf->target, cf->width, cf->height, cf->format};
+    };
+    auto r = std::make_unique<RendererImpl>(device, false, 0, frame_image, std::move(images), true);
     if (!r->init()) return nullptr;
     return r;
 }

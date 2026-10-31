@@ -37,12 +37,14 @@ des_session_locked() {
 #           backend cannot make a swap chain for a window that starts
 #           minimized yet.
 #   hide, normal   always that.
-# The route is the argument, else RSX_BACKEND. play.sh does not use this: a
-# play session's window opens as usual. The A/B tools ask for normal (they
-# save the window with PrintWindow, which a minimized window does not draw).
+# The route is the argument, else RSX_BACKEND. A play session (play.sh,
+# DES_KIND=play) always opens as usual, whatever DES_WINDOW says: it goes
+# through desrun.sh too. The A/B tools ask for normal (they save the window
+# with PrintWindow, which a minimized window does not draw).
 des_window_launch() {
   DES_LAUNCH=()
   [ "${OS:-}" = Windows_NT ] || return 0
+  [ "${DES_KIND:-}" = play ] && return 0
   local m=${DES_WINDOW:-auto} route=${1:-${RSX_BACKEND:-d3d12}}
   if [ "$m" = auto ]; then
     if des_session_locked; then m=normal; else m=min; fi

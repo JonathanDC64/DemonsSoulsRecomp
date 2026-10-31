@@ -79,3 +79,30 @@ std::unique_ptr<Renderer> create(void* device, void* queue, ImageSource images);
 #endif
 
 }  // namespace ui
+
+#if defined(PS3RECOMP_RSX_HAL)
+#include <cstdint>
+
+struct gpu_device;
+
+// The menus on ps3recomp's GPU layer (render_gpu.cpp, DES_UI_RENDER=gpu): render_d3d12.cpp's drawing through gpu.h,
+// on any of its backends. Built with PS3RECOMP_RSX_HAL only.
+namespace ui::gpu {
+// A back buffer as one of the device's textures: its handle (gpu_texture's id; 0 for none), size and format (gpu.h's
+// numbers). In GPU_STATE_PRESENT on entry to begin_frame and on exit from end_frame, as the D3D12 ones.
+struct BackBuffer {
+    uint32_t texture = 0;
+    int width = 0, height = 0;
+    uint32_t format = 0;
+};
+// begin_frame's back_buffer and index, as a texture.
+using BackBuffers = std::function<BackBuffer(void* back_buffer, unsigned index)>;
+
+// On a device of the caller's, recording on its slots first_slot to first_slot + 2 (gpu_cmd_begin), one submit a
+// frame. Null if the device cannot make what the renderer needs.
+std::unique_ptr<Renderer> create(gpu_device* device, unsigned first_slot, BackBuffers back_buffers, ImageSource images);
+// On the D3D12 device and queue d3d12::create takes: a device of the layer's over them (gpu_d3d12_create_on), the
+// back buffers their ID3D12Resource*s. Null off Windows.
+std::unique_ptr<Renderer> create_d3d12(void* device, void* queue, ImageSource images);
+}  // namespace ui::gpu
+#endif

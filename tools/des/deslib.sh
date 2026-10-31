@@ -28,6 +28,32 @@ des_session_locked() {
   tasklist //FI "IMAGENAME eq LogonUI.exe" //NH 2>/dev/null | grep -qi logonui
 }
 
+# des_window_launch [route]: how a test run's window opens, as DES_LAUNCH, the
+# words to put before the program (winmin.py, or none). DES_WINDOW:
+#   auto    (the default) while someone is at the PC (the session unlocked):
+#           min. While the session is locked: as usual.
+#   min     minimized, without the focus, so it never covers what they are
+#           looking at; on the vulkan route hidden instead, as the Vulkan
+#           backend cannot make a swap chain for a window that starts
+#           minimized yet.
+#   hide, normal   always that.
+# The route is the argument, else RSX_BACKEND. play.sh does not use this: a
+# play session's window opens as usual. The A/B tools ask for normal (they
+# save the window with PrintWindow, which a minimized window does not draw).
+des_window_launch() {
+  DES_LAUNCH=()
+  [ "${OS:-}" = Windows_NT ] || return 0
+  local m=${DES_WINDOW:-auto} route=${1:-${RSX_BACKEND:-d3d12}}
+  if [ "$m" = auto ]; then
+    if des_session_locked; then m=normal; else m=min; fi
+  fi
+  [ "$m" = min ] && [ "${route,,}" = vulkan ] && m=hide
+  case "$m" in
+    min)  DES_LAUNCH=(python "$(cygpath -m "$DES_ROOT/tools/des/winmin.py")") ;;
+    hide) DES_LAUNCH=(python "$(cygpath -m "$DES_ROOT/tools/des/winmin.py")" --hide) ;;
+  esac
+}
+
 des_env_defaults() {
   export PS3_VFS_ROOT="${PS3_VFS_ROOT:-$DES_ROOT/work/disc}"
   # Known-good boot config (docs/25): the LFQueue + SpursQueue families on

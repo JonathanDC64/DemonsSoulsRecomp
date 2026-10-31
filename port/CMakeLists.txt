@@ -859,7 +859,9 @@ endif()
 message(STATUS "des_boot: renderer calls through the route switch (DES_RSX_HAL=${DES_RSX_HAL}): ${_des_hal}")
 
 # ui_render_compare (port/ui/tests): render_gpu.cpp's proof, the menus drawn by it and by render_d3d12.cpp on one
-# D3D12 device and their pictures compared byte for byte. With the route switch, on Windows; built only when asked for.
+# D3D12 device and their pictures compared byte for byte; with a runtime built with the Vulkan backend
+# (PS3RECOMP_RSX_HAL_VULKAN in its CMakeCache.txt), drawn on a Vulkan device too (URC_VULKAN). With the route switch, on
+# Windows; built only when asked for.
 if(_des_hal AND WIN32 AND TARGET des_ui)
     add_executable(ui_render_compare EXCLUDE_FROM_ALL
         ui/tests/ui_render_compare.cpp
@@ -868,6 +870,13 @@ if(_des_hal AND WIN32 AND TARGET des_ui)
         "${PS3RECOMP_DIR}/runtime/host/host_stubs.c")   # (what the runtime's modules take from the PPU loader)
     target_include_directories(ui_render_compare PRIVATE ui/src ui/include "${PS3RECOMP_DIR}/libs/video/gpu")
     target_compile_definitions(ui_render_compare PRIVATE PS3RECOMP_RSX_HAL=1 NOMINMAX _CRT_SECURE_NO_WARNINGS)
+    set(_urc_vk "")
+    if(EXISTS "${PS3RECOMP_BUILD_DIR}/CMakeCache.txt")
+        file(STRINGS "${PS3RECOMP_BUILD_DIR}/CMakeCache.txt" _urc_vk REGEX "^PS3RECOMP_RSX_HAL_VULKAN:[A-Z]+=(ON|TRUE|1)$")
+    endif()
+    if(_urc_vk)
+        target_compile_definitions(ui_render_compare PRIVATE URC_VULKAN=1)
+    endif()
     if(MSVC)
         target_compile_options(ui_render_compare PRIVATE /O2 /EHsc /W3)
     endif()

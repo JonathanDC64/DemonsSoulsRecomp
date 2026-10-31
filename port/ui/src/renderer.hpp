@@ -84,6 +84,7 @@ std::unique_ptr<Renderer> create(void* device, void* queue, ImageSource images);
 #include <cstdint>
 
 struct gpu_device;
+struct gpu_cmd;
 
 // The menus on ps3recomp's GPU layer (render_gpu.cpp, DES_UI_RENDER=gpu): render_d3d12.cpp's drawing through gpu.h,
 // on any of its backends. Built with PS3RECOMP_RSX_HAL only.
@@ -104,5 +105,22 @@ std::unique_ptr<Renderer> create(gpu_device* device, unsigned first_slot, BackBu
 // On the D3D12 device and queue d3d12::create takes: a device of the layer's over them (gpu_d3d12_create_on), the
 // back buffers their ID3D12Resource*s. Null off Windows.
 std::unique_ptr<Renderer> create_d3d12(void* device, void* queue, ImageSource images);
+
+// A frame on the renderer's own device of the runtime's new path (rsx_out.h's overlay v2): what begin_frame and
+// read_back take as back_buffer from a renderer of create_core. The caller keeps one, fills it for each frame_gpu
+// call (a new serial each time) and sets cmd to null once frame_gpu returns, the recording the core's again.
+struct CoreFrame {
+    gpu_cmd* cmd = nullptr;           // the open recorder the core gave; null outside a frame
+    uint32_t target = 0, format = 0;  // the window's image (gpu_texture's id), GPU_STATE_PRESENT, and its gpu_format
+    int width = 0, height = 0;
+    uint64_t serial = 0;
+    // Has the core submit the recording so far and wait for it, and gives the recorder open again (null if it could
+    // not): rsx_out_overlay_gpu_flush, for a read back.
+    gpu_cmd* (*flush)(void* ctx) = nullptr;
+    void* ctx = nullptr;
+};
+// On the core's device: recording on the recorders CoreFrame hands it, the core submitting them (no slots of its own).
+// Null if the device cannot make what the renderer needs.
+std::unique_ptr<Renderer> create_core(gpu_device* device, ImageSource images);
 }  // namespace ui::gpu
 #endif

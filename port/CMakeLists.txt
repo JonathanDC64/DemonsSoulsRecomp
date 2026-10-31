@@ -51,6 +51,24 @@ else()
     set(PS3RECOMP_RUNTIME_LIB "${PS3RECOMP_BUILD_DIR}/libps3recomp_runtime.a")
 endif()
 set_target_properties(ps3recomp_runtime PROPERTIES IMPORTED_LOCATION "${PS3RECOMP_RUNTIME_LIB}")
+# The static libraries built with a runtime that it links, glslang and SPIRV-Tools
+# with PS3RECOMP_RSX_HAL_SPV: ps3recomp's configure lists them in
+# ps3recomp_runtime_deps.cmake beside the library, and whatever links the
+# runtime links them after it. A runtime from before that file has none.
+function(des_runtime_deps target lib)
+    get_filename_component(_dir "${lib}" DIRECTORY)
+    set(_file "${_dir}/ps3recomp_runtime_deps.cmake")
+    if(NOT EXISTS "${_file}")
+        return()
+    endif()
+    set(PS3RECOMP_RUNTIME_DEPS "")
+    include("${_file}")
+    set_property(TARGET ${target} APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${PS3RECOMP_RUNTIME_DEPS})
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_file}")
+    list(LENGTH PS3RECOMP_RUNTIME_DEPS _n)
+    message(STATUS "des_boot: ${target} brings ${_n} static libraries (${_file})")
+endfunction()
+des_runtime_deps(ps3recomp_runtime "${PS3RECOMP_RUNTIME_LIB}")
 
 # --- Lifted game code (generated PPU chunks) -------------------------------
 file(GLOB RECOMP_CHUNKS CONFIGURE_DEPENDS "${RECOMP_DIR}/ppu_recomp_*.cpp")
@@ -536,6 +554,7 @@ if(DES_SPLIT)
         "the ps3recomp runtime library built with PS3RECOMP_GAME_SPLIT=ON")
     add_library(ps3recomp_runtime_split STATIC IMPORTED GLOBAL)
     set_target_properties(ps3recomp_runtime_split PROPERTIES IMPORTED_LOCATION "${PS3RECOMP_SPLIT_LIB}")
+    des_runtime_deps(ps3recomp_runtime_split "${PS3RECOMP_SPLIT_LIB}")
     set(DES_SPLIT_GEN "${CMAKE_CURRENT_BINARY_DIR}/split_gen")
 
     # A generated file, written only when its text changes (no rebuild otherwise).

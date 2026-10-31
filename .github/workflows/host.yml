@@ -632,141 +632,56 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # The Linux host with both routes (docs/120): the runtime built as the Windows HAL builds are, with the portable
-  # renderer (PS3RECOMP_RSX_HAL; its spv target and Vulkan backend are on by default) beside today's renderer on
-  # vkd3d, so the route switch has RSX_BACKEND=d3d12 (the default, today's renderer), null and vulkan, with the
-  # Vulkan start's fallback to d3d12. Not what players get: host-linux above stays today's build, as the Windows
-  # host does. With host-linux's toolchain, SDL2, vkd3d and FFmpeg (its caches, saved by then), its folder with this
-  # des_host in it must pass the same checks, and des_host must have the vulkan route linked in. Not on a release.
-  host-linux-routes:
-    name: des_host (Linux, both routes, clang 22.1.8)
-    needs: host-linux
-    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    env:
-      # host-linux's (its caches' keys)
-      LLVM_SHA256: df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384
-      LLVM_DIR: ${{ github.workspace }}/../llvm
-      SDL2_VERSION: 2.32.10
-      VKD3D_VERSION: "2.1"
-      VULKAN_HEADERS_VERSION: 1.3.275
-      DEPS_DIR: ${{ github.workspace }}/../deps
-      FFMPEG_DIR: ${{ github.workspace }}/../ffmpeg
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: '3.12'
-
-      - name: Read the ps3recomp pin
-        id: pin
-        run: python .github/scripts/read_pin.py >> "$GITHUB_OUTPUT"
-
-      - name: Check out the pinned ps3recomp
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          repository: ${{ steps.pin.outputs.repo }}
-          ref: ${{ steps.pin.outputs.commit }}
-          path: ps3recomp
-          persist-credentials: false
-
-      - name: Install build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build pkg-config
-
-      - name: Restore SDL2 and vkd3d
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ${{ env.DEPS_DIR }}
-          key: host-linux-deps-sdl2-${{ env.SDL2_VERSION }}-vkd3d-${{ env.VKD3D_VERSION }}-vulkan-${{ env.VULKAN_HEADERS_VERSION }}-ubuntu-22.04-v2
-          fail-on-cache-miss: true
-
-      - name: Restore FFmpeg
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ${{ env.FFMPEG_DIR }}
-          key: host-linux-ffmpeg-${{ env.FFMPEG_SHA256 }}-ubuntu-22.04-v1
-          fail-on-cache-miss: true
-
-      - name: Restore LLVM
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ${{ env.LLVM_DIR }}
-          key: host-linux-llvm-${{ env.LLVM_SHA256 }}-v1
-          fail-on-cache-miss: true
-
-      - name: The HLE NID table, from ps3recomp alone
-        run: |
-          lift="$RUNNER_TEMP/host_lift"
-          mkdir -p "$lift"
-          python ps3recomp/tools/gen_hle_nids.py --all --out "$lift/hle_nid_table.cpp"
-          echo "HOST_LIFT=$lift" >> "$GITHUB_ENV"
-
-      - name: Toolchain flags
-        run: |
-          {
-            echo "CC=$LLVM_DIR/bin/clang"
-            echo "CXX=$LLVM_DIR/bin/clang++"
-            echo "CFLAGS=-I$DEPS_DIR/include"
-            echo "CXXFLAGS=-stdlib=libc++ -I$DEPS_DIR/include"
-            echo "LDFLAGS=-fuse-ld=lld -stdlib=libc++ -static-libstdc++ -rtlib=libgcc -unwindlib=libgcc -static-libgcc -Wl,-Bstatic -lc++abi -Wl,-Bdynamic"
-            echo "PKG_CONFIG_PATH=$DEPS_DIR/lib/pkgconfig"
-            echo "CMAKE_PREFIX_PATH=$DEPS_DIR"
-          } >> "$GITHUB_ENV"
-
-      # host-linux's options and PS3RECOMP_RSX_HAL. The configure must name both renderers.
-      - name: Configure the runtime library
+      # The Linux host with both routes (docs/120), after the artifact above, which stays today's build (as the
+      # Windows host, neither has the portable renderer): a second runtime build with host-linux's options and
+      # PS3RECOMP_RSX_HAL (its spv target and Vulkan backend on by default), as the Windows HAL builds are, and a
+      # second des_host on it. ps3recomp's route switch then has RSX_BACKEND=d3d12 (the default, today's renderer
+      # on vkd3d), null and vulkan, with the Vulkan start's fallback to d3d12. Its folder must pass the checks
+      # above. Not on a release tag.
+      - name: Both routes, configure the runtime library
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: |
           set -o pipefail
-          cmake -S ps3recomp -B ps3recomp/build_split -G Ninja -DCMAKE_BUILD_TYPE=Release -DPS3RECOMP_BUILD_TESTS=OFF \
+          cmake -S ps3recomp -B ps3recomp/build_routes -G Ninja -DCMAKE_BUILD_TYPE=Release -DPS3RECOMP_BUILD_TESTS=OFF \
             -DPS3RECOMP_RSX_D3D12_VKD3D=ON -DPS3RECOMP_RSX_HAL=ON -DPS3RECOMP_GAME_SPLIT=ON \
-            -DPS3RECOMP_FFMPEG_RUNTIME=ON "-DPS3RECOMP_FFMPEG_INCLUDE_DIR=$FFMPEG_DIR/include" | tee configure.log
-          grep -q "D3D12: *RSX backend on vkd3d" configure.log
-          grep -q "Renderer: *the GPU layer's Vulkan backend" configure.log
-          grep -q "Renderer: *the compile service's spv target" configure.log
+            -DPS3RECOMP_FFMPEG_RUNTIME=ON "-DPS3RECOMP_FFMPEG_INCLUDE_DIR=$FFMPEG_DIR/include" | tee routes_rt.log
+          grep -q "D3D12: *RSX backend on vkd3d" routes_rt.log
+          grep -q "Renderer: *the GPU layer's Vulkan backend" routes_rt.log
+          grep -q "Renderer: *the compile service's spv target" routes_rt.log
 
-      - name: Build the runtime library
-        run: cmake --build ps3recomp/build_split --target ps3recomp_runtime
+      - name: Both routes, build the runtime library
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: cmake --build ps3recomp/build_routes --target ps3recomp_runtime
 
-      # As host-linux's; DES_RSX_HAL=AUTO finds the option in the runtime's build and calls through the switch.
-      - name: Configure des_host
+      # DES_RSX_HAL=AUTO finds the option in that runtime's build: the port calls through the switch.
+      - name: Both routes, configure and build des_host
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: |
           set -o pipefail
-          cmake -S port -B build/host -G Ninja -DCMAKE_BUILD_TYPE= "-DRECOMP_DIR=$HOST_LIFT" \
+          cmake -S port -B build/host-routes -G Ninja -DCMAKE_BUILD_TYPE= "-DRECOMP_DIR=$HOST_LIFT" \
             -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON "-DCMAKE_INSTALL_RPATH=\$ORIGIN" -DDES_SPLIT=ON \
-            -DDES_SPLIT_FREESTANDING=ON -DDES_HOST_ONLY=ON -DDES_VKD3D=ON -DDES_REQUIRE_PIN=ON -DDES_DEV=OFF | tee configure.log
-          grep -q "renderer calls through the route switch (DES_RSX_HAL=AUTO): ON" configure.log
+            -DDES_SPLIT_FREESTANDING=ON -DDES_HOST_ONLY=ON -DDES_VKD3D=ON -DDES_REQUIRE_PIN=ON -DDES_DEV=OFF \
+            "-DPS3RECOMP_SPLIT_LIB=$PWD/ps3recomp/build_routes/libps3recomp_runtime.a" | tee routes_host.log
+          grep -q "renderer calls through the route switch (DES_RSX_HAL=AUTO): ON" routes_host.log
+          cmake --build build/host-routes --target des_host
 
-      - name: Build des_host
-        run: cmake --build build/host --target des_host
-
-      # The routes linked in: the switch, the core's null and vulkan tables (ps3recomp's rsx_out.c references the
-      # vulkan one on Linux only from the commit that offers it there), and the switch's line for the route.
-      - name: The routes in des_host
+      # The switch and the core's null and vulkan tables linked in (ps3recomp's rsx_out.c references the vulkan
+      # one on Linux from the commit that offers it there), and the switch's line for it.
+      - name: Both routes, the routes in des_host
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: |
-          nm build/host/des_host > syms.txt
+          nm build/host-routes/des_host > routes_syms.txt
           for s in rsx_out_backend_init rsxc_route_null rsxc_route_vk rsxc_vk_start_failed; do
-            grep -q " $s$" syms.txt || { echo "::error::des_host has no $s"; exit 1; }
-            grep " $s$" syms.txt
+            grep " $s$" routes_syms.txt || { echo "::error::des_host with both routes has no $s"; exit 1; }
           done
-          grep -c "the new path on its Vulkan backend" build/host/des_host
+          grep -c "the new path on its Vulkan backend" build/host-routes/des_host
 
-      # host-linux's folder with this des_host in its place: the same libraries beside it, nothing more needed
-      # (the Vulkan backend opens the loader at run time, as vkd3d does), no developer code.
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: des_host-linux-${{ github.sha }}
-          path: dist/host-linux
-
-      - name: What each file needs (NEEDED, GLIBC_ versions, RUNPATH)
+      # The release folder with this des_host in its place: nothing more needed (the Vulkan backend opens the
+      # loader at run time, as vkd3d does), no developer code.
+      - name: Both routes, what each file needs, not a developer build
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: |
-          cp build/host/des_host dist/host-linux/des_host
-          python tools/ci/check_host_elf.py --glibc 2.35 dist/host-linux
-
-      - name: Not a developer build
-        run: python tools/ci/check_release_no_dev.py dist/host-linux/des_host
+          cp -r dist/host-linux dist/host-linux-routes
+          cp build/host-routes/des_host dist/host-linux-routes/des_host
+          python tools/ci/check_host_elf.py --glibc 2.35 dist/host-linux-routes
+          python tools/ci/check_release_no_dev.py dist/host-linux-routes/des_host

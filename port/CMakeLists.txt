@@ -804,6 +804,12 @@ if(_des_hal)
             APPEND PROPERTY COMPILE_DEFINITIONS PS3RECOMP_RSX_HAL=1)
         set_property(SOURCE ${_des_ui_route} TARGET_DIRECTORY des_ui
             APPEND PROPERTY INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/libs/video")
+        # The menus' renderer on the runtime's GPU layer (render_gpu.cpp, which includes gpu.h) and host.cpp's choice
+        # of it (DES_UI_RENDER=gpu). Without the switch render_gpu.cpp is an empty file.
+        set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/ui/src/host.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/ui/src/render_gpu.cpp"
+            TARGET_DIRECTORY des_ui APPEND PROPERTY COMPILE_DEFINITIONS PS3RECOMP_RSX_HAL=1)
+        set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/ui/src/render_gpu.cpp" TARGET_DIRECTORY des_ui
+            APPEND PROPERTY INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/libs/video/gpu")
     endif()
 endif()
 message(STATUS "des_boot: renderer calls through the route switch (DES_RSX_HAL=${DES_RSX_HAL}): ${_des_hal}")

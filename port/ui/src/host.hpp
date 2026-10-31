@@ -71,3 +71,13 @@ bool animations_enabled();
 void add_png(const std::string& source, const void* png, size_t size);
 
 }  // namespace ui::host
+
+#if defined(PS3RECOMP_RSX_HAL)
+#include "renderer.hpp"
+
+namespace ui::host {
+// init with a renderer of the caller's making instead of the game's D3D12 one: make gets the images the renderers
+// take (RmlUi's files and add_png's). For a test, and for the renderer on the core's own GPU device.
+bool init(const std::function<std::unique_ptr<Renderer>(ImageSource images)>& make, void* hwnd, int width, int height);
+}  // namespace ui::host
+#endif

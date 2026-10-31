@@ -94,6 +94,15 @@ unsigned dpi_of_window() {
 // D3D12, or D3D11On12 with DES_UI_RENDER=d3d11; the other one if the one asked for cannot start.
 std::unique_ptr<Renderer> make_renderer(void* device, void* queue) {
     const char* v = std::getenv("DES_UI_RENDER");
+#if defined(PS3RECOMP_RSX_HAL)
+    if (v && same_name(v, "gpu")) {  // (render_gpu.cpp: the same drawing through the GPU layer)
+        if (std::unique_ptr<Renderer> r = gpu::create_d3d12(device, queue, find_png)) {
+            std::fprintf(stderr, "[ui] the menus draw through the GPU layer\n");
+            return r;
+        }
+        std::fprintf(stderr, "[ui] the menus' GPU-layer renderer could not start: trying D3D12\n");
+    }
+#endif
     const bool old = v && same_name(v, "d3d11");
     std::unique_ptr<Renderer> r = old ? d3d11::create(device, queue, find_png) : d3d12::create(device, queue, find_png);
     bool used_old = old;
@@ -478,3 +487,37 @@ void add_png(const std::string& source, const void* png, size_t size) {
 }
 
 }  // namespace ui::host
+
+#if defined(PS3RECOMP_RSX_HAL)
+namespace ui::host {
+
+// init's steps with the caller's renderer.
+bool init(const std::function<std::unique_ptr<Renderer>(ImageSource images)>& make, void* hwnd, int width, int height) {
+    if (s.initialised) return true;
+    if (!make) return false;
+    s.renderer = make(find_png);
+    if (!s.renderer) {
+        std::fprintf(stderr, "[ui] the menu's renderer could not start: the menu is unavailable\n");
+        return false;
+    }
+    sWindow = hwnd;
+    s.system = std::make_unique<System>(hwnd);
+    Rml::SetFileInterface(&s.files);
+    Rml::SetSystemInterface(s.system.get());
+    Rml::SetRenderInterface(s.renderer->rml());
+    if (!Rml::Initialise()) {
+        shutdown();
+        return false;
+    }
+    load_fonts();
+    s.rml = Rml::CreateContext("main", {std::max(width, 1), std::max(height, 1)});
+    if (!s.rml) {
+        shutdown();
+        return false;
+    }
+    s.initialised = true;
+    return true;
+}
+
+}  // namespace ui::host
+#endif

@@ -1,12 +1,21 @@
 // ui_render_compare: the proof for render_gpu.cpp, the menus' renderer on ps3recomp's GPU layer. The menus' pages are
-// drawn on one D3D12 device by today's renderer (render_d3d12.cpp, ui::d3d12::create) and by render_gpu.cpp twice: over
-// the same D3D12 objects (ui::gpu::create_d3d12, what DES_UI_RENDER=gpu runs), and on a device of the layer's own with
-// the back buffers named as its textures (ui::gpu::create); and by today's renderer once more, a control. One stream
-// of RmlUi calls feeds all four (a tee), and their pictures are compared byte for byte after every frame, on 8-bit
-// (SDR) and FP16 scRGB (HDR) back buffers; at each page's end their read_backs too. Each renderer's D3D12 command list
-// calls are counted per page as well (ui_render_compare_hooks.c): they should be the same.
+// drawn on one D3D12 device by today's renderer (render_d3d12.cpp, ui::d3d12::create) and by render_gpu.cpp three
+// times: over the same D3D12 objects (ui::gpu::create_d3d12, what DES_UI_RENDER=gpu runs on d3d12), on a device of the
+// layer's own with the back buffers named as its textures (ui::gpu::create), and on that device as the core's overlay
+// v2 drives it (ui::gpu::create_core: the recorder handed in, submitted after the frame, flushed for a read back, what
+// the hal-d3d12 and vulkan routes run); and by today's renderer once more, a control. One stream of RmlUi calls feeds
+// them all (a tee), and their pictures are compared byte for byte after every frame, on 8-bit (SDR) and FP16 scRGB
+// (HDR) back buffers; at each page's end their read_backs too. Each renderer's D3D12 command list calls are counted
+// per page as well (ui_render_compare_hooks.c): they should be the same (but gpu-core's resets and closes, the
+// core's).
+// In a build on a runtime with the Vulkan backend (URC_VULKAN), render_gpu.cpp draws the same pages a fifth time, as
+// the core's overlay on a Vulkan device (vk-core), into textures of that device: with --vk DIR, each page's last
+// picture of today's renderer and of vk-core go to DIR/d3d12 and DIR/vk (BMP, HDRP for FP16), for
+// tools/des/halimg.py --mode vk; RSX_VK_VALIDATION=1 (and the layer, VK_ADD_LAYER_PATH) checks it, and any message of
+// the validation layer fails the run.
 //
 //   ui_render_compare [--warp] [--frames N] [--bmp DIR] [--scratch DIR] [--page NAME] [--probe X Y] [--verbose]
+//                     [--vk DIR | --no-vk]
 //
 // --warp: WARP, D3D12's software adapter, instead of the default GPU. --frames: frames a page (24). --bmp: each page's
 // last picture as a BMP file there (today's renderer's, and another's where it differs). --scratch: the folder for
@@ -23,6 +32,8 @@
 #include "ui.hpp"
 
 #include "gpu.h"
+#include "gpu_shader.h"
+#include "gpu_vt_cmd.h"
 #include "ui_render_compare_hooks.h"
 
 #include <RmlUi/Core.h>
@@ -54,8 +65,13 @@ namespace {
 
 // The last is today's renderer once more, a control: where it differs from the first, the device draws the same
 // calls differently (some GPUs do, by one step at a few pixels), so a difference there is not render_gpu.cpp's.
-constexpr int kRenderers = 4, kControl = 3;
-const char* const kRendererName[kRenderers] = {"d3d12", "gpu", "gpu-dev", "d3d12-again"};
+// kRenderers draw on the D3D12 device; vk-core (kVk), when there is one, after them on its Vulkan device.
+constexpr int kRenderers = 5, kCore = 3, kControl = 4, kVk = 5;
+const char* const kRendererName[kRenderers + 1] = {"d3d12", "gpu", "gpu-dev", "gpu-core", "d3d12-again", "vk-core"};
+
+#if defined(URC_VULKAN)
+extern "C" volatile uint32_t gpu_vk_n_validation_all;  // gpu_vk.c: the validation layer's messages, every device
+#endif
 
 template <typename T>
 void release(T*& p) {
@@ -300,29 +316,104 @@ struct Targets {
     }
 };
 
+// ---- The core's side of overlay v2 (rsxc_api.inc's overlay_gpu_frame), for a create_core renderer ----
+
+// Per frame a recorder of two slots of its own (the GPU past the slot's last use first), handed to the renderer in a
+// CoreFrame, and ended and submitted once the frame is drawn; flush submits and waits, and opens the slot again. Its
+// own D3D12 calls count for no renderer (they are the core's). whole: open across the frame's ui::update and
+// host::render, as des_ui's frame_gpu has it; otherwise only from begin_frame to end_frame, so the images RmlUi makes
+// in its update come with no recorder (render_gpu.cpp's deferred uploads).
+struct CoreSide {
+    gpu_device* dev = nullptr;
+    uint32_t slot0 = 0;
+    bool whole = false;
+    ui::gpu::CoreFrame cf;
+    uint32_t target = 0, format = 0;  // the frame's image, set for each page
+    int w = 0, h = 0;
+    gpu_fence fence[2] = {};
+    int slot = 0;
+
+    void begin() {
+        const int who = g_urc_who;
+        g_urc_who = -1;
+        slot = (slot + 1) % 2;
+        wait(fence[slot]);
+        cf.cmd = gpu_cmd_begin(dev, slot0 + uint32_t(slot));
+        cf.target = target;
+        cf.format = format;
+        cf.width = w;
+        cf.height = h;
+        cf.serial++;
+        cf.flush = flush;
+        cf.ctx = this;
+        g_urc_who = who;
+    }
+    void end() {
+        const int who = g_urc_who;
+        g_urc_who = -1;
+        if (cf.cmd) fence[slot] = submit();
+        cf.cmd = nullptr;
+        g_urc_who = who;
+    }
+    gpu_fence submit() {
+        gpu_cmd_end(dev, cf.cmd);
+        gpu_submit_desc how{};
+        how.flags = GPU_SUBMIT_SIGNAL;
+        return gpu_submit(dev, &cf.cmd, 1, &how);
+    }
+    void wait(gpu_fence f) const {
+        if (f) gpu_fence_wait(dev, f, 10000);
+    }
+    static gpu_cmd* flush(void* ctx) {
+        auto* c = static_cast<CoreSide*>(ctx);
+        const int who = g_urc_who;
+        g_urc_who = -1;
+        const gpu_fence f = c->submit();
+        c->wait(f);
+        c->cf.cmd = gpu_cmd_begin(c->dev, c->slot0 + uint32_t(c->slot));
+        g_urc_who = who;
+        return c->cf.cmd;
+    }
+};
+
 // ---- One stream of RmlUi calls to every renderer ----
 
 // Each renderer's handle for one of RmlUi's (geometry, a texture, a filter, a shader).
 struct Handles {
-    uintptr_t h[kRenderers] = {};
+    uintptr_t h[kRenderers + 1] = {};
 };
 
 class Tee final : public ui::Renderer, public Rml::RenderInterface {
 public:
     std::vector<std::unique_ptr<ui::Renderer>> renderers;
-    void* targets[kRenderers] = {};       // this frame's back buffer of each
+    void* targets[kRenderers + 1] = {};   // this frame's back buffer of each
+    CoreSide* core[kRenderers + 1] = {};  // the core's side of a create_core renderer (its back buffer the CoreFrame)
     std::function<void(Tee&)> before_end;  // draws between the context's Render and end_frame (the models page)
     int mismatches = 0;                    // calls whose results differed between the renderers
 
     Rml::RenderInterface* rml() override { return this; }
     bool begin_frame(void*, unsigned index, int width, int height) override {
         bool ok = true;
-        each([&](int i, ui::Renderer& r) { ok = r.begin_frame(targets[i], index, width, height) && ok; });
+        each([&](int i, ui::Renderer& r) {
+            if (core[i] && !core[i]->whole) core[i]->begin();
+            ok = r.begin_frame(core[i] ? &core[i]->cf : targets[i], index, width, height) && ok;
+        });
         return ok;
     }
     void end_frame() override {
         if (before_end) before_end(*this);
-        each([&](int, ui::Renderer& r) { r.end_frame(); });
+        each([&](int i, ui::Renderer& r) {
+            r.end_frame();
+            if (core[i] && !core[i]->whole) core[i]->end();
+        });
+    }
+    // A renderer's read back of its picture, as the core lets one run (inside a frame of its own).
+    bool read_one(int i, int width, int height, std::vector<unsigned char>& rgba) {
+        if (!core[i]) return renderers[size_t(i)]->read_back(targets[i], 0, width, height, rgba);
+        core[i]->begin();
+        const bool ok = renderers[size_t(i)]->read_back(&core[i]->cf, 0, width, height, rgba);
+        core[i]->end();
+        return ok;
     }
     bool read_back(void*, unsigned index, int width, int height, std::vector<unsigned char>& rgba) override {
         return renderers[0]->read_back(targets[0], index, width, height, rgba);
@@ -334,7 +425,7 @@ public:
         each([&](int, ui::Renderer& r) { r.set_hdr(scale, srgb); });
     }
     bool draw_model(const char* name, const ui::ModelView& view) override {
-        bool drawn[kRenderers] = {};
+        bool drawn[kRenderers + 1] = {};
         each([&](int i, ui::Renderer& r) { drawn[i] = r.draw_model(name, view); });
         for (int i = 1; i < count(); i++) mismatches += drawn[i] != drawn[0];
         return drawn[0];
@@ -350,7 +441,7 @@ public:
         let_go(geometry, [](Rml::RenderInterface& r, uintptr_t h) { r.ReleaseGeometry(h); });
     }
     Rml::TextureHandle LoadTexture(Rml::Vector2i& dimensions, const Rml::String& source) override {
-        Rml::Vector2i d[kRenderers];
+        Rml::Vector2i d[kRenderers + 1];
         int i = 0;
         const Rml::TextureHandle t = made([&](Rml::RenderInterface& r) {
             d[i] = dimensions;
@@ -383,7 +474,7 @@ public:
     }
     // (Layers are numbers that every renderer hands out the same: the base layer is 0.)
     Rml::LayerHandle PushLayer() override {
-        Rml::LayerHandle l[kRenderers] = {};
+        Rml::LayerHandle l[kRenderers + 1] = {};
         each([&](int i, ui::Renderer& r) { l[i] = r.rml()->PushLayer(); });
         for (int i = 1; i < count(); i++) mismatches += l[i] != l[0];
         return l[0];
@@ -427,7 +518,7 @@ public:
     template <typename F>
     void each(F&& f) {
         for (int i = 0; i < count(); i++) {
-            g_urc_who = i;
+            g_urc_who = i < kRenderers ? i : -1;  // (vk-core: no D3D12 calls to count)
             f(i, *renderers[i]);
         }
         g_urc_who = -1;
@@ -597,6 +688,140 @@ void write_bmp(const std::filesystem::path& path, const std::vector<unsigned cha
     std::fclose(f);
 }
 
+// An FP16 picture as halimg.py reads one (RSX_HDR_SNAP's HDRP: "HDRP <w> <h>", a newline, then the pixels).
+void write_hdrp(const std::filesystem::path& path, const std::vector<uint8_t>& half, int w, int h) {
+    FILE* f = _wfopen(path.c_str(), L"wb");
+    if (!f) return;
+    std::fprintf(f, "HDRP %d %d\n", w, h);
+    std::fwrite(half.data(), 1, half.size(), f);
+    std::fclose(f);
+}
+
+#if defined(URC_VULKAN)
+// vk-core's back buffer on its Vulkan device, through the GPU layer only: the D3D12 targets' background copied into
+// it before each frame, and its picture read back after one. On the test's own recorder slot (2: CoreSide has 0, 1).
+struct VkTargets {
+    gpu_device* dev = nullptr;
+    int w = 0, h = 0;
+    bool hdr = false;
+    gpu_format format = GPU_FORMAT_UNKNOWN;
+    uint32_t pitch = 0;
+    gpu_texture background{}, target{};
+    gpu_buffer readback{};
+    gpu_fence last = 0;
+
+    gpu_cmd* begin() {
+        wait();
+        return gpu_cmd_begin(dev, 2);
+    }
+    void submit(gpu_cmd* c) {
+        gpu_cmd_end(dev, c);
+        gpu_submit_desc how{};
+        how.flags = GPU_SUBMIT_SIGNAL;
+        last = gpu_submit(dev, &c, 1, &how);
+    }
+    void wait() const {
+        if (last) gpu_fence_wait(dev, last, 10000);
+    }
+    gpu_footprint footprint() const {
+        gpu_footprint fp{};
+        fp.format = format;
+        fp.width = uint32_t(w);
+        fp.height = uint32_t(h);
+        fp.depth = 1;
+        fp.row_pitch = pitch;
+        return fp;
+    }
+    // bg: the background's pixels, rows packed (Targets::bg).
+    bool create(int width, int height, bool half, const std::vector<uint8_t>& bg) {
+        w = width;
+        h = height;
+        hdr = half;
+        format = half ? GPU_FORMAT_R16G16B16A16_FLOAT : GPU_FORMAT_R8G8B8A8_UNORM;
+        const size_t row = size_t(w) * (half ? 8 : 4);
+        pitch = (uint32_t(row) + 255u) & ~255u;
+        gpu_texture_desc td{};
+        td.width = uint32_t(w);
+        td.height = uint32_t(h);
+        td.layers = 1;
+        td.mips = 1;
+        td.format = format;
+        td.samples = 1;
+        td.use = GPU_USE_COPY_SRC | GPU_USE_COPY_DST;
+        td.state = GPU_STATE_COPY_DEST;
+        background = gpu_texture_create(dev, &td);
+        td.use = GPU_USE_RT | GPU_USE_COPY_SRC | GPU_USE_COPY_DST;
+        td.state = GPU_STATE_PRESENT;
+        target = gpu_texture_create(dev, &td);
+        gpu_buffer_desc bd{};
+        bd.size = uint64_t(pitch) * uint64_t(h);
+        bd.use = GPU_USE_COPY_DST;
+        bd.memory = GPU_MEM_READBACK;
+        bd.state = GPU_STATE_COPY_DEST;
+        readback = gpu_buffer_create(dev, &bd);
+        bd.use = GPU_USE_COPY_SRC;
+        bd.memory = GPU_MEM_UPLOAD;
+        bd.state = GPU_STATE_GENERIC_READ;
+        const gpu_buffer upload = gpu_buffer_create(dev, &bd);
+        uint8_t* p = GPU_VALID(upload) ? static_cast<uint8_t*>(gpu_buffer_map(dev, upload, 0, 0)) : nullptr;
+        if (!GPU_VALID(background) || !GPU_VALID(target) || !GPU_VALID(readback) || !p || bg.size() < row * size_t(h)) {
+            if (GPU_VALID(upload)) gpu_buffer_destroy(dev, upload, 0);
+            return false;
+        }
+        for (int y = 0; y < h; y++) std::memcpy(p + size_t(pitch) * size_t(y), bg.data() + row * size_t(y), row);
+        gpu_cmd* c = begin();
+        if (!c) {
+            gpu_buffer_destroy(dev, upload, 0);
+            return false;
+        }
+        const gpu_footprint fp = footprint();
+        gpu_cmd_copy_buf_to_tex(c, background, 0, 0, 0, 0, upload, &fp);
+        gpu_cmd_barrier(c, background, GPU_STATE_COPY_DEST, GPU_STATE_COPY_SOURCE);
+        submit(c);
+        wait();
+        gpu_buffer_destroy(dev, upload, 0);
+        return true;
+    }
+    void destroy() {
+        if (!dev) return;
+        gpu_wait_idle(dev);
+        if (GPU_VALID(background)) gpu_texture_destroy(dev, background, 0);
+        if (GPU_VALID(target)) gpu_texture_destroy(dev, target, 0);
+        if (GPU_VALID(readback)) gpu_buffer_destroy(dev, readback, 0);
+        background = target = gpu_texture{};
+        readback = gpu_buffer{};
+        w = h = 0;
+    }
+    void fill() {
+        gpu_cmd* c = begin();
+        if (!c) return;
+        gpu_cmd_barrier(c, target, GPU_STATE_PRESENT, GPU_STATE_COPY_DEST);
+        gpu_cmd_copy_texture_whole(c, target, background);
+        gpu_cmd_barrier(c, target, GPU_STATE_COPY_DEST, GPU_STATE_PRESENT);
+        submit(c);
+    }
+    // The picture as it is now, rows packed: w * h * (4 or 8) bytes.
+    bool read(std::vector<uint8_t>& out) {
+        gpu_cmd* c = begin();
+        if (!c) return false;
+        const gpu_footprint fp = footprint();
+        const gpu_box box{0, 0, 0, uint32_t(w), uint32_t(h), 1};
+        gpu_cmd_barrier(c, target, GPU_STATE_PRESENT, GPU_STATE_COPY_SOURCE);
+        gpu_cmd_copy_tex_to_buf(c, readback, &fp, target, 0, &box);
+        gpu_cmd_barrier(c, target, GPU_STATE_COPY_SOURCE, GPU_STATE_PRESENT);
+        submit(c);
+        wait();
+        const size_t row = size_t(w) * (hdr ? 8 : 4), bytes = size_t(pitch) * size_t(h);
+        const auto* p = static_cast<const uint8_t*>(gpu_buffer_map(dev, readback, 0, bytes));
+        if (!p) return false;
+        out.resize(row * size_t(h));
+        for (int y = 0; y < h; y++) std::memcpy(out.data() + row * size_t(y), p + size_t(pitch) * size_t(y), row);
+        gpu_buffer_unmap(dev, readback, 0, 0);
+        return true;
+    }
+};
+#endif
+
 struct Page {
     std::string name;
     int w = 1280, h = 720;
@@ -670,9 +895,10 @@ std::filesystem::path env_path(const char* name) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    bool warp = false, verbose = false;
+    std::setvbuf(stdout, nullptr, _IONBF, 0);  // (lines kept should the run end abruptly)
+    bool warp = false, verbose = false, vk_on = true;
     int frames = 24, probe_x = -1, probe_y = -1;
-    std::filesystem::path bmp, scratch;
+    std::filesystem::path bmp, scratch, vk_dir;
     std::string only;
     for (int i = 1; i < argc; i++) {
         const std::string a = argv[i];
@@ -682,13 +908,15 @@ int main(int argc, char** argv) {
         else if (a == "--bmp" && i + 1 < argc) bmp = argv[++i];
         else if (a == "--scratch" && i + 1 < argc) scratch = argv[++i];
         else if (a == "--page" && i + 1 < argc) only = argv[++i];
+        else if (a == "--vk" && i + 1 < argc) vk_dir = argv[++i];
+        else if (a == "--no-vk") vk_on = false;
         else if (a == "--probe" && i + 2 < argc) {
             probe_x = std::atoi(argv[++i]);
             probe_y = std::atoi(argv[++i]);
         }
         else {
             std::fprintf(stderr, "usage: ui_render_compare [--warp] [--frames N] [--bmp DIR] [--scratch DIR] [--page NAME] "
-                                 "[--verbose]\n");
+                                 "[--probe X Y] [--verbose] [--vk DIR | --no-vk]\n");
             return 2;
         }
     }
@@ -698,6 +926,10 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(scratch / "data", ec);
     std::filesystem::create_directories(scratch / "setup", ec);
     if (!bmp.empty()) std::filesystem::create_directories(bmp, ec);
+    if (!vk_dir.empty()) {
+        std::filesystem::create_directories(vk_dir / "d3d12", ec);
+        std::filesystem::create_directories(vk_dir / "vk", ec);
+    }
     _putenv_s("DES_DATA_DIR", (scratch / "data").string().c_str());
     _putenv_s("DES_SETTINGS", (scratch / "settings.ini").string().c_str());
     _putenv_s("DES_SETUP_DATA", (scratch / "setup").string().c_str());
@@ -717,9 +949,10 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    // The third renderer's device: the layer's own over the same D3D12 objects, its back buffers named as textures.
+    // The third and fourth renderers' device: the layer's own over the same D3D12 objects, its back buffers named as
+    // textures. Slots 0-2 gpu-dev's, 3-4 the core's side of gpu-core.
     gpu_device_desc gd{};
-    gd.cmd_slots = 3;
+    gd.cmd_slots = 5;
     gpu_device* gdev = gpu_d3d12_create_on(d.dev, d.queue, &gd);
     if (!gdev) {
         std::fprintf(stderr, "ui_render_compare: no device of the GPU layer\n");
@@ -737,6 +970,36 @@ int main(int argc, char** argv) {
         const gpu_texture_desc& td = it->second.second;
         return {it->second.first.id, int(td.width), int(td.height), td.format};
     };
+    CoreSide core_d3d12;
+    core_d3d12.dev = gdev;
+    core_d3d12.slot0 = 3;
+    core_d3d12.whole = true;  // (gpu-core as the game drives it; vk-core from begin_frame, the deferred uploads)
+
+    // vk-core's: a Vulkan device of the layer's (the GPU's), slots 0-1 the core's side, 2 the test's own.
+    gpu_device* vdev = nullptr;
+    CoreSide core_vk;
+#if defined(URC_VULKAN)
+    VkTargets vkt;
+    if (vk_on) {
+        gpu_device_desc vd{};
+        vd.cmd_slots = 3;
+        vdev = gpu_vk_create(&vd);
+        if (vdev) {
+            gpu_adapter_info ai{};
+            gpu_adapter(vdev, &ai);
+            std::printf("vulkan: %s (driver %s)\n", ai.name, ai.driver);
+            // The spv target's post-passes without the float controls, which not every device has (rsxc_vk.c picks
+            // them by the device for the game's shaders; the menu's need none).
+            gpu_sc_spv_set_options(GPU_SC_SPV_DEFAULT & ~(GPU_SC_SPV_FLOAT_PRESERVE | GPU_SC_SPV_DENORM_PRESERVE));
+        } else {
+            std::printf("vulkan: no device, so no vk-core\n");
+        }
+    }
+    vkt.dev = vdev;
+    core_vk.dev = vdev;
+#else
+    if (!vk_dir.empty()) std::printf("vulkan: this build's runtime has no Vulkan backend, so no vk-core\n");
+#endif
 
     Tee* tee = nullptr;
     const bool started = ui::host::init(
@@ -748,10 +1011,17 @@ int main(int argc, char** argv) {
             t->renderers.push_back(ui::gpu::create_d3d12(d.dev, d.queue, images));
             g_urc_who = 2;
             t->renderers.push_back(ui::gpu::create(gdev, 0, back_buffers, images));
+            g_urc_who = kCore;
+            t->renderers.push_back(ui::gpu::create_core(gdev, images));
+            t->core[kCore] = &core_d3d12;
             g_urc_who = kControl;
             t->renderers.push_back(ui::d3d12::create(d.dev, d.queue, images));
             g_urc_who = -1;
-            for (int i = 0; i < kRenderers; i++)
+            if (vdev) {
+                t->renderers.push_back(ui::gpu::create_core(vdev, images));
+                t->core[kVk] = &core_vk;
+            }
+            for (int i = 0; i < t->count(); i++)
                 if (!t->renderers[size_t(i)]) {
                     std::fprintf(stderr, "ui_render_compare: the %s renderer did not start\n", kRendererName[i]);
                     return nullptr;
@@ -822,6 +1092,24 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "ui_render_compare: no %dx%d targets\n", p.w, p.h);
                 return 2;
             }
+            const ui::gpu::BackBuffer b = back_buffers(targets.target[kCore], 0);
+            core_d3d12.target = b.texture;
+            core_d3d12.format = b.format;
+            core_d3d12.w = b.width;
+            core_d3d12.h = b.height;
+#if defined(URC_VULKAN)
+            if (vdev) {
+                vkt.destroy();
+                if (!vkt.create(p.w, p.h, p.hdr, targets.bg)) {
+                    std::fprintf(stderr, "ui_render_compare: no %dx%d Vulkan targets\n", p.w, p.h);
+                    return 2;
+                }
+                core_vk.target = vkt.target.id;
+                core_vk.format = vkt.format;
+                core_vk.w = p.w;
+                core_vk.h = p.h;
+            }
+#endif
         }
         for (int i = 0; i < kRenderers; i++) tee->targets[i] = targets.target[i];
         ui::host::set_hdr(p.hdr_scale, p.hdr_srgb);
@@ -842,8 +1130,13 @@ int main(int argc, char** argv) {
         for (int f = 0; f < frames; f++) {
             clock.now += 1.0 / 60.0;
             targets.fill(d);
+#if defined(URC_VULKAN)
+            if (vdev) vkt.fill();
+#endif
+            core_d3d12.begin();
             ui::update();
             ui::host::render(&dummy, 0, p.w, p.h, nullptr);
+            core_d3d12.end();
             targets.read(d, pixels);
             const size_t px = p.hdr ? 8 : 4, npx = size_t(p.w) * size_t(p.h);
             unsteady.resize(npx);
@@ -889,12 +1182,31 @@ int main(int argc, char** argv) {
             if (f + 1 == frames) {  // what the UI drew over the background, for a page that shows something
                 for (size_t k = 0; k < pixels[0].size() && k < targets.bg.size(); k += px)
                     drawn += std::memcmp(&pixels[0][k], &targets.bg[k], px) != 0;
-                // The renderers' own read backs of their last frames.
-                std::vector<unsigned char> rb[kRenderers];
+                // The renderers' own read backs of their last frames (vk-core's after its picture is read).
+                std::vector<unsigned char> rb[kRenderers + 1];
                 bool rb_ok = true;
-                tee->each([&](int i, ui::Renderer& r) { rb_ok = r.read_back(targets.target[i], 0, p.w, p.h, rb[i]) && rb_ok; });
+#if defined(URC_VULKAN)
+                std::vector<uint8_t> vk_pixels;
+                const bool vk_read = vdev && vkt.read(vk_pixels);
+#endif
+                tee->each([&](int i, ui::Renderer&) { rb_ok = tee->read_one(i, p.w, p.h, rb[i]) && rb_ok; });
                 for (int i = 1; i < kRenderers; i++)
                     if (!rb_ok || rb[i] != rb[0]) diff[i] += 1;
+#if defined(URC_VULKAN)
+                // vk-core's picture and read back beside today's renderer's, for halimg.py --mode vk.
+                if (!vk_dir.empty() && vdev) {
+                    if (!vk_read || rb[kVk].empty()) std::printf("  vk-core: no picture read back\n");
+                    if (p.hdr) {
+                        write_hdrp(vk_dir / "d3d12" / (p.name + ".hdrp"), pixels[0], p.w, p.h);
+                        if (vk_read) write_hdrp(vk_dir / "vk" / (p.name + ".hdrp"), vk_pixels, p.w, p.h);
+                    } else {
+                        write_bmp(vk_dir / "d3d12" / (p.name + ".bmp"), pixels[0], p.w, p.h);
+                        if (vk_read) write_bmp(vk_dir / "vk" / (p.name + ".bmp"), vk_pixels, p.w, p.h);
+                    }
+                    write_bmp(vk_dir / "d3d12" / (p.name + "-readback.bmp"), rb[0], p.w, p.h);
+                    if (!rb[kVk].empty()) write_bmp(vk_dir / "vk" / (p.name + "-readback.bmp"), rb[kVk], p.w, p.h);
+                }
+#endif
                 if (!bmp.empty() && rb_ok) {
                     write_bmp(bmp / (p.name + ".bmp"), rb[0], p.w, p.h);
                     for (int i = 1; i < kRenderers; i++)
@@ -908,41 +1220,46 @@ int main(int argc, char** argv) {
         bool counts_same = true;
         for (int k = 0; k < URC_COUNT; k++)
             for (int i = 1; i < kRenderers; i++)
-                counts_same = counts_same && g_urc_count[i][k] - before[i][k] == g_urc_count[0][k] - before[0][k];
+                if (i != kCore || (k != URC_RESET && k != URC_CLOSE))  // (gpu-core's recorder is the core's)
+                    counts_same = counts_same && g_urc_count[i][k] - before[i][k] == g_urc_count[0][k] - before[0][k];
         size_t differ_px = 0, steady_differ_px = 0, unsteady_px = 0;
         for (size_t q = 0; q < differs.size(); q++) {
             differ_px += differs[q];
             steady_differ_px += differs[q] && !unsteady[q];
             unsteady_px += unsteady[q];
         }
-        const bool every_frame = !diff[1] && !diff[2];
+        const bool every_frame = !diff[1] && !diff[2] && !diff[kCore];
         // (a still page only: its frames are drawn alike, so a change between them is the GPU's)
         const bool device_only = p.still && differ_px && !steady_differ_px;
         const bool same = (every_frame || device_only) && !page_mismatches && counts_same;
         failures += !same;
         steady_only += same && !every_frame;
-        std::printf("page %-20s %4dx%-4d %s  frames %d  drawn %llu px  differing bytes: gpu %llu, gpu-dev %llu "
-                    "(d3d12-again %llu)  %s\n",
+        std::printf("page %-20s %4dx%-4d %s  frames %d  drawn %llu px  differing bytes: gpu %llu, gpu-dev %llu, "
+                    "gpu-core %llu (d3d12-again %llu)  %s\n",
                     p.name.c_str(), p.w, p.h, p.hdr ? "FP16" : "RGBA8", frames, (unsigned long long)drawn,
-                    (unsigned long long)diff[1], (unsigned long long)diff[2], (unsigned long long)diff[kControl],
+                    (unsigned long long)diff[1], (unsigned long long)diff[2], (unsigned long long)diff[kCore],
+                    (unsigned long long)diff[kControl],
                     !same ? "DIFFERENT" : every_frame ? "SAME" : "SAME where the GPU draws alike (it varies between frames)");
         if (first_x >= 0)
             std::printf("  first difference: %s at (%d, %d)\n", kRendererName[first_r], first_x, first_y);
         if (p.still && (unsteady_px || differ_px))
-            std::printf("  still page: own changes between frames (px) d3d12 %llu, gpu %llu, gpu-dev %llu, d3d12-again "
-                        "%llu, at %zu px; renderers differ at %zu px, %zu of them where every renderer drew alike in "
-                        "every frame\n",
+            std::printf("  still page: own changes between frames (px) d3d12 %llu, gpu %llu, gpu-dev %llu, gpu-core %llu, "
+                        "d3d12-again %llu, at %zu px; renderers differ at %zu px, %zu of them where every renderer drew "
+                        "alike in every frame\n",
                         (unsigned long long)changed[0], (unsigned long long)changed[1], (unsigned long long)changed[2],
-                        (unsigned long long)changed[kControl], unsteady_px, differ_px, steady_differ_px);
+                        (unsigned long long)changed[kCore], (unsigned long long)changed[kControl], unsteady_px, differ_px,
+                        steady_differ_px);
         if (page_mismatches) std::printf("  %d calls whose results differed between the renderers\n", page_mismatches);
-        std::printf("  %-34s %10s %10s %10s %12s\n", "calls", kRendererName[0], kRendererName[1], kRendererName[2],
-                    kRendererName[3]);
+        std::printf("  %-34s %10s %10s %10s %10s %12s\n", "calls", kRendererName[0], kRendererName[1], kRendererName[2],
+                    kRendererName[3], kRendererName[4]);
         for (int k = 0; k < URC_COUNT; k++) {
             unsigned long long n[kRenderers];
             for (int i = 0; i < kRenderers; i++) n[i] = g_urc_count[i][k] - before[i][k];
-            if (!n[0] && !n[1] && !n[2] && !n[3]) continue;
-            std::printf("  %-34s %10llu %10llu %10llu %12llu%s\n", g_urc_name[k], n[0], n[1], n[2], n[3],
-                        n[1] == n[0] && n[2] == n[0] && n[3] == n[0] ? "" : "  <- differs");
+            if (!n[0] && !n[1] && !n[2] && !n[3] && !n[4]) continue;
+            const bool core_own = k == URC_RESET || k == URC_CLOSE;
+            std::printf("  %-34s %10llu %10llu %10llu %10llu %12llu%s\n", g_urc_name[k], n[0], n[1], n[2], n[3], n[4],
+                        n[1] == n[0] && n[2] == n[0] && (n[3] == n[0] || core_own) && n[4] == n[0] ? ""
+                                                                                                     : "  <- differs");
         }
         std::fflush(stdout);
     }
@@ -955,7 +1272,17 @@ int main(int argc, char** argv) {
     targets.destroy(d);
     urc_hooks_remove();
     d.destroy();
-    std::printf("%s: %d of %zu pages differ; %d the same in their steady pictures only\n", failures ? "FAILED" : "PASSED",
-                failures, pages.size(), steady_only);
-    return failures ? 1 : 0;
+    int vk_messages = 0;
+#if defined(URC_VULKAN)
+    if (vdev) {
+        vkt.destroy();
+        gpu_destroy(vdev);
+        vk_messages = int(gpu_vk_n_validation_all);
+        std::printf("vk-core: %d messages of the validation layer%s\n", vk_messages,
+                    vk_dir.empty() ? "" : "; pictures for halimg.py --mode vk in --vk's d3d12 and vk folders");
+    }
+#endif
+    std::printf("%s: %d of %zu pages differ; %d the same in their steady pictures only\n",
+                failures || vk_messages ? "FAILED" : "PASSED", failures, pages.size(), steady_only);
+    return failures || vk_messages ? 1 : 0;
 }

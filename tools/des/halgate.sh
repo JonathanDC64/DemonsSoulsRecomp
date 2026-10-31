@@ -11,7 +11,9 @@
 #   --time         G4 instead: replay CPU time per frame on each route (below)
 #   --frames F     frames per capture (default 4)
 #   --chain        also replay each chain of the set (capset.sh @chain) and
-#                  every capture without knobs, each as one chained run
+#                  every capture without knobs, each as one chained run (not
+#                  when B is vulkan: unrelated captures back to back read what
+#                  the one before left in memory, which no game frame does)
 #   --only <glob>  only the captures whose name matches
 #   --img <mode>   halimg.py mode (default: exact, vk when B is vulkan)
 #   --tol N        vk tolerance in 1/255 steps (default 1; 2 for D32S8)
@@ -314,7 +316,8 @@ if [ "$CHAIN" = 1 ]; then
     RUNS+=$'\n'"chain:$g||"$(printf '%s\n' "$SEL" | awk -F '|' -v g="$g" '$4 == g {printf "%s ", $2}')
   done
   all=$(printf '%s\n' "$SEL" | awk -F '|' '$3 == "" && $4 == "" {printf "%s ", $2}')
-  [ "$(echo $all | wc -w)" -ge 2 ] && RUNS+=$'\n'"chain:all||$all"
+  # G2 keeps it exact; G3 skips it (see --chain above).
+  [ "$(echo $all | wc -w)" -ge 2 ] && [ "$B" != vulkan ] && RUNS+=$'\n'"chain:all||$all"
 fi
 
 # ---------------------------------------------------------------- --time

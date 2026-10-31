@@ -113,7 +113,7 @@ estimates no run has checked.
 | G0 | Shared code changes leave today's HLSL texts and cache keys byte-identical. |
 | G1 | With `PS3RECOMP_RSX_HAL` off, the build is the same as before. With it on and route `d3d12`, regress passes and an exe A/B reads even. |
 | G2 | `hal-d3d12` against today's renderer, on a set of captures: identical frames (0 differing bytes), identical per-draw fingerprints (`RSX_DRAWPRINT`), ZPASS values and pipeline descriptions; regress passes live. |
-| G3 | Vulkan against today's renderer: identical per-draw fingerprints, clean validation, and at least 99.95% of pixels within ±1/255, no 16×16 block mean above 1.0, at most 0.01% of pixels off by more than 8/255. |
+| G3 | Vulkan against today's renderer: identical per-draw fingerprints, clean validation, and at least 99.95% of pixels within ±1/255, no 16×16 block mean above 1.0, at most 0.01% of pixels off by more than 8/255. HDR frames within 1e-3, except at most 0.01% of pixels within 8/255. Unrelated captures replayed back to back are not compared. |
 | G4 | Speed: replay CPU time and an exe A/B even (−0.5% at most for `hal-d3d12`, −1.0% for Vulkan); frame pacing and first-start hitches no worse. Anything slower is the user's decision. |
 
 The tools: `tools/des/halgate.sh` (replays and comparisons), `tools/des/halimg.py` (the image rule),

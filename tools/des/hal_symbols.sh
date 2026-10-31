@@ -16,11 +16,17 @@
 # in every object: MSVC string literals (??_C@), float and vector constants
 # (__real@, __xmm@, __ymm@, __zmm@), the UCRT's inline stdio functions
 # (printf, snprintf, sscanf, _vsnprintf_l ...: defined, COMDAT, wherever
-# they are called), __local_stdio_*_options, _fltused, @feat.00, the
+# they are called), __local_stdio_*_options and, in C++, their
+# function-local _OptionsStorage, wchar.h's selectany
+# _Avx2WmemEnabledWeakValue, _fltused, @feat.00, the
 # knob header's ps3_env_gen, dwmapi.h's selectany c_DwmMax* constants, and
 # C++ symbols of the standard library (std::,
 # type_info, __cxxabiv). A C++ symbol of our own passes when its name or class
 # starts with a prefix (?gpu_x@@..., ?f@gpu_vk@@..., _ZN6gpu_vk...).
+# glslang's own classes (glslang::, spv::) pass only in the spv compile
+# objects (gpu_shader_spv*.cpp): TShader::parse's short form and GlslangToSpv
+# make their inline virtual functions, vtables and RTTI there, with
+# glslang's linkage.
 # HAL_SYMBOLS_ALLOW=<regex> allows more.
 #
 # llvm-nm: $LLVM_NM, else llvm-nm on PATH, else CMAKE_NM from the
@@ -96,18 +102,22 @@ for a in "${ARGS[@]}"; do
 done > "$TMP/all.tsv" || exit 2
 
 OK_PREFIX='^_?(rsxc_|gpu_|rsx_out_)'
-GEN='^_?(\?\?_C@|__real@|__xmm@|__ymm@|__zmm@|__local_stdio_(printf|scanf)_options$|_fltused$|@feat\.00$|ps3_env_gen$|c_DwmMax(QueuedBuffers|Monitors|Adapters)$|_?v?(f|s|sn|w|fw|sw|snw)?(printf|scanf)(_s)?(_c)?(_p)?(_l)?$)'
+GEN='^_?(\?\?_C@|__real@|__xmm@|__ymm@|__zmm@|__local_stdio_(printf|scanf)_options$|\?_OptionsStorage@\?1\?\?__local_stdio_(printf|scanf)_options@@|_Avx2WmemEnabledWeakValue$|_fltused$|@feat\.00$|ps3_env_gen$|c_DwmMax(QueuedBuffers|Monitors|Adapters)$|_?v?(f|s|sn|w|fw|sw|snw)?(printf|scanf)(_s)?(_c)?(_p)?(_l)?$)'
 CXX_STD='@std@@|@stdext@@|type_info@@|^_?_ZN?K?St|^_?_ZT[VIS]St|__cxxabiv|^_?_ZT[VIS]N10__cxxabiv'
 CXX_OURS='(^|[?@$]|\?A[VU]|[0-9])(rsxc_|gpu_|rsx_out_)'
+CXX_GLSLANG='@glslang@@|@spv@@|^_?_Z[A-Z]*N?K?(7glslang|3spv)|^_?_ZT[VIS]N(7glslang|3spv)'
+GLSLANG_OBJ='(^|/)gpu_shader_spv[^/]*\.cpp\.(obj|o)$'
 EXTRA=${HAL_SYMBOLS_ALLOW:-}
-HS_OK=$OK_PREFIX HS_GEN=$GEN HS_STD=$CXX_STD HS_OURS=$CXX_OURS HS_EXTRA=$EXTRA \
+HS_OK=$OK_PREFIX HS_GEN=$GEN HS_STD=$CXX_STD HS_OURS=$CXX_OURS HS_GL=$CXX_GLSLANG HS_GLO=$GLSLANG_OBJ HS_EXTRA=$EXTRA \
 awk -F '\t' -v list="$LIST" -v req="$REQ" -v out="$TMP/bad.tsv" '
   BEGIN { ok = ENVIRON["HS_OK"]; gen = ENVIRON["HS_GEN"]; std = ENVIRON["HS_STD"]
-          ours = ENVIRON["HS_OURS"]; extra = ENVIRON["HS_EXTRA"] }
+          ours = ENVIRON["HS_OURS"]; gl = ENVIRON["HS_GL"]; glo = ENVIRON["HS_GLO"]
+          extra = ENVIRON["HS_EXTRA"] }
   { objs[$1] = 1; n++; s = $3
     if (s ~ ok) why = "ok"
     else if (s ~ gen) why = "compiler"
     else if (s ~ /^_?(\?|_Z)/ && (s ~ std || s ~ ours)) why = "c++"
+    else if (s ~ /^_?(\?|_Z)/ && s ~ gl && $1 ~ glo) why = "glslang"
     else if (extra != "" && s ~ extra) why = "allowed"
     else { why = "BAD"; bad++; print $1 "\t" $2 "\t" s > out }
     if (list) printf "%-8s %s %-40s %s\n", why, $2, s, $1 }

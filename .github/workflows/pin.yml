@@ -29,3 +29,39 @@ jobs:
 
       - name: Pin against the fork
         run: python tools/release/pin_ps3recomp.py check --remote
+
+  # The portable renderer's core (ps3recomp libs/video/rsxcore/, docs/120) holds copies of today's renderer,
+  # rsx_d3d12_backend.c, which stays as it is. A fix to today's renderer up to the pinned commit has to be
+  # ported to the copy, or marked as not applying in copy_synced.txt; tools/des/core_sync.sh lists the ones
+  # that are neither, and fails.
+  core-sync:
+    name: Core copy in step with today's renderer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Read the ps3recomp pin
+        id: pin
+        run: |
+          repo=$(sed -n 's#^repo=https://github\.com/\([A-Za-z0-9_.-]*/[A-Za-z0-9_-]*\)\(\.git\)\{0,1\}/\{0,1\}$#\1#p' ps3recomp.pin)
+          commit=$(sed -n 's/^commit=\([0-9a-f]\{40\}\)$/\1/p' ps3recomp.pin)
+          if [ -z "$repo" ] || [ -z "$commit" ]; then
+            echo "::error file=ps3recomp.pin::needs repo=https://github.com/<owner>/<name> and a 40-digit commit="
+            exit 1
+          fi
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      # All of the history (core_sync.sh walks it from the manifest's base), file contents fetched as needed.
+      - name: Check out the pinned ps3recomp
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.commit }}
+          path: ps3recomp
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Changes to today's renderer since the copy
+        run: bash tools/des/core_sync.sh ps3recomp

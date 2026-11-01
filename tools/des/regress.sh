@@ -131,8 +131,15 @@ say() { echo "[regress] t=$((SECONDS - t0))s $*"; }
 # script archive opens. desrun.sh lives as long as the game: a split build
 # writes its pid only once the game DLL is loaded, which can take longer than
 # any fixed grace.
+# A build configured without port/gen/libsre_glue.c or work/libsre (ignored
+# files a fresh worktree lacks) links, then hangs at the title on HLE SPURS:
+# say so once the modules have loaded, not after the 400 s wait.
 until grep -aq luabnd "$OUT"; do
   kill -0 "$DR" 2>/dev/null || des_running || { say "run ended before the level"; exit 2; }
+  if [ "${LIBSRE_LLE:-1}" != 0 ] && grep -aq "after prx; before ppu_hle_init" "$OUT" &&
+     ! grep -aq "LLE load: ok=1" "$OUT"; then
+    say "no libsre LLE in this build (configure said \"libsre LLE not built\": port/gen or work/libsre missing)"; exit 2
+  fi
   [ $((SECONDS - t0)) -lt 400 ] || { say "no level load"; exit 2; }
   sleep 0.5
 done

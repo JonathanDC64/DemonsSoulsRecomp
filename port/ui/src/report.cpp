@@ -1178,6 +1178,15 @@ std::string system_info() {
     o << "DemonsSoulsRecomp " << version() << "\n";
     o << "ps3recomp: " << kPs3recompVersion << "\n";
     o << "Game dump (EBOOT.ELF SHA-256): " << (*kDumpSha256 ? kDumpSha256 : "unknown") << "\n";
+#if defined(PS3RECOMP_RSX_HAL)
+    // The renderer that runs (the runtime's route switch, rsx_out.h), with why it is D3D12 when Vulkan was asked for.
+    // None in a process that never started one (the crash dialog: the game's log has the route's lines).
+    {
+        const char* why = nullptr;
+        if (const char* r = rsx_out_renderer_info(&why))
+            o << "Renderer: " << r << (why ? std::string(" (") + why + ")" : std::string()) << "\n";
+    }
+#endif
     platform_facts(o, game_process);
     return o.str();
 }

@@ -24,8 +24,9 @@ for kv in "$@"; do export "$kv"; done
 des_kill_own
 if [ "${COLD_CACHE:-0}" = 1 ]; then rm -rf "$(des_cache_dir)"; fi
 EXE="$(des_stage_exe)" || { echo "desrun: could not stage the exe"; exit 1; }
+des_window_launch   # (DES_WINDOW: minimized while someone is at the PC)
 START=$SECONDS
-timeout "$TIMEOUT" "$EXE" work/game/EBOOT.ELF > "$OUT" 2>&1
+timeout "$TIMEOUT" "${DES_LAUNCH[@]}" "$EXE" work/game/EBOOT.ELF > "$OUT" 2>&1
 rc=$?
 des_wait_own $((TIMEOUT - (SECONDS - START)))   # the game that setup's Play started, if any
 des_kill_own

@@ -141,3 +141,20 @@ if(NOT TARGET des_version)
 endif()
 target_include_directories(des_ui PRIVATE ${DES_VERSION_DIR})
 add_dependencies(des_ui des_version)
+
+# settings.cpp on its own, its report and privacy calls stubbed (tests/settings_check.cpp): settings.ini files and
+# environments in, the environment the runtime reads out, the Renderer row's included (docs/120). With the same
+# definitions as des_ui's settings.cpp (DES_RSX_VULKAN among them: port/CMakeLists.txt). Built on demand:
+#   cmake --build <build> --target settings_check, then settings_check --row (or --no-row, without the row)
+add_executable(settings_check EXCLUDE_FROM_ALL tests/settings_check.cpp src/settings.cpp)
+target_include_directories(settings_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${DES_VERSION_DIR})
+target_compile_definitions(settings_check PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+if(DES_DEV)
+  target_compile_definitions(settings_check PRIVATE DES_DEV=1)
+else()
+  target_compile_definitions(settings_check PRIVATE DES_DEV=0)
+endif()
+if(MSVC)
+  target_compile_options(settings_check PRIVATE /EHsc /W3 /wd4100)
+endif()
+add_dependencies(settings_check des_version)

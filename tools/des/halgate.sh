@@ -195,13 +195,14 @@ replay() {
     case " $knobs " in *" RSX_HDR=1 "*) E+=(RSX_HDR_SNAP="$(cygpath -m "$d/shots/hdr.hdrp")") ;; esac
   fi
   for k in $knobs; do E+=("$k"); done
+  des_window_launch "$route"   # (DES_WINDOW: minimized while someone is at the PC)
   if [ "$diag" = 1 ]; then
-    ( cd "$d" && env "${E[@]}" RSX_REPLAY_TIMES=1 timeout "$TMO" "$BIN" "${caps[@]}" "$fr" ) > "$d/replay.txt" 2>&1
+    ( cd "$d" && env "${E[@]}" RSX_REPLAY_TIMES=1 timeout "$TMO" "${DES_LAUNCH[@]}" "$BIN" "${caps[@]}" "$fr" ) > "$d/replay.txt" 2>&1
     rc=$?
   else
     # Timing: each line as it arrives (the replay's stdout is unbuffered) with
     # the wall clock, in stamped.txt, and "end <time>" once it has exited.
-    ( cd "$d" && env "${E[@]}" RSX_REPLAY_TIMES=1 timeout "$TMO" "$BIN" "${caps[@]}" "$fr" 2>&1 ) |
+    ( cd "$d" && env "${E[@]}" RSX_REPLAY_TIMES=1 timeout "$TMO" "${DES_LAUNCH[@]}" "$BIN" "${caps[@]}" "$fr" 2>&1 ) |
       { while IFS= read -r l; do printf '%s\n' "$l" >&5; printf '%s %s\n' "$EPOCHREALTIME" "$l" >&6; done
         printf 'end %s\n' "$EPOCHREALTIME" >&6; } 5> "$d/replay.txt" 6> "$d/stamped.txt"
     rc=${PIPESTATUS[0]}

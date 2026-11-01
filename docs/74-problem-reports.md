@@ -21,7 +21,7 @@ Code:
 | File | What |
 |---|---|
 | `screenshot.png` | the game's picture, taken with the menu closed |
-| `system.txt` | port version (and whether it is a developer build), ps3recomp version, the game dump's SHA-256, Windows version, CPU (cores, threads, instruction sets), memory (the PC's and this process's), each GPU with its driver (and the one in use with its memory budget), each display (size, refresh, primary, HDR), power (battery or not), free disk space where the game and the data are, gamepads (XInput, DualSense/DS4), keyboard layout, and other software loaded into the game (overlays, hooks) |
+| `system.txt` | port version (and whether it is a developer build), ps3recomp version, the game dump's SHA-256, the renderer that runs (with a runtime that has the route switch: `d3d12`, `vulkan`, ..., and why it is D3D12 when Vulkan was asked for; not in the crash dialog's), Windows version, CPU (cores, threads, instruction sets), memory (the PC's and this process's), each GPU with its driver (and the one in use with its memory budget), each display (size, refresh, primary, HDR), power (battery or not), free disk space where the game and the data are, gamepads (XInput, DualSense/DS4), keyboard layout, and other software loaded into the game (overlays, hooks) |
 | `game.txt` | time running; game frames, with "no new frame for N s: the game had stopped" when it has; frames per second for each of the last 60 s; overlay frames; window or fullscreen, size and DPI; picture size; crash and hang reports on this PC in the last 7 days (names only) |
 | `settings.ini` | every setting with its value, `# changed; default: X` where it differs from the default, and `# set in the environment: X` where the environment overrides it |
 | `environment.txt` | the command line and every port or runtime option set in the environment (`DES_`, `PS3_`, `RSX_`, `SPU_`, `SPURS_`, `GCM_`, `PAD_`, `PPU_`, `AUDIO_`, `VBLANK`, `FIFO_`, `LIBSRE_`, `SAIL_`, `TROPHY_`, `WATCHDOG_`) |
@@ -138,6 +138,7 @@ All are live: the debug console's `setenv` sets them in a running game.
 | `DES_HANG_AT_FRAME=n` | the game's flip thread stops for good once n frames were presented (a game hang; not on the render thread) |
 | `DES_HANG_RENDER_AT_FRAME=n` | the render thread stops for good (the hang dialog's case) |
 | `RSX_LOSE_DEVICE_AT_FRAME=n` | the D3D12 device is removed at the n-th frame, as a driver reset would lose it (the lost-graphics dialog's case; read at start, not live) |
+| `RSX_FAIL_START_AT=<step>` | the new renderer's start fails at that step: `loader`, `instance`, `adapter`, `features`, `device`, `window`, `swap chain`, `targets`, `shaders` or `rings`. On Vulkan the game then starts on D3D12 and `system.txt` says why (docs/120; read at start, not live) |
 | `DES_REPORT_AT_FRAME=n` | starts Report an issue at frame n, once per value |
 | `DES_UI_PRESS=KEY` | presses F1, ESC, ENTER, UP/DOWN/LEFT/RIGHT, TAB, SPACE as the window procedure would, then clears itself. Test runs set `PS3_NO_USER_INPUT=1`, which drops keys posted to the window. |
 | `DES_REPORT_NO_OPEN=1` | no browser or Explorer; the issue link goes to `<zip>.url.txt` |

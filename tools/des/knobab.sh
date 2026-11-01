@@ -86,6 +86,7 @@ if [ -n "${KAB_CHILD:-}" ]; then
 fi
 
 . "$HERE/perflib.sh"
+export DES_WINDOW=${DES_WINDOW:-normal}   # (the window is saved with PrintWindow; deslib.sh des_window_launch)
 cd "$DES_ROOT" || exit 1
 TAG=${1:?tag}; KV=${2:?KNOB=value or a knobs file}; shift 2
 D=$DES_SCRATCH/$TAG

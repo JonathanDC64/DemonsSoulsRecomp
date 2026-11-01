@@ -30,6 +30,9 @@ constexpr Def kDefs[] = {
 #endif
     {"DES_FULLSCREEN", "0", Apply::Live},      // 1 = borderless fullscreen; des_ui.cpp's sync_fullscreen, each frame
     {"DES_MAXIMIZED", "1", Apply::Restart},    // 1 = the window opens maximized (apply_window: RSX_MAXIMIZED)
+#if DES_RSX_VULKAN
+    {"RSX_BACKEND", "d3d12", Apply::Restart},  // Renderer: d3d12 or vulkan; the runtime's route switch, once at start
+#endif
     {"DES_FPS", "", Apply::Live},              // "" = the game's own 30 fps mode; read at each flip
     {"fps_custom", "90", Apply::UiOnly},       // Frame rate's Custom number, kept while a fixed rate is chosen
     {"DES_CUTFPS", "0", Apply::Live},          // des_options.cpp's cutfps_on, read at each flip
@@ -474,6 +477,21 @@ void apply_window() {
     ps3_setenv("RSX_MAXIMIZED", !v.empty() && v != "0" ? "1" : "0");  // (as bool_row reads it)
 }
 
+#if DES_RSX_VULKAN
+// Renderer -> the runtime reads RSX_BACKEND (load_file set it) once, at its first call. RSX_STATE_DIR, the data
+// folder, is where it notes a Vulkan start until the first frame is shown: a start that finds the note there (the last
+// one died in the graphics driver) uses D3D12 and says so (libs/video/rsx_out.c). Not in a test run (no data folder);
+// an RSX_STATE_DIR from the environment wins.
+void apply_renderer() {
+    if (env_set("RSX_STATE_DIR")) return;
+    const auto& dir = report::data_dir();
+    if (dir.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    ps3_setenv("RSX_STATE_DIR", report::narrow(dir.wstring()).c_str());
+}
+#endif
+
 // logs\settings.txt: describe(), kept current for the crash and hang dialog. It is a process of its own that reads
 // no settings, and settings.ini alone has neither the defaults nor what the environment set (and a player who never
 // changed a setting has none).
@@ -510,6 +528,9 @@ void load_and_apply_env() {
                  keys.c_str());
     apply_network();
     apply_window();
+#if DES_RSX_VULKAN
+    apply_renderer();
+#endif
     write_in_use();
 }
 

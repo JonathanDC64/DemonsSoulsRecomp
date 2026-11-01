@@ -28,28 +28,25 @@ des_session_locked() {
   tasklist //FI "IMAGENAME eq LogonUI.exe" //NH 2>/dev/null | grep -qi logonui
 }
 
-# des_window_launch [route]: how a test run's window opens, as DES_LAUNCH, the
-# words to put before the program (winmin.py, or none). DES_WINDOW:
+# des_window_launch: how a test run's window opens, as DES_LAUNCH, the words
+# to put before the program (winmin.py, or none). DES_WINDOW:
 #   auto    (the default) while someone is at the PC (the session unlocked):
 #           min. While the session is locked: as usual.
 #   min     minimized, without the focus, so it never covers what they are
-#           looking at; on the vulkan route hidden instead, as the Vulkan
-#           backend cannot make a swap chain for a window that starts
-#           minimized yet.
+#           looking at (every route: ps3recomp #203 lets Vulkan start so).
 #   hide, normal   always that.
-# The route is the argument, else RSX_BACKEND. A play session (play.sh,
-# DES_KIND=play) always opens as usual, whatever DES_WINDOW says: it goes
-# through desrun.sh too. The A/B tools ask for normal (they save the window
-# with PrintWindow, which a minimized window does not draw).
+# A play session (play.sh, DES_KIND=play) always opens as usual, whatever
+# DES_WINDOW says: it goes through desrun.sh too. The A/B tools ask for normal
+# (they save the window with PrintWindow, which a minimized window does not
+# draw).
 des_window_launch() {
   DES_LAUNCH=()
   [ "${OS:-}" = Windows_NT ] || return 0
   [ "${DES_KIND:-}" = play ] && return 0
-  local m=${DES_WINDOW:-auto} route=${1:-${RSX_BACKEND:-d3d12}}
+  local m=${DES_WINDOW:-auto}
   if [ "$m" = auto ]; then
     if des_session_locked; then m=normal; else m=min; fi
   fi
-  [ "$m" = min ] && [ "${route,,}" = vulkan ] && m=hide
   case "$m" in
     min)  DES_LAUNCH=(python "$(cygpath -m "$DES_ROOT/tools/des/winmin.py")") ;;
     hide) DES_LAUNCH=(python "$(cygpath -m "$DES_ROOT/tools/des/winmin.py")" --hide) ;;

@@ -8,36 +8,91 @@
 
 This is a PC port of *Demon's Souls* (PS3, 2009). The game's original code has been converted to run directly on Windows and Linux, with no emulator.
 
-You need your own copy of the game: the US version, **BLUS30443**. This project includes no game files.
-
-## Features
-
-- Higher frame rates, with the game's timing fixed so it still plays the way it should
-- Higher resolutions and ultrawide screens
-- Keyboard and mouse controls, laid out like the Souls games on PC
-- Controller support, including Xbox and PlayStation controllers
-- Change which buttons and keys do what
-- An in-game menu for settings, most of which apply right away
-- Windows, and Linux (newer and less tested)
-- Online play (experimental)
+You need your own copy of the game: the US version, **BLUS30443** (version 1.00). This project includes no game files.
 
 ## Status
 
-Early. The game is playable from the start through the first level, Boletarian Palace 1-1.
+Early, and there is no release yet. The game plays from the start, and testers have played the Nexus, Boletarian Palace and Stonefang Tunnel. Not every area has been tested, so expect bugs.
 
-## What you need to play
+The first release, 0.1.0, will be an alpha. It will appear on the [Releases](https://github.com/JonathanDC64/DemonsSoulsRecomp/releases) page. Until then, you can [build the game from source](#building-from-source).
 
-- Your own copy of Demon's Souls for the PS3, US version (BLUS30443)
-- A PC running Windows 10 or 11, or Linux
-- A graphics card that supports DirectX 12
+## Features
+
+Press **F1** (or **L3 + R3** on a controller) at any time to open the menu. Most settings apply right away. Each setting has a short help text in the menu.
+
+**Picture**
+- Frame rates of 30 (the original), 60, 120, 144, 165 or 240 fps, a number of your own, or unlocked. The game's timing is fixed so it still plays the way it should. Above 60 fps is less tested.
+- Cutscenes play at 30 fps by default, as they judder above it. You can play them at your frame rate instead.
+- V-sync on or off, "Even frames" for smooth motion, and G-Sync / FreeSync.
+- Render resolution up to 300% (4K), and ultrawide aspect ratios (21:9 and 32:9).
+- Anti-aliasing (FXAA or SMAA), anisotropic filtering up to 16x, texture filtering and a sharp scaling filter.
+- HDR on HDR displays (Windows), with settings for brightness, peak and shadows.
+- Turn off the game's depth of field and motion blur.
+- Window or fullscreen (Alt+Enter switches).
+
+**Controls**
+- Xbox controllers, DualSense and DualShock 4, over USB or Bluetooth, with vibration.
+- Keyboard and mouse, laid out like the Souls games on PC. To turn the camera with the mouse, turn on **Mouse look** in Settings > Controls.
+- Change which buttons and keys do what.
+- Mouse sensitivity, inverted axes, and switching lock-on targets with a flick of the mouse.
+- Locked-on rolls go where the stick points. Turn this off for the original's four directions.
+- The mouse in the game's own menus: point and click. Experimental, and off by default.
+
+**HUD**
+- Move, resize, hide or show each part of the HUD.
+- Change its size, and choose where it goes on wide screens.
+
+**Game**
+- Skip the logos and the opening movie, and go straight into your last save.
+- Two optional extras, both off by default:
+  - use several soul items at once, as Drop does;
+  - a stat respec in the Nexus, from the Maiden in Black.
+
+**The program**
+- A setup that builds the game from your copy, with an Original and an Enhanced preset (see [How to play](#how-to-play)).
+- Updates: the game checks for a new version at start and asks before changing anything. Your saves and settings are kept, and you can go back one version.
+- Trophies, with pop-ups. Setup can bring your trophies and save across from RPCS3.
+- **Report an issue** in the menu opens a GitHub issue with your PC's details filled in. It has no save data or game files.
+
+## What you need
+
+- Your own copy of Demon's Souls for the PS3, US version (BLUS30443, version 1.00), as a folder with `PS3_GAME` in it. Setup cannot use ISO files yet.
+- RPCS3, the free PS3 emulator, with the PS3 system software installed (4.93, the version Sony offers now). Setup has it unlock the game's encrypted files. (Or decrypt the files yourself: see below.)
+- Windows 10 or 11 (64-bit) with a graphics card that supports DirectX 12, or Linux (see [Linux](#linux)).
+- An internet connection during setup. Setup downloads a compiler and Python (about 60 MB on Windows, about 130 MB on Linux).
 
 ## How to play
 
-An easy setup tool is on the way. It will turn your copy of the game into the PC version for you.
+These steps are for the release download, once it is out.
 
-Until then, the game has to be built from source: see [Building from source](#building-from-source).
+1. Download the zip for Windows (`DemonsSoulsRecomp-X.Y.Z-windows.zip`) or the tarball for Linux (`DemonsSoulsRecomp-X.Y.Z-linux.tar.xz`), and unpack it into a folder of its own.
+2. Start `des_host.exe` (on Linux, `des_host`). Setup opens.
+3. Pick how setup gets your game's files:
+   - **Import from RPCS3**: setup finds the game in RPCS3's list and has your RPCS3 unlock its files. It can bring your save, trophies and some settings across too.
+   - **I have decrypted files**: your disc copy, plus the 28 files you decrypted yourself (`EBOOT.elf`, the `.sdat` files and `libsre.prx`).
+   - **Show me how**: step by step, with free tools only.
+4. Start the build. It runs on your PC and can take a while; setup shows an estimate first. You can stop it and carry on later.
+5. Pick a preset: **Original** plays as on the PS3; **Enhanced** sets 60 fps, a resolution that fits your display, SMAA, 16x anisotropic filtering and fullscreen. You can change anything later in Settings.
 
-Once the game is running, press **F1** (or **L3 + R3** on a controller) to open the menu and its settings.
+Then press **Play**.
+
+If setup says your `libsre.prx` came out different, your RPCS3 probably has PS3 system software 4.90. Install 4.93 in RPCS3 (*File > Install Firmware*) and try again. If RPCS3 is set to run as administrator, setup cannot start it: untick that in `rpcs3.exe`'s Properties.
+
+### Linux
+
+CI builds the Linux program on every change, and each release will include a Linux download. It needs x86-64 Linux with glibc 2.35 or newer, a Vulkan driver, and `curl` and `tar`. Nothing else needs installing. The game renders through vkd3d (DirectX 12 on Vulkan).
+
+Linux is newer and less tested than Windows. So far it has run in WSL (Ubuntu 24.04), not yet on a real Linux PC or a Steam Deck ([docs/106](docs/106-setup-on-linux.md)).
+
+macOS is not supported.
+
+### Online play
+
+Online play is not ready. Early work on it is in the game (Settings > Network), but that work is paused and it is largely untested. You can turn it off in Settings > Network > Online. What the project's server would keep about you is in the [privacy note](PRIVACY.md).
+
+### Problems
+
+Use **Report an issue** in the menu (F1), or open an [issue](https://github.com/JonathanDC64/DemonsSoulsRecomp/issues). Report security problems privately, as [SECURITY.md](SECURITY.md) says.
 
 ## Building from source
 
@@ -65,6 +120,7 @@ On Windows, step 4 downloads FFmpeg's MPEG-2 video decoder for the game's movies
    cd DemonsSoulsRecomp
    git clone https://github.com/JonathanDC64/ps3recomp.git
    ```
+   `ps3recomp.pin` names the ps3recomp commit this version of the port needs. `python tools/release/pin_ps3recomp.py local` checks your checkout against it.
 2. In RPCS3, decrypt `PS3_GAME/USRDIR/EBOOT.BIN` (*Utilities > Decrypt PS3 Binaries*) to `work/game/EBOOT.ELF`. Copy `PS3_GAME/ICON0.PNG` next to it, for the program's icon.
 3. Convert the game's main code:
    ```sh
@@ -90,6 +146,13 @@ On Windows, step 4 downloads FFmpeg's MPEG-2 video decoder for the game's movies
 
 Everything made from your copy of the game stays in `work/` and `gamedata/`, which git ignores. **Never share your build:** it contains code converted from your game.
 
+**For developers**
+
+- Each setting's help text ends with its name in brackets, such as `(DES_FPS)`. The same name works as an environment variable, which wins over the menu.
+- `-DDES_SPLIT=ON` also builds the game the way setup does: `des_host` plus the game as a separate library ([docs/57](docs/57-dll-split.md)).
+- `-DDES_DEV=ON` makes a developer build, with cheats and a Developer tab in Settings ([docs/55](docs/55-dev-cheats.md)). Never share one as a release.
+- A Vulkan renderer is in development beside today's DirectX 12 one ([docs/120](docs/120-portable-renderer.md)). It is only in builds whose ps3recomp is configured with `PS3RECOMP_RSX_HAL` and the Vulkan backend; those builds get a Renderer row in Settings > Display. The released build does not have it yet.
+
 ## Legal
 
 This project contains only its own code, scripts and documentation. It has no game code, no game files, no Sony firmware and no keys; you make those from your own copy ([docs/05](docs/05-legal.md)).
@@ -100,7 +163,10 @@ This project contains only its own code, scripts and documentation. It has no ga
 
 - [ps3recomp](https://github.com/sp00nznet/ps3recomp) by sp00nznet and its contributors: the recompiler and runtime this port is built on
 - [RPCS3](https://github.com/RPCS3/rpcs3): a reference for how the PS3 behaves (no RPCS3 code is copied)
-- [RmlUi](https://github.com/mikke89/RmlUi) for the menus, and [vkd3d](https://gitlab.winehq.org/wine/vkd3d) for Linux
+- [RmlUi](https://github.com/mikke89/RmlUi) and [FreeType](https://freetype.org) for the menus, adapted from [Dusklight](https://github.com/TwilitRealm/dusklight)'s interface code
+- [SMAA](https://www.iryoku.com/smaa/) for the SMAA setting, [FFmpeg](https://ffmpeg.org) for the movies, and [vkd3d](https://gitlab.winehq.org/wine/vkd3d) and [SDL](https://www.libsdl.org) for Linux
+
+Settings > About and [`port/ui/NOTICE.md`](port/ui/NOTICE.md) list the menus' parts with their licences. The download's `licenses` folder holds the licences of the libraries shipped beside the program.
 
 ## License
 

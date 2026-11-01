@@ -31,10 +31,13 @@ des_session_locked() {
 # des_window_launch: how a test run's window opens, as DES_LAUNCH, the words
 # to put before the program (winmin.py, or none). DES_WINDOW:
 #   auto    (the default) while someone is at the PC (the session unlocked):
-#           min. While the session is locked: as usual.
-#   min     minimized, without the focus, so it never covers what they are
-#           looking at (every route: ps3recomp #203 lets Vulkan start so).
-#   hide, normal   always that.
+#           hide. While the session is locked: as usual.
+#   hide    never shown, so it never covers what they are looking at. The
+#           regression shots come from CELLMARK, not from the window.
+#   min     minimized, without the focus. A minimized window has no client
+#           area: the Vulkan swap chain lists no HDR colour space there, so
+#           HDR captures stay SDR.
+#   normal  always as usual.
 # A play session (play.sh, DES_KIND=play) always opens as usual, whatever
 # DES_WINDOW says: it goes through desrun.sh too. The A/B tools ask for normal
 # (they save the window with PrintWindow, which a minimized window does not
@@ -45,7 +48,7 @@ des_window_launch() {
   [ "${DES_KIND:-}" = play ] && return 0
   local m=${DES_WINDOW:-auto}
   if [ "$m" = auto ]; then
-    if des_session_locked; then m=normal; else m=min; fi
+    if des_session_locked; then m=normal; else m=hide; fi
   fi
   case "$m" in
     min)  DES_LAUNCH=(python "$(cygpath -m "$DES_ROOT/tools/des/winmin.py")") ;;

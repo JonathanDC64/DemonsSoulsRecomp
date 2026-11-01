@@ -195,7 +195,7 @@ replay() {
     case " $knobs " in *" RSX_HDR=1 "*) E+=(RSX_HDR_SNAP="$(cygpath -m "$d/shots/hdr.hdrp")") ;; esac
   fi
   for k in $knobs; do E+=("$k"); done
-  des_window_launch "$route"   # (DES_WINDOW: minimized while someone is at the PC)
+  des_window_launch   # (DES_WINDOW: minimized while someone is at the PC)
   if [ "$diag" = 1 ]; then
     ( cd "$d" && env "${E[@]}" RSX_REPLAY_TIMES=1 timeout "$TMO" "${DES_LAUNCH[@]}" "$BIN" "${caps[@]}" "$fr" ) > "$d/replay.txt" 2>&1
     rc=$?

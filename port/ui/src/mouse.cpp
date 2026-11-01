@@ -65,7 +65,7 @@ std::atomic<bool> sOwnCursor{false};  // the UI draws its own cursor (set_own_cu
 std::atomic<HWND> sHwnd{nullptr};   // the game's window, for posting to it
 
 // The window's thread only.
-bool sRegistered = false;   // raw mouse input is registered for the window
+HWND sRegistered = nullptr;  // the window raw mouse input is registered for
 bool sFree = false;         // the game has the buttons and the wheel, the cursor shown and free (mouse look off)
 bool sSizeMove = false;     // between WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE
 bool sMenuLoop = false;     // the window's system menu is open
@@ -103,15 +103,18 @@ bool is_mouse_message(unsigned msg) {
 }
 
 // Raw input from the mouse (usage page 1, usage 2) for the window. Without RIDEV_INPUTSINK it arrives only while the
-// window is in front; without RIDEV_NOLEGACY the UI still gets its usual mouse messages.
+// window is in front; without RIDEV_NOLEGACY the UI still gets its usual mouse messages. Registered again when the
+// window is another one: a renderer that fails to start closes its window, and the one that starts instead (the
+// Vulkan route's fallback to D3D12) makes its own, which the raw input would otherwise never reach.
 void register_raw(HWND hwnd) {
-    if (sRegistered) return;
+    if (sRegistered == hwnd) return;
     RAWINPUTDEVICE rid{};
     rid.usUsagePage = 0x01;
     rid.usUsage = 0x02;
     rid.hwndTarget = hwnd;
     if (RegisterRawInputDevices(&rid, 1, sizeof rid)) {
-        sRegistered = true;
+        if (sRegistered && log_on()) std::fprintf(stderr, "[mouse] raw input registered again, for a new window\n");
+        sRegistered = hwnd;
         return;
     }
     static bool said = false;
@@ -190,7 +193,7 @@ void update(HWND hwnd, const char* why) {
         std::fprintf(stderr, "[mouse] mouse look %s\n",
                      look ? "on" : "off (mouse buttons and wheel with the cursor free)");
     }
-    const char* no = !sRegistered                                       ? "no raw mouse input"
+    const char* no = sRegistered != hwnd                               ? "no raw mouse input"
                      : GetForegroundWindow() != hwnd || IsIconic(hwnd) ? "window in the background"
                      : sUiOpen.load(std::memory_order_acquire)          ? "a menu of the UI is open"
                      : sGameMenu.load(std::memory_order_acquire)        ? "a menu of the game is open"

@@ -2957,6 +2957,13 @@ static void run_defaults()
          * half brightness and clamps it to white once doubled; with HDR on it
          * clamps at the target's own limit, twice white (docs/103). */
         {"RSX_HDR_SCENE_FP", "B42C01:2"},
+        /* Render scale (RSX_SCALE): targets of 640 px or less keep the game's
+         * size. Those are the depth of field's 640x360 buffers and the bloom
+         * and exposure chain below them. The blurs take taps a fixed distance
+         * apart in texture space, one texel at the game's size, so scaled
+         * buffers left texels between the taps: blurred areas came out as
+         * offset copies with stripes instead of a smooth blur (docs/37). */
+        {"RSX_SCALE_MIN", "640"},
     };
     for (const auto& d : kDefaults)
         if (!getenv(d.name)) ps3_setenv(d.name, d.value);

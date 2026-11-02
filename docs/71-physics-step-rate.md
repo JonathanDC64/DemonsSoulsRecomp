@@ -17,9 +17,11 @@ walks into them. RPCS3's DeS FPS patch has the same warning: above 60 fps "users
 
 ## Fix
 
-- `des_phys_rate` runs after `0x001D1E64` (`lbz r28, 0x14(r31)`, the update's own skip byte). Frames shorter than
-  1/n add up. Each time they reach 1/n the world steps exactly 1/n; on the other frames the step is skipped
-  (r28 = 1). A frame of 1/n or longer steps its own dt, so 30 fps and below is the game as it was.
+- `des_phys_rate` runs after `0x001D1E64` (`lbz r28, 0x14(r31)`, the update's own skip byte). Under the cap,
+  frames add up. Each time they reach 1/n the world steps exactly 1/n; on the other frames the step is skipped
+  (r28 = 1). A frame of 1/n or longer steps its own dt.
+- The cap goes on when the frames are clearly shorter than a step, and off when they are not (see "Frames at 30 fps"
+  below). With the cap off every frame steps its own dt, so 30 fps and below is the game as it was.
 - `des_phys_kf` runs after `fdivs f31, f0, f1` at `0x001EF6D0` and `0x001DF83C`. These two passes drive a
   character's bodies to its animation pose through Havok's hard keyframe `0x0131BAF8`, with a velocity of
   (distance to the pose) times 1/dt. Under the cap the world steps 1/n, so the hook sets 1/dt to n. Without it, a
@@ -40,6 +42,41 @@ walks into them. RPCS3's DeS FPS patch has the same warning: above 60 fps "users
   every frame too. See "Arrows stuck in a character" below.
 - `DES_PHYS_HZ=0` steps every frame (the old behaviour above 30 fps). Other values set the cap; 60 was tried and
   is worse than 30 (below).
+
+## Frames at 30 fps (2026-11-02)
+
+At 30 fps (the Frame rate setting 30, `DES_FPS=30`), ragdolls, debris and arrows stuck in the player jittered.
+
+- **Cause.** With `DES_FPS` set, the game's step is the real time since the last frame. At 30 fps the frames are a
+  little under and a little over 1/30 s by turns: in one run, 44% were under, by at most 0.35 ms (median 33.36 ms,
+  5th to 95th percentile 32.99-33.74 ms).
+- The cap tested each frame on its own:
+  - a frame under 1/30 was under the cap and skipped its step, because the time held was still short of 1/30;
+  - the next frame of 1/30 or longer stepped its own dt and dropped the time the short one held.
+- **Effect.** Replaying the 2,775 frames of that run through the old rule: 902 frames skipped their step (33%), and
+  the world ran 62.7 s in 92.6 s of game time (32% slow). The cap also went on and off 1,802 times. That turned
+  the in-between poses (`DES_RAGINTERP`, `DES_PARTINTERP`) on and off from one frame to the next. An arrow's sample
+  moved a whole step ahead on the short frames and back on the long ones.
+- **Fix.** The cap follows the mean of the last 8 frames:
+  - it goes on below 0.85/n (above about 35 fps at n = 30);
+  - it goes off above 0.95/n (below about 31.6 fps).
+  
+  At 30 fps the cap stays off, and every frame steps its own dt. The same 2,775 frames give 1 skipped step and a
+  world 0.03 s behind.
+- Under the cap, a frame of 1/n or longer still steps its own dt, but it keeps the time the short frames before it
+  held. `des_phys_kf` acts only under the cap.
+- The mean is of the step the game is handed (f31), so it does not depend on how fast the PC is. The game's own
+  30 fps mode (Frame rate "", a fixed 1/30) never had this, and still runs uncapped.
+
+Measured on the deep Palace save: the Havok world's time (its simulation, `*(world + 8)`, at +0x14), read every
+20 ms, against real time over 10 s per setting, switched live in one session (Havok's moves of its time back are
+left out). With `DES_FPS` set, the game's time runs at real time.
+
+| Setting | Before | Fix |
+|---|---|---|
+| 30 fps, cap 30 (twice) | 0.68, 0.66 | 1.00, 1.00 |
+| 30 fps, no cap (`DES_PHYS_HZ=0`) | 1.00 | 1.00 |
+| Unlocked, cap 30 | 1.00 | 1.00 |
 
 ## Corpses falling through the floor
 

@@ -144,6 +144,87 @@ void info_row(Pane& leftPane, Pane& rightPane, const Rml::String& label, const R
         });
 }
 
+// cellPad.h (declared here: des_ui does not take ps3recomp's include paths): the i-th controller connected now, its
+// PAD_CONTROLLER name ("controller1", "playstation2") and what it is ("DualSense (USB)"); 0 past the last.
+extern "C" int cellPad_host_controller(int i, char* id, int idn, char* name, int namen);
+
+struct PadChoice {
+    Rml::String value, label;
+};
+
+// "controller2" -> "Controller 2", "playstation1" -> "PlayStation 1": a pad that can't be named.
+Rml::String pad_number_label(const Rml::String& id) {
+    for (const char* kind : {"controller", "playstation"}) {
+        const size_t n = std::strlen(kind);
+        if (id.size() == n + 1 && id.compare(0, n, kind) == 0)
+            return Rml::String(kind[0] == 'c' ? "Controller " : "PlayStation ") + id.back();
+    }
+    return id;
+}
+
+// The Controller row's choices: Automatic, the pads connected now by what they are (a second pad of the same kind
+// gets a number), and the saved choice while its pad isn't connected. Read again at most twice a second: the row's
+// value is drawn every frame, and naming an XInput pad asks its driver.
+const std::vector<PadChoice>& pad_choices(const Rml::String& current) {
+    static std::vector<PadChoice> sChoices;
+    static Rml::String sFor = "\n";
+    static std::chrono::steady_clock::time_point sAt{};
+    const auto now = std::chrono::steady_clock::now();
+    if (current == sFor && now - sAt < std::chrono::milliseconds(500)) return sChoices;
+    sFor = current;
+    sAt = now;
+    sChoices = {{"auto", "Automatic"}};
+    char id[16], name[64];
+    for (int i = 0; cellPad_host_controller(i, id, int(sizeof id), name, int(sizeof name)); ++i) {
+        const Rml::String base = *name ? Rml::String(name) : pad_number_label(id);
+        Rml::String label = base;
+        for (int n = 2; std::any_of(sChoices.begin(), sChoices.end(), [&](const PadChoice& c) { return c.label == label; });)
+            label = base + " " + std::to_string(n++);
+        sChoices.push_back({id, label});
+    }
+    if (!current.empty() && current != "auto" &&
+        std::none_of(sChoices.begin(), sChoices.end(), [&](const PadChoice& c) { return c.value == current; }))
+        sChoices.push_back({current, pad_number_label(current) + " (not connected)"});
+    return sChoices;
+}
+
+// Settings > Controls > Controller (PAD_CONTROLLER): like choice_row, with the choices read when the row is drawn.
+void controller_row(Pane& leftPane, Pane& rightPane) {
+    const Rml::String key = "PAD_CONTROLLER";
+    const auto current = [key] { return settings::pinned(key) ? settings::pinned_value(key) : settings::get(key); };
+    const auto is_current = [current](const Rml::String& value) {
+        const Rml::String v = current();
+        return v == value || (value == "auto" && v.empty());
+    };
+    auto& button = leftPane.add_select_button({
+        .key = "Controller",
+        .getValue =
+            [current, is_current] {
+                for (const PadChoice& c : pad_choices(current()))
+                    if (is_current(c.value)) return c.label;
+                return Rml::String("Automatic");
+            },
+        .isModified = [key] { return !settings::is_default(key); },
+    });
+    leftPane.register_control(button, rightPane,
+        [key, current, is_current,
+            help = with_note(key, "The gamepad the game reads, when more than one is connected. Automatic: the "
+                                  "first one found.<br/><br/>(PAD_CONTROLLER)")](Pane& pane) {
+            for (const PadChoice& c : pad_choices(current())) {
+                pane.add_button({
+                                    .text = c.label,
+                                    .isSelected = [is_current, value = c.value] { return is_current(value); },
+                                    .isDisabled = [key] { return settings::pinned(key); },
+                                })
+                    .on_pressed([key, value = c.value] {
+                        play_sound(kSoundItemChange);
+                        settings::set(key, value);
+                    });
+            }
+            pane.add_rml("<br/>" + help);
+        });
+}
+
 // Frame rate's fixed choices. Any other DES_FPS (a number from 30 to 500, des_options.cpp's fps_parse) is its Custom
 // choice, whose number the Custom frame rate row sets; fps_custom keeps that number while a fixed choice is on.
 const std::vector<Rml::String> kFpsValues = {"", "30", "60", "120", "144", "165", "240", "unlocked"};
@@ -578,6 +659,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             });
         const input::PadSupport pads = input::pad_support();
         info_row(leftPane, rightPane, "Gamepads", pads.value, pads.help);
+        controller_row(leftPane, rightPane);
         bool_row(leftPane, rightPane, "Vibration", "PAD_RUMBLE",
             "Lets the game make your gamepad vibrate.<br/><br/>(PAD_RUMBLE)");
         bool_row(leftPane, rightPane, "Roll toward the stick", "DES_ROLLDIR",

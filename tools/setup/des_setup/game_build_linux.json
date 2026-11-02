@@ -2,7 +2,7 @@
  "about": "des_game.so's build, as CMake does it on Linux with DES_SPLIT=ON DES_SPLIT_FREESTANDING=ON (docs/87). Written by scripts/game_build_desc.py; read by tools/setup/des_setup/compile.py.",
  "version": 1,
  "system": "linux",
- "abi": 3,
+ "abi": 4,
  "objects": [
   {
    "name": "ppu",
@@ -293,6 +293,7 @@
  "headers": [
   "{src}/ps3recomp/include/ps3emu/game_freestanding.h",
   "{src}/ps3recomp/include/ps3emu/game_libc/math.h",
+  "{src}/ps3recomp/include/ps3emu/game_libc/setjmp.h",
   "{src}/ps3recomp/include/ps3emu/game_libc/stdio.h",
   "{src}/ps3recomp/include/ps3emu/game_libc/stdlib.h",
   "{src}/ps3recomp/include/ps3emu/game_libc/string.h",

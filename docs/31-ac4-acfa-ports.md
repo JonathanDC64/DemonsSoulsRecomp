@@ -233,8 +233,10 @@ Effort: S = a day or less, M = a few days, L = a week or more. "Have" says what 
 ### 21. A check: does Demon's Souls' Lua use setjmp/longjmp?
 - **What:** AC4's Lua 5.0 raises script errors with longjmp back to a protected call. The recompiler runs a host `setjmp` at every call site of the guest setjmp, and a guest longjmp jumps to the most recent live call for that buffer, then runs the game's own register restore. `luaD_throw` is hooked to log the message.
 - **Where:** [`guest_setjmp.cpp`](https://github.com/SulphurS16/AC4-Port/blob/main/src/runtime/guest_setjmp.cpp), [`ppu/ppu_recomp.h`](https://github.com/SulphurS16/AC4-Port/blob/main/src/ppu/ppu_recomp.h) (comment at "Guest setjmp/longjmp").
-- **Maps to:** `ps3recomp/tools/ppu_lifter.py`, which has no setjmp/longjmp handling. If Demon's Souls' Lua (`luabnd` scripts) can raise an error that a script catches, the lifted longjmp would return to the wrong place. First check whether the EBOOT has setjmp/longjmp and whether anything calls them at run time.
-- **Effort:** S to check, M to implement. **Payoff:** unknown (robustness). **Have:** no.
+- **Maps to:** `ps3recomp/tools/ppu_lifter.py`, which had no setjmp/longjmp handling. If Demon's Souls' Lua (`luabnd` scripts) can raise an error that a script catches, the lifted longjmp would return to the wrong place. First check whether the EBOOT has setjmp/longjmp and whether anything calls them at run time.
+- **Effort:** S to check, M to implement. **Payoff:** high, it turned out. **Have:** yes (11-01).
+- **What we found:** the EBOOT has the SDK's setjmp (0x01674938) and longjmp (0x01674A5C). A tester's game closed with no crash report in the Penetrator fight (1-3). The boss script `502000_battle` errors at line 86 ("attempt to compare nil with number"). A PS3 catches that, but our lifted longjmp returned to its own caller, so `luaV_execute` read a NULL `savedpc` and the game ended itself (`sys_process_exit(1)`).
+- **What we did:** ps3recomp's lifter now does what AC4's recompiler does (`PS3_GUEST_SETJMP` and `ps3_guest_longjmp`, docs/PPU_RECOMP.md there). Setup lifts the game again after the update.
 
 ### 22. Smaller tooling ideas
 - **Machine-wide CPU use in the perf log, beside our own.** It shows when another program skews a measurement ([ACFA `runtime/main.cpp`](https://github.com/SulphurS16/ACFA-Port/blob/main/src/runtime/main.cpp), watchdog). It maps to `tools/des/knobab.sh` and `exeab.sh`; docs/28 has an A/B spoiled by a busy editor. S, low-medium.

@@ -101,6 +101,7 @@ constexpr Def kDefs[] = {
     {"pad_menu_chord", "0", Apply::UiOnly},    // 0 = L3 + R3, 1 = Select + Start
     {"PAD_MAP", "", Apply::Live},              // cellPad, gamepad buttons (controls_window.cpp)
     {"PAD_KEYS", "", Apply::Live},             // cellPad, changes to the keyboard and mouse layout (kKeysLayout)
+    {"PAD_CONTROLLER", "auto", Apply::Live},   // cellPad, each poll: the controller the game reads (port 0)
     {"PAD_RUMBLE", "1", Apply::Live},          // cellPad's vibration thread, live; 0 = no pad vibrates
     {"DES_ROLLDIR", "1", Apply::Live},         // des_roll_dir, read at each roll; 0 = locked-on rolls go 4 ways only
     {"keys_layout", "souls", Apply::UiOnly},   // the layout PAD_KEYS changes; a file without this line is older

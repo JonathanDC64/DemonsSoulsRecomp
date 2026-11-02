@@ -299,6 +299,8 @@ constexpr Credit kCredits[] = {
 // ps3emu/ps3_net_signin.h (declared here: des_ui does not take ps3recomp's include paths). Its outcome comes back
 // through ps3_net_erase_result, which net_notices.cpp shows.
 extern "C" int ps3_net_player_erase(void);
+// cellPad.h, declared here for the same reason: the controllers connected now, by their PAD_CONTROLLER names.
+extern "C" int cellPad_host_controllers(char* out, int n);
 
 // Delete my data (the server's docs/social.md), asked first.
 void ask_erase() {
@@ -578,6 +580,44 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             });
         const input::PadSupport pads = input::pad_support();
         info_row(leftPane, rightPane, "Gamepads", pads.value, pads.help);
+        {
+            // cellPad's PAD_CONTROLLER: XInput users 1-4 and the PlayStation pads' HID slots 1-4 (Windows), SDL's
+            // controllers 1-4 elsewhere
+            std::vector<Rml::String> values = {"auto"}, labels = {"Automatic"};
+            for (int i = 1; i <= 4; ++i) {
+                values.push_back("controller" + std::to_string(i));
+                labels.push_back("Controller " + std::to_string(i));
+            }
+#ifdef _WIN32
+            for (int i = 1; i <= 4; ++i) {
+                values.push_back("playstation" + std::to_string(i));
+                labels.push_back("PlayStation " + std::to_string(i));
+            }
+            const char* help = "The gamepad the game reads, when more than one is connected. Automatic: the first one "
+                               "found. Controller 1 to 4 are Xbox-style pads, by the number Windows gives them; "
+                               "PlayStation 1 to 4 are DualSense and DualShock 4 pads, in the order they connected."
+                               "<br/><br/>(PAD_CONTROLLER)";
+#else
+            const char* help = "The gamepad the game reads, when more than one is connected. Automatic: the first one "
+                               "found. Controller 1 to 4 go in the order they connected.<br/><br/>(PAD_CONTROLLER)";
+#endif
+            const auto connected = [values, labels](Pane& pane) {
+                char names[128];
+                Rml::String now;
+                if (cellPad_host_controllers(names, int(sizeof names)) > 0) {
+                    std::string_view rest(names);
+                    while (!rest.empty()) {
+                        const size_t comma = std::min(rest.find(','), rest.size());
+                        const auto it = std::find(values.begin(), values.end(), rest.substr(0, comma));
+                        if (it != values.end()) now += (now.empty() ? "" : ", ") + labels[size_t(it - values.begin())];
+                        rest.remove_prefix(std::min(comma + 1, rest.size()));
+                    }
+                }
+                pane.add_rml("<br/>Connected now: " + (now.empty() ? Rml::String("none") : now) + "<br/>");
+            };
+            choice_row(leftPane, rightPane, "Controller", "PAD_CONTROLLER", std::move(values), std::move(labels), help,
+                {}, connected);
+        }
         bool_row(leftPane, rightPane, "Vibration", "PAD_RUMBLE",
             "Lets the game make your gamepad vibrate.<br/><br/>(PAD_RUMBLE)");
         bool_row(leftPane, rightPane, "Roll toward the stick", "DES_ROLLDIR",

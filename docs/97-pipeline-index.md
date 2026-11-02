@@ -219,6 +219,25 @@ play at the Palace, on the same shader cache with HDR on:
 - Left out again: the 2 rows without `hdrv` above.
 - The 10-minute play asked for no row the seen file lacked.
 
+**Vulkan's first plays** (2026-10-26 to 10-31): the developer's play and test runs in the Tutorial, the Nexus
+and the Palace, on D3D12, hal-d3d12 and Vulkan, with HDR on:
+
+- 268 new rows, 1694 in all: 44 vertex and 250 fragment programs in 321 pairs.
+- On D3D12 these were in the player's own library already, so they never showed. A cache that had not met them
+  (Vulkan's first plays, a new PC) compiled each one on the render thread the first time a draw asked for it.
+- Left out again: the 2 rows without `hdrv` above.
+
+**A tester's full play** (2026-11-02): the seen file of a tester who played the game through to the end on the
+test builds, with HDR off:
+
+- 1276 rows, 607 of them new, 2301 in all: 50 vertex and 312 fragment programs in 440 pairs.
+- 6 vertex and 62 fragment programs are new: the later worlds, which the developer's runs had not reached. The
+  other 416 new rows are known pairs in new draw states.
+- All 607 draw into 8-bit targets. None uses the clamp form or has `hdrv`.
+- A start over a cache that had the 1694-row index's pipelines found both programs of all 2301 rows in the
+  game's files. It built the 508 its library lacked in 1.6 s, in the background on 4 threads; the other 99 new
+  rows were in the library already.
+
 ## Limits
 
 - A fragment program with more inline constants than the constant buffer holds has them baked into its text.

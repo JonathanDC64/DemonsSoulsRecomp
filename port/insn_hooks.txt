@@ -195,6 +195,14 @@
 # hook makes it ease as at 30 fps (docs/28, "Locked-on direction changes").
 0x003D42BC=des_twist_rate   # lfs f12, 0x20(r31): the bone's ease share (0.35, the locomotion controller's +0x154)
 
+# des_sun_gate (port/des_options.cpp): the sun flare's readers take the probe's
+# count only once label 0x52 has reached the probe's counter; above 30 fps that
+# never happens and the flare keeps a stale count, through walls or gone (issue
+# #290, docs/28, "Sun flare stuck above 30 fps").
+0x003E2DF0=des_sun_gate   # lwz r0, 0(r9): label 0x52, then cmplw r0, r28 (the query's counter, 0x003E2D38)
+0x003E6330=des_sun_gate   # lwz r0, 0(r3): label 0x52, then cmplw r0, r29 (0x003E5750)
+0x003E6518=des_sun_gate   # lwz r0, 0(r3): label 0x52, then cmplw r0, r29 (0x003E6368)
+
 # des_ik_rate (port/des_options.cpp): the foot IK (issue #140, docs/92). The
 # driver 0x002F5B08 and Havok's foot placement solver (0x00FF4DC0) smooth by
 # a fixed amount an update, so above 30 fps the hips and feet settle faster

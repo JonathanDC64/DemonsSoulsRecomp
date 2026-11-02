@@ -1283,6 +1283,29 @@ extern "C" void des_twist_rate(ppu_context* ctx, uint32_t addr)
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
 }
 
+/* The sun flare's occlusion probe (issue #290, docs/28 "Sun flare stuck above
+ * 30 fps"). Once a frame the game draws a 24x24 probe at the sun with ZPASS
+ * counting on. Ending the query (0x00AB41E8) adds one to a 64-bit counter,
+ * keeps it at the query's +0x18, and has the RSX release label 0x52 with it
+ * after the GET_REPORT into report 1024. The flare's readers (0x003E2D38, and
+ * in 0x003E5750 and 0x003E6368) take report 1024's count only once label 0x52
+ * has reached the query's counter, and otherwise keep the count they have. At
+ * 30 fps the RSX has walked the last probe by the next frame's first check.
+ * Above 30 fps the main thread runs 2-3 probes ahead of it, so the check fails
+ * every frame and the flare keeps whatever count it last took: it shines
+ * through walls, or is gone in the open. The lifter calls this after each
+ * reader's load of the label (the counter is in r28 or r29). The label becomes
+ * at least the counter, so the reader takes the report's latest count, a few
+ * frames old. DES_SUNFIX=0 turns it off live. */
+extern "C" void des_sun_gate(ppu_context* ctx, uint32_t addr)
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_SUNFIX", 1) != 0);
+    if (!on || s_fps <= 0) return;
+    const uint32_t seq = (uint32_t)ctx->gpr[addr == 0x003E2DF0u ? 28 : 29];
+    if ((uint32_t)ctx->gpr[0] < seq) ctx->gpr[0] = seq;
+}
+
 /* DES_PHYS_HZ=<n> (default 30; 0 = step every frame): at most n Havok steps
  * a second. The physics update 0x001D1E30 steps the world once a frame with
  * the frame's dt (f31). Havok counts its solver passes and its sleep checks

@@ -12,7 +12,8 @@
 //     gamepad's menu chord is then seen in g_pad0_buttons, the game's own pad 0 read.
 //
 // The game does not see the pads or the keyboard while a document is up (cellPad_set_host_hold), and gets them back
-// only once every key and button is released, so the press that closed the menu does not reach the game.
+// once every key and button is released, so the press that closed the menu does not reach the game, or a second after
+// the menu closed with something still held.
 #include "des_ui.h"
 
 #include "app.hpp"
@@ -91,11 +92,13 @@ int rsx_d3d12_borderless(void);
 void cellPad_set_host_hold(int hold);
 extern volatile unsigned g_pad0_buttons;  // pad 0 as the game last read it (CELL_PAD_CTRL_* layout)
 
-typedef struct {
+typedef struct {  // as pad_hid_sony.h has it, field for field: the poll fills an array of these
     unsigned short buttons;    // CELL_PAD_CTRL_*
     unsigned char lx, ly, rx, ry;  // 0-255, centre 128, up = 0
     unsigned char l2, r2;
+    unsigned char slot;        // the pad, for its vibration
 } PadHidSonyState;
+static_assert(sizeof(PadHidSonyState) == 10, "pad_hid_sony.h's PadHidSonyState");
 int pad_hid_sony_poll(PadHidSonyState* out, int max);
 int cellPad_host_pads_on(void);  // cellPad.h: 0 while the game ignores the pads (PAD_FOCUS_ONLY in the background)
 
@@ -119,6 +122,11 @@ constexpr unsigned kTriangle = 1u << 12, kCircle = 1u << 13, kCross = 1u << 14, 
 
 // How long the UI keeps drawing after the last document hides: its closing transitions.
 constexpr auto kGrace = std::chrono::milliseconds(600);
+
+// The longest the game waits for its controls after the last document hides (frame's hold). A key or a pad that
+// reads as held for good, as a driver can leave one until a restart, kept them from the game for the whole run
+// (issue #298: a DualShock 3 on BthPS3, fine with the start screen off).
+constexpr auto kHoldMax = std::chrono::seconds(1);
 
 // The game has stopped (no new frame for this long): the watch thread then reads the gamepad's menu chord itself,
 // since the game no longer reads the pad, and a menu key the render thread does not answer opens the hang dialog.
@@ -154,6 +162,7 @@ bool sDocumentsPushed = false;
 bool sActive = false;
 bool sPadIdle = false;  // awake with no document up: the pads are not fed to RmlUi (frame)
 bool sHold = false;
+clock_type::time_point sHoldWait{};  // the hold is on with no document up since then (frame)
 bool sChordWasDown = false;
 clock_type::time_point sLastVisible{};
 bool sRepaint = false;  // rsx_d3d12_overlay_repaint is on
@@ -477,6 +486,42 @@ bool keyboard_neutral() {
     for (int vk = 1; vk < 0xFF; vk++)
         if (ui::keys::key_down(vk)) return false;
     return true;
+}
+
+// For the log, when the hold gives up waiting: the keys and buttons held now, and every pad's state.
+std::string held_inputs() {
+    std::string s;
+    char b[128];
+    const auto add = [&](const char* text) {
+        if (!s.empty()) s += "; ";
+        s += text;
+    };
+    for (int vk = 1; vk < 0xFF; vk++)
+        if (ui::keys::key_down(vk)) {
+            const std::string name = ui::keys::key_name(vk);
+            std::snprintf(b, sizeof b, "key 0x%02X%s%s", vk, name.empty() ? "" : " ", name.c_str());
+            add(b);
+        }
+#ifdef _WIN32
+    for (DWORD i = 0; i < XUSER_MAX_COUNT; i++) {
+        XINPUT_STATE st{};
+        if (XInputGetState(i, &st) != ERROR_SUCCESS) continue;
+        const XINPUT_GAMEPAD& g = st.Gamepad;
+        std::snprintf(b, sizeof b, "XInput %lu: buttons 0x%04X, triggers %u %u, sticks %d %d %d %d",
+                      (unsigned long)i, unsigned(g.wButtons), unsigned(g.bLeftTrigger), unsigned(g.bRightTrigger),
+                      g.sThumbLX, g.sThumbLY, g.sThumbRX, g.sThumbRY);
+        add(b);
+    }
+#endif
+    PadHidSonyState hid[4];
+    const int n = pad_hid_sony_poll(hid, 4);
+    for (int i = 0; i < n; i++) {
+        std::snprintf(b, sizeof b, "HID pad %u: buttons 0x%04X, triggers %u %u, sticks %u %u %u %u", unsigned(hid[i].slot),
+                      unsigned(hid[i].buttons), unsigned(hid[i].l2), unsigned(hid[i].r2), unsigned(hid[i].lx),
+                      unsigned(hid[i].ly), unsigned(hid[i].rx), unsigned(hid[i].ry));
+        add(b);
+    }
+    return s.empty() ? "nothing now" : s;
 }
 
 ui::MenuBar* menu_bar() {
@@ -1031,12 +1076,21 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     }
     ui::mouse::set_ui_open(visible);  // (the cursor is the UI's while a document is up)
 
+    if (visible) sHoldWait = {};
     if (visible && !sHold) {
         sHold = true;
         cellPad_set_host_hold(1);
-    } else if (!visible && sHold && padNeutral && keyboard_neutral()) {
-        sHold = false;
-        cellPad_set_host_hold(0);
+    } else if (!visible && sHold) {
+        if (sHoldWait == clock_type::time_point{}) sHoldWait = now;
+        const bool held = !padNeutral || !keyboard_neutral();
+        if (!held || now - sHoldWait >= kHoldMax) {
+            if (held)
+                std::fprintf(stderr, "[ui] the game gets its controls back a second after the menu closed, with this "
+                                     "still held: %s\n", held_inputs().c_str());
+            sHold = false;
+            sHoldWait = {};
+            cellPad_set_host_hold(0);
+        }
     }
 
     if (sReportCountdown > 0 && !visible && --sReportCountdown == 0)  // (the game's picture, before the UI is drawn)

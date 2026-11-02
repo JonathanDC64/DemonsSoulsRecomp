@@ -9,6 +9,9 @@
 #            take from the MSVC headers otherwise, and leaves out ps3types.h's C++ part (the workload table's
 #            only use of the C++ library). /Zl: no default-library names in the objects. /GS-: no stack
 #            cookies, which are the C runtime's. /GR-: no RTTI, which needs the C++ library's type_info.
+#            /EHs-c-: no C++ exceptions. An object with a destructor (the lift's guest-setjmp scope) would
+#            otherwise get an unwind handler, __CxxFrameHandler3, which is the C runtime's, and the link fails.
+#            A host longjmp still unwinds through the module's frames by their unwind tables.
 #   Sources  one more: ps3recomp's runtime/ppu/game_libc.c (memcpy and friends, _fltused, the TLS directory).
 #   Link     lld-link /nodefaultlib /noentry. CMake's default Windows libraries are cleared for this folder
 #            and given back to des_boot and des_host by name. The one library is an import library for
@@ -24,7 +27,8 @@
 #            The forced include also hides every name (game_module.h says why); -fvisibility=hidden does the
 #            same for anything it does not reach. -ftls-model=initial-exec: the trampolines are read %fs-relative,
 #            with no call into glibc (game_module.c). -fno-stack-protector: the stack guard is glibc's.
-#            -fno-rtti, as /GR-.
+#            -fno-rtti, as /GR-. -fno-exceptions, as /EHs-c-: the personality routine and _Unwind_Resume
+#            are the C++ library's and libgcc's.
 #   Sources  game_libc.c (memcpy and friends).
 #   Link     the clang driver with -nostdlib and -fuse-ld=lld (it finds ld.lld beside itself): no C library,
 #            start files or libgcc. -z defs: a name nothing defines fails the link, not the dlopen. -z now: every
@@ -45,7 +49,7 @@ if(NOT WIN32)
     target_include_directories(des_game BEFORE PRIVATE "${DES_GAME_LIBC}")
     target_compile_definitions(des_game PRIVATE PS3_GAME_FREESTANDING)
     target_compile_options(des_game PRIVATE -nostdlibinc -fvisibility=hidden -ftls-model=initial-exec
-        -fno-stack-protector $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
+        -fno-stack-protector $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti> $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
         "-include${PS3RECOMP_DIR}/include/ps3emu/game_freestanding.h")
     target_link_options(des_game PRIVATE -nostdlib -fuse-ld=lld -Wl,-z,defs -Wl,-z,now -Wl,--build-id=sha1)
     message(STATUS "des_boot: des_game.so freestanding: no C library; C library calls go to the host (docs/87)")
@@ -79,7 +83,7 @@ endforeach()
 target_sources(des_game PRIVATE "${PS3RECOMP_DIR}/runtime/ppu/game_libc.c")
 target_include_directories(des_game BEFORE PRIVATE "${DES_GAME_LIBC}")
 target_compile_definitions(des_game PRIVATE PS3_GAME_FREESTANDING)
-target_compile_options(des_game PRIVATE /X /Zl /GS- $<$<COMPILE_LANGUAGE:CXX>:/GR->
+target_compile_options(des_game PRIVATE /X /Zl /GS- $<$<COMPILE_LANGUAGE:CXX>:/GR-> $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->
     "/FI${PS3RECOMP_DIR}/include/ps3emu/game_freestanding.h")
 target_link_options(des_game PRIVATE /NODEFAULTLIB /NOENTRY /MANIFEST:NO)
 

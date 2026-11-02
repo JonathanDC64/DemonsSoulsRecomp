@@ -190,6 +190,7 @@ clang-cl /nologo -TP -DDS_NO_SHADOW_STACK -D_CRT_SECURE_NO_WARNINGS -DPS3_GAME_F
 - SPU images also get their source options `/O2 /Zi /clang:-msse4.1`. C sources get no `/GR-`.
 - `-MD` stays: with `/Zl` it no longer names `msvcrt.lib`, and nothing in the shims reads the `_DLL` it defines.
 - `/X`: no Visual C++ or SDK headers. `/Zl`: no default-library names. `/GS-`: no cookies. `/GR-`: no RTTI (`type_info` is the C++ library's).
+- `/EHs-c-` for C++ (added 11-02, issue #304): no C++ exceptions. With `/EHsc`, a local with a destructor gets an unwind handler, `__CxxFrameHandler3`, which is the C runtime's. The first such local was the lift's guest-setjmp scope (ps3recomp #212, `SJLJ_SUPPORT`), and the link stopped with `undefined symbol: __CxxFrameHandler3` in the 7 chunks that have it. The module never throws or catches. A host `longjmp` still unwinds through its frames by their unwind tables. The guest-setjmp code does not need the destructor on that path: the guest `longjmp` sets the slot list itself, and the thread proc empties it after a thread exit. On Linux the same flag is `-fno-exceptions`: there the names were `__gxx_personality_v0` and `_Unwind_Resume`, and `-z defs` fails the link too.
 
 Link (`cmake -E vs_link_dll ... -- lld-link`, the linker part, which is what setup runs):
 

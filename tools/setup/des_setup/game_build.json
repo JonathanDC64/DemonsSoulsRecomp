@@ -38,6 +38,7 @@
     "/Zl",
     "/GS-",
     "/GR-",
+    "/EHs-c-",
     "/FI{src}/ps3recomp/include/ps3emu/game_freestanding.h"
    ]
   },
@@ -113,6 +114,7 @@
     "/Zl",
     "/GS-",
     "/GR-",
+    "/EHs-c-",
     "/FI{src}/ps3recomp/include/ps3emu/game_freestanding.h"
    ]
   },
@@ -187,6 +189,7 @@
     "/Zl",
     "/GS-",
     "/GR-",
+    "/EHs-c-",
     "/FI{src}/ps3recomp/include/ps3emu/game_freestanding.h"
    ]
   },
@@ -264,6 +267,7 @@
     "/Zl",
     "/GS-",
     "/GR-",
+    "/EHs-c-",
     "/FI{src}/ps3recomp/include/ps3emu/game_freestanding.h"
    ]
   },

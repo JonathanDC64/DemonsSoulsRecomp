@@ -34,6 +34,7 @@
     "-ftls-model=initial-exec",
     "-fno-stack-protector",
     "-fno-rtti",
+    "-fno-exceptions",
     "-include{src}/ps3recomp/include/ps3emu/game_freestanding.h"
    ]
   },
@@ -103,6 +104,7 @@
     "-ftls-model=initial-exec",
     "-fno-stack-protector",
     "-fno-rtti",
+    "-fno-exceptions",
     "-include{src}/ps3recomp/include/ps3emu/game_freestanding.h"
    ]
   },
@@ -169,6 +171,7 @@
     "-ftls-model=initial-exec",
     "-fno-stack-protector",
     "-fno-rtti",
+    "-fno-exceptions",
     "-include{src}/ps3recomp/include/ps3emu/game_freestanding.h"
    ]
   },
@@ -238,6 +241,7 @@
     "-ftls-model=initial-exec",
     "-fno-stack-protector",
     "-fno-rtti",
+    "-fno-exceptions",
     "-include{src}/ps3recomp/include/ps3emu/game_freestanding.h"
    ]
   },

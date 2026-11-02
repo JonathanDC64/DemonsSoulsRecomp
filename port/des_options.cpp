@@ -1289,9 +1289,14 @@ extern "C" void des_twist_rate(ppu_context* ctx, uint32_t addr)
  * in steps, so at 400 fps a ragdoll gets 13 times the passes and 1/13 of the
  * time to settle: corpses twitch after death and sink through the floor when
  * touched. The hook runs after 0x001D1E64 (lbz r28, 0x14(r31), the update's
- * own skip byte). Frames shorter than 1/n add up; the world steps 1/n each
- * time they reach it and skips the step (r28 = 1) otherwise. A frame of 1/n
- * or longer steps its own dt, so 30 fps is the game as it was. */
+ * own skip byte). Under the cap, frames add up; the world steps 1/n each
+ * time they reach it and skips the step (r28 = 1) otherwise, and a frame of
+ * 1/n or longer steps its own dt. The cap goes on while the mean of the
+ * last 8 frames is under 0.85/n, and off once it is over 0.95/n.
+ * Frames at 30 fps are a little under and over 1/30 by turns; a test on
+ * each frame skipped the steps of the short ones and dropped the time they
+ * held at the long ones, so the physics jumped. Without the cap every frame
+ * steps its own dt, so 30 fps is the game as it was. */
 static int phys_hz()
 {
     static int hz = 30;
@@ -1299,7 +1304,7 @@ static int phys_hz()
     return hz;
 }
 static std::atomic<double> s_phys_clock{0.0};   /* game seconds, summed frame dts */
-static std::atomic<bool> s_phys_capped{false};  /* this frame was shorter than the step */
+static std::atomic<bool> s_phys_capped{false};  /* this frame is under the cap */
 static std::atomic<bool> s_phys_ride{false};    /* this frame steps uncapped: the player rides a moving body */
 static std::atomic<double> s_phys_world_now{0.0}; /* under the cap: the world's time that matches the game's */
 
@@ -1375,10 +1380,21 @@ extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
     static int ride_on = 1, ride_log = 0;
     PS3_KNOB(ride_on, ps3_env_int("DES_PHYS_RIDE", 1));
     PS3_KNOB(ride_log, ps3_env_int("DES_PHYS_RIDE_LOG", 0));
-    int hz = phys_hz();
-    static double acc = 0.0, ride_until = 0.0;
+    const int hz = phys_hz();
+    static double acc = 0.0, ride_until = 0.0, recent[8];
+    static unsigned frames = 0;
+    static bool capping = false;
     const double dt = ctx->fpr[31];
-    if (dt > 0.0) s_phys_clock.store(s_phys_clock.load() + dt);
+    if (dt > 0.0) {
+        s_phys_clock.store(s_phys_clock.load() + dt);
+        recent[frames++ % 8] = dt;
+    }
+    const unsigned nr = frames < 8 ? frames : 8;
+    double mean = 0.0;
+    for (unsigned i = 0; i < nr; i++) mean += recent[i];
+    if (nr) mean /= nr;
+    if (hz <= 0) capping = false;
+    else if (nr && (capping ? mean > 0.95 / hz : mean < 0.85 / hz)) capping = !capping;
     uint32_t world = vm_read32((uint32_t)ctx->gpr[31] + 0x10);
     world = guest_ptr_ok(world) ? vm_read32(world + 4) : 0;
     static uint32_t world_seen = 0;
@@ -1386,18 +1402,17 @@ extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
         world_seen = world;
         fprintf(stderr, "[physride] world %08X (vtable %08X)\n", world, guest_ptr_ok(world) ? vm_read32(world) : 0u);
     }
-    const uint32_t body = hz > 0 && ride_on && dt > 0.0 && dt < 1.0 / hz ? player_moving_body(world) : 0;
+    const uint32_t body = capping && ride_on && dt > 0.0 ? player_moving_body(world) : 0;
     if (body) ride_until = s_phys_clock.load() + 0.25;
-    const bool ride = hz > 0 && ride_on && s_phys_clock.load() < ride_until;
+    const bool ride = capping && ride_on && s_phys_clock.load() < ride_until;
     if (ride_log && ride != s_phys_ride.load())
         fprintf(stderr, "[physride] %s at %.2f s (body %08X, filter %08X)\n", ride ? "every frame" : "capped again",
                 s_phys_clock.load(), body, body ? vm_read32(body + 0x2C) : 0u);
     s_phys_ride.store(ride);
-    if (ride) hz = 0;
-    const double h = hz > 0 ? 1.0 / hz : 0.0;
-    s_phys_capped.store(hz > 0 && dt > 0.0 && dt < h);
-    if (hz <= 0 || ctx->gpr[28] != 0) { acc = 0.0; return; }
-    if (!(dt > 0.0) || dt >= h) { acc = 0.0; return; }
+    const bool cap = capping && !ride && dt > 0.0;
+    const double h = cap ? 1.0 / hz : 0.0;
+    s_phys_capped.store(cap);
+    if (!cap || ctx->gpr[28] != 0) { acc = 0.0; return; }
     /* for DES_PARTINTERP: the world's time before this frame's step (the
      * world *(*(r31 + 0x10) + 4), vtable 0x018B4F98; its simulation, +8;
      * the time, +0x14) */
@@ -1411,10 +1426,11 @@ extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
         s_phys_world_now.store(wt + acc);
         return;
     }
-    ctx->fpr[31] = (float)h;
-    acc -= h;
+    const double step = dt >= h ? dt : h;   /* a long frame keeps what the short ones before it held */
+    ctx->fpr[31] = (float)step;
+    acc -= step;
     if (acc >= h) acc = 0.0;
-    s_phys_world_now.store(wt + h + acc);
+    s_phys_world_now.store(wt + step + acc);
 }
 
 /* With DES_PHYS_HZ: the passes that drive a character's bodies to its
@@ -1422,12 +1438,12 @@ extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
  * 0x0131BAF8) set each body's velocity to the distance to the pose times
  * 1/dt. Under the cap the world steps 1/n, so a frame's 1/dt would carry the
  * body n*dt times too far. The hook runs after their fdivs f31, f0, f1 and
- * makes 1/dt n when the frame is shorter than 1/n (not while the world steps
- * every frame for a ride). */
+ * makes 1/dt n when the frame is shorter than 1/n under the cap (not while
+ * the world steps every frame for a ride). */
 extern "C" void des_phys_kf(ppu_context* ctx, uint32_t)
 {
-    const int hz = s_phys_ride.load() ? 0 : phys_hz();
-    if (hz <= 0 || !(ctx->fpr[1] > 0.0) || ctx->fpr[1] >= 1.0 / hz) return;
+    const int hz = phys_hz();
+    if (!s_phys_capped.load() || hz <= 0 || !(ctx->fpr[1] > 0.0) || ctx->fpr[1] >= 1.0 / hz) return;
     ctx->fpr[31] = (float)(ctx->fpr[0] * hz);
 }
 

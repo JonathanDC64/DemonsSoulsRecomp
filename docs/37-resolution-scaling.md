@@ -250,6 +250,8 @@ have sharpened the HUD.
 - **Threshold.** A target is scaled only if its larger side is above
   `RSX_SCALE_MIN` (default 64), not 16. This keeps the 64x64 and 16x16
   exposure targets at 1x, so their write-back is unchanged.
+  Demon's Souls now starts with `RSX_SCALE_MIN=640` (see "Depth of field and
+  bloom" below).
 - **Fill from guest memory.** `off_rt_get` expands the guest image
   nearest-neighbour on the CPU, into the upload buffer, instead of a GPU
   pass. It only runs when a target is created.
@@ -354,3 +356,33 @@ Asked for with resolution scaling, and independent of it:
   and one read linear where the game reads it nearest blends entries.
 
 Both are part of the sampler-table key, so a change makes new tables.
+
+### Depth of field and bloom (2026-11-01)
+
+Above 100%, blurred areas looked wrong: distant things showed offset copies
+and stripes instead of a smooth blur.
+
+- **Which targets.** In every capture checked (the courtyard, the fog wall,
+  the Palace and others), the targets of 640 px or less are only the
+  post-processing chain:
+  - the depth of field's 640x360 pair;
+  - the bloom's 320x180 and 160x90 targets;
+  - the exposure's 64x64 and 16x16.
+- **Why scaling broke them.** The depth-of-field blur (two programs of 16
+  taps, `B41881` and `B41C81`) reads at offsets from shader constants. The
+  offsets are in texture space, one texel apart at the game's size. At 200%
+  the 640x360 buffer is 1280x720, so the taps skip every other texel. The
+  downsample into it also reads a quarter of what it read at 100%. The blur
+  becomes a few sharp copies of the scene.
+- **The fix.** The game's start sets `RSX_SCALE_MIN=640` (`run_defaults`,
+  `port/des_options.cpp`), unless the environment already has it. The chain
+  stays at the game's size, and the scene and the shadow atlas still scale.
+  RPCS3 has the same setting ("Minimum Scalable Dimension", default 16).
+  The chain reads the scaled scene and writes its blur back into scaled
+  targets, so only the blurred part is at the game's resolution, as on a PS3.
+- **Checked.** A Palace capture replayed with the composite showing only the
+  blurred buffer:
+  - at 100%, a smooth blur;
+  - at 200%, copies and stripes;
+  - at 200% with the threshold, a smooth blur again, matching 100%.
+- **To go back.** `RSX_SCALE_MIN=64` brings back the old behaviour.

@@ -207,6 +207,43 @@ jobs:
           name: ffmpeg-windows-${{ github.sha }}
           path: ${{ runner.temp }}/ffmpeg
 
+      # sccache (as in ps3recomp's CI): every CMake configure below takes it from CMAKE_<LANG>_COMPILER_LAUNCHER, so
+      # the runtime's and des_host's compiles that did not change come from the newest master entry; it is saved
+      # from master pushes only, one key per commit. Never on a release tag: a player's exe is compiled afresh.
+      # Nothing here compiles with /Zi (DES_DEBUG_INFO is off), which sccache could not cache.
+      - name: sccache
+        id: sccache
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        shell: bash
+        env:
+          SCCACHE_VERSION: v0.18.0
+          SCCACHE_ARCHIVE_SIZE: '9694400'
+          SCCACHE_ARCHIVE_SHA256: 8965c74d5e8a225244f741e18ad2f3f504f48228dc1bac948fc22761a348363d
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 5 --retry-all-errors -o sccache.zip \
+            "https://github.com/mozilla/sccache/releases/download/$SCCACHE_VERSION/sccache-$SCCACHE_VERSION-x86_64-pc-windows-msvc.zip"
+          [ "$(stat -c %s sccache.zip)" = "$SCCACHE_ARCHIVE_SIZE" ] || { echo "::error::sccache.zip has the wrong size"; exit 1; }
+          echo "$SCCACHE_ARCHIVE_SHA256  sccache.zip" | sha256sum -c -
+          unzip -q sccache.zip
+          d="$RUNNER_TEMP/sccache-$SCCACHE_VERSION-x86_64-pc-windows-msvc"
+          [ -f "$d/sccache.exe" ] || { echo "::error::no sccache.exe in the archive"; exit 1; }
+          echo "$d" >> "$GITHUB_PATH"
+          {
+            echo "SCCACHE_DIR=$GITHUB_WORKSPACE/.ci-cache/sccache"
+            echo "SCCACHE_CACHE_SIZE=1G"
+            echo "CMAKE_C_COMPILER_LAUNCHER=sccache"
+            echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache"
+          } >> "$GITHUB_ENV"
+
+      - name: Restore sccache's cache
+        if: steps.sccache.outcome == 'success'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/sccache
+          key: sccache-host-${{ runner.os }}-${{ github.sha }}
+          restore-keys: sccache-host-${{ runner.os }}-
+
       # The runtime library des_host links: PS3RECOMP_GAME_SPLIT=ON (docs/57), the static Visual C++ runtime
       # (/MT), because a /MT exe cannot link C++ objects built /MD, and FFmpeg opened at run time for the movies
       # (its headers only: nothing links the DLLs). PS3RECOMP_RSX_HAL adds the portable renderer (docs/120), with
@@ -387,6 +424,20 @@ jobs:
           path: dist/host/
           if-no-files-found: error
           retention-days: 14
+
+      - name: sccache's counts
+        if: ${{ !cancelled() && steps.sccache.outcome == 'success' }}
+        shell: bash
+        run: |
+          sccache --show-stats
+          sccache --stop-server || true
+
+      - name: Save sccache's cache
+        if: ${{ !cancelled() && steps.sccache.outcome == 'success' && github.event_name == 'push' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/sccache
+          key: sccache-host-${{ runner.os }}-${{ github.sha }}
 
   # The Linux host (docs/87), built on ubuntu-22.04, the oldest glibc the Linux build supports, so it runs on 2.35
   # and later. After it, setup's engine tests on the same system (ci.yml runs them on Windows). As players will get
@@ -621,6 +672,40 @@ jobs:
             echo "CMAKE_PREFIX_PATH=$DEPS_DIR"
           } >> "$GITHUB_ENV"
 
+      # sccache, as in the Windows job (its comment says why); after the dependencies' builds, so only the
+      # runtime's, des_host's and what CMake fetches go through it. Never on a release tag.
+      - name: sccache
+        id: sccache
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        env:
+          SCCACHE_VERSION: v0.18.0
+          SCCACHE_ARCHIVE_SIZE: '9730540'
+          SCCACHE_ARCHIVE_SHA256: 45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 5 --retry-all-errors -o sccache.tar.gz \
+            "https://github.com/mozilla/sccache/releases/download/$SCCACHE_VERSION/sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz"
+          [ "$(stat -c %s sccache.tar.gz)" = "$SCCACHE_ARCHIVE_SIZE" ] || { echo "::error::sccache.tar.gz has the wrong size"; exit 1; }
+          echo "$SCCACHE_ARCHIVE_SHA256  sccache.tar.gz" | sha256sum -c -
+          tar xzf sccache.tar.gz
+          d="$RUNNER_TEMP/sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl"
+          [ -x "$d/sccache" ] || { echo "::error::no sccache in the archive"; exit 1; }
+          echo "$d" >> "$GITHUB_PATH"
+          {
+            echo "SCCACHE_DIR=$GITHUB_WORKSPACE/.ci-cache/sccache"
+            echo "SCCACHE_CACHE_SIZE=1G"
+            echo "CMAKE_C_COMPILER_LAUNCHER=sccache"
+            echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache"
+          } >> "$GITHUB_ENV"
+
+      - name: Restore sccache's cache
+        if: steps.sccache.outcome == 'success'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/sccache
+          key: sccache-host-${{ runner.os }}-${{ github.sha }}
+          restore-keys: sccache-host-${{ runner.os }}-
+
       - name: Configure the runtime library
         run: >
           cmake -S ps3recomp -B ps3recomp/build_split -G Ninja
@@ -813,3 +898,16 @@ jobs:
         if: ${{ !cancelled() && steps.setup-py.outcome == 'success' }}
         working-directory: tools/setup
         run: python -m unittest discover -s tests
+
+      - name: sccache's counts
+        if: ${{ !cancelled() && steps.sccache.outcome == 'success' }}
+        run: |
+          sccache --show-stats
+          sccache --stop-server || true
+
+      - name: Save sccache's cache
+        if: ${{ !cancelled() && steps.sccache.outcome == 'success' && github.event_name == 'push' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/sccache
+          key: sccache-host-${{ runner.os }}-${{ github.sha }}

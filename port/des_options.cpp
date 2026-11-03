@@ -162,6 +162,8 @@ extern "C" int rsx_d3d12_display_shown_mhz(void);     /* how often it refreshed,
 extern "C" void des_aspect_init(void);         /* des_aspect.cpp: DES_ASPECT, DES_HUD */
 extern "C" void des_aspect_poll(void);         /* des_aspect.cpp: their live changes */
 extern "C" void des_hud_init(void);            /* des_hud.cpp: DES_HUD_SIZE, the corners, hidden groups */
+extern "C" void des_route_init(void);          /* des_route.cpp: DES_ROUTE */
+extern "C" void des_route_on_flip(void);       /* des_route.cpp: its game clock and steps */
 extern "C" volatile unsigned g_pad0_reads, g_pad0_empty_reads, g_pad0_buttons, g_pad0_lstick;   /* cellPad.c */
 extern "C" void cellPad_host_stick(int stick, unsigned char x, unsigned char y, unsigned reads);   /* cellPad.c */
 #ifdef _WIN32
@@ -678,6 +680,7 @@ void on_flip_request()
     s_flips.fetch_add(1, std::memory_order_relaxed);
     fps_on_flip_request();
     if (s_framelog) frame_log();
+    des_route_on_flip();   /* (after the frame log: the same step) */
 }
 
 constexpr unsigned kPadCross = 0x4000u, kPadStart = 0x0008u;
@@ -1014,6 +1017,25 @@ void gauge_len_rate(ppu_context* ctx)
 }
 
 } // namespace
+
+/* For des_route.cpp (DES_ROUTE): the step this frame was handed (s), a
+ * cutscene playing, the player's place (0 with no player). */
+extern "C" float des_frame_step(void)
+{
+    const uint32_t bits = vm_read32(kFrameDt);
+    float dt;
+    memcpy(&dt, &bits, 4);
+    return dt;
+}
+
+extern "C" int des_cutscene_playing(void) { return cutscene_playing() ? 1 : 0; }
+
+extern "C" int des_player_xyz(float* x, float* y, float* z)
+{
+    int stamina;
+    float speed;
+    return player_pos(x, y, z, &stamina, &speed) ? 1 : 0;
+}
 
 /* DES_DOF=0: no depth of field. The image-process update 0x00218428 blends
  * the area's two DOF_BANK rows (0x005EAF18) into a buffer on its stack at
@@ -3096,6 +3118,7 @@ extern "C" void ps3_title_options_init(void)
             fprintf(stderr, "[des] DES_FRAMELOG: cannot open %s\n", f);
         }
     }
+    des_route_init();      /* DES_ROUTE: a walk on the game clock, with screenshots */
     g_pad_title_hook = title_buttons;
     g_fs_open_hook = auto_continue_on_open;
     if (auto_continue_on())

@@ -52,6 +52,12 @@
 # and save s5_ab, then clear it and save s6_back. The walk does not end in
 # the same place every run, so this, not two runs, is how to see what one
 # knob changes. These two shots are not diffed against the good set.
+# REGRESS_ROUTE=game walks the same route inside the game (port/des_route.cpp,
+# DES_ROUTE=regress) instead of from Python through the debug console: its
+# holds are frame-exact, the game ends itself after the last shot, and the set
+# also gets the route's timeline and frame-time summary (route.txt,
+# summary.json). The test kit plays that route; this compares it with the
+# Python one before it becomes the default.
 set -uo pipefail
 . "$(dirname "$0")/deslib.sh"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -120,7 +126,13 @@ OUT="$RUN/run.txt"; PAD="$RUN/pad"; CON="$RUN/con"; : > "$PAD"; : > "$OUT"
 
 # No periodic frame dump: each shot asks for the next frame (CELLMARK_DUMP_NOW),
 # and MINDRAWS keeps an empty present from being the one saved.
-tools/des/desrun.sh "${REGRESS_MAX:-600}" "$OUT" DES_SKIP_INTRO=1 DES_AUTO_CONTINUE=1 "${ROOT[@]}" \
+ROUTE=()
+if [ "${REGRESS_ROUTE:-python}" = game ]; then
+  ROUTE=(DES_ROUTE=regress DES_ROUTE_OUT="$(cygpath -m "$SET")" DES_ROUTE_QUIT=1
+         DES_ROUTE_SETTLE="${REGRESS_SETTLE:-35.9}" DES_ROUTE_WALK="${REGRESS_WALK:-8}"
+         DES_ROUTE_TURN="${REGRESS_TURN:-1.5}" DES_ROUTE_ON="${REGRESS_ON:-5}" DES_ROUTE_AB="${REGRESS_AB:-}")
+fi
+tools/des/desrun.sh "${REGRESS_MAX:-600}" "$OUT" DES_SKIP_INTRO=1 DES_AUTO_CONTINUE=1 "${ROOT[@]}" "${ROUTE[@]}" \
   PAD_FILE="$(cygpath -m "$PAD")" PS3_DEBUG="$(cygpath -m "$CON")" PS3_OSK_TEXT=Aldia HLE_FIRST=1 \
   DES_FRAMELOG="$(cygpath -m "$RUN/frames.txt")" \
   CELLMARK_DUMP_MINDRAWS=1 CELLMARK_DUMP_DIR="$(cygpath -m "$RUN/shots")" > "$RUN/summary.txt" 2>&1 &
@@ -145,13 +157,27 @@ until grep -aq luabnd "$OUT"; do
 done
 say "level loading"
 
-python "$(cygpath -m "$HERE/regress_route.py")" --frames "$(cygpath -m "$RUN/frames.txt")" \
-  --console "$(cygpath -m "$CON")" --shots "$(cygpath -m "$RUN/shots")" --set "$(cygpath -m "$SET")" \
-  --log "$(cygpath -m "$RUN/route.txt")" --settle "${REGRESS_SETTLE:-35.9}" --walk "${REGRESS_WALK:-8}" \
-  --turn "${REGRESS_TURN:-1.5}" --on "${REGRESS_ON:-5}" --ab "${REGRESS_AB:-}" --t-offset $((SECONDS - t0))
-rc=$?
-[ $rc = 2 ] && exit 2
-des_console "$CON" "stat" | sed 's/^/  /'
+if [ ${#ROUTE[@]} -gt 0 ]; then
+  # The game walks the route and then ends itself; desrun.sh ends with it, or
+  # stops it at REGRESS_MAX.
+  wait "$DR" 2>/dev/null
+  cp "$SET/route.txt" "$RUN/route.txt" 2>/dev/null
+  last=$(tail -1 "$SET/route.txt" 2>/dev/null | tr -d '\r')
+  case "$last" in
+    *"done: ok,"*) rc=0 ;;
+    *"done: missing,"*) rc=1 ;;
+    *) say "the route did not finish: ${last:-no route.txt} (see $OUT)"; exit 2 ;;
+  esac
+  say "route ${last#* done: }"
+else
+  python "$(cygpath -m "$HERE/regress_route.py")" --frames "$(cygpath -m "$RUN/frames.txt")" \
+    --console "$(cygpath -m "$CON")" --shots "$(cygpath -m "$RUN/shots")" --set "$(cygpath -m "$SET")" \
+    --log "$(cygpath -m "$RUN/route.txt")" --settle "${REGRESS_SETTLE:-35.9}" --walk "${REGRESS_WALK:-8}" \
+    --turn "${REGRESS_TURN:-1.5}" --on "${REGRESS_ON:-5}" --ab "${REGRESS_AB:-}" --t-offset $((SECONDS - t0))
+  rc=$?
+  [ $rc = 2 ] && exit 2
+  des_console "$CON" "stat" | sed 's/^/  /'
+fi
 restore; trap - EXIT
 say "set $SET"
 

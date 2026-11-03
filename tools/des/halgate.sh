@@ -10,6 +10,7 @@
 #   --repeat N     A/A instead: route A N times (N >= 2), each pass compared
 #                  with the first: is the replay deterministic?
 #   --time         G4 instead: replay CPU time per frame on each route (below)
+#   --gpu          with --time: the GPU's own time a frame too (below)
 #   --frames F     frames per capture (default 4)
 #   --chain        also replay each chain of the set (capset.sh @chain) and
 #                  every capture without knobs, each as one chained run (not
@@ -72,6 +73,11 @@
 # most +0.5% over A, vulkan no slower, other routes reported.
 # Like the A/B batches it waits for a quiet PC (perf_wait_quiet), refuses
 # while any game runs, pins RSX_PRESENT from the lock state and RSX_VSYNC=0.
+# With --gpu each timed replay also gets RSX_GPU_TIMES=1 (ps3recomp #225:
+# GPU timestamps around each recording) and its times line's "gpu X ms a
+# frame" goes in the table beside the CPU figure, as a report with no limit.
+# The stamps cost the CPU a little on both routes. legacy has no GPU device
+# of the new path, so it shows "-".
 #
 # The table goes to the terminal and <out>/verdict.txt. Exit status: 0 every
 # check passed, 1 one failed, 2 bad arguments, 3 refused (another build's
@@ -83,7 +89,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/perflib.sh"
 cd "$DES_ROOT" || exit 1
-A=legacy; B=d3d12; REPEAT=0; TIME=0; F=4; CHAIN=0; ONLY='*'; IMG=; TOL=1; COLD=0; RTCAP=1; OUTD=; ANY=0
+A=legacy; B=d3d12; REPEAT=0; TIME=0; GPU=0; F=4; CHAIN=0; ONLY='*'; IMG=; TOL=1; COLD=0; RTCAP=1; OUTD=; ANY=0
 CS=
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -91,6 +97,7 @@ while [ $# -gt 0 ]; do
     -b) B=${2:?-b needs a route}; shift ;;
     --repeat) REPEAT=${2:?--repeat needs N}; shift ;;
     --time) TIME=1 ;;
+    --gpu) GPU=1 ;;
     --frames) F=${2:?--frames needs F}; shift ;;
     --chain) CHAIN=1 ;;
     --only) ONLY=${2:?--only needs a glob}; shift ;;
@@ -113,6 +120,7 @@ num "$TOL" || { echo "[gate] --tol takes a whole number"; exit 2; }
 num "$REPEAT" || { echo "[gate] --repeat takes a whole number"; exit 2; }
 [ "$REPEAT" = 0 ] || [ "$REPEAT" -ge 2 ] || { echo "[gate] --repeat takes N >= 2"; exit 2; }
 [ "$REPEAT" = 0 ] || [ "$TIME" = 0 ] || { echo "[gate] --repeat or --time, not both"; exit 2; }
+[ "$GPU" = 0 ] || [ "$TIME" = 1 ] || { echo "[gate] --gpu goes with --time"; exit 2; }
 case "$IMG" in ''|exact|vk) ;; *) echo "[gate] --img is exact or vk"; exit 2 ;; esac
 [ "$A" = hal-d3d12 ] && A=d3d12   # (its old name: the replay says d3d12)
 [ "$B" = hal-d3d12 ] && B=d3d12
@@ -198,6 +206,7 @@ replay() {
     [ "$COLD" = 1 ] && E+=(PS3_SHADER_CACHE_HLSL=1)
     case " $knobs " in *" RSX_HDR=1 "*) E+=(RSX_HDR_SNAP="$(cygpath -m "$d/shots/hdr.hdrp")") ;; esac
   fi
+  [ "$GPU" = 1 ] && [ "$diag" = 0 ] && E+=(RSX_GPU_TIMES=1)
   for k in $knobs; do E+=("$k"); done
   des_window_launch   # (DES_WINDOW: hidden while someone is at the PC)
   if [ "$diag" = 1 ]; then
@@ -355,13 +364,19 @@ if [ "$TIME" = 1 ]; then
         END {if (t2 && e) printf "%.4f wall\n", 1000 * (e - t2) / (f - 3); else print "- none"}' "$1/stamped.txt"
     fi
   }
+  # gpu_of <dir>: the replay's GPU ms a frame (--gpu), or "-" when it gave none.
+  gpu_of() {
+    local g
+    g=$(grep -a '^\[replay\] times:' "$1/replay.txt" | grep -ao 'gpu [0-9.]* ms a frame' | tail -1 | awk '{print $2}')
+    echo "${g:--}"
+  }
   : > "$OUT/times.tsv"
   for i in $(seq 1 "$TR"); do
     if [ $((i % 2)) = 1 ]; then order="$A $B"; else order="$B $A"; fi
     for r in $order; do
       perf_wait_quiet 3 || { echo "[gate] the PC stayed busy; stopping"; exit 4; }
       perf_present_ok || { echo "[gate] the session locked under a presenting run; stopping"; exit 4; }
-      sum=0; srcs=
+      sum=0; srcs=; gsum=0; gn=0
       for c in $TC; do
         x=r${i}_${c%.rcap}
         replay "$OUT/time/$r" "$r" "$x" "" "$TF" 0 "$c"
@@ -369,28 +384,48 @@ if [ "$TIME" = 1 ]; then
         read -r pf src <<< "$(per_frame "$OUT/time/$r/$x")"
         [ "$pf" != - ] || { echo "[gate] $r $x: no frame 2 line to time from"; exit 1; }
         sum=$(awk -v a="$sum" -v b="$pf" 'BEGIN {print a + b}'); srcs="$srcs $src"
+        g=$(gpu_of "$OUT/time/$r/$x")
+        [ "$g" = - ] || { gsum=$(awk -v a="$gsum" -v b="$g" 'BEGIN {print a + b}'); gn=$((gn + 1)); }
       done
       pf=$(awk -v s="$sum" -v n="$NC" 'BEGIN {printf "%.4f", s / n}')
       src=$(printf '%s\n' $srcs | sort -u | tr '\n' '+' | sed 's/+$//')
-      printf '%s\t%s\t%s\t%s\t%s\n' "$r" "$i" "$pf" "$src" "${PERF_BG:-?}" >> "$OUT/times.tsv"
-      echo "[gate] round $i $r: $pf ms a frame ($src; background cpu ${PERF_BG:-?}%)"
+      # A round's GPU figure only when every capture gave one.
+      gpf=-; [ "$gn" = "$NC" ] && gpf=$(awk -v s="$gsum" -v n="$NC" 'BEGIN {printf "%.4f", s / n}')
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$r" "$i" "$pf" "$src" "${PERF_BG:-?}" "$gpf" >> "$OUT/times.tsv"
+      echo "[gate] round $i $r: $pf ms a frame ($src; background cpu ${PERF_BG:-?}%)$([ "$GPU" = 1 ] && echo ", gpu $gpf ms")"
     done
   done
-  awk -F '\t' -v a="$A" -v b="$B" '
+  awk -F '\t' -v a="$A" -v b="$B" -v gpu="$GPU" '
     function med(r,   n, i, j, t, v) { n = 0; for (i = 1; i <= cnt[r]; i++) v[++n] = x[r, i]
       for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (v[j] < v[i]) { t = v[i]; v[i] = v[j]; v[j] = t }
       return (n % 2) ? v[(n + 1) / 2] : (v[n / 2] + v[n / 2 + 1]) / 2 }
-    { cnt[$1]++; x[$1, cnt[$1]] = $3 + 0; src[$1] = $4 }
+    function gmed(r,   n, i, j, t, v) { n = 0; for (i = 1; i <= cnt[r]; i++) if (g[r, i] != "-") v[++n] = g[r, i] + 0
+      if (n < cnt[r] || n == 0) return -1
+      for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (v[j] < v[i]) { t = v[i]; v[i] = v[j]; v[j] = t }
+      return (n % 2) ? v[(n + 1) / 2] : (v[n / 2] + v[n / 2 + 1]) / 2 }
+    function gtxt(m) { return m < 0 ? "-" : sprintf("%.4f", m) }
+    { cnt[$1]++; x[$1, cnt[$1]] = $3 + 0; src[$1] = $4; g[$1, cnt[$1]] = $6 }
     END {
       ma = med(a); mb = med(b)
       if (ma <= 0 || mb <= 0) { printf "no valid time (%s %.4f, %s %.4f ms a frame): FAIL\n", a, ma, b, mb; exit 1 }
       d = 100 * (mb / ma - 1)
       lim = (b == "d3d12") ? 0.5 : (b == "vulkan") ? 0.0 : ""
-      printf "%-10s %6s %12s %s\n", "route", "runs", "ms a frame", "(median)"
-      printf "%-10s %6d %12.4f %s\n", a, cnt[a], ma, src[a]
-      printf "%-10s %6d %12.4f %s\n", b, cnt[b], mb, src[b]
+      if (gpu == 1) {
+        ga = gmed(a); gb = gmed(b)
+        printf "%-10s %6s %12s %12s %s\n", "route", "runs", "ms a frame", "gpu ms", "(median)"
+        printf "%-10s %6d %12.4f %12s %s\n", a, cnt[a], ma, gtxt(ga), src[a]
+        printf "%-10s %6d %12.4f %12s %s\n", b, cnt[b], mb, gtxt(gb), src[b]
+      } else {
+        printf "%-10s %6s %12s %s\n", "route", "runs", "ms a frame", "(median)"
+        printf "%-10s %6d %12.4f %s\n", a, cnt[a], ma, src[a]
+        printf "%-10s %6d %12.4f %s\n", b, cnt[b], mb, src[b]
+      }
       if (lim == "") printf "B against A: %+.2f%% (no limit for %s)\n", d, b
       else printf "B against A: %+.2f%%, limit %+.1f%%: %s\n", d, lim, (d <= lim ? "ok" : "FAIL")
+      if (gpu == 1) {
+        if (ga > 0 && gb > 0) printf "GPU, B against A: %+.2f%% (a report, no limit)\n", 100 * (gb / ga - 1)
+        else printf "GPU, B against A: - (%s gave no GPU time)\n", (ga < 0 && gb < 0) ? "neither route" : (ga < 0 ? a : b)
+      }
       exit (lim != "" && d > lim) }' "$OUT/times.tsv" | tee "$OUT/verdict.txt"
   rc=${PIPESTATUS[0]}
   echo "[gate] finished $(date '+%F %T'); $OUT"

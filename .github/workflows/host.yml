@@ -214,17 +214,47 @@ jobs:
       # Display > Renderer offers Vulkan beside it, and RSX_BACKEND=legacy is the renderer before it (docs/120, "The
       # switch"). Without this option the host would have the legacy renderer only. The Vulkan backend opens the
       # system's loader at run time.
+      #
+      # The portable renderer's FetchContent clones Vulkan-Headers, SPIRV-Headers, SPIRV-Tools and glslang by
+      # commit (ps3recomp's cmake/gpu_deps.cmake), so not shallow: most of this configure's 3.5 minutes. They are
+      # cached on that file, as in ps3recomp's own CI: a hit hands them to the configure through FetchContent's
+      # FETCHCONTENT_SOURCE_DIR_*, a miss clones and the step after keeps them (no .git: their builds take their
+      # versions from their own files).
+      - name: Cache the GPU layer's sources
+        id: gpu-src
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/gpu-src
+          key: gpu-src-${{ runner.os }}-${{ hashFiles('ps3recomp/cmake/gpu_deps.cmake') }}-v1
+
       - name: Configure the runtime library
-        run: >
-          cmake -S ps3recomp -B ps3recomp/build_split -G Ninja
-          -DCMAKE_C_COMPILER=clang-cl
-          -DCMAKE_CXX_COMPILER=clang-cl
-          -DCMAKE_BUILD_TYPE=Release
-          -DPS3RECOMP_GAME_SPLIT=ON
-          -DPS3RECOMP_STATIC_CRT=ON
-          -DPS3RECOMP_RSX_HAL=ON
-          -DPS3RECOMP_FFMPEG_RUNTIME=ON
-          "-DPS3RECOMP_FFMPEG_INCLUDE_DIR=${{ runner.temp }}/ffmpeg/include"
+        id: rt_cfg
+        run: |
+          $src = @()
+          if ('${{ steps.gpu-src.outputs.cache-hit }}' -eq 'true') {
+            foreach ($n in 'vulkan_headers', 'spirv_headers', 'spirv_tools', 'glslang') {
+              $d = "$env:GITHUB_WORKSPACE/.ci-cache/gpu-src/$n" -replace '\\', '/'
+              if (-not (Test-Path "$d/CMakeLists.txt")) { Write-Output "::error::the cached $n has no CMakeLists.txt"; exit 1 }
+              $src += "-DFETCHCONTENT_SOURCE_DIR_$($n.ToUpper())=$d"
+            }
+          }
+          cmake -S ps3recomp -B ps3recomp/build_split -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl `
+            -DCMAKE_BUILD_TYPE=Release -DPS3RECOMP_GAME_SPLIT=ON -DPS3RECOMP_STATIC_CRT=ON -DPS3RECOMP_RSX_HAL=ON `
+            -DPS3RECOMP_FFMPEG_RUNTIME=ON "-DPS3RECOMP_FFMPEG_INCLUDE_DIR=${{ runner.temp }}/ffmpeg/include" @src
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Never in the way: a copy that fails is removed, so no half copy is saved, and the job goes on.
+      - name: Keep the GPU layer's sources for the cache
+        if: steps.gpu-src.outputs.cache-hit != 'true' && steps.rt_cfg.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          trap 'rm -rf .ci-cache/gpu-src' ERR
+          for n in vulkan_headers spirv_headers spirv_tools glslang; do
+            mkdir -p ".ci-cache/gpu-src/$n"
+            tar -C "ps3recomp/build_split/_deps/$n-src" --exclude=.git -cf - . | tar -C ".ci-cache/gpu-src/$n" -xf -
+          done
+          du -sh .ci-cache/gpu-src/*
 
       - name: Build the runtime library
         run: cmake --build ps3recomp/build_split --target ps3recomp_runtime
@@ -670,16 +700,46 @@ jobs:
       # second des_host on it. ps3recomp's route switch then has RSX_BACKEND=d3d12 (the default, which on Linux is
       # still the legacy renderer on vkd3d), legacy, null and vulkan, with the Vulkan start's fallback to the default. Its folder must pass the checks
       # above. Not on a release tag.
+      # The GPU layer's sources, cached as in the Windows job above (its comment says why).
+      - name: Cache the GPU layer's sources
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        id: gpu-src
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/gpu-src
+          key: gpu-src-${{ runner.os }}-${{ hashFiles('ps3recomp/cmake/gpu_deps.cmake') }}-v1
+
       - name: Both routes, configure the runtime library
+        id: routes_rt_cfg
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: |
           set -o pipefail
+          src=()
+          if [ "${{ steps.gpu-src.outputs.cache-hit }}" = true ]; then
+            for n in vulkan_headers spirv_headers spirv_tools glslang; do
+              d="$GITHUB_WORKSPACE/.ci-cache/gpu-src/$n"
+              [ -f "$d/CMakeLists.txt" ] || { echo "::error::the cached $n has no CMakeLists.txt"; exit 1; }
+              src+=("-DFETCHCONTENT_SOURCE_DIR_${n^^}=$d")
+            done
+          fi
           cmake -S ps3recomp -B ps3recomp/build_routes -G Ninja -DCMAKE_BUILD_TYPE=Release -DPS3RECOMP_BUILD_TESTS=OFF \
             -DPS3RECOMP_RSX_D3D12_VKD3D=ON -DPS3RECOMP_RSX_HAL=ON -DPS3RECOMP_GAME_SPLIT=ON \
-            -DPS3RECOMP_FFMPEG_RUNTIME=ON "-DPS3RECOMP_FFMPEG_INCLUDE_DIR=$FFMPEG_DIR/include" | tee routes_rt.log
+            -DPS3RECOMP_FFMPEG_RUNTIME=ON "-DPS3RECOMP_FFMPEG_INCLUDE_DIR=$FFMPEG_DIR/include" "${src[@]}" | tee routes_rt.log
           grep -q "D3D12: *RSX backend on vkd3d" routes_rt.log
           grep -q "Renderer: *the GPU layer's Vulkan backend" routes_rt.log
           grep -q "Renderer: *the compile service's spv target" routes_rt.log
+
+      # Never in the way: a copy that fails is removed, so no half copy is saved, and the job goes on.
+      - name: Keep the GPU layer's sources for the cache
+        if: ${{ !startsWith(github.ref, 'refs/tags/') && steps.gpu-src.outputs.cache-hit != 'true' && steps.routes_rt_cfg.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          trap 'rm -rf .ci-cache/gpu-src' ERR
+          for n in vulkan_headers spirv_headers spirv_tools glslang; do
+            mkdir -p ".ci-cache/gpu-src/$n"
+            tar -C "ps3recomp/build_routes/_deps/$n-src" --exclude=.git -cf - . | tar -C ".ci-cache/gpu-src/$n" -xf -
+          done
+          du -sh .ci-cache/gpu-src/*
 
       - name: Both routes, build the runtime library
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}

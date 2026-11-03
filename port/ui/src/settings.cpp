@@ -31,7 +31,13 @@ constexpr Def kDefs[] = {
     {"DES_FULLSCREEN", "0", Apply::Live},      // 1 = borderless fullscreen; des_ui.cpp's sync_fullscreen, each frame
     {"DES_MAXIMIZED", "1", Apply::Restart},    // 1 = the window opens maximized (apply_window: RSX_MAXIMIZED)
 #if DES_RSX_VULKAN
-    {"RSX_BACKEND", "d3d12", Apply::Restart},  // Renderer: d3d12 or vulkan; the runtime's route switch, once at start
+    // Renderer: d3d12 or vulkan; the runtime's route switch, once at start. Its default is the runtime's: D3D12 on
+    // Windows, Vulkan off it (ps3recomp's rsx_out.c), where d3d12 is the legacy renderer on vkd3d.
+#if defined(_WIN32)
+    {"RSX_BACKEND", "d3d12", Apply::Restart},
+#else
+    {"RSX_BACKEND", "vulkan", Apply::Restart},
+#endif
 #endif
     {"DES_FPS", "", Apply::Live},              // "" = the game's own 30 fps mode; read at each flip
     {"fps_custom", "90", Apply::UiOnly},       // Frame rate's Custom number, kept while a fixed rate is chosen

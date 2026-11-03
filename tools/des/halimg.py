@@ -8,7 +8,7 @@ for the renderer gates (halgate.sh). In a folder every file is matched by its
 path under the folder, subfolders included; a file on one side only fails.
 
   exact  the pixels are identical (every channel, alpha too). Reports how many
-         pixels differ. For a route that must be bit-identical (hal-d3d12).
+         pixels differ. For a route that must be bit-identical (d3d12 against legacy).
   vk     the rule for a route that may round differently (Vulkan), all three:
            - at least 99.95% of pixels within +-tol/255 on every channel
              (--tol, default 1; 2 for the D32S8 tests);

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # halgate.sh [options] <capset dir>: the renderer gates on a capture set
 # (capset.sh; docs/120 G2-G4). Replays every capture through rsx_replay once
-# per route (RSX_BACKEND=<route>: d3d12 is today's renderer; hal-d3d12 and
-# vulkan come with the portable path) and compares route B with route A.
+# per route (RSX_BACKEND=<route>: legacy is the renderer before the portable
+# path; d3d12, Windows' default, and vulkan are the portable path's, and
+# hal-d3d12 is d3d12's old name) and compares route B with route A.
 #
-#   -a <route>     route A (default d3d12)
-#   -b <route>     route B (default hal-d3d12)
+#   -a <route>     route A (default legacy)
+#   -b <route>     route B (default d3d12)
 #   --repeat N     A/A instead: route A N times (N >= 2), each pass compared
-#                  with the first: is today's replay deterministic?
+#                  with the first: is the replay deterministic?
 #   --time         G4 instead: replay CPU time per frame on each route (below)
 #   --frames F     frames per capture (default 4)
 #   --chain        also replay each chain of the set (capset.sh @chain) and
@@ -47,10 +48,11 @@
 #   manifest   rsxcap manifests line by line (pointers left out)
 #   legacy     no non-VP draw records ("d<n> legacy" in DRAWPRINT): the new
 #              path does not copy them
-#   route      a route other than d3d12 must say it ran ("[rsx_out] ... route
-#              <name>" or "renderer <name>" in the replay's output), so a
-#              build without it, or a fallback, never passes as that route
-# plus, for hal-d3d12 and A/A, one row for the shader caches: the .dxbc and
+#   route      a route must say it ran ("[rsx_out] ... route <name>" or
+#              "renderer <name>" in the replay's output, the last such line),
+#              so a build without it, or a fallback, never passes as that
+#              route; legacy may say nothing (a build without the switch)
+# plus, for d3d12 and A/A, one row for the shader caches: the .dxbc and
 # .hlsl files each pass added, by name and bytes.
 #
 # Same build only: capset.json names the rsx_replay that matches the game
@@ -66,8 +68,8 @@
 # today's prints frames 0-2 only), else the wall clock from the moment its
 # "frame 2" line arrives to its exit, over the frames after it (no load or
 # start-up in it; the exit is). A round's figure is the mean over the
-# captures; the verdict is on the median of the rounds per route: hal-d3d12
-# at most +0.5% over A, vulkan no slower, other routes reported.
+# captures; the verdict is on the median of the rounds per route: d3d12 at
+# most +0.5% over A, vulkan no slower, other routes reported.
 # Like the A/B batches it waits for a quiet PC (perf_wait_quiet), refuses
 # while any game runs, pins RSX_PRESENT from the lock state and RSX_VSYNC=0.
 #
@@ -81,7 +83,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/perflib.sh"
 cd "$DES_ROOT" || exit 1
-A=d3d12; B=hal-d3d12; REPEAT=0; TIME=0; F=4; CHAIN=0; ONLY='*'; IMG=; TOL=1; COLD=0; RTCAP=1; OUTD=; ANY=0
+A=legacy; B=d3d12; REPEAT=0; TIME=0; F=4; CHAIN=0; ONLY='*'; IMG=; TOL=1; COLD=0; RTCAP=1; OUTD=; ANY=0
 CS=
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -112,7 +114,9 @@ num "$REPEAT" || { echo "[gate] --repeat takes a whole number"; exit 2; }
 [ "$REPEAT" = 0 ] || [ "$REPEAT" -ge 2 ] || { echo "[gate] --repeat takes N >= 2"; exit 2; }
 [ "$REPEAT" = 0 ] || [ "$TIME" = 0 ] || { echo "[gate] --repeat or --time, not both"; exit 2; }
 case "$IMG" in ''|exact|vk) ;; *) echo "[gate] --img is exact or vk"; exit 2 ;; esac
-for r in "$A" "$B"; do case "$r" in d3d12|hal-d3d12|vulkan|metal|auto) ;; *) echo "[gate] unknown route $r"; exit 2 ;; esac; done
+[ "$A" = hal-d3d12 ] && A=d3d12   # (its old name: the replay says d3d12)
+[ "$B" = hal-d3d12 ] && B=d3d12
+for r in "$A" "$B"; do case "$r" in legacy|d3d12|vulkan|metal|auto) ;; *) echo "[gate] unknown route $r"; exit 2 ;; esac; done
 [ -d "$CS" ] || CS=$(dirname "$CS")
 CS=$(cd "$CS" 2>/dev/null && cygpath -m "$(pwd)") || { echo "[gate] no folder $CS"; exit 2; }
 JSON=$CS/capset.json
@@ -221,10 +225,11 @@ replay_problem() {
   grep -aq 'rsx_replay: cannot read' "$d/replay.txt" && { echo "cannot read the capture"; return; }
   [ "$rc" = 0 ] || { [ "$rc" = 124 ] && echo "timed out" || echo "exit $rc"; return; }
   local said
-  said=$(grep -aE '^\[rsx_out\]' "$d/replay.txt" | grep -aiE '(route|renderer)[ :=]+[a-z0-9-]+' |
-         sed -E 's/.*(route|renderer)[ :=]+([A-Za-z0-9-]+).*/\2/I' | tail -1)
-  if [ "$route" != d3d12 ] && [ "$said" != "$route" ]; then echo "route not confirmed (said: ${said:-nothing})"; return; fi
-  [ "$route" = d3d12 ] && [ -n "$said" ] && [ "$said" != d3d12 ] && { echo "ran $said"; return; }
+  # (the word right after "route": the reasons in brackets name renderers too)
+  said=$(grep -aiE '^\[rsx_out\] (route|renderer)[ :=]+[a-z0-9-]+' "$d/replay.txt" |
+         sed -E 's/^\[rsx_out\] (route|renderer)[ :=]+([A-Za-z0-9-]+).*/\2/I' | tail -1)
+  if [ "$route" = legacy ]; then [ -n "$said" ] && [ "$said" != legacy ] && { echo "ran $said"; return; }
+  elif [ "$said" != "$route" ]; then echo "route not confirmed (said: ${said:-nothing})"; return; fi
   return 0
 }
 
@@ -380,7 +385,7 @@ if [ "$TIME" = 1 ]; then
       ma = med(a); mb = med(b)
       if (ma <= 0 || mb <= 0) { printf "no valid time (%s %.4f, %s %.4f ms a frame): FAIL\n", a, ma, b, mb; exit 1 }
       d = 100 * (mb / ma - 1)
-      lim = (b == "hal-d3d12") ? 0.5 : (b == "vulkan") ? 0.0 : ""
+      lim = (b == "d3d12") ? 0.5 : (b == "vulkan") ? 0.0 : ""
       printf "%-10s %6s %12s %s\n", "route", "runs", "ms a frame", "(median)"
       printf "%-10s %6d %12.4f %s\n", a, cnt[a], ma, src[a]
       printf "%-10s %6d %12.4f %s\n", b, cnt[b], mb, src[b]

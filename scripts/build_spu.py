@@ -186,7 +186,9 @@ def cut(eboot, elf_dir, job_dir, ps3recomp, table=TABLE):
 
 def _lift(name, cmd):
     print(f"lifting {name} ...", flush=True)
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    # The lifter prints its paths, in UTF-8 mode (main's py), so its output is read as UTF-8. In the code page, a
+    # folder named in other letters (a Cyrillic or Japanese user name) ended the lifter, and this lost its output.
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         return f"{name}: the lifter failed\n{r.stdout[-2000:]}\n{r.stderr[-2000:]}"
     return None
@@ -208,6 +210,7 @@ def main(argv=None):
     ap.add_argument("-j", "--jobs", type=int, default=1, help="lifts to run at once (default 1)")
     a = ap.parse_args(argv)
     lifter = os.path.join(a.ps3recomp, "tools", "spu_lifter.py")
+    py = [sys.executable, "-X", "utf8"]   # the lifter in UTF-8 mode, as setup runs this script (des_setup/lift.py)
     out_dir = a.out_dir or os.path.join(a.ps3recomp, "work_spu")
     gen_only = a.gen_only
 
@@ -262,7 +265,7 @@ def main(argv=None):
                     print(f"  {img}: fingerprint 0x{imgs[-1][1]:016X} is not the one its "
                           f"jump tables were written for; lifting without them")
                     tables = []
-            tasks.append((img, [sys.executable, lifter, "--auto-functions", f,
+            tasks.append((img, py + [lifter, "--auto-functions", f,
                                 "--symbol-prefix", img + "_", "-o", out] +
                                (["--regions"] if img in REGIONS else []) +
                                [x for h in hooks for x in ("--native-hook", h)] +
@@ -281,7 +284,7 @@ def main(argv=None):
             os.makedirs(out, exist_ok=True)
             elf = os.path.join(out, img + ".elf")
             open(elf, "wb").write(wrap(raw, base=0, entry=0))
-            tasks.append((img, [sys.executable, lifter, "--auto-functions", elf,
+            tasks.append((img, py + [lifter, "--auto-functions", elf,
                                 "--symbol-prefix", img + "_", "-o", out]))
 
     with ThreadPoolExecutor(max_workers=max(1, a.jobs)) as ex:

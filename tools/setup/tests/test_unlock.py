@@ -168,7 +168,8 @@ class UnlockTest(unittest.TestCase):
         calls = self.t.calls()
         self.assertEqual(len(calls), 1)
         c = calls[0]
-        self.assertEqual(c["inputs"], [str(self.t.work / "in" / p) for p, _, _ in FILES])
+        # (named from RPCS3's working folder, the work folder: never a data folder's own letters, docs/126)
+        self.assertEqual(c["inputs"], [str(Path("in") / p) for p, _, _ in FILES])
         self.assertEqual(os.path.normcase(c["cwd"]), os.path.normcase(str(self.t.work)))
         self.assertEqual(c["stdin"], "")                 # the null device: a KLIC prompt would end at once
         self.assertFalse(c["outside"])

@@ -30,10 +30,11 @@ BASE = 0x30000000
 
 
 def run(cmd):
-    print("+ " + " ".join(os.path.basename(c) if i == 1 else c for i, c in enumerate(cmd)), flush=True)
+    script = next(c for c in cmd if c.endswith(".py"))
+    print("+ " + " ".join(os.path.basename(c) if c == script else c for c in cmd), flush=True)
     r = subprocess.run(cmd)
     if r.returncode != 0:
-        raise SystemExit(f"build_libsre: {os.path.basename(cmd[1])} failed (exit {r.returncode})")
+        raise SystemExit(f"build_libsre: {os.path.basename(script)} failed (exit {r.returncode})")
 
 
 def main(argv=None):
@@ -52,20 +53,22 @@ def main(argv=None):
         print(f"no decrypted libsre.prx at {a.prx}", file=sys.stderr)
         return 1
     tools = os.path.join(a.ps3recomp, "tools")
-    py = sys.executable
+    # The tools in UTF-8 mode, as setup runs this script (des_setup/lift.py): they print their paths, and in the code
+    # page a folder named in other letters (a Cyrillic or Japanese user name) ended them.
+    py = [sys.executable, "-X", "utf8"]
     os.makedirs(a.work, exist_ok=True)
-    run([py, os.path.join(tools, "lift_prx.py"), a.prx, "--base", f"0x{BASE:08X}", "-o", a.work])
+    run(py + [os.path.join(tools, "lift_prx.py"), a.prx, "--base", f"0x{BASE:08X}", "-o", a.work])
     toc = a.toc
     if toc is None:
         toc = int(json.load(open(os.path.join(a.work, "libsre_exports.json"), encoding="utf-8"))["toc"], 16)
     lifted = os.path.join(a.work, "lifted")
-    run([py, os.path.join(tools, "ppu_lifter.py"), os.path.join(a.work, "libsre_image.bin"), "--raw",
+    run(py + [os.path.join(tools, "ppu_lifter.py"), os.path.join(a.work, "libsre_image.bin"), "--raw",
          "--base", f"0x{BASE:08X}", "--toc", f"0x{toc:08X}",
          "--functions", os.path.join(a.work, "libsre_functions.json"),
          "--symbol-prefix", "libsre_", "--output", lifted])
     # One chunk; CMake builds it as ppu_recomp.c (compiled as C++).
     os.replace(os.path.join(lifted, "ppu_recomp_000.cpp"), os.path.join(lifted, "ppu_recomp.c"))
-    run([py, os.path.join(ROOT, "scripts", "gen_libsre_exports.py"), "--src", a.work, "--out", a.glue,
+    run(py + [os.path.join(ROOT, "scripts", "gen_libsre_exports.py"), "--src", a.work, "--out", a.glue,
          "--runtime-image", a.runtime_image])
     print("build_libsre: done; re-run cmake for port/build")
     return 0

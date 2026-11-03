@@ -493,8 +493,12 @@ class Unlock:
     def _rpcs3(self, jobs) -> _Ran:
         """One RPCS3 process for `jobs`, in order, watched until it ends. One
         `--decrypt <file>` pair each: the `--decrypt=` form misses RPCS3's
-        headless mode (rpcs3.cpp find_arg)."""
-        cmd = self.launch + [a for j in jobs for a in ("--decrypt", str(j.copy))]
+        headless mode (rpcs3.cpp find_arg). Each file is named from RPCS3's
+        working folder (the work folder): RPCS3 reads its arguments in the
+        ANSI code page, so a full path with letters outside it (a Cyrillic or
+        Japanese user name on a Western Windows) makes RPCS3 fail (measured);
+        the part under the work folder has only the game's own names."""
+        cmd = self.launch + [a for j in jobs for a in ("--decrypt", str(j.copy.relative_to(self.work)))]
         env = dict(os.environ, **NO_MESSAGE_BOXES)
         if not self.shared:
             env.update(self.env)

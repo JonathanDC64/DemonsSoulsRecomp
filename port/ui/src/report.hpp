@@ -40,6 +40,10 @@ std::string version();
 // power, free disk space, gamepads, the keyboard layout and the other software loaded into the game (overlays and
 // the like), one fact per line.
 std::string system_info();
+// The renderer this process runs ("vulkan", "d3d12", ...), with in `why` the reason it is not the one asked for (or
+// nullptr); nullptr where none started (a second process such as the crash dialog, whose own route would be the
+// default, not the game's) or in a build without the route switch. Allocates nothing: the crash handler calls it.
+const char* renderer_name(const char** why);
 // The environment variables of the port's and the runtime's own options (DES_, PS3_, RSX_, SPU_ and the like) that
 // are set, and the command line (this process's, or `command_line`): what a run was started with, beyond settings.ini.
 // The online name and password show only as set.

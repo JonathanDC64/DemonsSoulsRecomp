@@ -167,6 +167,11 @@ void report_running(const char* kind, const char* mark, const std::string& what,
     std::fprintf(out, "\n%s%s ===\n", mark, what.c_str());
     std::fprintf(out, "version %s, ps3recomp %s, game dump %s\n", kVersion, kPs3recompVersion,
                  *kDumpSha256 ? kDumpSha256 : "unknown");
+    {
+        const char* why = nullptr;
+        if (const char* r = report::renderer_name(&why))
+            std::fprintf(out, "renderer %s%s%s%s\n", r, why ? " (" : "", why ? why : "", why ? ")" : "");
+    }
     std::fprintf(out, "%s\n\n", note);
     ps3_diag_report(out, 2);
     std::fclose(out);

@@ -45,17 +45,30 @@ jobs:
           cmake --version
           ninja --version
 
+      # FreeType, RmlUi and stb are cloned by commit (port/ui/CMakeLists.txt), so not shallow: most of each
+      # configure's minute and more. A copy without .git is cached on that file and handed to the configure
+      # (tools/ci/fetch_src.py); a miss clones and the step after the configure keeps the copy.
+      - name: Cache the wrapper UI's sources
+        id: ui-src
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/ui-src
+          key: ui-src-${{ runner.os }}-${{ hashFiles('port/ui/CMakeLists.txt') }}-v1
+
       # port/ui is its own static library (start screen, menu, settings, crash and issue reports) with
       # FreeType and RmlUi fetched at configure time. des_boot only links it, so it builds here alone,
       # configured like the port in README.md (no build type: no Debug flags, the release C runtime).
       - name: Configure
-        run: >
-          cmake -S .github/ci/des_ui -B build/ui -G Ninja
-          -DCMAKE_C_COMPILER=clang-cl
-          -DCMAKE_CXX_COMPILER=clang-cl
-          -DCMAKE_BUILD_TYPE=
-          -DCMAKE_CXX_FLAGS_DEBUG=
-          -DCMAKE_C_FLAGS_DEBUG=
+        id: ui-cfg
+        run: |
+          $src = @(python tools/ci/fetch_src.py args .ci-cache/ui-src freetype rmlui stb)
+          cmake -S .github/ci/des_ui -B build/ui -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl `
+            -DCMAKE_BUILD_TYPE= -DCMAKE_CXX_FLAGS_DEBUG= -DCMAKE_C_FLAGS_DEBUG= @src
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Keep the wrapper UI's sources for the cache
+        if: steps.ui-src.outputs.cache-hit != 'true' && steps.ui-cfg.outcome == 'success'
+        run: python tools/ci/fetch_src.py keep .ci-cache/ui-src build/ui freetype rmlui stb
 
       - name: Build
         run: cmake --build build/ui
@@ -123,10 +136,25 @@ jobs:
           make -s -j"$(nproc)"
           make -s install
 
+      # FreeType, RmlUi and stb, cached as in the Windows UI job above (its comment says why). On a miss, the copy
+      # the step after the UI's configure keeps also serves the description's configure below.
+      - name: Cache the wrapper UI's sources
+        id: ui-src
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/ui-src
+          key: ui-src-${{ runner.os }}-${{ hashFiles('port/ui/CMakeLists.txt') }}-v1
+
       - name: Wrapper UI, configure
+        id: ui-cfg
         run: |
+          mapfile -t src < <(python tools/ci/fetch_src.py args .ci-cache/ui-src freetype rmlui stb)
           PKG_CONFIG_PATH="$VKD3D_PREFIX/lib/pkgconfig" CC=clang CXX=clang++ \
-            cmake -S .github/ci/des_ui -B build/ui -G Ninja -DCMAKE_BUILD_TYPE=
+            cmake -S .github/ci/des_ui -B build/ui -G Ninja -DCMAKE_BUILD_TYPE= "${src[@]}"
+
+      - name: Wrapper UI, keep its sources for the cache
+        if: steps.ui-src.outputs.cache-hit != 'true' && steps.ui-cfg.outcome == 'success'
+        run: python tools/ci/fetch_src.py keep .ci-cache/ui-src build/ui freetype rmlui stb
 
       - name: Wrapper UI, build
         run: cmake --build build/ui
@@ -162,9 +190,10 @@ jobs:
         id: desc-cfg
         if: ${{ !cancelled() && steps.lift.outcome == 'success' }}
         run: |
+          mapfile -t src < <(python tools/ci/fetch_src.py args .ci-cache/ui-src freetype rmlui stb)
           PKG_CONFIG_PATH="$VKD3D_PREFIX/lib/pkgconfig" CC=clang CXX=clang++ \
             /usr/bin/cmake -S port -B build/desc -G Ninja -DCMAKE_BUILD_TYPE= "-DRECOMP_DIR=$DES_LIFT" \
-            -DDES_VKD3D=ON -DDES_SPLIT=ON -DDES_SPLIT_FREESTANDING=ON
+            -DDES_VKD3D=ON -DDES_SPLIT=ON -DDES_SPLIT_FREESTANDING=ON "${src[@]}"
 
       - name: game_build_linux.json matches CMake's commands
         if: ${{ !cancelled() && steps.desc-cfg.outcome == 'success' }}
@@ -239,21 +268,28 @@ jobs:
         if: ${{ !cancelled() && steps.cmake.outcome == 'success' }}
         run: python .github/scripts/placeholder_lift.py "$RUNNER_TEMP/lift" >> "$GITHUB_ENV"
 
+      # FreeType, RmlUi and stb, cached as in the Windows UI job above (its comment says why).
+      - name: Cache the wrapper UI's sources
+        id: ui-src
+        if: ${{ !cancelled() && steps.lift.outcome == 'success' }}
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/ui-src
+          key: ui-src-${{ runner.os }}-${{ hashFiles('port/ui/CMakeLists.txt') }}-v1
+
       # As the description was written (docs/86): no build type, no developer code.
       - name: Configure
         id: desc-cfg
         if: ${{ !cancelled() && steps.lift.outcome == 'success' }}
-        run: >
-          cmake -S port -B build/desc -G Ninja
-          -DCMAKE_C_COMPILER=clang-cl
-          -DCMAKE_CXX_COMPILER=clang-cl
-          -DCMAKE_BUILD_TYPE=
-          -DCMAKE_CXX_FLAGS_DEBUG=
-          -DCMAKE_C_FLAGS_DEBUG=
-          "-DRECOMP_DIR=$DES_LIFT"
-          -DDES_SPLIT=ON
-          -DDES_SPLIT_FREESTANDING=ON
-          -DDES_DEV=OFF
+        run: |
+          mapfile -t src < <(python tools/ci/fetch_src.py args .ci-cache/ui-src freetype rmlui stb)
+          cmake -S port -B build/desc -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl \
+            -DCMAKE_BUILD_TYPE= -DCMAKE_CXX_FLAGS_DEBUG= -DCMAKE_C_FLAGS_DEBUG= "-DRECOMP_DIR=$DES_LIFT" \
+            -DDES_SPLIT=ON -DDES_SPLIT_FREESTANDING=ON -DDES_DEV=OFF "${src[@]}"
+
+      - name: Keep the wrapper UI's sources for the cache
+        if: ${{ !cancelled() && steps.ui-src.outputs.cache-hit != 'true' && steps.desc-cfg.outcome == 'success' }}
+        run: python tools/ci/fetch_src.py keep .ci-cache/ui-src build/desc freetype rmlui stb
 
       - name: game_build.json matches CMake's commands
         if: ${{ !cancelled() && steps.desc-cfg.outcome == 'success' }}

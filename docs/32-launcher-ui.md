@@ -321,6 +321,7 @@ issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
 | `DES_UI_PICK=<folder>[;<folder>...]` | The setup screens' folder dialogs answer in turn with these folders, and none is shown; past the list's end, as if closed without a choice. With DES_UI_KEYS and DES_UI_SHOT, a test can walk the game folder pages. |
 | `DES_UI_NO_ANIM=1` | No transitions. |
 | `DES_UI_RENDER=d3d11` | The menus and the crash dialog draw through D3D11On12, as before the D3D12 renderer (Windows; kept for one release, with no settings row). |
+| `DES_UI_RENDER=d3d12` | On the `d3d12` route (the default since 2026-11-02, docs/120), the menus draw through the legacy menu renderer (`render_d3d12.cpp`) instead of on the renderer's own device. |
 | `RSX_OVERLAY_REPAINT=0` | The UI moves only with the game's frames, not at the display's refresh rate (live; "The UI's frame rate" below). |
 | `DES_UI_SOUND=0` | No UI sounds. |
 | `DES_CURSOR3D=0` | The system's arrow over the menus, not the Large Sword of Moonlight (its row is Sword cursor). `DES_CURSOR_SIZE=<dp>` (64) is the sword's length, `DES_CURSOR_SPIN=<degrees a second>` (0) turns it about its blade, `DES_CURSOR_GLOW=0` takes away the blue glow about its blade (docs/112). |

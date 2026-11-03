@@ -209,8 +209,10 @@ jobs:
       # The runtime library des_host links: PS3RECOMP_GAME_SPLIT=ON (docs/57), the static Visual C++ runtime
       # (/MT), because a /MT exe cannot link C++ objects built /MD, and FFmpeg opened at run time for the movies
       # (its headers only: nothing links the DLLs). PS3RECOMP_RSX_HAL adds the portable renderer (docs/120), with
-      # its spv target and Vulkan backend on by default: Settings > Display > Renderer offers Vulkan beside today's
-      # D3D12 renderer, which stays the default. The Vulkan backend opens the system's loader at run time.
+      # its spv target and Vulkan backend on by default: the new path on D3D12 is the default renderer, Settings >
+      # Display > Renderer offers Vulkan beside it, and RSX_BACKEND=legacy is the renderer before it (docs/120, "The
+      # switch"). Without this option the host would have the legacy renderer only. The Vulkan backend opens the
+      # system's loader at run time.
       - name: Configure the runtime library
         run: >
           cmake -S ps3recomp -B ps3recomp/build_split -G Ninja
@@ -662,8 +664,8 @@ jobs:
       # The Linux host with both routes (docs/120), after the artifact above, which stays today's build (as the
       # Windows host has both routes; on Linux the default build changes only after testers): a second runtime build with host-linux's options and
       # PS3RECOMP_RSX_HAL (its spv target and Vulkan backend on by default), as the Windows HAL builds are, and a
-      # second des_host on it. ps3recomp's route switch then has RSX_BACKEND=d3d12 (the default, today's renderer
-      # on vkd3d), null and vulkan, with the Vulkan start's fallback to d3d12. Its folder must pass the checks
+      # second des_host on it. ps3recomp's route switch then has RSX_BACKEND=d3d12 (the default, which on Linux is
+      # still the legacy renderer on vkd3d), legacy, null and vulkan, with the Vulkan start's fallback to the default. Its folder must pass the checks
       # above. Not on a release tag.
       - name: Both routes, configure the runtime library
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}

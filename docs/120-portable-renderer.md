@@ -6,6 +6,37 @@ must lose nothing: today's renderer stays exactly as it is, one setting away.
 This builds on docs/113 (Vulkan beside D3D12). Figures marked **read** were seen in the code; **inferred** ones are
 estimates no run has checked.
 
+**Status (2026-11-02):** the new path on D3D12 is now the default on Windows. Today's renderer is the `legacy` route:
+frozen, kept as a fallback. See [The switch](#the-switch-2026-11) below. The rest of this page is the design as
+written on 10-30, when today's renderer was still the default.
+
+## The switch (2026-11)
+
+The new path on D3D12 passed G2 (identical frames) and G4 (even speed) on 10-31, and every fix made to today's
+renderer since then has been ported to the core (`tools/des/core_sync.sh`: none left). Keeping two D3D12 renderers
+means every fix is made twice, so the new path became the default.
+
+- **The routes now** (`RSX_BACKEND`):
+  - `d3d12`, the default on Windows: the new path on its D3D12 backend. `hal-d3d12` still works, as another name for
+    it.
+  - `legacy`: today's renderer, as it was. It is not in Settings.
+  - `vulkan`: the new path on Vulkan (Settings > Display > Renderer).
+  - On Linux, `d3d12` is still the legacy renderer on vkd3d. The new path has no D3D12 there; Linux moves to the new
+    path when Vulkan becomes its default.
+- **Starts that fail fall back,** in the same process, and say why in the log and in problem reports:
+  - Vulkan falls back to `d3d12` (on Linux to `legacy`);
+  - `d3d12` falls back to `legacy`.
+- **The menus** draw on the core's own device on `d3d12`, as they already did on Vulkan (`render_gpu.cpp`).
+  `DES_UI_RENDER=d3d12` or `d3d11` brings back the legacy menu renderers on the core's D3D12 objects.
+- **The freeze:** from 2026-11-02, fixes go to the core only. The legacy renderer and the legacy menu renderers
+  (`render_d3d12.cpp`, `render_d3d11.cpp`) get no more fixes. They are never deleted: after a round with testers they
+  are marked retired, and they stay buildable and selectable.
+- **The tools:** `halgate.sh` compares route B (default `d3d12`) with route A (default `legacy`).
+- **The other games on ps3recomp** get the same default. The core does not draw the draws that have no vertex-program
+  path (non-indexed lines and points, and a few fallbacks), which the legacy renderer drew with a rough fixed-function
+  pass. Demon's Souls has none; a game that has them gets one log line saying so, and `RSX_BACKEND=legacy` draws
+  them.
+
 ## Terms
 
 - **Today's renderer:** `ps3recomp/libs/video/rsx_d3d12_backend.c`. It is one file of 16,472 lines, and every Demon's
@@ -19,6 +50,8 @@ estimates no run has checked.
   seconds, with no game.
 
 ## Short answer
+
+(As designed on 10-30. The routes changed on 11-02: see [The switch](#the-switch-2026-11).)
 
 - **Today's renderer is frozen.** These files are never edited:
   - `rsx_d3d12_backend.c` and `.h`;

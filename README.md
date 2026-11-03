@@ -142,7 +142,7 @@ On Windows, step 4 downloads FFmpeg's MPEG-2 video decoder for the game's movies
    cmake --build ps3recomp/build --target ps3recomp_runtime rsx_shader_precompile
    cmake --build port/build --target des_boot --parallel 4
    ```
-   `PS3RECOMP_RSX_HAL=ON` adds the Vulkan renderer beside the DirectX 12 one (Settings > Display > Renderer). Its first configure downloads glslang and SPIRV-Tools at their pinned commits. On Linux, see [docs/76](docs/76-native-linux.md#building).
+   `PS3RECOMP_RSX_HAL=ON` builds the portable renderer: DirectX 12 through it, the default, and Vulkan beside it (Settings > Display > Renderer). Without it the game runs on the legacy renderer only. Its first configure downloads glslang and SPIRV-Tools at their pinned commits. On Linux, see [docs/76](docs/76-native-linux.md#building).
 5. Copy `tools/des/local.env.example` to `tools/des/local.env`, set `PS3_VFS_ROOT` in it to the folder that holds `PS3_GAME`, and start the game with `tools/des/play.sh`.
 
 Everything made from your copy of the game stays in `work/` and `gamedata/`, which git ignores. **Never share your build:** it contains code converted from your game.
@@ -152,7 +152,7 @@ Everything made from your copy of the game stays in `work/` and `gamedata/`, whi
 - Each setting's help text ends with its name in brackets, such as `(DES_FPS)`. The same name works as an environment variable, which wins over the menu.
 - `-DDES_SPLIT=ON` also builds the game the way setup does: `des_host` plus the game as a separate library ([docs/57](docs/57-dll-split.md)).
 - `-DDES_DEV=ON` makes a developer build, with cheats and a Developer tab in Settings ([docs/55](docs/55-dev-cheats.md)). Never share one as a release.
-- A Vulkan renderer sits beside today's DirectX 12 one ([docs/120](docs/120-portable-renderer.md)): Settings > Display > Renderer, then restart. DirectX 12 stays the default. If Vulkan fails to start, the game runs on DirectX 12 and says why. A build has it when its ps3recomp is configured with `PS3RECOMP_RSX_HAL=ON`, as in the steps above and in the released Windows build.
+- The renderer is the portable one ([docs/120](docs/120-portable-renderer.md)): DirectX 12 by default, or Vulkan in Settings > Display > Renderer, then restart. If Vulkan fails to start, the game runs on DirectX 12 and says why. `RSX_BACKEND=legacy` runs the renderer from before it, kept as a fallback. A build has it when its ps3recomp is configured with `PS3RECOMP_RSX_HAL=ON`, as in the steps above and in the released Windows build.
 
 ## Legal
 

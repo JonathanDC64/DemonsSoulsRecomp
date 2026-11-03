@@ -273,23 +273,31 @@ jobs:
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
               f.write(f"HOST_LIFT={lift}\n")
 
+      # The wrapper UI's FreeType, RmlUi and stb are cloned by commit (port/ui/CMakeLists.txt), so not shallow:
+      # most of this configure's minute. A copy without .git is cached on that file, as in ci.yml, and handed to
+      # the configure (tools/ci/fetch_src.py); a miss clones and the step after the configure keeps the copy.
+      - name: Cache the wrapper UI's sources
+        id: ui-src
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/ui-src
+          key: ui-src-${{ runner.os }}-${{ hashFiles('port/ui/CMakeLists.txt') }}-v1
+
       # The port with only des_host in it (DES_HOST_ONLY: no des_boot or des_game build, no SPU workload
       # table), the hybrid CRT for every target (des_ui, FreeType and RmlUi too), exactly the pinned
       # ps3recomp, and no developer code. No build type, as in README.md and ci.yml.
       - name: Configure des_host
-        run: >
-          cmake -S port -B build/host -G Ninja
-          -DCMAKE_C_COMPILER=clang-cl
-          -DCMAKE_CXX_COMPILER=clang-cl
-          -DCMAKE_BUILD_TYPE=
-          -DCMAKE_CXX_FLAGS_DEBUG=
-          -DCMAKE_C_FLAGS_DEBUG=
-          -DRECOMP_DIR=${{ env.HOST_LIFT }}
-          -DDES_SPLIT=ON
-          -DDES_HOST_ONLY=ON
-          -DDES_HOST_STATIC_CRT=ON
-          -DDES_REQUIRE_PIN=ON
-          -DDES_DEV=OFF
+        id: host_cfg
+        run: |
+          $src = @(python tools/ci/fetch_src.py args .ci-cache/ui-src freetype rmlui stb)
+          cmake -S port -B build/host -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl `
+            -DCMAKE_BUILD_TYPE= -DCMAKE_CXX_FLAGS_DEBUG= -DCMAKE_C_FLAGS_DEBUG= "-DRECOMP_DIR=${{ env.HOST_LIFT }}" `
+            -DDES_SPLIT=ON -DDES_HOST_ONLY=ON -DDES_HOST_STATIC_CRT=ON -DDES_REQUIRE_PIN=ON -DDES_DEV=OFF @src
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Keep the wrapper UI's sources for the cache
+        if: steps.ui-src.outputs.cache-hit != 'true' && steps.host_cfg.outcome == 'success'
+        run: python tools/ci/fetch_src.py keep .ci-cache/ui-src build/host freetype rmlui stb
 
       - name: Build des_host
         run: cmake --build build/host --target des_host
@@ -626,20 +634,27 @@ jobs:
       - name: Build the runtime library
         run: cmake --build ps3recomp/build_split --target ps3recomp_runtime
 
+      # The wrapper UI's sources, cached as in the Windows job above (its comment says why). On a miss, the copy the
+      # step after this configure keeps also serves the both-routes configure below.
+      - name: Cache the wrapper UI's sources
+        id: ui-src
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/ui-src
+          key: ui-src-${{ runner.os }}-${{ hashFiles('port/ui/CMakeLists.txt') }}-v1
+
       # des_host alone (DES_HOST_ONLY), exactly the pinned ps3recomp, no developer code, and RUNPATH $ORIGIN only.
       - name: Configure des_host
-        run: >
-          cmake -S port -B build/host -G Ninja
-          -DCMAKE_BUILD_TYPE=
-          "-DRECOMP_DIR=$HOST_LIFT"
-          -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
-          "-DCMAKE_INSTALL_RPATH=\$ORIGIN"
-          -DDES_SPLIT=ON
-          -DDES_SPLIT_FREESTANDING=ON
-          -DDES_HOST_ONLY=ON
-          -DDES_VKD3D=ON
-          -DDES_REQUIRE_PIN=ON
-          -DDES_DEV=OFF
+        id: host_cfg
+        run: |
+          mapfile -t src < <(python tools/ci/fetch_src.py args .ci-cache/ui-src freetype rmlui stb)
+          cmake -S port -B build/host -G Ninja -DCMAKE_BUILD_TYPE= "-DRECOMP_DIR=$HOST_LIFT" \
+            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON "-DCMAKE_INSTALL_RPATH=\$ORIGIN" -DDES_SPLIT=ON \
+            -DDES_SPLIT_FREESTANDING=ON -DDES_HOST_ONLY=ON -DDES_VKD3D=ON -DDES_REQUIRE_PIN=ON -DDES_DEV=OFF "${src[@]}"
+
+      - name: Keep the wrapper UI's sources for the cache
+        if: steps.ui-src.outputs.cache-hit != 'true' && steps.host_cfg.outcome == 'success'
+        run: python tools/ci/fetch_src.py keep .ci-cache/ui-src build/host freetype rmlui stb
 
       - name: Build des_host
         run: cmake --build build/host --target des_host
@@ -756,10 +771,11 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: |
           set -o pipefail
+          mapfile -t src < <(python tools/ci/fetch_src.py args .ci-cache/ui-src freetype rmlui stb)
           cmake -S port -B build/host-routes -G Ninja -DCMAKE_BUILD_TYPE= "-DRECOMP_DIR=$HOST_LIFT" \
             -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON "-DCMAKE_INSTALL_RPATH=\$ORIGIN" -DDES_SPLIT=ON \
             -DDES_SPLIT_FREESTANDING=ON -DDES_HOST_ONLY=ON -DDES_VKD3D=ON -DDES_REQUIRE_PIN=ON -DDES_DEV=OFF \
-            "-DPS3RECOMP_SPLIT_LIB=$PWD/ps3recomp/build_routes/libps3recomp_runtime.a" | tee routes_host.log
+            "-DPS3RECOMP_SPLIT_LIB=$PWD/ps3recomp/build_routes/libps3recomp_runtime.a" "${src[@]}" | tee routes_host.log
           grep -q "renderer calls through the route switch (DES_RSX_HAL=AUTO): ON" routes_host.log
           cmake --build build/host-routes --target des_host
 

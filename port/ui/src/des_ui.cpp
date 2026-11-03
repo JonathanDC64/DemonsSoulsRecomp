@@ -179,8 +179,8 @@ bool sInitFailed = false;
 bool sOpenPending = false;     // DES_UI_OPEN, until the documents exist
 #if defined(PS3RECOMP_RSX_HAL)
 // The menus on the renderer's own GPU device (rsx_out.h's overlay v2, render_gpu.cpp's create_core): on the new
-// path's vulkan route always, on hal-d3d12 with DES_UI_RENDER=gpu (else today's D3D12 renderer on its native objects,
-// as on d3d12). Picked in des_ui_privacy_wait.
+// path's routes, vulkan and d3d12, but on d3d12 with DES_UI_RENDER=d3d12 or d3d11 (the legacy menu renderers on its
+// native objects, as on legacy). Picked in des_ui_early_init.
 bool sOnCore = false;
 ui::gpu::CoreFrame sCore;  // frame_gpu's frame, for the renderer (begin_frame's and read_back's back_buffer)
 bool on_core();
@@ -615,7 +615,7 @@ bool ensure_init(int width, int height) {
     if (sInitFailed) return false;
     bool started = false;
 #if defined(PS3RECOMP_RSX_HAL)
-    sOnCore = sOnCore && on_core();  // (a route that fell back to d3d12 since: today's renderer's objects)
+    sOnCore = sOnCore && on_core();  // (a route that fell back to legacy since: its native objects)
     if (sOnCore) {
         const auto make = [](ui::ImageSource images) {
             std::unique_ptr<ui::Renderer> r = ui::gpu::create_core(rsx_out_gpu_device(), std::move(images));
@@ -1135,8 +1135,10 @@ void frame_gpu(void* user, gpu_cmd* cmd, uint32_t target, uint32_t format, unsig
 
 bool on_core() {
     const char* route = rsx_out_renderer();
+    if (!std::strcmp(route, "vulkan")) return true;  // (its only menus)
+    if (std::strcmp(route, "d3d12")) return false;   // (legacy's native objects; null has none)
     const char* v = std::getenv("DES_UI_RENDER");
-    return !std::strcmp(route, "vulkan") || (!std::strcmp(route, "hal-d3d12") && v && ui::same_name(v, "gpu"));
+    return !(v && (ui::same_name(v, "d3d12") || ui::same_name(v, "d3d11")));
 }
 #endif
 

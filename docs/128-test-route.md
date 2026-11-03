@@ -10,6 +10,7 @@ Linux and macOS can run it with no Python and no debug console. `tools/des/regre
 | Knob | What it does |
 |---|---|
 | `DES_ROUTE=regress` | plays regress.sh's route: the spawn point, a walk, a turn, a walk on, a shot after each |
+| `DES_ROUTE=look` | the tester kit's: no walking; a shot, three turns of the camera with a shot after each, then a pan |
 | `DES_ROUTE=<file>` | plays a route file (below) |
 | `DES_ROUTE_OUT=<folder>` | where the results go (default `des_route` in the current folder) |
 | `DES_ROUTE_QUIT=1` | ends the game when the route is done |
@@ -91,8 +92,36 @@ regress.sh on the same exe, the pinned save, Windows, D3D12:
 In both, the game read the left stick on exactly the frames of each walk. The in-game route's holds start on the
 planned frame; the Python one's start up to 0.03 s later (the console's delay).
 
+## The tester kit (`tools/testkit/`)
+
+`bash tools/testkit/run_tests.sh [game folder]`, from an install (the folder with `des_host`). Its README is for
+testers.
+
+- **Route:** `DES_ROUTE=look` by default, built into the game. It does no walking: it stays where the save puts the
+  player, so it suits any save. It takes a shot, three 5 s turns of the camera at full stick with a shot after each,
+  then a 30 s pan for frame times. (The camera starts a turn slowly: 3 s from rest turns it about 15 degrees, 9 s
+  about 150. A stick at 160 is inside the game's dead zone.) `DES_KIT_ROUTE=regress` walks from the first level's
+  spawn instead.
+- **Renderers:** each one in turn (Linux: `vulkan` then `legacy`, the old renderer on vkd3d; Windows: `d3d12` then
+  `vulkan`; `DES_KIT_RENDERERS` sets them). Each runs twice: with an empty shader cache, then with the one the first
+  run made.
+- **Each run** plays from a copy of the tester's save (`PS3_SAVEDATA_ROOT`), muted, offline (`DES_ONLINE=0`), at the
+  original 30 fps (`DES_FPS=0`), and with the tester's input left out (`PS3_NO_USER_INPUT=1`). It ends itself
+  (`DES_ROUTE_QUIT=1`), or is stopped after `DES_KIT_MAX` seconds (900).
+- **The archive,** `des_test_results_<date>.tar.gz` beside the script, holds:
+  - per run: the log, the shots, `route.txt` and `summary.json`;
+  - `results.txt`: one line a run;
+  - `system.txt`: OS, CPU, RAM, the desktop session, `vulkaninfo --summary` where installed, and each run's route and
+    GPU lines.
+  
+  The shader caches are deleted before packing (made from the game's files, and large).
+- **Names out:** the home folder, the user name and the computer name are replaced in every text file. If any are left
+  (in any case: Windows paths ignore it), nothing is packed and the files are listed.
+- **The shots are for looking at, not for pixel diffs.** Fog and particles differ from run to run: two runs on one
+  renderer differ about as much as D3D12 and Vulkan do (a mean of 3-5/255).
+- bash 3.2 and later, so the macOS one works when there is a Mac build. No Python, no `jq`, no `timeout`.
+
 ## Next
 
-- The tester kit: a runner script (`run_tests.sh`, and a `.command` for macOS) that runs each renderer cold and warm,
-  collects the logs, shots and summaries, and removes user and machine names before packing them.
+- A `.command` wrapper for macOS once there is a Mac build (docs/120, phase 6).
 - regress.sh's default moves to the in-game route once more runs agree.

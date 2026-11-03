@@ -3,9 +3,12 @@
  * (testers on Linux and macOS, with no Python and no debug console) and
  * tools/des/regress.sh use it.
  *
- * DES_ROUTE=regress plays regress.sh's route (kRegress below); DES_ROUTE=<file>
- * plays a route file. DES_ROUTE_OUT=<folder> (default des_route) gets the
- * shots as <name>.bmp, route.txt (the timeline) and summary.json.
+ * DES_ROUTE=regress plays regress.sh's route (regress_text below), which walks
+ * from the first level's spawn point. DES_ROUTE=look stays where the save puts
+ * the player and turns the camera, so it is safe anywhere (the test kit's,
+ * tools/testkit). DES_ROUTE=<file> plays a route file. DES_ROUTE_OUT=<folder>
+ * (default des_route) gets the shots as <name>.bmp, route.txt (the timeline)
+ * and summary.json.
  * DES_ROUTE_QUIT=1 ends the game when the route is done; the verdict is in
  * summary.json ("result": ok, missing or no_level) and route.txt's last line.
  *
@@ -180,6 +183,23 @@ std::string regress_text()
         t += b;
     }
     return t;
+}
+
+/* The test kit's route: no walking, so it suits any save. A shot, three turns
+ * of the camera with a shot after each, then a pan for frame times. The camera
+ * starts a turn slowly: from rest, 3 s at full stick turns it about 15 degrees,
+ * 9 s about 150. A stick at 160 is inside the game's dead zone; 192 turns. */
+std::string look_text()
+{
+    char b[512];
+    snprintf(b, sizeof b,
+             "anchor\nwait 15\nshot look1\n"
+             "wait %.3f\nhold 5 128 128 255 128\nwait %.3f\nshot look2\n"
+             "wait %.3f\nhold 5 128 128 255 128\nwait %.3f\nshot look3\n"
+             "wait %.3f\nhold 5 128 128 255 128\nwait %.3f\nshot look4\n"
+             "wait %.3f\nhold 30 128 128 200 128\nwait %.3f\nshot look5\n",
+             kGap, kStop, kGap, kStop, kGap, kStop, kGap, kStop);
+    return b;
 }
 
 /* The steps, or an empty list and a message when a line does not parse. */
@@ -402,6 +422,8 @@ extern "C" void des_route_init(void)
     std::string text, err;
     if (!strcmp(e, "regress")) {
         text = regress_text();
+    } else if (!strcmp(e, "look")) {
+        text = look_text();
     } else {
         std::ifstream f{fs::path(e)};   /* (UTF-8: des_utf8.manifest on Windows) */
         if (!f) {

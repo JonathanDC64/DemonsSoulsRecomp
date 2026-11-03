@@ -176,6 +176,7 @@ add_executable(des_boot
     "${CMAKE_CURRENT_SOURCE_DIR}/des_souls_use.cpp"         # DES_SOULS_AT_ONCE: Use several soul items at once
     "${CMAKE_CURRENT_SOURCE_DIR}/des_respec.cpp"            # DES_RESPEC: stat respec at the Nexus statue and the Maiden
     "${CMAKE_CURRENT_SOURCE_DIR}/des_prework.cpp"           # startup work: the shader cache, behind a progress bar
+    "${CMAKE_CURRENT_SOURCE_DIR}/des_route.cpp"             # DES_ROUTE: a walk on the game clock, with screenshots
 )
 
 if(WIN32)

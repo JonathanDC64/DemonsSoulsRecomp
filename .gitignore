@@ -77,3 +77,6 @@ tools/ghidra/ghidra_one.txt
 
 # Claude Code per-user settings
 .claude/settings.local.json
+
+# The tester kit's results (tools/testkit/run_tests.sh), made beside it
+/tools/testkit/des_test_results_*

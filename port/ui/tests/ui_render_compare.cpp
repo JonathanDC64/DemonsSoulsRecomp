@@ -1,9 +1,9 @@
 // ui_render_compare: the proof for render_gpu.cpp, the menus' renderer on ps3recomp's GPU layer. The menus' pages are
-// drawn on one D3D12 device by today's renderer (render_d3d12.cpp, ui::d3d12::create) and by render_gpu.cpp three
-// times: over the same D3D12 objects (ui::gpu::create_d3d12, what DES_UI_RENDER=gpu runs on d3d12), on a device of the
+// drawn on one D3D12 device by the legacy renderer (render_d3d12.cpp, ui::d3d12::create) and by render_gpu.cpp three
+// times: over the same D3D12 objects (ui::gpu::create_d3d12, what DES_UI_RENDER=gpu runs on legacy), on a device of the
 // layer's own with the back buffers named as its textures (ui::gpu::create), and on that device as the core's overlay
 // v2 drives it (ui::gpu::create_core: the recorder handed in, submitted after the frame, flushed for a read back, what
-// the hal-d3d12 and vulkan routes run); and by today's renderer once more, a control. One stream of RmlUi calls feeds
+// the d3d12 and vulkan routes run); and by the legacy renderer once more, a control. One stream of RmlUi calls feeds
 // them all (a tee), and their pictures are compared byte for byte after every frame, on 8-bit (SDR) and FP16 scRGB
 // (HDR) back buffers; at each page's end their read_backs too. Each renderer's D3D12 command list calls are counted
 // per page as well (ui_render_compare_hooks.c): they should be the same (but gpu-core's resets and closes, the

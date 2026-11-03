@@ -6,9 +6,9 @@ must lose nothing: today's renderer stays exactly as it is, one setting away.
 This builds on docs/113 (Vulkan beside D3D12). Figures marked **read** were seen in the code; **inferred** ones are
 estimates no run has checked.
 
-**Status (2026-11-02):** the new path on D3D12 is now the default on Windows. Today's renderer is the `legacy` route:
-frozen, kept as a fallback. See [The switch](#the-switch-2026-11) below. The rest of this page is the design as
-written on 10-30, when today's renderer was still the default.
+**Status (2026-11-03):** the new path on D3D12 is the default on Windows. The renderer before it is the `legacy`
+route: retired on Windows, frozen everywhere, kept as a fallback. See [The switch](#the-switch-2026-11) below. The rest
+of this page is the design as written on 10-30, when today's renderer was still the default.
 
 ## The switch (2026-11)
 
@@ -21,16 +21,23 @@ means every fix is made twice, so the new path became the default.
     it.
   - `legacy`: today's renderer, as it was. It is not in Settings.
   - `vulkan`: the new path on Vulkan (Settings > Display > Renderer).
-  - On Linux, `d3d12` is still the legacy renderer on vkd3d. The new path has no D3D12 there; Linux moves to the new
-    path when Vulkan becomes its default.
+  - On Linux the default is `vulkan` (from 2026-11-03; ps3recomp #224, with the next pin), and the Renderer row's
+    default follows. `d3d12` there is the legacy renderer on vkd3d: the new path has no D3D12 off Windows. Vulkan on
+    Linux has only had CI's lavapipe runs, no tester yet.
 - **Starts that fail fall back,** in the same process, and say why in the log and in problem reports:
-  - Vulkan falls back to `d3d12` (on Linux to `legacy`);
+  - Vulkan falls back to `d3d12` (on Linux to `legacy`), and so does the start after a Vulkan start that crashed;
   - `d3d12` falls back to `legacy`.
 - **The menus** draw on the core's own device on `d3d12`, as they already did on Vulkan (`render_gpu.cpp`).
   `DES_UI_RENDER=d3d12` or `d3d11` brings back the legacy menu renderers on the core's D3D12 objects.
 - **The freeze:** from 2026-11-02, fixes go to the core only. The legacy renderer and the legacy menu renderers
-  (`render_d3d12.cpp`, `render_d3d11.cpp`) get no more fixes. They are never deleted: after a round with testers they
-  are marked retired, and they stay buildable and selectable.
+  (`render_d3d12.cpp`, `render_d3d11.cpp`) get no more fixes. They are never deleted, and they stay buildable and
+  selectable.
+- **Retired (2026-11-03):** the legacy renderer and the legacy menu renderers are marked retired (on Linux too, where Vulkan is now the default):
+  - `rsx_d3d12_backend.h` (ps3recomp) and the two menu renderers start with a RETIRED note: what they are, when they
+    still run, and where fixes go instead. The notes are comments only: each file's object is the same bytes.
+  - The route's start line says so (ps3recomp #224, `rsx_out.c`; in the port with its next pin):
+    `[rsx_out] route legacy (retired: ...)`.
+  - `rsx_d3d12_backend.c` itself is untouched: `tools/des/core_sync.sh` still lists any commit that changes it.
 - **The tools:** `halgate.sh` compares route B (default `d3d12`) with route A (default `legacy`).
 - **The other games on ps3recomp** get the same default. The core does not draw the draws that have no vertex-program
   path (non-indexed lines and points, and a few fallbacks), which the legacy renderer drew with a rough fixed-function
@@ -173,7 +180,7 @@ The tools: `tools/des/halgate.sh` (replays and comparisons), `tools/des/halimg.p
 2. **Vulkan on Windows,** gated by G3 and G4; then the Settings row and the fallback.
 3. **Setup's shader pass and the pipeline stores for each backend,** alongside phase 2.
 4. **Linux on Vulkan,** with a CI run on lavapipe under validation and a test kit for testers on real Linux PCs.
-   vkd3d stays the Linux default until testers' numbers match.
+   vkd3d was the Linux default until 2026-11-03; Vulkan took its place ahead of testers (The switch, above).
 5. **The platform module** (`plat.h`), in parallel. It fixes Linux's per-job SPU threads (inferred: about 650 a
    second) and moves the window to the main thread for macOS.
 6. **macOS:** docs/118's CPU work, NRI Metal, and the Vulkan fallback, built in CI on Apple Silicon and tested by

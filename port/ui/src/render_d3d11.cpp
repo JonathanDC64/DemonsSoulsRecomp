@@ -1,3 +1,6 @@
+// RETIRED (2026-11-03), frozen: a legacy menu renderer, drawn only with DES_UI_RENDER=d3d11. Kept as it is and not to
+// be deleted; fixes and new work go to render_gpu.cpp (docs/120, "The switch").
+//
 // The menus' old renderer on Windows (renderer.hpp), kept for one release behind DES_UI_RENDER=d3d11 in case the
 // D3D12 one (render_d3d12.cpp) shows a problem on someone's PC. RmlUi's stock D3D11 renderer draws on a D3D11On12
 // device that shares the game's D3D12 device and command queue; each swap chain back buffer is wrapped as a D3D11

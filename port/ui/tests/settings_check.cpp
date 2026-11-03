@@ -114,11 +114,16 @@ int run_case(const std::string& name) {
     const bool has = settings::find("RSX_BACKEND") != nullptr;
     check(has == g_row, std::string("the Renderer row is ") + (has ? "there" : "not there"));
     if (name == "no-ini") {
-        check(env("RSX_BACKEND").empty(), "RSX_BACKEND unset (the runtime's default, d3d12): " + env("RSX_BACKEND"));
-        check(settings::get("RSX_BACKEND") == (g_row ? "d3d12" : ""), "the row's default: " + settings::get("RSX_BACKEND"));
+#if defined(_WIN32)
+        const std::string def = "d3d12";  // the runtime's default (rsx_out.c), which the row shows
+#else
+        const std::string def = "vulkan";
+#endif
+        check(env("RSX_BACKEND").empty(), "RSX_BACKEND unset (the runtime's default, " + def + "): " + env("RSX_BACKEND"));
+        check(settings::get("RSX_BACKEND") == (g_row ? def : ""), "the row's default: " + settings::get("RSX_BACKEND"));
         check(env("RSX_STATE_DIR") == (g_row ? data : ""), "RSX_STATE_DIR: " + env("RSX_STATE_DIR"));
         const std::string d = settings::describe();
-        check((d.find("RSX_BACKEND = d3d12\n") != std::string::npos) == g_row, "settings.txt's line");
+        check((d.find("RSX_BACKEND = " + def + "\n") != std::string::npos) == g_row, "settings.txt's line");
     } else if (name == "ini-vulkan") {
         check(env("RSX_BACKEND") == (g_row ? "vulkan" : ""), "RSX_BACKEND from settings.ini: " + env("RSX_BACKEND"));
         check(!settings::pinned("RSX_BACKEND"), "the row is not pinned");

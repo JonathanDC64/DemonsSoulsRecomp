@@ -14,6 +14,11 @@ on:
 permissions:
   contents: read
 
+# A new commit on the pull request cancels the run it replaces.
+concurrency:
+  group: release-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   dry-run:
     name: Package without releasing

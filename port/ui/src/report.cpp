@@ -1167,6 +1167,18 @@ void platform_facts(std::ostringstream& o, bool) {
 
 }  // namespace
 
+const char* renderer_name(const char** why) {
+    if (why) *why = nullptr;
+#if defined(PS3RECOMP_RSX_HAL)
+    // Started, so its window is there. A process that only asked (the crash dialog: the menus' code asks which route
+    // runs) has a route too, the default one, and no window.
+    if (!rsx_d3d12_hwnd()) return nullptr;
+    return rsx_out_renderer_info(why);
+#else
+    return nullptr;
+#endif
+}
+
 std::string system_info() {
     std::ostringstream o;
     // The game's own process (its renderer is up), not the crash dialog's: only then are this process's memory and
@@ -1178,15 +1190,13 @@ std::string system_info() {
     o << "DemonsSoulsRecomp " << version() << "\n";
     o << "ps3recomp: " << kPs3recompVersion << "\n";
     o << "Game dump (EBOOT.ELF SHA-256): " << (*kDumpSha256 ? kDumpSha256 : "unknown") << "\n";
-#if defined(PS3RECOMP_RSX_HAL)
     // The renderer that runs (the runtime's route switch, rsx_out.h), with why it is D3D12 when Vulkan was asked for.
-    // None in a process that never started one (the crash dialog: the game's log has the route's lines).
+    // None in a process that never started one (the crash dialog takes the game's from its report: renderer line).
     {
         const char* why = nullptr;
-        if (const char* r = rsx_out_renderer_info(&why))
+        if (const char* r = renderer_name(&why))
             o << "Renderer: " << r << (why ? std::string(" (") + why + ")" : std::string()) << "\n";
     }
-#endif
     platform_facts(o, game_process);
     return o.str();
 }

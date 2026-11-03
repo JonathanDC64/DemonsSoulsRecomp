@@ -146,6 +146,11 @@ void write_report(const char* what, CONTEXT* context, EXCEPTION_POINTERS* info) 
     out("version %s, last HLE call 0x%08X (%s), thread %lu\n", kVersion, g_last_hle_nid,
         g_last_hle_name ? g_last_hle_name : "", GetCurrentThreadId());
     out("ps3recomp %s, game dump %s\n", kPs3recompVersion, *kDumpSha256 ? kDumpSha256 : "unknown");
+    {
+        const char* why = nullptr;
+        if (const char* r = report::renderer_name(&why))  // (the dialog's report takes it from here: its own is not the game's)
+            out("renderer %s%s%s%s\n", r, why ? " (" : "", why ? why : "", why ? ")" : "");
+    }
     const HANDLE process = GetCurrentProcess();
     SymRefreshModuleList(process);  // (the modules loaded since install)
     CONTEXT ctx = *context;
@@ -304,7 +309,15 @@ std::string hide_private(const std::string& ini) {
 // The text to show the player afterwards.
 std::string make_report(Dialog& d) {
     const std::string txt = report::redact(read_text(d.txt));
-    const std::string system = report::redact(report::system_info());
+    std::string system = report::redact(report::system_info());
+    // The renderer the game ran, from its report's renderer line (this process started none), after the game dump's.
+    if (const size_t r = txt.find("\nrenderer "); r != std::string::npos && system.find("Renderer: ") == std::string::npos) {
+        const size_t end = txt.find('\n', r + 1);
+        const std::string line = "Renderer: " + txt.substr(r + 10, (end == std::string::npos ? txt.size() : end) - r - 10) + "\n";
+        const size_t dump = system.find("Game dump");
+        const size_t after = dump == std::string::npos ? std::string::npos : system.find('\n', dump);
+        system.insert(after == std::string::npos ? system.size() : after + 1, line);
+    }
     std::vector<report::File> files;
     files.push_back({d.lost ? "graphics-lost.txt" : d.hang ? "hang.txt" : "crash.txt", report::bytes(txt)});
     files.push_back({"system.txt", report::bytes(system)});
@@ -482,6 +495,11 @@ void report_running(const char* kind, const char* mark, const std::string& what,
     std::fprintf(out, "\n%s%s ===\n", mark, what.c_str());
     std::fprintf(out, "version %s, ps3recomp %s, game dump %s\n", kVersion, kPs3recompVersion,
                  *kDumpSha256 ? kDumpSha256 : "unknown");
+    {
+        const char* why = nullptr;
+        if (const char* r = report::renderer_name(&why))
+            std::fprintf(out, "renderer %s%s%s%s\n", r, why ? " (" : "", why ? why : "", why ? ")" : "");
+    }
     std::fprintf(out, "%s\n\n", note);
     ps3_diag_report(out, 2);
     std::fclose(out);

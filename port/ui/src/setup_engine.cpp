@@ -1,5 +1,5 @@
-// The host's side of the setup engine (see setup_engine.hpp). One fact differs by platform, in a small function:
-// where the local data folder is.
+// The host's side of the setup engine (see setup_engine.hpp). Two facts differ by platform, in small functions: where
+// the local data folder is, and which folder names the runtime's file calls can take.
 #include "setup_engine.hpp"
 
 #include "report.hpp"
@@ -51,6 +51,23 @@ std::filesystem::path local_data_base() {
     return out;
 }
 
+// Whether the runtime's narrow file calls (the C library's, and Windows' "A" calls) can name `p`: always when the
+// process's code page is UTF-8 (des_utf8.manifest, Windows 10 1903 and later), else only when the system's code page
+// has every letter of it.
+bool narrow_can_name(const std::filesystem::path& p) {
+    if (GetACP() == CP_UTF8) return true;
+    const std::wstring w = p.wstring();
+    BOOL lost = FALSE;
+    return w.empty() || (WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, w.c_str(), int(w.size()), nullptr, 0,
+                                             nullptr, &lost) > 0 &&
+                         !lost);
+}
+
+// What must be said before there is any window.
+void tell(const std::string& title, const std::string& text) {
+    MessageBoxW(nullptr, report::widen(text).c_str(), report::widen(title).c_str(), MB_OK | MB_ICONERROR);
+}
+
 #else
 
 std::filesystem::path local_data_base() {
@@ -58,6 +75,9 @@ std::filesystem::path local_data_base() {
     const std::string home = env("HOME");
     return home.empty() ? std::filesystem::path{} : std::filesystem::path(home) / ".local" / "share";
 }
+
+bool narrow_can_name(const std::filesystem::path&) { return true; }  // (names are UTF-8 bytes)
+void tell(const std::string&, const std::string&) {}                // (standard error has it)
 
 #endif
 
@@ -122,6 +142,23 @@ Request request_from_env() {
 std::filesystem::path gamedata_dir() {
     const auto dir = report::program_dir();
     return dir.empty() ? dir : dir / "gamedata";
+}
+
+bool folders_usable(const std::vector<std::filesystem::path>& folders, bool quiet) {
+    for (const auto& f : folders) {
+        if (narrow_can_name(f)) continue;
+        std::fprintf(stderr,
+                     "[setup] launch: this Windows cannot give the game the folder %s (letters outside its code page): "
+                     "Windows 10 1903 or later is needed (docs/126)\n",
+                     utf8(f).c_str());
+        if (!quiet)
+            tell("Demon's Souls cannot start",
+                 "Windows 10 version 1903 or later is needed for a folder with this name:\n\n" + utf8(f) +
+                     "\n\nUpdate Windows. Or, if it is the game's folder, move the game to a folder named with the "
+                     "letters A to Z only.");
+        return false;
+    }
+    return true;
 }
 
 Launch launch_state() {

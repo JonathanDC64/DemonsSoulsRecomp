@@ -78,6 +78,13 @@ struct Launch {
 };
 Launch launch_state();
 
+// False when one of `folders` has a name the game cannot be given on this Windows, after saying so on standard error
+// and, unless `quiet`, in a message box. The programs ask for UTF-8 as their code page (des_utf8.manifest), which
+// Windows 10 before version 1903 ignores: the runtime's file calls then take the system's code page, which cannot
+// write a name in other letters (a Cyrillic or Japanese folder on a Western Windows). Always true off Windows, whose
+// names are UTF-8 bytes (docs/126).
+bool folders_usable(const std::vector<std::filesystem::path>& folders, bool quiet);
+
 // The engine's Python: DES_SETUP_PYTHON (a developer's), else the downloaded one (empty until the host has fetched it:
 // Engine::start fetches it first then).
 std::filesystem::path python();

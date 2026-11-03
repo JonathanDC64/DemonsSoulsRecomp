@@ -1280,6 +1280,11 @@ extern "C" int des_ui_launch(int* argc, char*** argv) {
     if (setup_only_open(std::getenv("DES_UI_OPEN"))) return -2;
     if (elf_given(*argc, *argv)) return -1;
     const ui::setup::Launch launch = ui::setup::launch_state();
+    // A folder whose name this Windows cannot give the game (docs/126): said before setup builds anything in it.
+    if (!ui::setup::folders_usable(
+            {ui::report::program_dir(), ui::setup::data_dir(), ui::report::data_dir(), launch.game},
+            ui::settings::unattended_run()))
+        return 1;
     if (launch.state != ui::setup::State::Ready) {
         std::fprintf(stderr, "[setup] launch: the game is not set up yet, setup opens\n");
         return -2;

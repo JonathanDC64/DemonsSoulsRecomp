@@ -440,6 +440,11 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/DesVersion.cmake")
 if(WIN32)
     enable_language(RC)
     target_sources(des_boot PRIVATE "${DES_VERSION_RC}")
+    # UTF-8 as the process's code page (Windows 10 1903 and later): the runtime's and the C library's narrow file
+    # calls, getenv and argv then take the UTF-8 paths the port gives them, so the game, data and user folders may be
+    # named in any letters (docs/126). des_host takes it with des_boot's sources. An older Windows ignores it:
+    # des_ui_launch then checks the folders (setup_engine.hpp, folders_usable).
+    target_sources(des_boot PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/des_utf8.manifest")
 endif()
 add_dependencies(des_boot des_version)
 

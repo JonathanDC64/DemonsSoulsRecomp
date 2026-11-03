@@ -1,3 +1,8 @@
+// RETIRED on Windows (2026-11-03), frozen everywhere: the legacy menu renderer. On Windows the menus draw on the
+// renderer's own GPU device (render_gpu.cpp) on d3d12 and vulkan; this file draws them only on the legacy route, with
+// DES_UI_RENDER=d3d12, and on Linux, where the legacy renderer on vkd3d is still the default. Kept as it is and not
+// to be deleted; fixes and new work go to render_gpu.cpp (docs/120, "The switch").
+//
 // Written for Demon's Souls. RmlUi's renderer on D3D12 (renderer.hpp, docs/76). RmlUi's own D3D11 renderer
 // (Backends/RmlUi_Renderer_DX11.cpp, MIT) rewritten for D3D12, and in D3D's conventions throughout (rows top down, no
 // flips): its shaders, its layers and filters (opacity, blur, drop shadow, the colour matrices, mask images), its

@@ -6,9 +6,9 @@ must lose nothing: today's renderer stays exactly as it is, one setting away.
 This builds on docs/113 (Vulkan beside D3D12). Figures marked **read** were seen in the code; **inferred** ones are
 estimates no run has checked.
 
-**Status (2026-11-02):** the new path on D3D12 is now the default on Windows. Today's renderer is the `legacy` route:
-frozen, kept as a fallback. See [The switch](#the-switch-2026-11) below. The rest of this page is the design as
-written on 10-30, when today's renderer was still the default.
+**Status (2026-11-03):** the new path on D3D12 is the default on Windows. The renderer before it is the `legacy`
+route: retired on Windows, frozen everywhere, kept as a fallback. See [The switch](#the-switch-2026-11) below. The rest
+of this page is the design as written on 10-30, when today's renderer was still the default.
 
 ## The switch (2026-11)
 
@@ -29,8 +29,16 @@ means every fix is made twice, so the new path became the default.
 - **The menus** draw on the core's own device on `d3d12`, as they already did on Vulkan (`render_gpu.cpp`).
   `DES_UI_RENDER=d3d12` or `d3d11` brings back the legacy menu renderers on the core's D3D12 objects.
 - **The freeze:** from 2026-11-02, fixes go to the core only. The legacy renderer and the legacy menu renderers
-  (`render_d3d12.cpp`, `render_d3d11.cpp`) get no more fixes. They are never deleted: after a round with testers they
-  are marked retired, and they stay buildable and selectable.
+  (`render_d3d12.cpp`, `render_d3d11.cpp`) get no more fixes. They are never deleted, and they stay buildable and
+  selectable.
+- **Retired (2026-11-03):** the legacy renderer and the legacy menu renderers are marked retired on Windows:
+  - `rsx_d3d12_backend.h` (ps3recomp) and the two menu renderers start with a RETIRED note: what they are, when they
+    still run, and where fixes go instead. The notes are comments only: each file's object is the same bytes.
+  - The route's start line says so (ps3recomp #224, `rsx_out.c`; in the port with its next pin): `[rsx_out] route legacy (retired: ...)` on Windows, and
+    `(the default off Windows: ... frozen)` on Linux.
+  - `rsx_d3d12_backend.c` itself is untouched: `tools/des/core_sync.sh` still lists any commit that changes it.
+  - **On Linux** the legacy renderer on vkd3d is still the default, and with the freeze it gets no more fixes there
+    either. New renderer fixes reach Linux players on `RSX_BACKEND=vulkan`, until Vulkan becomes Linux's default.
 - **The tools:** `halgate.sh` compares route B (default `d3d12`) with route A (default `legacy`).
 - **The other games on ps3recomp** get the same default. The core does not draw the draws that have no vertex-program
   path (non-indexed lines and points, and a few fallbacks), which the legacy renderer drew with a rough fixed-function

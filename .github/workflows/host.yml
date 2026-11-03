@@ -341,10 +341,16 @@ jobs:
           cp ps3recomp/third_party/smaa/LICENSE.txt dist/host/licenses/smaa/
           # The portable renderer's libraries are compiled into the runtime too: glslang, SPIRV-Tools and
           # SPIRV-Headers (fetched at their pins, ps3recomp's cmake/gpu_deps.cmake), volk (vendored) and the Vulkan
-          # headers. Each licence goes along.
-          deps=ps3recomp/build_split/_deps
-          for d in glslang:$deps/glslang-src spirv-tools:$deps/spirv_tools-src spirv-headers:$deps/spirv_headers-src \
-                   vulkan-headers:$deps/vulkan_headers-src volk:ps3recomp/third_party/volk; do
+          # headers. Each licence goes along, from where the build took the sources: the cached copies when the
+          # configure was handed them (FETCHCONTENT_SOURCE_DIR_* in its cache), else FetchContent's own clones.
+          src_of() {
+            local v
+            v=$(sed -n "s/^FETCHCONTENT_SOURCE_DIR_$1:[A-Z]*=//p" ps3recomp/build_split/CMakeCache.txt)
+            echo "${v:-ps3recomp/build_split/_deps/$2-src}"
+          }
+          for d in glslang:$(src_of GLSLANG glslang) spirv-tools:$(src_of SPIRV_TOOLS spirv_tools) \
+                   spirv-headers:$(src_of SPIRV_HEADERS spirv_headers) \
+                   vulkan-headers:$(src_of VULKAN_HEADERS vulkan_headers) volk:ps3recomp/third_party/volk; do
             n=${d%%:*}; src=${d#*:}; f=
             for c in LICENSE.txt LICENSE.md LICENSE; do [ -f "$src/$c" ] && { f=$src/$c; break; }; done
             [ -n "$f" ] || { echo "::error::no licence file for $n in $src"; exit 1; }

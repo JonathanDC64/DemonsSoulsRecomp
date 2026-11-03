@@ -84,7 +84,8 @@ jobs:
     env:
       VKD3D_VERSION: "2.1"
       VKD3D_SHA256: 7510146aff2adfb4ae07ab890701a607e5ff7c66e57100cfc9f630ec92eeda6a
-      VKD3D_PREFIX: ${{ github.workspace }}/../vkd3d
+      # The prefix is inside the workspace: actions/cache refuses a path with '..' in it, and saved nothing while these were beside it.
+      VKD3D_PREFIX: ${{ github.workspace }}/.ci-cache/vkd3d
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 

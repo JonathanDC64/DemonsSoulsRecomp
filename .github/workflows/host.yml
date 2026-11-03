@@ -365,7 +365,8 @@ jobs:
       LLVM_URL: https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-X64.tar.xz
       LLVM_SIZE: '1938859476'
       LLVM_SHA256: df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384
-      LLVM_DIR: ${{ github.workspace }}/../llvm
+      # LLVM_DIR, DEPS_DIR and FFMPEG_DIR are cached inside the workspace: actions/cache refuses a path with '..' in it, and saved nothing while these were beside it.
+      LLVM_DIR: ${{ github.workspace }}/.ci-cache/llvm
       SDL2_VERSION: 2.32.10
       SDL2_SIZE: '7630262'
       SDL2_SHA256: 5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165
@@ -375,8 +376,8 @@ jobs:
       # 24.04's), by its commit.
       VULKAN_HEADERS_VERSION: 1.3.275
       VULKAN_HEADERS_COMMIT: 217e93c664ec6704ec2d8c36fa116c1a4a1e2d40
-      DEPS_DIR: ${{ github.workspace }}/../deps
-      FFMPEG_DIR: ${{ github.workspace }}/../ffmpeg
+      DEPS_DIR: ${{ github.workspace }}/.ci-cache/deps
+      FFMPEG_DIR: ${{ github.workspace }}/.ci-cache/ffmpeg
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

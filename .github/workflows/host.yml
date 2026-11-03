@@ -11,6 +11,7 @@ name: Host exe
 on:
   push:
     branches: [ master ]
+    paths-ignore: [ 'docs/**', '**.md' ]
   pull_request:
   workflow_dispatch:
   workflow_call:   # release.yml: the exe of the player's zip, built from the tag
@@ -344,7 +345,8 @@ jobs:
           retention-days: 14
 
   # The Linux host (docs/87), built on ubuntu-22.04, the oldest glibc the Linux build supports, so it runs on 2.35
-  # and later. As players will get it:
+  # and later. After it, setup's engine tests on the same system (ci.yml runs them on Windows). As players will get
+  # it:
   #   - the C++ library linked in: LLVM's libc++ (ubuntu-22.04's libstdc++ 12 has no <format>), with GCC's runtime
   #     static too (-static-libgcc);
   #   - SDL2 and vkd3d built from their pinned sources and shipped beside it, found through RUNPATH $ORIGIN. SDL2
@@ -714,3 +716,17 @@ jobs:
           cp build/host-routes/des_host dist/host-linux-routes/des_host
           python tools/ci/check_host_elf.py --glibc 2.35 dist/host-linux-routes
           python tools/ci/check_release_no_dev.py dist/host-linux-routes/des_host
+
+      # Setup's engine (tools/setup) on Linux at the glibc floor (docs/87), with Python 3.13, setup's own line (a 3.13
+      # standalone build): independent of the host above, so it runs after a failure there too. Not on a release tag.
+      - name: Setup engine tests, Python 3.13.9
+        id: setup-py
+        if: ${{ !cancelled() && !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13.9'
+
+      - name: Setup engine tests
+        if: ${{ !cancelled() && steps.setup-py.outcome == 'success' }}
+        working-directory: tools/setup
+        run: python -m unittest discover -s tests

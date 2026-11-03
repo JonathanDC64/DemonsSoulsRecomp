@@ -7,11 +7,17 @@ name: ps3recomp pin
 on:
   push:
     branches: [ master ]
+    paths-ignore: [ 'docs/**', '**.md' ]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# A new commit on a pull request (or a new push to master) cancels the run it replaces.
+concurrency:
+  group: pin-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   pin:

@@ -9,6 +9,7 @@
 #include "input.hpp"
 #include "modal.hpp"
 #include "ui.hpp"
+#include "version.hpp"
 
 #include <windows.h>
 #include <windowsx.h>
@@ -220,7 +221,7 @@ bool show(const Content& content, const Actions& actions) {
     AdjustWindowRect(&r, style, FALSE);
     const int w = r.right - r.left, h = r.bottom - r.top;
     const int x = std::max(0, (GetSystemMetrics(SM_CXSCREEN) - w) / 2), y = std::max(0, (GetSystemMetrics(SM_CYSCREEN) - h) / 2);
-    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"Demon's Souls", style, x, y, w, h, nullptr, nullptr, instance, nullptr);
+    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"" DES_PRODUCT_NAME, style, x, y, w, h, nullptr, nullptr, instance, nullptr);
     if (!hwnd) return false;
 
     Gpu gpu;

@@ -8,6 +8,8 @@
 // unless DES_SETTINGS names one.
 #pragma once
 
+#include "version.hpp"  // (kProductName: the project server's name in the Server row)
+
 #include <string>
 #include <string_view>
 
@@ -98,7 +100,7 @@ struct NetServer {
     bool privacy;         // keeps what PRIVACY.md says: the player accepts the note before going online (privacy.hpp)
 };
 inline constexpr NetServer kNetServers[] = {
-    {"project", "Demon's Souls Recomp", kNetProjectHost, "This project's own server.", true, true, true, true},
+    {"project", kProductName, kNetProjectHost, "This project's own server.", true, true, true, true},
 #if DES_DEV
     // Developer builds only. The address is the one its setup page publishes for emulators (thearchstones.com,
     // "serverinfo"). Not this project's server: no sign-in (it would get the install's key and name for nothing).

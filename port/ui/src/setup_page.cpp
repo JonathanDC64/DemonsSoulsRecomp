@@ -27,7 +27,7 @@ const Rml::String kSource = R"RML(
     <setup-shell id="shell">
         <setup-rail>
             <setup-brand>
-                <setup-brand-name>Demon's Souls</setup-brand-name>
+                <setup-brand-name>)RML" DES_PRODUCT_NAME R"RML(</setup-brand-name>
                 <setup-brand-rule/>
             </setup-brand>
             <setup-rail-steps id="rail"/>

@@ -97,11 +97,14 @@ EOF
 chmod +x "$APPDIR/AppRun" "$APPDIR/usr/bin/des_boot"
 
 # The desktop entry and icon appimagetool asks for. The icon is the game's own ICON0.PNG when the disc folder is
-# known (as the Windows build's exe icon is), else a plain one.
-cat > "$APPDIR/demonssoulsrecomp.desktop" <<'EOF'
+# known (as the Windows build's exe icon is), else a plain one. Its Name is the name people see (PRODUCT_NAME,
+# docs/130); the files keep the technical name.
+PRODUCT=$(tr -d '\r\n' < "$ROOT/PRODUCT_NAME" 2>/dev/null || true)
+cat > "$APPDIR/demonssoulsrecomp.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Demon's Souls (recompiled)
+Name=${PRODUCT:-DemonsSoulsRecomp}
+Comment=Demon's Souls on PC
 Exec=des_boot
 Icon=demonssoulsrecomp
 Categories=Game;

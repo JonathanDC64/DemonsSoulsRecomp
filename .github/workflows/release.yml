@@ -109,6 +109,7 @@ jobs:
         run: |
           pre=""
           case "$TAG" in *-*) pre="--prerelease" ;; esac
-          gh release create "$TAG" --draft --verify-tag $pre --title "DemonsSoulsRecomp ${TAG#v}" \
+          # (the title has the name people see, PRODUCT_NAME, docs/130; the files keep the technical name)
+          gh release create "$TAG" --draft --verify-tag $pre --title "$(tr -d '\r\n' < PRODUCT_NAME) ${TAG#v}" \
             --notes-file dist/notes.md dist/DemonsSoulsRecomp-*-source.zip dist/DemonsSoulsRecomp-*-windows.zip \
             dist/DemonsSoulsRecomp-*-linux.tar.xz dist/SHA256SUMS dist/third-party/*

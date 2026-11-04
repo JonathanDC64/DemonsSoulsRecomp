@@ -1033,7 +1033,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "This build has cheats (the Developer tab). Never share it as a release.");
 #endif
         info_row(leftPane, rightPane, "Version", kVersion,
-            "Demon's Souls PC port, a recompilation of the PS3 game.<br/><br/>Version " +
+            Rml::String(kProductName) + ": Demon's Souls on PC, a recompilation of the PS3 game.<br/><br/>Version " +
                 escape(kVersion) + ".",
             [](Pane& pane) {
                 pane.add_button("Open the project page").on_pressed([] {

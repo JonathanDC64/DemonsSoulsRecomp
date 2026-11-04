@@ -176,7 +176,7 @@ private:
     Rml::Element* mCheck = nullptr;
     Rml::Element* mLinks = nullptr;
     Rml::Element* mActionsRow = nullptr;
-    Buttons mChooseButton, mPlaceButtons, mDecryptedButton, mLinkButtons, mActions;
+    Buttons mChooseButton, mPlaceButtons, mDecryptedButton, mReportButton, mLinkButtons, mActions;
     setup::Engine mEngine;  // (last: destroyed first, which ends a check still going)
 };
 

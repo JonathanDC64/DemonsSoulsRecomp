@@ -60,11 +60,9 @@ private:
     void set_actions(std::vector<Action> actions, const std::string& note = {});
     void toggle_details();
     void ask_stop();
-    void ask_report();
     void open_log();
     std::filesystem::path log_file() const;
     std::string log_tail(size_t lines) const;
-    std::string send_report();
     void put(Rml::Element* element, std::string& shown, const std::string& text);
 
     Props mProps;

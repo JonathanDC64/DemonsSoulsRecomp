@@ -91,7 +91,7 @@ These steps are for the release download.
    - **I have decrypted files**: your disc copy, plus the 28 files you decrypted yourself (`EBOOT.elf`, the `.sdat` files and `libsre.prx`).
    - **Show me how**: step by step, with free tools only.
 4. Start the build. It runs on your PC and can take a while; setup shows an estimate first. You can stop it and carry on later.
-5. Pick a preset: **Original** plays as on the PS3; **Enhanced** sets 60 fps, a resolution that fits your display, SMAA, 16x anisotropic filtering and fullscreen. You can change anything later in Settings.
+5. Pick a preset: **Original** plays as on the PS3; **Enhanced** sets 60 fps, a resolution that fits your display, SMAA, 16x anisotropic filtering, fullscreen, and HDR when Windows has HDR on for your display. Then a few choices (HDR among them, on Windows) and your online name. You can change anything later in Settings.
 
 Then press **Play**.
 

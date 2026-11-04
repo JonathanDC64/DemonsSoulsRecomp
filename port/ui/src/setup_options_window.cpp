@@ -24,8 +24,12 @@
 namespace ui {
 namespace {
 
-// The settings "A few choices" sets, in its order (the online name last: it shows only while online play is on).
-const char* const kChoiceKeys[] = {"DES_FULLSCREEN", "DES_FPS",   "RSX_SCALE",   "DES_ASPECT",
+// The settings "A few choices" sets, in its order (the online name last: it shows only while online play is on). HDR
+// is Windows only, as the game's HDR is.
+const char* const kChoiceKeys[] = {"DES_FULLSCREEN", "DES_FPS", "RSX_SCALE", "DES_ASPECT",
+#ifdef _WIN32
+                                   "RSX_HDR",
+#endif
                                    "DES_MOUSE_LOOK", "DES_ONLINE", "DES_NET_NAME"};
 
 // The frame rate as a number for the hints: the game's own 30 for "" and "30", far above any display for "unlocked".
@@ -101,7 +105,10 @@ std::string setup_options_summary() {
 // ---- 1. How do you want to play? ----
 
 SetupPresetWindow::SetupPresetWindow()
-    : SetupPage("setup-preset"), mHeight(setup::display().height), mRpcs3(rpcs3_settings()) {
+    : SetupPage("setup-preset"), mRpcs3(rpcs3_settings()) {
+    const setup::Display display = setup::display();
+    mHeight = display.height;
+    mHdr = display.hdr;
     using S = RailStep::State;
     setup::Preset picked;
     if (setup::preset_from_key(settings::get("setup_preset"), picked)) mPick = picked;
@@ -168,7 +175,7 @@ SetupPresetWindow::SetupPresetWindow()
         text(r, "setup-cmp-cell", enhanced)->SetClass("on", !head && original != enhanced);
     };
     row("Option", "Original", "Enhanced", true);
-    for (const setup::Change& c : setup::preset_changes(mHeight))  // (only what differs, so the page fits 720 dp)
+    for (const setup::Change& c : setup::preset_changes(mHeight, mHdr))  // (only what differs, so the page fits 720 dp)
         if (c.original != c.enhanced) row(c.name, c.original, c.enhanced, false);
 
     set_buttons(mActions, footer_row(),
@@ -223,7 +230,7 @@ void SetupPresetWindow::open_choices() {
     } else {
         // (Custom from RPCS3's settings: those over the settings in use; Original and Enhanced ignore them)
         const setup::Settings preset =
-            mPick == setup::Preset::Custom ? mRpcs3 : setup::preset_settings(mPick, mHeight);
+            mPick == setup::Preset::Custom ? mRpcs3 : setup::preset_settings(mPick, mHeight, mHdr);
         for (const char* key : kChoiceKeys) {
             std::string v = settings::get(key);
             for (const auto& [k, pv] : preset)
@@ -240,6 +247,7 @@ void SetupPresetWindow::open_choices() {
         .preset = mPick,
         .values = std::move(values),
         .displayHeight = mHeight,
+        .displayHdr = mHdr,
         .onBack =
             [this, pick = mPick](const setup::Settings& v) {
                 mKept = v;
@@ -307,6 +315,9 @@ SetupChoicesWindow::SetupChoicesWindow(Props props)
         aspects.push_back({aspectNow, label});
     }
     add_opt(opts, "Aspect ratio", "DES_ASPECT", std::move(aspects));
+#ifdef _WIN32
+    add_opt(opts, "HDR", "RSX_HDR", {{"0", "Off"}, {"1", "On"}});
+#endif
 
     add_opt(opts, "Controls", "DES_MOUSE_LOOK", {{"0", "Gamepad"}, {"1", "Keyboard and mouse"}});
     add_opt(opts, "Online play", "DES_ONLINE", {{"1", "On"}, {"0", "Off"}});
@@ -397,6 +408,9 @@ void SetupChoicesWindow::draw_hints() {
             else if (std::fabs(shape - 16.f / 9.f) < 0.02f) hint = "Your display is 16:9, so both look the same.";
             else if (shape > 16.f / 9.f) hint = "Your display is wider: Match the display shows more at the sides.";
             else hint = "Your display is narrower, so the picture stays 16:9.";
+        } else if (!std::strcmp(o.key, "RSX_HDR")) {
+            if (!d.hdr) hint = "HDR is off for your display in Windows. The game shows HDR only while it is on there.";
+            else hint = v == "1" ? "Your display has HDR on in Windows." : "Off keeps the PS3's picture, in SDR.";
         } else if (!std::strcmp(o.key, "DES_MOUSE_LOOK")) {
             hint = v == "1" ? "Mouse look, and the keys of the Souls games on PC. Change any key in Settings."
                             : "The keyboard works as well. Buttons show as PS3 buttons.";
@@ -469,7 +483,8 @@ void SetupChoicesWindow::back() {
 
 // The preset's settings, then the choices over them, then the preset: the game reads them all when it starts.
 void SetupChoicesWindow::finish() {
-    for (const auto& [key, v] : setup::preset_settings(mProps.preset, mProps.displayHeight)) settings::store(key, v);
+    for (const auto& [key, v] : setup::preset_settings(mProps.preset, mProps.displayHeight, mProps.displayHdr))
+        settings::store(key, v);
     for (const auto& [key, v] : mProps.values) settings::store(key, v);
     for (const auto& [key, v] : mProps.extra) settings::store(key, v);
     settings::store("setup_preset", setup::preset_key(mProps.preset));

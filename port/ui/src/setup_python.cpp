@@ -1,6 +1,8 @@
 // The first Python (see setup_python.hpp). One fact differs by platform, in one small function: where the system's
 // curl and tar are. The steps, the checks and the stamp are the same code everywhere; which archive it is (a zip on
-// Windows, a .tar.gz on Linux) is in the pins (setup_engine.hpp).
+// Windows, a .tar.gz on Linux) is in the pins (setup_engine.hpp). When curl or tar does not start (Wine and CrossOver
+// have neither), the host's own: its download (setup_http.hpp, WinHTTP on Windows, none elsewhere) and, for a zip, its
+// own unzip (setup_unzip.hpp). DES_SETUP_NO_SYSTEM_TOOLS=1 hides the system's two, for tests.
 //
 // The tools run in the data folder and are given names relative to it (downloads\python-embed-3.13.9.zip.part and so
 // on, all ASCII), so a data folder whose path has characters outside the system's code page still reaches them intact
@@ -9,6 +11,7 @@
 
 #include "setup_engine.hpp"
 #include "setup_pc.hpp"
+#include "setup_unzip.hpp"
 #include "sha256.hpp"
 
 #ifdef _WIN32
@@ -78,6 +81,12 @@ constexpr const char* kToolFrom = "on PATH";
 #endif
 
 // ---- The same everywhere ----
+
+// DES_SETUP_NO_SYSTEM_TOOLS=1: as if the system had no curl or tar (tests of the host's own download and unzip).
+bool no_system_tools() {
+    const char* v = std::getenv("DES_SETUP_NO_SYSTEM_TOOLS");
+    return v && std::string_view(v) == "1";
+}
 
 // fetch.py's <name>-<version>.
 std::string base_name() {
@@ -176,6 +185,7 @@ void PythonFetch::stop() {
     }
     mWake.notify_all();
     mTool.stop();
+    mHttp.stop();
 }
 
 PythonFetch::Result PythonFetch::steps() {
@@ -245,7 +255,8 @@ PythonFetch::Result PythonFetch::steps() {
     return Result::Ok;
 }
 
-// curl into the .part file, carrying on from what a stopped try left there (-C -); the bar from the file's size.
+// curl into the .part file, carrying on from what a stopped try left there (-C -); the bar from the file's size. A curl
+// that does not start hands over to the host's own download.
 PythonFetch::Result PythonFetch::download(const std::filesystem::path& part) {
     std::filesystem::path relative = relative_archive();
     relative += ".part";
@@ -267,10 +278,7 @@ PythonFetch::Result PythonFetch::download(const std::filesystem::path& part) {
                                  nullptr, [&] { progress(size_of(part)); });
         if (stopping()) return Result::Stopped;
         progress(size_of(part));
-        if (!ran.started) {
-            say("FIX  " + mToolWhy);
-            return fail("internal", kStartFailed);
-        }
+        if (!ran.started) return download_own(part);
         if (ran.status == 0) return Result::Ok;
         if (ran.status == 33 && !again) {  // (curl's "cannot resume": the server ignored the range; start over once)
             std::filesystem::remove(part, ec);
@@ -286,9 +294,39 @@ PythonFetch::Result PythonFetch::download(const std::filesystem::path& part) {
     }
 }
 
+// The host's own download (setup_http.hpp), for a curl that did not start (mToolWhy says why): into the same .part file,
+// carrying on from it, with the same bar and the same failures. Where the host has none, the old failure.
+PythonFetch::Result PythonFetch::download_own(const std::filesystem::path& part) {
+    const char* library = HttpDownload::library();
+    if (!library) {
+        say("FIX  " + mToolWhy);
+        return fail("internal", kStartFailed);
+    }
+    std::fprintf(stderr, "[setup] %s: downloading %s with %s instead\n", mToolWhy.c_str(), archive_name().c_str(),
+                 library);
+    say(mToolWhy + ": downloading with " + library + " instead");
+    const unsigned long long have = size_of(part);  // (download() has checked it against the pin)
+    const HttpDownload::Result got =
+        mHttp.get(kPythonUrl, part, [&] { progress(size_of(part)); }, [this] { return stopping(); });
+    if (stopping() || got == HttpDownload::Result::Stopped) return Result::Stopped;
+    progress(size_of(part));
+    if (got == HttpDownload::Result::Ok) {
+        if (have) say(mHttp.resumed() ? "carried on from " + std::to_string(have) + " bytes"
+                                      : std::string("the server sent the whole file, so it started over"));
+        return Result::Ok;
+    }
+    say(std::string("FIX  ") + kPythonName + ": the download stopped (" + library + ": " + mHttp.why() +
+        "); it resumes next time");
+    const unsigned long long left = kPythonSize - std::min(kPythonSize, size_of(part));
+    if (const Space space = data_space(); mHttp.write_failed() && space.known && space.free < left)
+        return fail("disk", kDiskFull);
+    return fail("download", kDownloadFailed);
+}
+
 // The archive's names first (tar -tf), refused as fetch.py's unpack refuses them; then tar -xf into <folder>.tmp, a
 // rename into place, and the stamp. The archive is the pinned one by now, so a refusal means a changed pin (fetch.py
-// says "download" for it too).
+// says "download" for it too). A tar that does not start hands a zip over to the host's own unzip, which lists and
+// unpacks it in tar's place; the checks around them are the same.
 PythonFetch::Result PythonFetch::unpack() {
     const std::filesystem::path dest = python_folder();
     std::filesystem::path tmp = dest;
@@ -299,7 +337,17 @@ PythonFetch::Result PythonFetch::unpack() {
     std::vector<std::string> names;
     Ran ran = run_tool("tar", {"-tf", archive}, &names, {});
     if (stopping()) return Result::Stopped;
-    if (!ran.started || ran.status != 0 || names.empty()) {
+    const bool own = !ran.started && std::string_view(kPythonSuffix) == ".zip";
+    if (own) {
+        std::string why;
+        if (!zip_names(python_archive(), names, why)) {
+            say("FIX  " + archive_name() + ": " + mToolWhy + ", and the host's own unzip cannot read it: " + why);
+            return fail("internal", kUnpackFailed);
+        }
+        std::fprintf(stderr, "[setup] %s: unpacking %s with the host's own unzip instead\n", mToolWhy.c_str(),
+                     archive_name().c_str());
+        say(mToolWhy + ": unpacking with the host's own unzip instead");
+    } else if (!ran.started || ran.status != 0 || names.empty()) {
         say("FIX  " + archive_name() + ": " +
             (ran.started ? "tar -tf ended with exit " + std::to_string(ran.status) : mToolWhy));
         return fail("internal", kUnpackFailed);
@@ -313,14 +361,21 @@ PythonFetch::Result PythonFetch::unpack() {
     std::error_code ec;
     std::filesystem::remove_all(tmp, ec);
     const bool made = std::filesystem::create_directories(tmp, ec) && !ec;
-    ran = made ? run_tool("tar", {"-xf", archive, "-C", tmpRelative}, nullptr, {}) : Ran{};
+    std::string trouble;  // why it did not unpack, for the FIX line
+    if (!made) {
+        trouble = "no folder to unpack it in";
+    } else if (own) {
+        zip_unpack(python_archive(), tmp, trouble);
+    } else {
+        ran = run_tool("tar", {"-xf", archive, "-C", tmpRelative}, nullptr, {});
+        if (!ran.started) trouble = mToolWhy;
+        else if (ran.status) trouble = "tar -xf ended with exit " + std::to_string(ran.status);
+    }
     if (stopping()) return Result::Stopped;
-    if (!made || !ran.started || ran.status != 0 || !std::filesystem::is_regular_file(tmp / kPythonProgram, ec)) {
-        say("FIX  " + archive_name() + ": " +
-            (!made          ? std::string("no folder to unpack it in")
-             : !ran.started ? mToolWhy
-             : ran.status   ? "tar -xf ended with exit " + std::to_string(ran.status)
-                            : std::string("no ") + kPythonProgram + " in it"));
+    if (trouble.empty() && !std::filesystem::is_regular_file(tmp / kPythonProgram, ec))
+        trouble = std::string("no ") + kPythonProgram + " in it";
+    if (!trouble.empty()) {
+        say("FIX  " + archive_name() + ": " + trouble);
         std::filesystem::remove_all(tmp, ec);
         return fail("internal", kUnpackFailed);
     }
@@ -352,9 +407,10 @@ PythonFetch::Ran PythonFetch::run_tool(const char* name, const std::vector<std::
                                        std::vector<std::string>* listing, const std::function<void()>& each) {
     Ran out;
     std::error_code ec;
-    const std::filesystem::path exe = system_tool(name);
+    const std::filesystem::path exe = no_system_tools() ? std::filesystem::path() : system_tool(name);
     if (exe.empty() || !std::filesystem::is_regular_file(exe, ec)) {
-        mToolWhy = std::string("no ") + name + " " + kToolFrom;
+        mToolWhy = std::string("no ") + name + " " + kToolFrom +
+                   (no_system_tools() ? " (DES_SETUP_NO_SYSTEM_TOOLS=1)" : "");
         return out;
     }
     {
@@ -433,7 +489,9 @@ void PythonFetch::progress(unsigned long long done) {
     say("@overall " + std::to_string(done * kPythonShare / kPythonSize) + "/1000");
 }
 
+// A line for the screens. A FIX line (what went wrong, for Details) goes to the log too, so a player's report has it.
 void PythonFetch::say(std::string line) {
+    if (line.rfind("FIX  ", 0) == 0) std::fprintf(stderr, "[setup] the first Python: %s\n", line.c_str() + 5);
     if (mOnLine) mOnLine(std::move(line));
 }
 

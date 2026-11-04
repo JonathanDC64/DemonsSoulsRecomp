@@ -3,11 +3,14 @@
 // first, and there is no Python yet to run the engine's own download with. So the host fetches it itself before the
 // engine's first run: the system's own curl and tar (on Windows from System32, on Linux from PATH; run by full path
 // through the process runner, so Cancel ends them and they get no window), checked with the host's own SHA-256
-// (sha256.hpp). It lands where des_setup's fetch.py puts it, with the same stamp, so from then on the host's lookup
-// (setup_engine.hpp python()) and the engine's fetch both see it as unpacked.
+// (sha256.hpp). A Windows with no curl or tar that starts (Wine and CrossOver have neither) gets the host's own
+// instead: WinHTTP (setup_http.hpp) and its own unzip (setup_unzip.hpp). It lands where des_setup's fetch.py puts it,
+// with the same stamp, so from then on the host's lookup (setup_engine.hpp python()) and the engine's fetch both see it
+// as unpacked.
 #pragma once
 
 #include "child_process.hpp"
+#include "setup_http.hpp"
 
 #include <atomic>
 #include <condition_variable>
@@ -60,7 +63,8 @@ public:
 
     // Starts a try (after ending the last one). Both callbacks come on its threads.
     void start(LineFn on_line, EndFn on_end);
-    // Cancel: ends curl or tar at once (any thread). The .part file stays, so the next try carries on from it.
+    // Cancel: ends curl, tar or the host's own download at once (any thread). The .part file stays, so the next try
+    // carries on from it.
     void stop();
     bool running() const { return mRunning.load(); }
 
@@ -73,6 +77,7 @@ private:
 
     Result steps();
     Result download(const std::filesystem::path& part);
+    Result download_own(const std::filesystem::path& part);
     Result unpack();
     Ran run_tool(const char* name, const std::vector<std::string>& args, std::vector<std::string>* listing,
                  const std::function<void()>& each);
@@ -94,6 +99,7 @@ private:
     std::atomic<bool> mStop{false};
     std::atomic<bool> mRunning{false};
     std::thread mThread;
+    HttpDownload mHttp;  // the host's own download, when curl does not start
     ChildProcess mTool;  // curl or tar, one at a time (last: destroyed first, with its reading thread)
 };
 

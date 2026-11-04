@@ -226,46 +226,60 @@ struct State {
 };
 State s;
 
-float env_float(const char* name, float fallback, float lo, float hi) {
-    const char* v = std::getenv(name);
+float to_float(const char* v, float fallback, float lo, float hi) {
     char* end = nullptr;
     const float f = v && *v ? std::strtof(v, &end) : fallback;
     return end && *end ? fallback : std::clamp(f, lo, hi);
 }
 
-// An on/off row of Settings > Interface, as it is now (the environment's value when it was set there).
+float env_float(const char* name, float fallback, float lo, float hi) {
+    return to_float(std::getenv(name), fallback, lo, hi);
+}
+
+// A row of Settings > Interface, as it is now (the environment's value when it was set there).
+std::string row_value(const char* key) {
+    return settings::pinned(key) ? settings::pinned_value(key) : settings::get(key);
+}
+
 bool row_on(const char* key) {
-    const std::string v = settings::pinned(key) ? settings::pinned_value(key) : settings::get(key);
+    const std::string v = row_value(key);
     return !v.empty() && v != "0";
 }
 
-// The Large Sword of Moonlight as the cursor (docs/112): over everything, its tip at the pointer, while a document is
+// The sword its row chose (Cursor sword, DES_CURSOR_SWORD): a name that is not one of them is the first of the list.
+std::string cursor_sword() {
+    const std::string v = row_value("DES_CURSOR_SWORD");
+    return ui::models::is_sword(v) ? v : ui::models::swords().front().name;
+}
+
+// One of the game's swords as the cursor (docs/112): over everything, its tip at the pointer, while a document is
 // up and RmlUi would show the arrow or the hand there, or over a menu of the game (set_game_pointer, docs/114); the
 // system's cursor is hidden meanwhile (mouse.cpp), and while the game's menu has hidden the pointer. Its row,
-// Sword cursor (DES_CURSOR3D), off keeps the system's arrow. Knobs: DES_CURSOR_SIZE the sword's length in dp (64);
-// DES_CURSOR_SPIN a turn about its blade, in degrees a second (0, still).
+// Sword cursor (DES_CURSOR3D), off keeps the system's arrow; Cursor size (DES_CURSOR_SIZE) is the sword's length in dp
+// (64). Knob: DES_CURSOR_SPIN a turn about its blade, in degrees a second (0, still).
 void draw_cursor() {
     const bool on = row_on("DES_CURSOR3D");
-    static const float size = env_float("DES_CURSOR_SIZE", 64.f, 16.f, 512.f);
+    const float size = to_float(row_value("DES_CURSOR_SIZE").c_str(), 64.f, 16.f, 512.f);
     static const auto start = std::chrono::steady_clock::now();
     const bool arrow = sCursorName.empty() || sCursorName == "default" || sCursorName == "auto" ||
                        sCursorName == "arrow" || sCursorName == "pointer";
     bool drawn = false;
     const bool game = s.game_mode == 1 && !s.cursor_wanted;
     if (on && ((s.cursor_wanted && s.pointer_inside && arrow) || game)) {
-        if (const ui::models::Model* m = ui::models::get("moonlight")) {
+        const std::string sword = cursor_sword();
+        if (const ui::models::Model* m = ui::models::get(sword)) {
             float lo[3], hi[3];
             ui::models::bounds(*m, lo, hi);
             const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-            const double turn = std::fmod(double(ui::models::spin("moonlight")) * t, 360.0);
-            const ui::models::Look look = ui::models::look("moonlight", float(turn));
+            const double turn = std::fmod(double(ui::models::spin(sword)) * t, 360.0);
+            const ui::models::Look look = ui::models::look(sword, float(turn));
             ModelView v;
             std::memcpy(v.rotation, look.rotation, sizeof v.rotation);
             v.pivot[1] = lo[1];  // the tip: the blade lies along -Y
             v.at[0] = float(game ? s.game_x : s.pointer_x);
             v.at[1] = float(game ? s.game_y : s.pointer_y);
             v.scale = hi[1] > lo[1] ? size * s.rml->GetDensityIndependentPixelRatio() / (hi[1] - lo[1]) : 0.f;
-            drawn = v.scale > 0.f && s.renderer->draw_model("moonlight", v);
+            drawn = v.scale > 0.f && s.renderer->draw_model(sword.c_str(), v);
         }
     }
     mouse::set_own_cursor(drawn || (s.game_mode == 2 && !s.cursor_wanted));

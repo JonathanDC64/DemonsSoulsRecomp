@@ -891,20 +891,48 @@ void find_spots(Model& m) {
     m.spots = std::move(all);
 }
 
-// parts/wp_a_0258.partsbnd: the weapon's FLVER0 and its textures.
-std::unique_ptr<Model> load_moonlight(const std::string& dir, std::string& why) {
+// The swords, by name. model: its file in parts/, the weapon's equipModelId in the game's EquipParamWeapon. solid: how
+// much its opaque meshes are brightened: the game lights these from its surroundings, and some are near black
+// without them. glow: the halo's colour and strength; whole: it is around all of the sword, as none of them but the
+// moonlight has a blended mesh.
+struct SwordInfo {
+    const char* name;
+    const char* label;
+    const char* model;
+    float solid;
+    float glow[3];
+    float glow_strength;
+    bool whole;
+};
+const SwordInfo kSwords[] = {
+    {"moonlight", "Large Sword of Moonlight", "0258", 1.0f, {0.55f, 0.78f, 1.0f}, 0.85f, false},
+    {"soulbrandt", "Soulbrandt", "0251", 2.6f, {0.72f, 0.84f, 1.0f}, 0.75f, true},  // (the game's sword)
+    {"demonbrandt", "Demonbrandt", "0254", 1.0f, {0.95f, 0.25f, 0.12f}, 0.55f, true},
+    {"regalia", "Northern Regalia", "0253", 1.7f, {0.8f, 0.88f, 1.0f}, 0.55f, true},
+    {"stormruler", "Storm Ruler", "0256", 1.5f, {0.6f, 0.78f, 1.0f}, 0.5f, true},
+};
+
+const SwordInfo* sword_info(const std::string& name) {
+    for (const SwordInfo& s : kSwords)
+        if (name == s.name) return &s;
+    return nullptr;
+}
+
+// parts/wp_a_<model>.partsbnd: the weapon's FLVER0 and its textures.
+std::unique_ptr<Model> load_sword(const std::string& dir, const std::string& model, std::string& why) {
+    const std::string base = "wp_a_" + model;
     std::vector<uint8_t> file;
-    if (!read_file(dir + "parts/wp_a_0258.partsbnd", file)) {
-        why = "parts/wp_a_0258.partsbnd could not be read";
+    if (!read_file(dir + "parts/" + base + ".partsbnd", file)) {
+        why = "parts/" + base + ".partsbnd could not be read";
         return nullptr;
     }
     const View v{file.data(), file.size()};
     const auto entries = bnd3(v);
-    const Entry* fl = find(entries, "wp_a_0258.flver");
-    const Entry* tx = find(entries, "wp_a_0258.tpf");
+    const Entry* fl = find(entries, base + ".flver");
+    const Entry* tx = find(entries, base + ".tpf");
     Flver f;
     if (!fl || !tx || !flver0(fl->data, f)) {
-        why = "wp_a_0258.partsbnd has no model that reads";
+        why = base + ".partsbnd has no model that reads";
         return nullptr;
     }
     auto m = std::make_unique<Model>();
@@ -1001,6 +1029,17 @@ std::unique_ptr<Model> load_lizard(const std::string& dir, std::string& why) {
 
 }  // namespace
 
+const std::vector<Sword>& swords() {
+    static const std::vector<Sword> list = [] {
+        std::vector<Sword> out;
+        for (const SwordInfo& s : kSwords) out.push_back({s.name, s.label});
+        return out;
+    }();
+    return list;
+}
+
+bool is_sword(const std::string& name) { return sword_info(name) != nullptr; }
+
 const Model* get(const std::string& name) {
     static std::map<std::string, std::unique_ptr<Model>> loaded;
     static std::map<std::string, bool> tried;
@@ -1011,7 +1050,7 @@ const Model* get(const std::string& name) {
     std::string why = "no game folder (PS3_VFS_ROOT)";
     std::unique_ptr<Model> m;
     if (!dir.empty()) {
-        if (name == "moonlight") m = load_moonlight(dir, why);
+        if (const SwordInfo* sword = sword_info(name)) m = load_sword(dir, sword->model, why);
         else if (name == "lizard") m = load_lizard(dir, why);
         else why = "no such model";
     }
@@ -1065,7 +1104,7 @@ float spin(const std::string& name) {
     };
     // The sword keeps still; the lizard turns round once in 12 s as it dances.
     static const float sword = knob("DES_CURSOR_SPIN", 0.f), lizard = knob("DES_UI_LIZARD_SPIN", 30.f);
-    return name == "moonlight" ? sword : name == "lizard" ? lizard : 0.f;
+    return is_sword(name) ? sword : name == "lizard" ? lizard : 0.f;
 }
 
 namespace {
@@ -1083,7 +1122,7 @@ Look look(const std::string& name, float turn) {
     static const float kOver[9] = {1, 0, 0, 0, -1, 0, 0, 0, -1};
     Look l{};
     float a[9], b[9];
-    if (name == "moonlight") {
+    if (const SwordInfo* sword = sword_info(name)) {
         // The blade lies along -Y. Turned 28 degrees about it (the light catches its flat), over, and then the tip,
         // now at the screen's bottom, turned round to the top left.
         turn_about(0, 1, 0, 28.f + turn, a);
@@ -1095,12 +1134,13 @@ Look look(const std::string& name, float turn) {
         std::memcpy(l.tint, tint, sizeof tint);
         l.ambient = 0.62f;
         l.alpha_test = 0.5f;
-        // The moonlight: a pale blue halo about the blade, as the previews had it.
+        l.solid[0] = l.solid[1] = l.solid[2] = sword->solid;
+        // A soft halo: on the moonlight, pale blue about the blade, as the previews had it.
         static const bool glow = effect_on("DES_CURSOR_GLOW");
-        const float halo[3] = {0.55f, 0.78f, 1.0f};
-        std::memcpy(l.glow, halo, sizeof halo);
-        l.glow_strength = glow ? 0.85f : 0.f;
+        std::memcpy(l.glow, sword->glow, sizeof l.glow);
+        l.glow_strength = glow ? sword->glow_strength : 0.f;
         l.glow_radius = 0.035f;
+        l.glow_whole = sword->whole;
     } else {
         // Seen from 35 degrees to its left (plus turn), from 28 degrees above.
         turn_about(0, 1, 0, -35.f + turn, a);
@@ -1110,6 +1150,7 @@ Look look(const std::string& name, float turn) {
         const float light[3] = {-0.3f, -0.7f, 0.65f};
         std::memcpy(l.light, light, sizeof light);
         l.tint[0] = l.tint[1] = l.tint[2] = 1.f;
+        l.solid[0] = l.solid[1] = l.solid[2] = 1.f;
         l.ambient = 0.55f;
         l.alpha_test = 0.f;
         // The twinkle: its gems flash, and star glints come and go on them.

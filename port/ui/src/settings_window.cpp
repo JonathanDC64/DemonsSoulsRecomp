@@ -17,6 +17,7 @@
 #include "privacy_window.hpp"
 #include "report.hpp"
 #include "settings.hpp"
+#include "souls_model.hpp"
 #include "string_button.hpp"
 #include "ui.hpp"
 #include "updates.hpp"
@@ -985,7 +986,19 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
         bool_row(leftPane, rightPane, "Trophy pop-ups", "trophy_popups",
             "Shows a note when you earn a trophy. Off only hides the note.");
         bool_row(leftPane, rightPane, "Sword cursor", "DES_CURSOR3D",
-            "The cursor in these menus is the Large Sword of Moonlight. Off uses the usual arrow.");
+            "The cursor in these menus is a sword from the game. Off uses the usual arrow.");
+        {
+            std::vector<Rml::String> names, labels;
+            for (const auto& sword : models::swords()) {
+                names.push_back(sword.name);
+                labels.push_back(sword.label);
+            }
+            choice_row(leftPane, rightPane, "Cursor sword", "DES_CURSOR_SWORD", std::move(names), std::move(labels),
+                "Which of the game's swords the cursor is.");
+        }
+        choice_row(leftPane, rightPane, "Cursor size", "DES_CURSOR_SIZE", {"48", "64", "96", "128", "192"},
+            {"Small", "Normal", "Large", "Very large", "Huge"},
+            "How long the sword is.");
         bool_row(leftPane, rightPane, "Crystal lizard", "DES_UI_LIZARD",
             "A crystal lizard dances in the corner of these menus.");
         choice_row(leftPane, rightPane, "Gamepad menu buttons", "pad_menu_chord", {"0", "1"},

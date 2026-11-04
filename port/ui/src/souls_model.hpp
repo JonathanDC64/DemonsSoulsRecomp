@@ -1,5 +1,5 @@
-// Written for Demon's Souls. Two of the game's own models for the UI, read from the player's copy of the game
-// (docs/112): the Large Sword of Moonlight, drawn as the menus' cursor, and the crystal lizard in its little dance.
+// Written for Demon's Souls. The game's own models for the UI, read from the player's copy of the game (docs/112): its
+// swords, one of them drawn as the menus' cursor and in the program's icon, and the crystal lizard in its little dance.
 // Nothing of the game is in the program: the files are read from the game's folder ($PS3_VFS_ROOT/PS3_GAME/USRDIR)
 // the first time a model is drawn, and kept in memory.
 //
@@ -42,7 +42,14 @@ struct Mesh {
 
 struct Model;
 
-// The model by name: "moonlight" or "lizard". Read the first time; nullptr if the game's files are not there or do
+// The swords the cursor can be, the first the default: the name get() and look() take, and the one shown to the player.
+struct Sword {
+    std::string name, label;
+};
+const std::vector<Sword>& swords();
+bool is_sword(const std::string& name);
+
+// The model by name: one of swords(), or "lizard". Read the first time; nullptr if the game's files are not there or do
 // not read (said once on stderr). The UI's render thread.
 const Model* get(const std::string& name);
 
@@ -65,20 +72,24 @@ const std::vector<Spot>& spots(const Model& m);
 // viewer), its rows: the sword with its tip to the top left, the lizard seen from its front left and a little above;
 // each turned `turn` degrees more (the sword about its blade, the lizard about its up). light: toward the light, in
 // the screen's space, and ambient the part of it that is everywhere. tint: the blended meshes' colour (the blade's
-// moonlight blue). alpha_test: below it an opaque mesh's texel is not drawn.
-// The effects, stand-ins for the game's own (docs/112): glow, a soft halo in that colour around the blended meshes, as
-// strong as glow_strength (0: none; the sword's moonlight, DES_CURSOR_GLOW), blurred by glow_radius of the model's
-// length; glitter, how bright a gem flashes white now and then (0: none), and sparkles, how many star glints at most
+// moonlight blue); solid: the opaque meshes' (above 1, a dark sword brightened). alpha_test: below it an opaque mesh's
+// texel is not drawn.
+// The effects, stand-ins for the game's own (docs/112): glow, a soft halo in that colour around the blended meshes, or
+// around the whole model with glow_whole (a sword with no blended mesh), as strong as glow_strength (0: none;
+// DES_CURSOR_GLOW), blurred by glow_radius of the model's length; glitter, how bright a gem flashes white now and then
+// (0: none), and sparkles, how many star glints at most
 // show at once at its spots, each sparkle_size of its length (the lizard's twinkle, DES_UI_LIZARD_TWINKLE).
 struct Look {
     float rotation[9];
     float light[3];
     float ambient;
     float tint[3];
+    float solid[3];
     float alpha_test;
     float glow[3];
     float glow_strength;
     float glow_radius;
+    bool glow_whole;
     float glitter;
     int sparkles;
     float sparkle_size;

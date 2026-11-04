@@ -160,3 +160,18 @@ if(MSVC)
   target_compile_options(settings_check PRIVATE /EHsc /W3 /wd4100)
 endif()
 add_dependencies(settings_check des_version)
+
+# The first Python's fetch on its own (tests/setup_fetch_check.cpp), the data folder and the free space stubbed: curl
+# and tar against the host's own download and unzip (what Wine and CrossOver get), a stopped download carried on, and
+# the zip reader's refusals. It downloads python.org's embeddable zip three times. Windows only. Built on demand:
+#   cmake --build <build> --target setup_fetch_check, then setup_fetch_check <a new folder>
+if(WIN32)
+  add_executable(setup_fetch_check EXCLUDE_FROM_ALL tests/setup_fetch_check.cpp src/setup_python.cpp
+    src/setup_http.cpp src/setup_unzip.cpp src/child_process.cpp src/sha256.cpp src/stb_impl.cpp)
+  target_include_directories(setup_fetch_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${stb_SOURCE_DIR})
+  target_compile_definitions(setup_fetch_check PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+  if(MSVC)
+    target_compile_options(setup_fetch_check PRIVATE /EHsc /W3 /wd4100)
+  endif()
+  target_link_libraries(setup_fetch_check PRIVATE winhttp)
+endif()

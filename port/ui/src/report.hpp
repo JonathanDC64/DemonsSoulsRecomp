@@ -64,6 +64,12 @@ std::string read_head_tail(const std::filesystem::path& path, size_t head, size_
 std::vector<uint8_t> read_file(const std::filesystem::path& path);
 inline std::vector<uint8_t> bytes(const std::string& s) { return {s.begin(), s.end()}; }
 
+// The player's save, so that a report's problem can be loaded and seen: every save folder in the game's save root
+// (PS3_SAVEDATA_ROOT, else gamedata/dev_hdd0/home/00000001/savedata in the working folder, as cellSaveData.c), as
+// save/<folder>/<file> in the zip. Not the folders' pictures (the game's art) or a file the runtime is still writing;
+// read again when the game saved meanwhile. `note` is game.txt's line about it (what, how much, how long ago saved).
+std::vector<File> save_files(std::string& note);
+
 // Writes `files` to a new zip in the data folder's reports folder, named `<stem>.zip`; the path, or empty on failure.
 std::filesystem::path write_bundle(const std::string& stem, const std::vector<File>& files);
 std::string timestamp();  // "20261017-153012", for file names
@@ -101,13 +107,15 @@ void flip_hook();
 // what des_ui.cpp says about this run (uptime, frames, frame rate, window). The zip holds:
 //   screenshot.png  the game's picture (the menu closed)
 //   system.txt      system_info()
-//   game.txt        `session`, and the crash and hang reports of the last week on this PC (names only)
+//   game.txt        `session`, the save's line (save_files), and the crash and hang reports of the last week on this
+//                   PC (names only)
 //   settings.ini    every setting, with its default where it differs, and those set in the environment
 //   environment.txt environment_info()
 //   runtime.txt     the runtime's snapshot: what every thread is doing (ps3_diag_report, 2 s of sampling)
 //   des.log         the log's start and its last 512 KB; des.prev.log the end of the previous run's (a freeze or
 //                   crash the player restarted after), when it is from the last day
-// Nothing of the game's files, saves or memory: names, numbers, settings and the log only.
+//   save/...        the player's save (save_files)
+// Nothing of the game's files or memory: names, numbers, settings, the log and the save only.
 void send_issue_report(void* back_buffer, unsigned index, int width, int height, std::string session);
 
 }  // namespace ui::report

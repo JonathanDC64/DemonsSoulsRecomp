@@ -8,6 +8,9 @@ issue** as first built. This page covers what was added on 2026-10-21:
   reported too;
 - the rules that keep private data and the game's content out of reports.
 
+Since 2026-11-03 both kinds of report also hold the player's save, so a
+problem can be loaded where it happened instead of played up to again.
+
 Code:
 - port: `port/ui/src/report.cpp`, `crash_report.cpp`, `crash_dialog.cpp`,
   `des_ui.cpp` (watch thread), `settings.cpp`;
@@ -22,16 +25,22 @@ Code:
 |---|---|
 | `screenshot.png` | the game's picture, taken with the menu closed |
 | `system.txt` | port version (and whether it is a developer build), ps3recomp version, the game dump's SHA-256, the renderer that runs (with a runtime that has the route switch: `d3d12`, `vulkan`, ..., and why it is D3D12 when Vulkan was asked for; not in the crash dialog's), Windows version, CPU (cores, threads, instruction sets), memory (the PC's and this process's), each GPU with its driver (and the one in use with its memory budget), each display (size, refresh, primary, HDR), power (battery or not), free disk space where the game and the data are, gamepads (XInput, DualSense/DS4), keyboard layout, and other software loaded into the game (overlays, hooks) |
-| `game.txt` | time running; game frames, with "no new frame for N s: the game had stopped" when it has; frames per second for each of the last 60 s; overlay frames; window or fullscreen, size and DPI; picture size; crash and hang reports on this PC in the last 7 days (names only) |
+| `game.txt` | time running; game frames, with "no new frame for N s: the game had stopped" when it has; frames per second for each of the last 60 s; overlay frames; window or fullscreen, size and DPI; picture size; the save (its folder, how many files, how many minutes before the report it was saved); crash and hang reports on this PC in the last 7 days (names only) |
 | `settings.ini` | every setting with its value, `# changed; default: X` where it differs from the default, and `# set in the environment: X` where the environment overrides it |
 | `environment.txt` | the command line and every port or runtime option set in the environment (`DES_`, `PS3_`, `RSX_`, `SPU_`, `SPURS_`, `GCM_`, `PAD_`, `PPU_`, `AUDIO_`, `VBLANK`, `FIFO_`, `LIBSRE_`, `SAIL_`, `TROPHY_`, `WATCHDOG_`) |
 | `runtime.txt` | the runtime's snapshot (below), sampled over 2 s |
 | `des.log` | the first 120 lines of the log and its last 512 KB |
 | `des.prev.log` | the end of the previous run's log, when that run was in the last 24 h: a freeze or crash the player restarted after |
+| `save/<folder>/...` | the player's save (`report::save_files`): each save folder in the game's save root (`PS3_SAVEDATA_ROOT`, else `gamedata/dev_hdd0/home/00000001/savedata`, as `cellSaveData.c` finds it). Every file except the folder's two pictures (`ICON0.PNG`, `PIC1.PNG`: the game's art, and a save loads without them) and a file the runtime is still writing (`.<name>.tmp`). If the game saved while it was read, it is read again, up to twice, half a second apart. At most 8 MB a file and 32 MB in all; a Demon's Souls save is ten 256 KB files |
+
+To load a reported save, put its folder in a save root of its own and start
+with `PS3_SAVEDATA_ROOT=<that root>`. Copy in `ICON0.PNG` and `PIC1.PNG` from
+any other save if the game's load screen wants them.
 
 The crash and hang dialog's **Report on GitHub** zips `crash.txt`,
 `hang.txt` or `graphics-lost.txt`, `system.txt`, `settings.ini`, `environment.txt` (the game's
-command line, saved with the report) and `des.log`. The dialog runs as a
+command line, saved with the report), `des.log` and the save (as above; its
+line is in the issue's System block). The dialog runs as a
 process of its own and reads no settings. So the game keeps
 `logs\settings.txt` up to date: the same listing as above, written at
 startup and after each change. The dialog uses that file, and falls back to
@@ -111,7 +120,12 @@ the game has stopped, the repaint no longer waits.
 
 Reports are posted on a public GitHub issue, so:
 
-- **Nothing of the game.** No game files, saves or guest memory. The runtime
+- **The save, and nothing else of the game.** The save holds the player's
+  characters and their names, and it is posted with the issue, so the
+  report's texts say so (the menu's box, the crash dialog, the README). The
+  port writes its own `PARAM.SFO` (setup's import too), so no PSN account is
+  in it. Its two pictures are the game's art and stay out.
+- **No game files or guest memory.** The runtime
   snapshot holds thread names, counters and addresses only. The log holds the
   runtime's and the port's own messages. The only game content is the
   screenshot: one frame the player was looking at, which they can see before

@@ -349,7 +349,7 @@ void put32(std::string& s, uint32_t v) {
     put16(s, v >> 16);
 }
 
-// A zip of stored (uncompressed) files: the screenshot is a PNG already, and the text is small.
+// A zip of stored (uncompressed) files: the screenshot is a PNG already, the text is small and a save a few MB.
 bool write_zip(const std::filesystem::path& path, const std::vector<File>& files) {
     const std::time_t t = std::time(nullptr);
     std::tm tm{};
@@ -690,8 +690,10 @@ void make_issue_report(std::vector<uint8_t> rgba, int width, int height, std::st
     }
     const std::string system = redact(system_info());
     files.push_back({"system.txt", bytes(system)});
+    std::string save_note;
+    std::vector<File> save = save_files(save_note);
     const std::string game = redact(session + "Picture: " + std::to_string(width) + "x" + std::to_string(height) + "\n" +
-                                    recent_reports());
+                                    save_note + recent_reports());
     files.push_back({"game.txt", bytes(game)});
     files.push_back({"settings.ini", bytes(redact(settings_text))});
     files.push_back({"environment.txt", bytes(redact(environment_info()))});
@@ -706,13 +708,14 @@ void make_issue_report(std::vector<uint8_t> rgba, int width, int height, std::st
                 std::chrono::hours(24))
             files.push_back({"des.prev.log", bytes(redact(read_head_tail(prev, 40, 192 << 10)))});
     }
+    for (File& f : save) files.push_back(std::move(f));
     const auto zip = write_bundle("issue-" + stamp, files);
     std::string body = "## What happened\n(Please describe the problem and what you were doing.)\n\n## What you expected\n\n"
                        "## System\n```\n" + system + game + "```\n\n## Attachments\n";
     body += zip.empty() ? "(The report files could not be saved.)\n"
                         : "Drag `" + narrow(zip.filename().wstring()) + "` (its folder is open) into this issue: it has "
-                          "a screenshot, your settings, what each part of the game was doing and the game's recent "
-                          "messages.\n";
+                          "a screenshot, your settings, what each part of the game was doing, the game's recent "
+                          "messages and your save.\n";
     std::fprintf(stderr, "[report] issue report: %s\n", zip.empty() ? "could not be saved" : narrow(zip.wstring()).c_str());
     open_issue(issue_url("", body), zip);
     end_report_thread();
@@ -1269,6 +1272,94 @@ std::string read_head_tail(const std::filesystem::path& path, size_t head, size_
     std::fclose(f);
     text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
     return text;
+}
+
+namespace {
+// A save folder's files as they were when looked at (name, size, time), to tell whether the game saved meanwhile.
+struct SaveStamp {
+    std::filesystem::path path;
+    std::string name;
+    uintmax_t size = 0;
+    std::filesystem::file_time_type time;
+    bool operator==(const SaveStamp& o) const { return name == o.name && size == o.size && time == o.time; }
+    bool operator!=(const SaveStamp& o) const { return !(*this == o); }
+};
+
+std::vector<SaveStamp> save_stamp(const std::filesystem::path& folder) {
+    std::vector<SaveStamp> out;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(folder, ec))
+        if (e.is_regular_file(ec))
+            out.push_back({e.path(), narrow(e.path().filename().wstring()), e.file_size(ec), e.last_write_time(ec)});
+    std::sort(out.begin(), out.end(), [](const SaveStamp& a, const SaveStamp& b) { return a.name < b.name; });
+    return out;
+}
+
+// A file of a save that a report takes: not the folder's pictures (ICON0.PNG, PIC1.PNG: the game's own art, which a
+// save loads without) and not one the runtime is writing (".<name>.tmp", cellSaveData.c).
+bool save_file_taken(const std::string& name) {
+    std::string ext = std::filesystem::path(name).extension().string();
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return !name.empty() && name[0] != '.' && ext != ".png";
+}
+}  // namespace
+
+std::vector<File> save_files(std::string& note) {
+    constexpr uintmax_t kMaxFile = 8u << 20, kMaxAll = 32u << 20;  // (a Demon's Souls save is about 2.6 MB)
+    std::error_code ec;
+    // (as cellSaveData.c finds it: PS3_SAVEDATA_ROOT, else this folder in the working folder; the crash dialog has the
+    // game's environment and working folder)
+    std::filesystem::path root = "gamedata/dev_hdd0/home/00000001/savedata";
+    if (const char* given = std::getenv("PS3_SAVEDATA_ROOT"); given && *given) root = std::filesystem::path(widen(given));
+    std::vector<File> files;
+    std::string what;
+    uintmax_t total = 0;
+    std::filesystem::file_time_type newest = std::filesystem::file_time_type::min();
+    bool changing = false, too_big = false;
+    for (const auto& dir : std::filesystem::directory_iterator(root, ec)) {
+        if (!dir.is_directory(ec) || !std::filesystem::exists(dir.path() / L"PARAM.SFO", ec)) continue;  // (a save)
+        const std::string folder = narrow(dir.path().filename().wstring());
+        std::vector<File> taken;
+        uintmax_t size = 0;
+        std::vector<SaveStamp> before;
+        // Read again (at most twice, half a second apart) when a file changed or one was being written meanwhile.
+        for (int attempt = 0; attempt < 3; attempt++) {
+            if (attempt) std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            before = save_stamp(dir.path());
+            taken.clear();
+            size = 0;
+            bool writing = false;
+            for (const SaveStamp& s : before) {
+                writing |= s.name.size() > 4 && s.name[0] == '.' && s.name.compare(s.name.size() - 4, 4, ".tmp") == 0;
+                if (!save_file_taken(s.name)) continue;
+                if (s.size > kMaxFile || total + size + s.size > kMaxAll) {
+                    too_big = true;
+                    continue;
+                }
+                taken.push_back({"save/" + folder + "/" + s.name, read_file(s.path)});
+                size += taken.back().data.size();
+            }
+            changing = writing || save_stamp(dir.path()) != before;
+            if (!changing) break;
+        }
+        if (taken.empty()) continue;
+        for (const SaveStamp& s : before)
+            if (save_file_taken(s.name)) newest = std::max(newest, s.time);
+        for (File& f : taken) files.push_back(std::move(f));
+        total += size;
+        what += (what.empty() ? "" : ", ") + folder;
+    }
+    if (files.empty()) {
+        note = "Save: none found\n";
+        return files;
+    }
+    const long long minutes =
+        std::chrono::duration_cast<std::chrono::minutes>(std::filesystem::file_time_type::clock::now() - newest).count();
+    note = "Save: " + what + ", " + std::to_string(files.size()) + " files (" + std::to_string((total + 1023) / 1024) +
+           " KB), last saved " + std::to_string(std::max(0LL, minutes)) + " min before this report" +
+           (changing ? "; the game was saving while it was copied" : "") +
+           (too_big ? "; files over the size limit were left out" : "") + "\n";
+    return files;
 }
 
 std::filesystem::path write_bundle(const std::string& stem, const std::vector<File>& files) {

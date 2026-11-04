@@ -52,7 +52,7 @@ Press **F1** (or **L3 + R3** on a controller) at any time to open the menu. Most
 - A setup that builds the game from your copy, with an Original and an Enhanced preset (see [How to play](#how-to-play)).
 - Updates: the game checks for a new version at start and asks before changing anything. Your saves and settings are kept, and you can go back one version.
 - Trophies, with pop-ups. Setup can bring your trophies and save across from RPCS3.
-- **Report an issue** in the menu opens a GitHub issue with your PC's details filled in. It has no save data or game files.
+- **Report an issue** in the menu opens a GitHub issue with your PC's details filled in, and a zip to attach that includes your save, so the problem can be seen where it happened. It has no game files. If the game crashes or stops responding, a window offers to do the same.
 
 ## What you need
 

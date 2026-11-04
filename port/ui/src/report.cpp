@@ -5,6 +5,7 @@
 #include "host.hpp"
 #include "portable.hpp"
 #include "settings.hpp"
+#include "setup_pc.hpp"  // (setup::hdr_on, for the displays' lines)
 #include "version.hpp"
 #include "../../des_rsx_route.h"  // the renderer calls below: through rsx_out in a PS3RECOMP_RSX_HAL build
 
@@ -880,30 +881,6 @@ std::string redact_log(std::string text) {
 namespace {
 
 #ifdef _WIN32
-// Is HDR on for the display `mon` (DXGI's output description)?
-bool hdr_on(HMONITOR mon) {
-    bool on = false;
-    IDXGIFactory1* factory = nullptr;
-    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) return false;
-    IDXGIAdapter1* adapter = nullptr;
-    for (UINT i = 0; !on && factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++) {
-        IDXGIOutput* output = nullptr;
-        for (UINT k = 0; !on && adapter->EnumOutputs(k, &output) != DXGI_ERROR_NOT_FOUND; k++) {
-            IDXGIOutput6* o6 = nullptr;
-            DXGI_OUTPUT_DESC1 d{};
-            if (SUCCEEDED(output->QueryInterface(IID_PPV_ARGS(&o6)))) {
-                if (SUCCEEDED(o6->GetDesc1(&d)) && d.Monitor == mon)
-                    on = d.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
-                o6->Release();
-            }
-            output->Release();
-        }
-        adapter->Release();
-    }
-    factory->Release();
-    return on;
-}
-
 // The software loaded into the game that is neither Windows' nor the game's: overlays, recorders, injectors (their
 // file names; "beside the game" for one in the game's folder, such as a ReShade dxgi.dll).
 std::string other_modules() {
@@ -1108,7 +1085,7 @@ void platform_facts(std::ostringstream& o, bool game_process) {
                 EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode);
                 *m.o << "Display " << ++m.n << ": " << (info.rcMonitor.right - info.rcMonitor.left) << "x"
                      << (info.rcMonitor.bottom - info.rcMonitor.top) << " at " << mode.dmDisplayFrequency << " Hz"
-                     << ((info.dwFlags & MONITORINFOF_PRIMARY) ? " (primary)" : "") << (hdr_on(mon) ? ", HDR on" : "")
+                     << ((info.dwFlags & MONITORINFOF_PRIMARY) ? " (primary)" : "") << (setup::hdr_on(mon) ? ", HDR on" : "")
                      << "\n";
                 return TRUE;
             },

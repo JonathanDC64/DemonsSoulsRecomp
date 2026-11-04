@@ -37,7 +37,8 @@ private:
 
     setup::Preset mPick = setup::Preset::Enhanced;
     int mHeight = 0;           // the display's, for Enhanced's render resolution
-    setup::Settings mKept;     // "A few choices" as its Back left them, for mKeptFor
+    bool mHdr = false;         // Windows has HDR on for the display: Enhanced turns the game's on
+    setup::Settings mKept;    // "A few choices" as its Back left them, for mKeptFor
     bool mHaveKept = false;
     setup::Preset mKeptFor = setup::Preset::Enhanced;
     setup::Settings mRpcs3;    // the settings brought across from RPCS3, Custom's starting values (docs/90 1.8)
@@ -50,6 +51,7 @@ public:
         setup::Preset preset;
         setup::Settings values;  // the choices to begin with (kChoiceKeys, setup_options_window.cpp)
         int displayHeight = 0;
+        bool displayHdr = false;
         std::function<void(const setup::Settings&)> onBack;  // Back: the choices as they are now
         std::function<void()> onFinish;                      // Finish: the options are written
         bool fromRpcs3 = false;  // Custom, from the settings brought across from RPCS3

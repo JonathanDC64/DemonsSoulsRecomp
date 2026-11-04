@@ -65,11 +65,17 @@ struct Power {
 };
 Power power();
 
-// The display the UI's window is on (else the primary one): its mode in pixels and its refresh rate. Zeros when it
-// cannot tell. For the options page's hints and the matched render resolution (docs/91).
+// The display the UI's window is on (else the primary one): its mode in pixels, its refresh rate, and whether Windows
+// has HDR on for it. Zeros (and no HDR) when it cannot tell. For the options page's hints, the matched render
+// resolution (docs/91) and Enhanced's HDR.
 struct Display {
     int width = 0, height = 0, hz = 0;
+    bool hdr = false;
 };
 Display display();
+
+// Whether Windows has HDR on for a display (an HMONITOR): its DXGI output's colour space is HDR10's then. Always false
+// off Windows, where the game has no HDR.
+bool hdr_on(void* monitor);
 
 }  // namespace ui::setup

@@ -27,15 +27,16 @@ using Settings = std::vector<std::pair<const char*, std::string>>;
 int matched_scale(int height);
 
 // The settings a preset writes, every key it touches with its value. Custom: none (it keeps what is there). The
-// display's height picks Enhanced's render resolution.
-Settings preset_settings(Preset preset, int displayHeight);
+// display's height picks Enhanced's render resolution; `hdr` (Windows has HDR on for the display, setup_pc.hpp) turns
+// on Enhanced's HDR. Original keeps HDR off, as on the PS3.
+Settings preset_settings(Preset preset, int displayHeight, bool hdr);
 
 // One line of "What changes" (Original against Enhanced), as the preset page shows it.
 struct Change {
     const char* name;
     std::string original, enhanced;
 };
-std::vector<Change> preset_changes(int displayHeight);
+std::vector<Change> preset_changes(int displayHeight, bool hdr);
 
 // A render resolution (RSX_SCALE) as the screens name it: "720p", "1080p", "1440p", "4K", else "175%".
 std::string scale_label(int scale);

@@ -1,5 +1,5 @@
-// What the setup screens ask of this PC (see setup_pc.hpp). Three facts differ by platform, each a small function:
-// the folders to look in, the memory, and the power. The scan, the PARAM.SFO reader, the free space and the time
+// What the setup screens ask of this PC (see setup_pc.hpp). A few facts differ by platform, each a small function:
+// the folders to look in, the memory, the power, and the display with its HDR. The scan, the PARAM.SFO reader, the free space and the time
 // estimate are the same everywhere.
 #include "setup_pc.hpp"
 
@@ -10,6 +10,7 @@
 #ifdef _WIN32
 #include <windows.h>
 // (after windows.h)
+#include <dxgi1_6.h>
 #include <shlobj.h>
 #else
 #include <SDL.h>
@@ -80,6 +81,30 @@ Power platform_power() {
     return out;
 }
 
+// Is HDR on for the display `monitor` (DXGI's output description)?
+bool platform_hdr_on(void* monitor) {
+    bool on = false;
+    IDXGIFactory1* factory = nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) return false;
+    IDXGIAdapter1* adapter = nullptr;
+    for (UINT i = 0; !on && factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++) {
+        IDXGIOutput* output = nullptr;
+        for (UINT k = 0; !on && adapter->EnumOutputs(k, &output) != DXGI_ERROR_NOT_FOUND; k++) {
+            IDXGIOutput6* o6 = nullptr;
+            DXGI_OUTPUT_DESC1 d{};
+            if (SUCCEEDED(output->QueryInterface(IID_PPV_ARGS(&o6)))) {
+                if (SUCCEEDED(o6->GetDesc1(&d)) && d.Monitor == static_cast<HMONITOR>(monitor))
+                    on = d.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+                o6->Release();
+            }
+            output->Release();
+        }
+        adapter->Release();
+    }
+    factory->Release();
+    return on;
+}
+
 // dmPelsWidth and dmPelsHeight are the mode's pixels, whatever the process's DPI awareness (rcMonitor is scaled for
 // a process that is not aware).
 Display platform_display() {
@@ -91,7 +116,7 @@ Display platform_display() {
     if (!GetMonitorInfoW(monitor, &info) || !EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode))
         return {};
     const int hz = mode.dmDisplayFrequency > 1 ? int(mode.dmDisplayFrequency) : 0;  // (0 and 1: the default rate)
-    return {int(mode.dmPelsWidth), int(mode.dmPelsHeight), hz};
+    return {int(mode.dmPelsWidth), int(mode.dmPelsHeight), hz, platform_hdr_on(monitor)};
 }
 
 #else
@@ -187,6 +212,10 @@ Display platform_display() {
     SDL_DisplayMode mode{};
     if (SDL_GetCurrentDisplayMode(index < 0 ? 0 : index, &mode) != 0) return {};
     return {mode.w, mode.h, mode.refresh_rate};
+}
+
+bool platform_hdr_on(void*) {
+    return false;  // (the game's HDR is Windows only)
 }
 
 #endif
@@ -381,6 +410,10 @@ Power power() {
 
 Display display() {
     return platform_display();
+}
+
+bool hdr_on(void* monitor) {
+    return platform_hdr_on(monitor);
 }
 
 }  // namespace ui::setup

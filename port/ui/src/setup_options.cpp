@@ -47,7 +47,7 @@ int matched_scale(int height) {
 
 // Both presets write the same keys, so picking one after the other leaves nothing of the first. The ones neither
 // changes (Texture filtering, HUD, cutscene frame rate, V-sync) go back to their defaults with them.
-Settings preset_settings(Preset preset, int displayHeight) {
+Settings preset_settings(Preset preset, int displayHeight, bool hdr) {
     if (preset == Preset::Custom) return {};
     const bool e = preset == Preset::Enhanced;
     return {
@@ -56,6 +56,7 @@ Settings preset_settings(Preset preset, int displayHeight) {
         {"RSX_AA", e ? "2" : "0"},  // SMAA: smooth edges without FXAA's soft textures
         {"RSX_ANISO", e ? "16" : "0"},
         {"RSX_OUTFILTER", e ? "1" : "0"},
+        {"RSX_HDR", e && hdr ? "1" : "0"},  // (the game's HDR shows only while Windows has HDR on for its display)
         {"DES_FULLSCREEN", e ? "1" : "0"},
         {"DES_MOTION_BLUR", "1"},
         {"DES_DOF", "1"},
@@ -67,7 +68,7 @@ Settings preset_settings(Preset preset, int displayHeight) {
     };
 }
 
-std::vector<Change> preset_changes(int displayHeight) {
+std::vector<Change> preset_changes(int displayHeight, bool hdr) {
     const int matched = matched_scale(displayHeight);
     return {
         {"Frame rate", "30 fps", "60 fps"},
@@ -75,6 +76,7 @@ std::vector<Change> preset_changes(int displayHeight) {
         {"Anisotropic filtering", "The game's own (4x)", "16x"},
         {"Anti-aliasing", "Off", "SMAA"},
         {"Scaling filter", "Bilinear", "Sharp"},
+        {"HDR", "Off", hdr ? "On, as your display has it" : "Off"},
         {"Display mode", "Window", "Fullscreen"},
         {"Motion blur, depth of field", "On", "On"},
         {"Aspect ratio", "16:9", "16:9"},
@@ -102,6 +104,7 @@ std::string summary(Preset preset, const std::function<std::string(std::string_v
     if (aspect == "auto") s += ", the display's shape";
     else if (aspect == "32:9") s += ", 32:9";
     else if (!aspect.empty()) s += ", 21:9";
+    if (get("RSX_HDR") == "1") s += ", HDR";
     s += get("DES_FULLSCREEN") == "1" ? ", fullscreen" : ", window";
     s += get("DES_MOUSE_LOOK") == "1" ? ", keyboard and mouse" : ", gamepad";
     s += get("DES_ONLINE") == "0" ? ", online off." : ", online on.";

@@ -335,7 +335,9 @@ std::string make_report(Dialog& d) {
     }
     auto log = d.txt;
     log.replace_extension(L".log");
-    if (const std::string tail = read_text(log); !tail.empty()) files.push_back({"des.log", report::bytes(report::redact(tail))});
+    if (const std::string tail = read_text(log); !tail.empty()) files.push_back({"des.log", report::bytes(report::redact_log(tail))});
+    std::string save_note;  // (the save: this process has the game's environment and working folder)
+    for (report::File& f : report::save_files(save_note)) files.push_back(std::move(f));
     const auto zip = report::write_bundle(report::narrow(d.txt.stem().wstring()), files);
 
     const bool running = d.hang || d.lost;
@@ -345,10 +347,10 @@ std::string make_report(Dialog& d) {
                                  : "crashed.)\n\n## Crash\n") +
                        d.what + "\n\n```\n" +
                        (running ? top_of_stack(txt, 24, "--- guest threads") : top_of_stack(txt, 20)) +
-                       "```\n\n## System\n```\n" + system + "```\n\n## Attachments\n";
+                       "```\n\n## System\n```\n" + system + report::redact(save_note) + "```\n\n## Attachments\n";
     const std::string name = report::narrow(zip.filename().wstring());
-    const char* holds = running ? "what every thread was doing, your settings and the game's recent messages"
-                                : "the full stack, your settings and the game's recent messages";
+    const char* holds = running ? "what every thread was doing, your settings, the game's recent messages and your save"
+                                : "the full stack, your settings, the game's recent messages and your save";
     body += zip.empty() ? "(The report files could not be saved.)\n"
                         : "Drag `" + name + "` (its folder is open) into this issue: it has " + holds + ".\n";
     report::open_issue(

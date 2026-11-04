@@ -244,9 +244,9 @@ bool show(const Content& content, const Actions& actions) {
                        ".</b> The game lost its graphics device, so its picture stays as it was while it runs on. "
                        "Restart the game to go on.<br/><br/>"
                        "A report was saved on this PC. Reporting the problem opens a new issue on GitHub with the "
-                       "details filled in, and a zip to attach with what each part of the game was doing, your settings "
-                       "and the game's recent messages. It has no save data or game files; nothing is sent until you "
-                       "submit the issue.",
+                       "details filled in, and a zip to attach with what each part of the game was doing, your settings, "
+                       "the game's recent messages and your save (your characters and their names). It has no game "
+                       "files; nothing is sent until you submit the issue.",
             .actions =
                 {
                     ModalAction{
@@ -283,9 +283,9 @@ bool show(const Content& content, const Actions& actions) {
             .bodyRml = "<b>" + escape(content.what) +
                        ".</b> The menu cannot open. The game may still recover: keep waiting, or close it.<br/><br/>"
                        "A report was saved on this PC. Reporting the problem opens a new issue on GitHub with the "
-                       "details filled in, and a zip to attach with what each part of the game was doing, your settings "
-                       "and the game's recent messages. It has no save data or game files; nothing is sent until you "
-                       "submit the issue.",
+                       "details filled in, and a zip to attach with what each part of the game was doing, your settings, "
+                       "the game's recent messages and your save (your characters and their names). It has no game "
+                       "files; nothing is sent until you submit the issue.",
             .actions =
                 {
                     ModalAction{.label = "Keep waiting", .onPressed = dismiss},
@@ -314,9 +314,9 @@ bool show(const Content& content, const Actions& actions) {
             .title = "The game has crashed",
             .bodyRml = "<b>" + escape(content.what) +
                        "</b><br/><br/>A report was saved on this PC. Reporting the problem opens a new issue on GitHub "
-                       "with the details filled in, and a zip to attach with the stack, your settings (settings.ini) "
-                       "and the game's recent messages. It has no save data or game files; nothing is sent until you "
-                       "submit the issue.",
+                       "with the details filled in, and a zip to attach with the stack, your settings (settings.ini), "
+                       "the game's recent messages and your save (your characters and their names). It has no game "
+                       "files; nothing is sent until you submit the issue.",
             .actions =
                 {
                     ModalAction{

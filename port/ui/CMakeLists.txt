@@ -83,10 +83,11 @@ add_custom_command(
 
 # ---- The UI ----
 # Each platform's mouse and crash reports (docs/76): Win32 on Windows (with the crash dialog and the D3D11 renderer),
-# SDL elsewhere. The setup screens' files (child_process, setup_engine, setup_python, sha256, setup_protocol,
-# setup_page, setup_window, setup_screens, setup_options, setup_options_window, setup_pc, setup_rpcs3, folder_picker;
-# docs/88, docs/89, docs/90, docs/91) build on both: child_process.cpp, setup_engine.cpp, setup_python.cpp,
-# setup_pc.cpp, setup_rpcs3.cpp and folder_picker.cpp hold their few functions for each platform inside.
+# SDL elsewhere. The setup screens' files (child_process, setup_engine, setup_python, setup_http, setup_unzip, sha256,
+# setup_protocol, setup_page, setup_window, setup_screens, setup_options, setup_options_window, setup_pc, setup_rpcs3,
+# folder_picker; docs/88, docs/89, docs/90, docs/91) build on both: child_process.cpp, setup_engine.cpp,
+# setup_python.cpp, setup_http.cpp, setup_pc.cpp, setup_rpcs3.cpp and folder_picker.cpp hold their few functions for
+# each platform inside.
 file(GLOB DES_UI_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 if(WIN32)
   set(DES_UI_OTHER mouse_sdl crash_report_posix)
@@ -118,7 +119,8 @@ endif()
 # compile lines, only its link line.
 if(WIN32)
   target_link_libraries(des_ui PRIVATE des_rmlui_backend RmlUi::RmlUi d3d11 d3d12 d3dcompiler dxgi dxguid xinput shell32
-    ole32 user32 dbghelp uuid wevtapi)   # (dbghelp: the crash reports' minidump and stack; wevtapi: driver resets)
+    ole32 user32 dbghelp uuid wevtapi winhttp)   # (dbghelp: the crash reports' minidump and stack; wevtapi: driver
+                                                 # resets; winhttp: the first Python with no curl, setup_http.cpp)
 else()
   # SDL2 and vkd3d as port/CMakeLists.txt found them (the window, the pads, D3D12 and D3DCompile).
   if(NOT TARGET PkgConfig::DES_VKD3D_LIBS)
@@ -158,3 +160,18 @@ if(MSVC)
   target_compile_options(settings_check PRIVATE /EHsc /W3 /wd4100)
 endif()
 add_dependencies(settings_check des_version)
+
+# The first Python's fetch on its own (tests/setup_fetch_check.cpp), the data folder and the free space stubbed: curl
+# and tar against the host's own download and unzip (what Wine and CrossOver get), a stopped download carried on, and
+# the zip reader's refusals. It downloads python.org's embeddable zip three times. Windows only. Built on demand:
+#   cmake --build <build> --target setup_fetch_check, then setup_fetch_check <a new folder>
+if(WIN32)
+  add_executable(setup_fetch_check EXCLUDE_FROM_ALL tests/setup_fetch_check.cpp src/setup_python.cpp
+    src/setup_http.cpp src/setup_unzip.cpp src/child_process.cpp src/sha256.cpp src/stb_impl.cpp)
+  target_include_directories(setup_fetch_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${stb_SOURCE_DIR})
+  target_compile_definitions(setup_fetch_check PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+  if(MSVC)
+    target_compile_options(setup_fetch_check PRIVATE /EHsc /W3 /wd4100)
+  endif()
+  target_link_libraries(setup_fetch_check PRIVATE winhttp)
+endif()

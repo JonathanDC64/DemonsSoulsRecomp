@@ -20,8 +20,9 @@ version before it kept to go back to. The host runs these at the start screen an
 
 Only one version is kept: the one kept before goes once a swap is done. The player's files in the install (gamedata/
 with the saves, shader_cache/, a portable install's data/ and portable.txt) never move, nor does anything else that
-is not a program file. The program files are the names at the top of the install that release-files.txt lists (the
-player's zip has it, tools/release/package.py), or, for an install from before it, the names the new release has.
+is not a program file. The program files are the names at the top of the install that setup/release-files.txt lists
+(the player's zip has it, tools/release/package.py), or, for an install from before it, the names the new release has.
+The program's own file name is in setup/release-info.txt (exe=), so a release may give it another.
 
 A swap is a few renames in the same folder, each written to DIR/.update/swap.txt first, so a swap that fails is
 undone at once, and one cut short (a power cut) is undone at the program's next start (the host reads the same
@@ -47,7 +48,9 @@ NAME = "DemonsSoulsRecomp"
 REPO = "JonathanDC64/Soulbrandt"
 FEED = f"https://api.github.com/repos/{REPO}/releases?per_page=20"
 STABLE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
-MANIFEST = "release-files.txt"
+MANIFEST = "setup/release-files.txt"
+INFO = "setup/release-info.txt"
+ENGINE = "setup/tools/setup/run_setup.py"
 SUMS = "SHA256SUMS"
 SIG = SUMS + signing.SIG_SUFFIX    # SHA256SUMS.sig: the maintainer's signature of SUMS (signing.py)
 SIGNED_TRIES = 3                   # the check looks at most this many newer releases for one that is signed
@@ -55,7 +58,6 @@ UPDATE, PREVIOUS = ".update", ".previous"
 SWAP = "swap.txt"                  # in UPDATE: the swap's journal (Swap)
 # Never moved by a swap, whatever a list says: the player's own files, and the swap's folders.
 KEEP = {"gamedata", "shader_cache", "data", "portable.txt", UPDATE, PREVIOUS, PREVIOUS + ".old"}
-EXE = "des_host.exe" if os.name == "nt" else "des_host"
 NOTE_LINES, NOTE_WIDTH = 300, 500
 FEED_TIMEOUT = 15
 
@@ -355,6 +357,24 @@ def listed(root: Path):
     return {n for n in names if plain_name(n) and n not in KEEP}
 
 
+def exe_name(root):
+    """The program's file name at the top of a release's folder (its release-info.txt's exe=), or None."""
+    try:
+        text = (Path(root) / INFO).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.startswith("exe="):
+            name = line[len("exe="):].strip()
+            return name if plain_name(name) else None
+    return None
+
+
+def has_program(root) -> bool:
+    name = exe_name(root)
+    return bool(name) and (Path(root) / name).is_file()
+
+
 def program_names(root: Path) -> set:
     """The program files at the top of a new release's folder: its list's names, else all that is there."""
     names = listed(root)
@@ -363,27 +383,27 @@ def program_names(root: Path) -> set:
     return names
 
 
-def _order(names, first_out):
+def _order(names, exe, first_out):
     """The exe last out and first in: the install has none for the shortest time."""
-    rest = sorted(n for n in names if n != EXE)
-    return rest + [EXE] if first_out and EXE in names else ([EXE] if EXE in names else []) + rest
+    rest = sorted(n for n in names if n != exe)
+    return rest + [exe] if first_out and exe in names else ([exe] if exe in names else []) + rest
 
 
 def swap_program(sw: Swap, install: Path, staged: Path, keep_as: Path):
     """install's program files into keep_as, then staged's in their place (journaled in sw). An install from before
     release-files.txt: the names the new release has (what else is there may be the player's)."""
     out = (listed(install) or set()) | program_names(staged)
-    for n in _order(out, True):
+    for n in _order(out, exe_name(install), True):
         if (install / n).exists() or (install / n).is_symlink():
             sw.move(install / n, keep_as / n)
-    for n in _order(program_names(staged), False):
+    for n in _order(program_names(staged), exe_name(staged), False):
         if (staged / n).exists():
             sw.move(staged / n, install / n)
 
 
 def release_shaped(install: Path) -> bool:
-    """A player's install (release-info.txt and the exe at its top), not a developer's tree (a git checkout)."""
-    return (install / "release-info.txt").is_file() and (install / EXE).is_file() and not (install / ".git").exists()
+    """A player's install (setup/release-info.txt, and the program it names), not a developer's tree (a git checkout)."""
+    return has_program(install) and not (install / ".git").exists()
 
 
 def kept_version(install):
@@ -392,7 +412,7 @@ def kept_version(install):
     if not p.is_dir():
         return None
     for d in sorted(p.iterdir(), reverse=True):
-        if d.is_dir() and version_of(d.name) and (d / EXE).is_file():
+        if d.is_dir() and version_of(d.name) and has_program(d):
             return d.name
     return None
 
@@ -482,7 +502,7 @@ def _staged_root(unpacked: Path, version) -> Path:
     if not root.is_dir():
         dirs = [d for d in unpacked.iterdir() if d.is_dir()]
         root = dirs[0] if len(dirs) == 1 else root
-    if not (root / EXE).is_file() or not (root / "tools" / "setup" / "run_setup.py").is_file():
+    if not has_program(root) or not (root / ENGINE).is_file():
         raise UpdateFailed("download", "install", "The download is not a release of the game (the program is "
                                                   "missing from it).")
     return root

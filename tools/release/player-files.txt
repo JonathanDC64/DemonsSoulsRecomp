@@ -1,0 +1,58 @@
+# The player's download (tools/release/package.py): the files of the source tree that the program and setup use. They
+# go in setup/ beside the program, in the same layout, so setup finds them as it does in a source tree. The whole tree
+# stays in the source zip.
+#
+# A line is a path from the root of the tree, ps3recomp/ being the fork at its pin. * is any name in one folder, ** any
+# path below one. A line that matches nothing fails the packaging, as does a file game_build*.json names that no line
+# takes, or a script here that imports one of the tree's scripts that no line takes. release-check.yml runs the lift's
+# tools from the packaged tree too.
+
+# The setup engine (tools/setup/run_setup.py is what the program starts).
+tools/setup/run_setup.py
+tools/setup/des_setup/**
+
+# The lift's scripts and tables (des_setup/lift.py), and the icon from the game's own picture (des_setup/compile.py
+# reads the tables too).
+scripts/apply_boot_patches.py
+scripts/build_libsre.py
+scripts/build_spu.py
+scripts/gen_libsre_exports.py
+scripts/make_icon.py
+scripts/lift_ppu.json
+scripts/spu_table.json
+
+# The game module's own source, and what the lift and the compile read (game_build.json).
+port/des_game_module.cpp
+port/insn_hooks.txt
+port/compat/**
+
+# The pipeline list the program reads to prepare its shaders (port/des_prework.cpp).
+port/data/pso_index/**
+
+# The fork's tools that the lift starts, and what they import.
+ps3recomp/tools/elf_parser.py
+ps3recomp/tools/extract_spu_images.py
+ps3recomp/tools/find_spu_functions.py
+ps3recomp/tools/gen_hle_nids.py
+ps3recomp/tools/lift_prx.py
+ps3recomp/tools/nid_database.py
+ps3recomp/tools/ppu_disasm.py
+ps3recomp/tools/ppu_lifter.py
+ps3recomp/tools/ppu_loader.py
+ps3recomp/tools/spu_disasm.py
+ps3recomp/tools/spu_lifter.py
+ps3recomp/tools/wrap_spu_elf.py
+
+# The modules gen_hle_nids.py --all reads the function names from (its discover_all).
+ps3recomp/libs/*/cell*.c
+ps3recomp/libs/*/sce*.c
+ps3recomp/libs/*/sys*.c
+
+# What the game module compiles (game_build*.json: its sources, and the headers beside them).
+ps3recomp/include/**
+ps3recomp/runtime/ppu/game_libc.c
+ps3recomp/runtime/ppu/game_libc_kernel32.def
+ps3recomp/runtime/ppu/game_module.c
+ps3recomp/runtime/ppu/*.h
+ps3recomp/runtime/prx/*.h
+ps3recomp/runtime/spu/*.h

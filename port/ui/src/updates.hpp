@@ -30,7 +30,7 @@ struct Release {
 std::string this_version();
 // The folder the player's zip was unpacked in: the exe's.
 std::filesystem::path install_dir();
-// Updates can run here: this program is a release (X.Y.Z), it runs from a player's install (release-info.txt beside
+// Updates can run here: this program is a release (X.Y.Z), it runs from a player's install (setup/release-info.txt beside
 // it, not a git checkout), the setup engine and its Python are there (setup fetches the Python at its first run), and
 // this is not a test run. DES_UPDATE_FEED (a test's list of releases, update.py) allows a test run too.
 bool possible();

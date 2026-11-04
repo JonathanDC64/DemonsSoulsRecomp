@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools" / "release"
 from des_setup import fetch, journal, protocol, signing, update  # noqa: E402
 import package  # noqa: E402
 
-EXE = update.EXE
+EXE = "Game.exe" if os.name == "nt" else "Game"
 PLAYER = "windows" if os.name == "nt" else "linux"   # this system's player's download
 SEED, OTHER = bytes(range(32)), bytes(range(1, 33))   # the tests' release key, and a key the build does not list
 _keys = tempfile.TemporaryDirectory()
@@ -145,8 +145,8 @@ def unpack_package(data, dest):
 
 
 def program(version, extra=None) -> dict:
-    files = {EXE: f"exe {version}".encode(), "release-info.txt": f"version={version}\n".encode(),
-             "tools/setup/run_setup.py": f"# {version}\n".encode(), "port/a.cpp": f"a {version}".encode(),
+    files = {EXE: f"exe {version}".encode(), "setup/release-info.txt": f"version={version}\nexe={EXE}\n".encode(),
+             "setup/tools/setup/run_setup.py": f"# {version}\n".encode(), "setup/port/a.cpp": f"a {version}".encode(),
              "README.md": b"readme"}
     files.update(extra or {})
     return files
@@ -308,7 +308,7 @@ class ApplyTest(unittest.TestCase):
         self.assertEqual(out[-1], "@done ok")
 
     def test_list_names_stay_inside(self):
-        m = self.install / "release-files.txt"
+        m = self.install / "setup" / "release-files.txt"
         m.write_text(m.read_text() + "../outside.txt\n..\\outside.txt\nC:evil\n\x01x\n./x\n")
         names = update.listed(self.install)
         self.assertIn(EXE, names)
@@ -335,7 +335,7 @@ class ApplyTest(unittest.TestCase):
         real = update._rename
 
         def rename(src, dst, tries=40):
-            if Path(src).name == "port" and update.PREVIOUS in str(dst):
+            if Path(src).name == "setup" and update.PREVIOUS in str(dst):
                 raise PermissionError(32, "in use", str(src))
             real(src, dst, 1)
 
@@ -345,7 +345,7 @@ class ApplyTest(unittest.TestCase):
         self.assertTrue(out[-2].startswith("@error busy install "), out)
         self.assertEqual((self.install / EXE).read_bytes(), b"exe 0.1.0")
         self.assertTrue((self.install / "docs/old-only.md").is_file())
-        self.assertTrue((self.install / "port/a.cpp").is_file())
+        self.assertTrue((self.install / "setup/port/a.cpp").is_file())
         self.player_files_kept()
         self.assertFalse((self.install / update.PREVIOUS).exists())
         self.assertFalse((self.install / update.UPDATE / update.SWAP).exists())
@@ -364,11 +364,30 @@ class ApplyTest(unittest.TestCase):
 
     def test_install_without_a_list(self):
         # An install from before release-files.txt: the names the new release has are swapped, the rest stay.
-        (self.install / "release-files.txt").unlink()
+        (self.install / "setup" / "release-files.txt").unlink()
         rc, out = self.run_cmd(update.apply, "0.1.0", "0.2.0")
         self.assertEqual(rc, 0, out)
         self.assertEqual((self.install / EXE).read_bytes(), b"exe 0.2.0")
         self.assertFalse((self.install / "docs/old-only.md").exists())   # (docs/ is in the new release)
+        self.player_files_kept()
+
+    def test_another_program_name(self):
+        # A release that gives the program another file name: the old one goes, the new one is what is in place, and
+        # going back brings the old name back.
+        new = "Other.exe" if os.name == "nt" else "Other"
+        files = program("0.2.0", {new: b"exe 0.2.0", "setup/release-info.txt": f"version=0.2.0\nexe={new}\n".encode()})
+        del files[EXE]
+        self.serve("0.2.0", files)
+        rc, out = self.run_cmd(update.apply, "0.1.0", "0.2.0")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual((self.install / new).read_bytes(), b"exe 0.2.0")
+        self.assertFalse((self.install / EXE).exists())
+        self.assertEqual(update.kept_version(self.install), "0.1.0")
+        self.player_files_kept()
+        rc, out = self.run_cmd(update.back, "0.2.0")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual((self.install / EXE).read_bytes(), b"exe 0.1.0")
+        self.assertFalse((self.install / new).exists())
         self.player_files_kept()
 
     def test_developer_tree_refused(self):
@@ -386,11 +405,60 @@ class ApplyTest(unittest.TestCase):
 class ManifestTest(unittest.TestCase):
     def test_lists_itself(self):
         top = "DemonsSoulsRecomp-1.0.0/"
-        name, _mode, text = package.manifest([(top + "des_host.exe", 0o755, b""), (top + "port/a.cpp", 0o644, b"")],
-                                             top)
-        self.assertEqual(name, top + "release-files.txt")
+        name, _mode, text = package.manifest([(top + "Game.exe", 0o755, b""), (top + "setup/a.cpp", 0o644, b"")], top)
+        self.assertEqual(name, top + "setup/release-files.txt")
         listed = [x for x in text.decode().splitlines() if not x.startswith("#")]
-        self.assertEqual(listed, ["des_host.exe", "port/a.cpp", "release-files.txt"])
+        self.assertEqual(listed, ["Game.exe", "setup/a.cpp", "setup/release-files.txt"])
+
+
+class PlayerTreeTest(unittest.TestCase):
+    TOP = "DemonsSoulsRecomp-1.0.0/"
+
+    def tree(self, *paths):
+        return [(self.TOP + p, 0o644, b"x") for p in paths]
+
+    def test_only_what_the_list_takes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            listing = Path(tmp) / "list.txt"
+            listing.write_text("# a comment\ntools/setup/run_setup.py\nport/**\nlibs/*/cell*.c\n")
+            with mock.patch.object(package, "PLAYER_LIST", str(listing)):
+                got = package.player_tree(self.tree("tools/setup/run_setup.py", "tools/des/x.sh", "port/a/b.cpp",
+                                                    "libs/audio/cellAudio.c", "libs/audio/other.c",
+                                                    "libs/audio/tests/cellX.c", "README.md", "LICENSE", ".gitignore"),
+                                          self.TOP, True)
+        self.assertEqual(sorted(g[0][len(self.TOP):] for g in got),
+                         ["LICENSE", "README.md", "setup/libs/audio/cellAudio.c", "setup/port/a/b.cpp",
+                          "setup/tools/setup/run_setup.py"])
+
+    def test_a_line_with_no_file_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            listing = Path(tmp) / "list.txt"
+            listing.write_text("tools/gone.py\n")
+            with mock.patch.object(package, "PLAYER_LIST", str(listing)):
+                with self.assertRaises(package.Error):
+                    package.player_tree(self.tree("README.md"), self.TOP, True)
+
+    def test_an_import_inside_a_function_is_followed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            listing = Path(tmp) / "list.txt"
+            listing.write_text("scripts/a.py\n")
+            source = b"def f():\n    from helper import x\n"
+            files = [(self.TOP + "scripts/a.py", 0o644, source), (self.TOP + "ps3recomp/tools/helper.py", 0o644, b"x=1\n")]
+            with mock.patch.object(package, "PLAYER_LIST", str(listing)):
+                with self.assertRaises(package.Error):
+                    package.player_tree(files, self.TOP, True)
+                listing.write_text("scripts/a.py\nps3recomp/tools/helper.py\n")
+                self.assertEqual(len(package.player_tree(files, self.TOP, True)), 2)
+
+    def test_a_file_the_build_uses_is_not_left_out(self):
+        desc = b'{"objects": [{"args": ["/FI{src}/inc/left_out.h"]}]}'
+        with tempfile.TemporaryDirectory() as tmp:
+            listing = Path(tmp) / "list.txt"
+            listing.write_text("tools/setup/des_setup/**\n")
+            with mock.patch.object(package, "PLAYER_LIST", str(listing)):
+                with self.assertRaises(package.Error):
+                    package.player_tree([(self.TOP + "tools/setup/des_setup/game_build.json", 0o644, desc)], self.TOP,
+                                        True)
 
 
 if __name__ == "__main__":

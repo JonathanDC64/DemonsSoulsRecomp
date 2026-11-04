@@ -38,11 +38,13 @@ jobs:
           cat dist/notes.md
 
       # With stand-ins for host.yml's des_host.exe folder and its Linux host folder: the player's zip and the Linux
-      # tarball are made around them the same way, and the program must land at the top of its tree (the Linux one
-      # executable), FFmpeg's DLLs and licence beside the Windows one.
+      # tarball are made around them the same way, and the program must land at the top of its tree under its name
+      # (the Linux one executable), FFmpeg's DLLs and licence beside the Windows one, setup's files in setup/, and
+      # none of the rest of the tree; the maps go in the symbols zip.
       - name: Package, twice
         run: |
           mkdir -p host/licenses/ffmpeg host-linux/licenses/SDL2 && printf 'stand-in' > host/des_host.exe
+          printf 'stand-in' > host/des_host.map && printf 'stand-in' > host-linux/des_host.map
           printf 'stand-in' > host/avcodec-62.dll && printf 'stand-in' > host/avutil-60.dll
           printf 'stand-in' > host/licenses/ffmpeg/COPYING.LGPLv2.1
           printf 'stand-in' > host-linux/des_host && printf 'stand-in' > host-linux/libSDL2-2.0.so.0
@@ -53,13 +55,30 @@ jobs:
           done
           cmp dist/SHA256SUMS dist2/SHA256SUMS
           cat dist/SHA256SUMS
-          unzip -l dist/DemonsSoulsRecomp-*-windows.zip | grep -E ' DemonsSoulsRecomp-[^/]+/des_host\.exe$'
+          program=$(tr -d '\r\n' < PRODUCT_NAME)
+          unzip -l dist/DemonsSoulsRecomp-*-windows.zip | grep -E " DemonsSoulsRecomp-[^/]+/$program\.exe\$"
+          unzip -l dist/DemonsSoulsRecomp-*-windows.zip | grep -E ' DemonsSoulsRecomp-[^/]+/setup/tools/setup/run_setup\.py$'
+          ! unzip -l dist/DemonsSoulsRecomp-*-windows.zip | grep -E ' DemonsSoulsRecomp-[^/]+/(port|ps3recomp|scripts|tools|des_host)'
+          unzip -l dist/DemonsSoulsRecomp-*-symbols.zip | grep -E '/windows/des_host\.map$'
+          unzip -l dist/DemonsSoulsRecomp-*-symbols.zip | grep -E '/linux/des_host\.map$'
           unzip -l dist/DemonsSoulsRecomp-*-windows.zip | grep -E ' DemonsSoulsRecomp-[^/]+/avcodec-62\.dll$'
           unzip -l dist/DemonsSoulsRecomp-*-windows.zip | grep -E ' DemonsSoulsRecomp-[^/]+/licenses/ffmpeg/COPYING\.LGPLv2\.1$'
           unzip -p dist/DemonsSoulsRecomp-*-windows.zip '*/release-files.txt' | grep -x 'avutil-60.dll'
-          tar -tvJf dist/DemonsSoulsRecomp-*-linux.tar.xz | grep -E '^-rwxr-xr-x .* DemonsSoulsRecomp-[^/]+/des_host$'
+          unzip -p dist/DemonsSoulsRecomp-*-windows.zip '*/release-info.txt' | grep -x "exe=$program.exe"
+          tar -tvJf dist/DemonsSoulsRecomp-*-linux.tar.xz | grep -E "^-rwxr-xr-x .* DemonsSoulsRecomp-[^/]+/$program\$"
           tar -tvJf dist/DemonsSoulsRecomp-*-linux.tar.xz | grep -E ' DemonsSoulsRecomp-[^/]+/licenses/SDL2/LICENSE\.txt$'
-          tar -xOJf dist/DemonsSoulsRecomp-*-linux.tar.xz --wildcards '*/release-files.txt' | grep -x 'des_host'
+          tar -xOJf dist/DemonsSoulsRecomp-*-linux.tar.xz --wildcards '*/release-files.txt' | grep -x "$program"
+          # The lift's tools from the packaged tree: each starts (what it imports is there), and the names they find
+          # in the fork's modules are the same as from the whole tree.
+          mkdir unpacked && unzip -q dist/DemonsSoulsRecomp-*-windows.zip -d unpacked
+          tree=$(echo unpacked/DemonsSoulsRecomp-*/setup)
+          for s in ps3recomp/tools/ppu_loader ps3recomp/tools/ppu_lifter ps3recomp/tools/spu_lifter \
+                   ps3recomp/tools/lift_prx ps3recomp/tools/gen_hle_nids scripts/build_spu scripts/build_libsre; do
+            python "$tree/$s.py" --help > /dev/null
+          done
+          python dist/stage/DemonsSoulsRecomp-*/ps3recomp/tools/gen_hle_nids.py --all --out names-whole.cpp
+          python "$tree/ps3recomp/tools/gen_hle_nids.py" --all --out names-packaged.cpp
+          cmp names-whole.cpp names-packaged.cpp
 
       - name: Third-party sources
         run: |

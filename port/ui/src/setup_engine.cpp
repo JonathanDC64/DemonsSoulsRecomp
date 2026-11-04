@@ -197,6 +197,10 @@ std::filesystem::path engine_script() {
         return std::filesystem::is_regular_file(script, ec) ? script : std::filesystem::path{};
     }
     std::filesystem::path dir = report::program_dir();
+    // A player's install: setup/ beside the program (tools/release/package.py). A source tree: tools/ further up.
+    if (const auto script = dir / "setup" / "tools" / "setup" / "run_setup.py";
+        !dir.empty() && std::filesystem::is_regular_file(script, ec))
+        return script;
     for (int up = 0; up <= 3 && !dir.empty(); ++up) {
         const auto script = dir / "tools" / "setup" / "run_setup.py";
         if (std::filesystem::is_regular_file(script, ec)) return script;

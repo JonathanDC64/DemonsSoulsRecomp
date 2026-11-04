@@ -41,7 +41,6 @@
 #include <unistd.h>
 
 #include <cerrno>
-#include <fstream>
 
 extern char** environ;
 #endif
@@ -53,6 +52,7 @@ extern char** environ;
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <fstream>
 #include <initializer_list>
 #include <mutex>
 #include <regex>
@@ -714,6 +714,21 @@ std::filesystem::path exe_dir() { return exe_path().parent_path(); }
 
 std::filesystem::path program_dir() { return exe_dir(); }
 std::filesystem::path program_path() { return exe_path(); }
+
+std::filesystem::path program_now() {
+    const std::filesystem::path self = exe_path();
+    std::error_code ec;
+    if (self.empty() || std::filesystem::is_regular_file(self, ec)) return self;
+    std::ifstream info(self.parent_path() / "setup" / "release-info.txt");
+    for (std::string line; std::getline(info, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.rfind("exe=", 0) != 0) continue;
+        const std::string name = line.substr(4);
+        const std::filesystem::path file = std::filesystem::path(std::u8string(name.begin(), name.end()));
+        if (!name.empty() && !file.has_parent_path()) return self.parent_path() / file;
+    }
+    return self;
+}
 
 std::string this_pc() {
     const std::string id = machine_id();

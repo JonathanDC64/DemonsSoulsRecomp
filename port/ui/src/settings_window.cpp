@@ -977,7 +977,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
 
         choice_row(leftPane, rightPane, "UI scale", "ui_scale", {"0", "75", "100", "125", "150"},
             {"Auto", "75%", "100%", "125%", "150%"},
-            "The size of these menus. Auto follows Windows' display scale.",
+            "The size of these menus. Auto follows the display's scale, and shrinks to fit a small window.",
             [] { apply_scale(); });
         bool_row(leftPane, rightPane, "Start screen", "show_start_screen",
             "Shows Play, Settings and Quit when the game starts. Off goes straight to the game.");

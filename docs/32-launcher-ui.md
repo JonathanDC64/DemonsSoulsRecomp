@@ -71,7 +71,7 @@ and on every change.
 | Skip opening movie (Game) | `DES_SKIP_INTRO_MOVIE` (sets `PS3_SAIL_SKIP_FIRST`: the advert's first play only) | 0 / 1 | from the next movie |
 | Continue automatically (Game) | `DES_AUTO_CONTINUE` | 0 / 1 | at once until the first level loads (read at each pad poll); from the file it waits for Play on the start screen |
 | Sound (Game) | `AUDIO_MUTE` (inverted) | 0 / 1 | at once (live knob) |
-| UI scale (Interface) | `ui_scale` | 0 = auto (the display's scale), 75, 100, 125, 150 (% of it) | at once |
+| UI scale (Interface) | `ui_scale` | 0 = auto (the display's scale, less on a small window), 75, 100, 125, 150 (% of it) | at once |
 | Start screen (Interface) | `show_start_screen` | 1 / 0 | next start |
 | Menu hint (Interface) | `menu_hint` | 1 / 0 | at once |
 | Trophy pop-ups (Interface) | `trophy_popups` | 1 / 0 (off hides the toast; the unlock is still kept) | at once |
@@ -123,6 +123,15 @@ before the first change and hands the vblank back to the PS3's 59.94 Hz. A
   large as other programs' text; moving it to a display of another scale
   takes the size Windows suggests. (It used to be the window's height /
   720, which made everything grow with the window.)
+- **Never more than the window holds** (11-04, `host.cpp`'s `base_scale`).
+  The menus and the setup screens always have at least 960 x 720 dp, in
+  quarter steps rounded down, whatever the display says. A tester's Steam
+  Deck needed this: on Linux SDL gives the panel's real density, 215 dpi on
+  the Deck's 7" screen, where Windows gives the scale the player chose. At
+  2.25 x a 1280 x 720 window has 320 dp of height, and the setup page was
+  cut off. Now it has 1 x. The setup screens take exactly what the window
+  holds, as they did for the height. `DES_UI_DPI=<n>` tries another
+  display's figure on this PC.
 - It opens maximized on the primary display (Start maximized,
   `DES_MAXIMIZED`, on by default; it sets the runtime's `RSX_MAXIMIZED`,
   read once as the window is made, so a change takes effect at the next
@@ -322,6 +331,7 @@ issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
 | `DES_UI_KEYS=<frame>:<KEY>[,...]` | Press keys at presented frames: F1 ESC UP DOWN LEFT RIGHT ENTER PGUP PGDN TAB SPACE. OSK opens the on-screen keyboard as the game would, and a digit (0-9) is typed, for a number field. With DES_UI_SHOT, a test can walk the menus. |
 | `DES_UI_PICK=<folder>[;<folder>...]` | The setup screens' folder dialogs answer in turn with these folders, and none is shown; past the list's end, as if closed without a choice. With DES_UI_KEYS and DES_UI_SHOT, a test can walk the game folder pages. |
 | `DES_UI_NO_ANIM=1` | No transitions. |
+| `DES_UI_DPI=<n>` | As if the display said this DPI (96 is 100%). A Steam Deck says 215. |
 | `DES_UI_RENDER=d3d11` | The menus and the crash dialog draw through D3D11On12, as before the D3D12 renderer (Windows; kept for one release, with no settings row). |
 | `DES_UI_RENDER=d3d12` | On the `d3d12` route (the default since 2026-11-02, docs/120), the menus draw through the legacy menu renderer (`render_d3d12.cpp`) instead of on the renderer's own device. |
 | `RSX_OVERLAY_REPAINT=0` | The UI moves only with the game's frames, not at the display's refresh rate (live; "The UI's frame rate" below). |

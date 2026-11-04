@@ -100,7 +100,7 @@ Online play is not ready. Early work on it is in the game (Settings > Network), 
 - Only the US version (BLUS30443) works. The European version is being looked at; other versions are not supported.
 - Setup can't read ISO files, and it needs RPCS3 to unlock the game's files (or files you decrypted yourself).
 - Online play isn't available yet.
-- macOS isn't supported. Linux is less tested than Windows, and the Steam Deck hasn't been tried yet.
+- macOS isn't supported. Running the Windows download through CrossOver stops at setup's first step ("Setup could not start its first download"). Linux is less tested than Windows, and the Steam Deck hasn't been tried yet.
 - On-screen button prompts always show PlayStation buttons, even with a keyboard or an Xbox controller.
 
 **Bugs we know about**

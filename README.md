@@ -115,7 +115,7 @@ Online play is on by default and uses this project's own server. Setup asks for 
 
 - Only the US version (BLUS30443) works. The European version is being looked at; other versions are not supported.
 - Setup can't read ISO files, and it needs RPCS3 to unlock the game's files (or files you decrypted yourself).
-- macOS isn't supported. Running the Windows download through CrossOver stops at setup's first step ("Setup could not start its first download"). Linux is less tested than Windows, and the Steam Deck hasn't been tried yet.
+- macOS isn't supported, and running the Windows download through CrossOver hasn't been tested all the way through. Linux is less tested than Windows, and the Steam Deck hasn't been tried yet.
 - On-screen button prompts always show PlayStation buttons, even with a keyboard or an Xbox controller.
 
 ### Problems

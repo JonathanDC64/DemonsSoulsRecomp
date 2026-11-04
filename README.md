@@ -1,6 +1,6 @@
 <div align="center">
 
-# Demon's Souls Recomp
+# Soulbrandt
 
 **Demon's Souls, running natively on PC.**
 
@@ -10,7 +10,7 @@
 
 </div>
 
-This is a PC port of *Demon's Souls* (PS3, 2009). The game's original code has been converted to run directly on Windows and Linux, with no emulator.
+Soulbrandt is a PC port of *Demon's Souls* (PS3, 2009). The game's original code has been converted to run directly on Windows and Linux, with no emulator.
 
 You need your own copy of the game: the US version, **BLUS30443** (version 1.00). This project includes no game files.
 

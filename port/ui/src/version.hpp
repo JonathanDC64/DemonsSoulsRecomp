@@ -6,6 +6,9 @@
 #include "des_version.h"
 
 namespace ui {
+// The name people see: PRODUCT_NAME at the root, docs/130. Not the technical name DemonsSoulsRecomp,
+// which the downloads, the folders and the update feed keep. DES_PRODUCT_NAME is the same text as a string literal.
+inline constexpr const char* kProductName = DES_PRODUCT_NAME;
 // "0.1.0" for a release; "0.1.0-dev.<commits>+g<commit>" on the way to it, ".dirty" with uncommitted changes.
 inline constexpr const char* kVersion = DES_VERSION;
 // The fork's release tag ("des-0.14.0-1"), or its commit, as git describe gives it; "unknown" if not known.

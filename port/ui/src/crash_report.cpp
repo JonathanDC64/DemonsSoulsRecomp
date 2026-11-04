@@ -418,9 +418,9 @@ int run_dialog(int argc, LPWSTR* argv) {
                                   L".\nTo report it, attach the files in that folder to a new issue at " +
                                   report::widen(report::kRepositoryUrl);
         MessageBoxW(nullptr, text.c_str(),
-                    d.lost   ? L"Demon's Souls can no longer draw"
-                    : d.hang ? L"Demon's Souls is not responding"
-                             : L"Demon's Souls has crashed",
+                    d.lost   ? L"" DES_PRODUCT_NAME L" can no longer draw"
+                    : d.hang ? L"" DES_PRODUCT_NAME L" is not responding"
+                             : L"" DES_PRODUCT_NAME L" has crashed",
                     MB_OK | MB_ICONERROR);
     }
     return 0;

@@ -318,6 +318,10 @@ jobs:
           done
           exit $fail
 
+      # The name people see is only in PRODUCT_NAME (and the README's title and PRIVACY.md, by hand): docs/130.
+      - name: The shown name in one place
+        run: python tools/ci/check_product_name.py
+
       # Every build with the game's PS3_GAME/ICON0.PNG makes the exe's icon with scripts/make_icon.py.
       # Here it gets a made-up picture of the same shape (320x176) and must write all six sizes.
       - name: Icon step on a made-up picture

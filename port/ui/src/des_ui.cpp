@@ -1236,11 +1236,12 @@ bool elf_given(int argc, char** argv) {
 }
 
 // Setup alone: each pass of the window's thread presents, so V-sync paces it; the last build's pipeline library stays
-// shut (its threads would compete with the compile); and the title bar has the game's name (no PARAM.SFO is read).
+// shut (its threads would compete with the compile); and the title bar has the program's name (no PARAM.SFO is read;
+// the game's own window has the game's title from it).
 void setup_only_env() {
     ps3_setenv("RSX_VSYNC", "1");
     ps3_setenv("PS3_PSO_LIBRARY", "0");
-    if (!env_on("PS3_TITLE")) ps3_setenv("PS3_TITLE", "Demon's Souls");
+    if (!env_on("PS3_TITLE")) ps3_setenv("PS3_TITLE", ui::kProductName);
     // No game runs in this process, so none of the backend's vertex-program buffers: 1.2 GB more for the compile
     // beside the screens (docs/53 section 16). Play starts the game in a new process, with the environment this one
     // started with.

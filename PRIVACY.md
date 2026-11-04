@@ -2,8 +2,8 @@
 
 Version 1, 26 October 2026
 
-This note covers this project's online server, the one the game uses when Settings > Network > Server is "Demon's
-Souls Recomp". The project's maintainer runs it, on a DigitalOcean server in New York, United States. Offline play
+This note covers this project's online server, the one the game uses when Settings > Network > Server is
+"Soulbrandt". The project's maintainer runs it, on a DigitalOcean server in New York, United States. Offline play
 sends nothing to it, and another server's owner decides what that server keeps.
 
 ## What the server keeps

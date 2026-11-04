@@ -152,7 +152,7 @@ bool folders_usable(const std::vector<std::filesystem::path>& folders, bool quie
                      "Windows 10 1903 or later is needed (docs/126)\n",
                      utf8(f).c_str());
         if (!quiet)
-            tell("Demon's Souls cannot start",
+            tell(std::string(kProductName) + " cannot start",
                  "Windows 10 version 1903 or later is needed for a folder with this name:\n\n" + utf8(f) +
                      "\n\nUpdate Windows. Or, if it is the game's folder, move the game to a folder named with the "
                      "letters A to Z only.");

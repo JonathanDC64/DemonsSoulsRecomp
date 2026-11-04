@@ -202,7 +202,9 @@ def notes(to, since, checkout):
         version = f"{file_version or '0.0.0'} (not tagged: {to_sha[:9]})"
     span = f"{since}..{to_sha}" if since else to_sha
     prs, direct = pull_requests(span)
-    lines = [f"DemonsSoulsRecomp {version}."]
+    # (the name people see, PRODUCT_NAME at that commit, docs/130; the technical name before the file existed)
+    product = (try_git(["show", f"{to_sha}:PRODUCT_NAME"]) or "DemonsSoulsRecomp").strip()
+    lines = [f"{product} {version}."]
     lines.append(f"Changes since {since}:" if since else "The first release: everything up to it.")
     lines += pr_sections(prs, direct, "")
     lines += fork_section(read_pin(since) if since else None, read_pin(to_sha), checkout)

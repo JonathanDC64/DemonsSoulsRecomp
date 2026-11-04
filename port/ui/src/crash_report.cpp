@@ -335,7 +335,7 @@ std::string make_report(Dialog& d) {
     }
     auto log = d.txt;
     log.replace_extension(L".log");
-    if (const std::string tail = read_text(log); !tail.empty()) files.push_back({"des.log", report::bytes(report::redact(tail))});
+    if (const std::string tail = read_text(log); !tail.empty()) files.push_back({"des.log", report::bytes(report::redact_log(tail))});
     std::string save_note;  // (the save: this process has the game's environment and working folder)
     for (report::File& f : report::save_files(save_note)) files.push_back(std::move(f));
     const auto zip = report::write_bundle(report::narrow(d.txt.stem().wstring()), files);

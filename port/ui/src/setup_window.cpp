@@ -553,7 +553,7 @@ std::string SetupWindow::send_report() {
     std::vector<report::File> files;
     files.push_back({"system.txt", report::bytes(report::redact(report::system_info()))});
     const auto tail_of = [](const std::filesystem::path& path, size_t head, size_t tail) {
-        return report::bytes(report::redact(report::read_head_tail(path, head, tail)));
+        return report::bytes(report::redact_log(report::read_head_tail(path, head, tail)));
     };
     files.push_back({"setup.log", tail_of(setupDir / "logs" / "run.log", 40, 256 * 1024)});
     if (!mStatus.logPath.empty()) files.push_back({"step.log", tail_of(from_utf8(mStatus.logPath), 20, 64 * 1024)});

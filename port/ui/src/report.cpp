@@ -700,13 +700,13 @@ void make_issue_report(std::vector<uint8_t> rgba, int width, int height, std::st
     files.push_back({"runtime.txt", bytes(redact(runtime_snapshot()))});
     if (!g_log_path.empty()) {
         flush_log();
-        files.push_back({"des.log", bytes(redact(read_head_tail(g_log_path, 120, 512 << 10)))});
+        files.push_back({"des.log", bytes(redact_log(read_head_tail(g_log_path, 120, 512 << 10)))});
         std::error_code ec;
         const auto prev = g_log_path.parent_path() / L"des.prev.log";
         if (std::filesystem::exists(prev, ec) &&
             std::filesystem::file_time_type::clock::now() - std::filesystem::last_write_time(prev, ec) <
                 std::chrono::hours(24))
-            files.push_back({"des.prev.log", bytes(redact(read_head_tail(prev, 40, 192 << 10)))});
+            files.push_back({"des.prev.log", bytes(redact_log(read_head_tail(prev, 40, 192 << 10)))});
     }
     for (File& f : save) files.push_back(std::move(f));
     const auto zip = write_bundle("issue-" + stamp, files);
@@ -867,6 +867,13 @@ std::string redact(std::string text) {
     replace_all(text, online_name(), "<online name>", true);
     replace_all(text, user_name(), "<user>", true);
     replace_all(text, pc_name(), "<pc>", true);
+    return text;
+}
+
+std::string redact_log(std::string text) {
+    text = redact(std::move(text));
+    replace_all(text, user_name(), "<user>");
+    replace_all(text, pc_name(), "<pc>");
     return text;
 }
 

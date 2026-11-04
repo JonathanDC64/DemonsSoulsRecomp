@@ -135,6 +135,12 @@ Reports are posted on a public GitHub issue, so:
   its last name). It also replaces the online name, because the runtime logs
   it (`[sceNp] Init(... username=...)`): `<online name>`. When no name is
   set, the runtime's default (`PS3Player`) stays.
+  In the logs (`des.log`, `des.prev.log`, setup's logs), `report::redact_log`
+  also replaces the user and computer names inside longer words: two
+  threads' lines can interleave inside a folder's name, and then no whole
+  folder or word is left to find (seen 2026-11-04, a name glued to
+  "Documents"). An issue's own text keeps whole words only, since there
+  the user name can be part of the project's link.
 - The online name, matchmaking password and custom server address (and its
   mark, `net_custom_here`) appear only as `(set)`, in `settings.ini` (both
   report kinds) and in

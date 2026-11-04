@@ -51,6 +51,10 @@ std::string environment_info(const std::string& command_line = {});
 // Hides the user's name, profile folder, computer name, PSN name, e-mail addresses and the folders of this PC from
 // text that is going to be posted.
 std::string redact(std::string text);
+// redact for a log: also the user's and the computer's name inside longer words. Two threads' lines can interleave
+// in a log, even inside a folder's name, and then no whole folder or word is left to find. (Not for an issue's own
+// text: there "jon" in "JonathanDC64" is the project's link.)
+std::string redact_log(std::string text);
 
 // Sends this process's standard output and error to logs\des.log in the data folder as well as where they went (the
 // previous run's log is kept as des.prev.log). Called once, before main() (crash_report.cpp). Nothing without a data

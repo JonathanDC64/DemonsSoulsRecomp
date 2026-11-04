@@ -40,7 +40,8 @@
 #
 # The comparison, per capture (all must hold):
 #   images     shots/ through halimg.py (exact: 0 differing pixels; vk: the
-#              G3 rule), heat maps in <out>/heat/
+#              G3 rule, an HDR snapshot in the 8-bit codes its paper white
+#              and curve decode, from A's log), heat maps in <out>/heat/
 #   rt images  rsxcap/ images the same way
 #   drawprint  the same batch files, the same lines (values of 12 or more hex
 #              digits, pointers, are left out)
@@ -254,11 +255,16 @@ compare() {
   if [ -n "$pa$pb" ]; then
     printf 'replay\t-\t-\t-\t-\t-\tFAIL: %s\n' "${pa:+A: $pa}${pa:+${pb:+; }}${pb:+B: $pb}"; return 1
   fi
-  # images
+  # images (an HDR snapshot under vk in the 8-bit codes the blit decoded: the
+  # paper white and the curve from A's log, halimg --hdr-white)
+  local hw=() hl
+  hl=$(grep -a -m1 -E 'HDR snap .*paper white [0-9.]+ \(' "$a/replay.txt" 2>/dev/null)
+  [ -n "$hl" ] && hw=(--hdr-white "$(echo "$hl" | sed -E 's/.*paper white ([0-9.]+) \(.*/\1/')")
+  grep -a -q -E 'HDR: on \(.*sRGB curve' "$a/replay.txt" 2>/dev/null && hw+=(--hdr-curve srgb)
   if ! compgen -G "$a/shots/*.bmp" > /dev/null; then img="FAIL no frames"; fail=1
   else
     python "$(cygpath -m "$HERE/halimg.py")" "$(cygpath -m "$a/shots")" "$(cygpath -m "$b/shots")" \
-      --mode "$mode" --tol "$TOL" --out "$(cygpath -m "$h/shots")" --quiet >> "$det" 2>&1; rc=$?
+      --mode "$mode" --tol "$TOL" "${hw[@]}" --out "$(cygpath -m "$h/shots")" --quiet >> "$det" 2>&1; rc=$?
     s=$(grep -a '^halimg:' "$det" | tail -1 | sed -E 's/.*images=([0-9]+) failed=([0-9]+).*/\1 \2/')
     if [ $rc = 0 ]; then img="ok (${s% *})"; else img="FAIL ${s#* } of ${s% *}"; fail=1; fi
   fi

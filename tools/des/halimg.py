@@ -22,6 +22,13 @@ path under the folder, subfolders included; a file on one side only fails.
          the pixels have such a channel: the same bound as the 8-bit rule's
          spikes. These are pixels that sampled the next texel of an 8-bit
          texture across an edge (seen: 25 pixels, up to 4.4/255).
+         With --hdr-white (the paper white, in the snapshot's units: nits /
+         80) an HDRP pair is turned back into the 8-bit codes the blit
+         decoded (--hdr-curve: gamma 2.2, or srgb for RSX_HDR_GAMMA=1) and
+         held to the 8-bit rule above instead. A texel's step grows with the
+         paper white: at 400 nits the bound above failed pixels one step of
+         a texture apart, which the frame's 8-bit shots pass (seen: 119
+         pixels, 1 to 5 codes). halgate.sh passes it from the replay's log.
   hdr    HDRP pairs: every channel within 1e-3 of the other, relative to the
          larger of 1 and its value (--hdr-tol), with no outliers. Other images
          as vk.
@@ -90,27 +97,19 @@ def block_means(d):
     return s / (ch * cw)
 
 
-def compare(a, b, mode, tol, hdr_tol):
-    """A dict with the measures and 'ok'. a and b have the same shape."""
-    r = {'size': '%dx%d' % (a.shape[1], a.shape[0])}
-    if a.dtype == np.float32:   # HDRP
-        diff = np.abs(a - b)
-        r['differ'] = int((a != b).any(axis=2).sum())
-        r['max'] = float(diff.max()) if diff.size else 0.0
-        if mode == 'exact':
-            r['ok'] = r['differ'] == 0
-        else:
-            scale = np.maximum(1.0, np.maximum(np.abs(a), np.abs(b)))
-            over = diff > hdr_tol * scale
-            opix = over.any(axis=2)
-            r['within'] = 100.0 - 100.0 * float(opix.mean())
-            if mode == 'vk':
-                far = (diff > HDR_OUTLIER_TOL * scale) | np.isnan(diff)
-                r['ok'] = not far.any() and 100.0 - r['within'] <= HDR_OUTLIERS
-            else:
-                r['ok'] = not opix.any()
-        return r
-    d = np.abs(a.astype(np.int16) - b.astype(np.int16))
+def hdr_codes(v, white, curve):
+    """An HDRP's RGB as the 8-bit codes the blit decoded (RSX_HDR): v / white through the inverse of gamma 2.2,
+    or of the sRGB curve, times 255. Above white (the roll-off's highlights) the same curve goes on."""
+    x = np.maximum(v[:, :, :3], 0.0) / white
+    if curve == 'srgb':
+        c = np.where(x <= 0.0031308, x * 12.92, 1.055 * np.power(x, 1 / 2.4) - 0.055)
+    else:
+        c = np.power(x, 1 / 2.2)
+    return c * 255.0
+
+
+def rule8(r, d, mode, tol):
+    """The 8-bit measures of d (HxWxC steps of 1/255) into r, and 'ok' by the mode."""
     dmax = d.max(axis=2)
     n = dmax.size
     r['differ'] = int((dmax > 0).sum())
@@ -126,6 +125,35 @@ def compare(a, b, mode, tol, hdr_tol):
         r['ok'] = r['within'] >= 99.95 and r['block'] <= 1.0 and r['over8'] <= 0.01
     r['_d'] = dmax
     return r
+
+
+def compare(a, b, mode, tol, hdr_tol, hdr_white=0.0, hdr_curve='gamma'):
+    """A dict with the measures and 'ok'. a and b have the same shape."""
+    r = {'size': '%dx%d' % (a.shape[1], a.shape[0])}
+    if a.dtype == np.float32:   # HDRP
+        diff = np.abs(a - b)
+        if mode == 'vk' and hdr_white > 0:   # in the codes the blit decoded, by the 8-bit rule
+            if np.isnan(a).any() or np.isnan(b).any():
+                r.update(differ=int((a != b).any(axis=2).sum()), max=float('nan'), ok=False)
+                return r
+            d = np.rint(np.abs(hdr_codes(a, hdr_white, hdr_curve) - hdr_codes(b, hdr_white, hdr_curve)))
+            return rule8(r, d.astype(np.int32), mode, tol)
+        r['differ'] = int((a != b).any(axis=2).sum())
+        r['max'] = float(diff.max()) if diff.size else 0.0
+        if mode == 'exact':
+            r['ok'] = r['differ'] == 0
+        else:
+            scale = np.maximum(1.0, np.maximum(np.abs(a), np.abs(b)))
+            over = diff > hdr_tol * scale
+            opix = over.any(axis=2)
+            r['within'] = 100.0 - 100.0 * float(opix.mean())
+            if mode == 'vk':
+                far = (diff > HDR_OUTLIER_TOL * scale) | np.isnan(diff)
+                r['ok'] = not far.any() and 100.0 - r['within'] <= HDR_OUTLIERS
+            else:
+                r['ok'] = not opix.any()
+        return r
+    return rule8(r, np.abs(a.astype(np.int16) - b.astype(np.int16)), mode, tol)
 
 
 def heat(r, path, tol):
@@ -179,7 +207,7 @@ def line(name, r):
     return '  '.join(parts)
 
 
-def run(a, b, mode, tol, hdr_tol, out, quiet, show=print):
+def run(a, b, mode, tol, hdr_tol, out, quiet, show=print, hdr_white=0.0, hdr_curve='gamma'):
     """Compare files or folders; returns the exit status."""
     if os.path.isdir(a) != os.path.isdir(b):
         show('halimg: %s and %s are not both folders or both files' % (a, b))
@@ -216,7 +244,7 @@ def run(a, b, mode, tol, hdr_tol, out, quiet, show=print):
             failed += 1
             show(line(n, {'error': 'shape %s vs %s' % (ia.shape, ib.shape)}))
             continue
-        r = compare(ia, ib, mode, tol, hdr_tol)   # (an HDRP pair under vk: the hdr rule with outliers)
+        r = compare(ia, ib, mode, tol, hdr_tol, hdr_white, hdr_curve)   # (an HDRP pair under vk: see the docstring)
         if not r['ok']:
             failed += 1
         if not quiet or not r['ok']:
@@ -299,6 +327,33 @@ def selftest():
     check('hdrp: 16 pixels 2/255 off / hdr', compare(h, hdr_off(16, 2 / 255), 'hdr', 1, 1e-3)['ok'], False)
     check('hdrp: 200 pixels 2/255 off / vk', compare(h, hdr_off(200, 2 / 255), 'vk', 1, 1e-3)['ok'], False)
     check('hdrp: one pixel 0.05 off / vk', compare(h, hdr_off(1, 0.05), 'vk', 1, 1e-3)['ok'], False)
+    # --hdr-white: the blit's own picture at 400 nits white (5.0), from 8-bit codes; pixels a texel's step apart.
+    def hdr_of(c, curve='gamma'):
+        x = c.astype(np.float64) / 255
+        x = np.where(x <= 0.04045, x / 12.92, ((x + 0.055) / 1.055) ** 2.4) if curve == 'srgb' else x ** 2.2
+        o = np.ones(c.shape[:2] + (4,), np.float32)
+        o[:, :, :3] = 5.0 * x
+        return o.astype(np.float16).astype(np.float32)
+    def codes_off(k, step):
+        o = base.astype(np.int16); o.reshape(-1, 3)[np.arange(k) * 997, 1] += step
+        return np.clip(o, 0, 255).astype(np.uint8)
+    hw = hdr_of(base)
+    check('hdrp white 5: codes round trip (gamma)',
+          float(np.abs(hdr_codes(hw, 5.0, 'gamma') - base).max()) < 0.2, True)
+    check('hdrp white 5: codes round trip (srgb)',
+          float(np.abs(hdr_codes(hdr_of(base, 'srgb'), 5.0, 'srgb') - base).max()) < 0.2, True)
+    check('hdrp white 5: 120 pixels 4 codes off / vk, no white',
+          compare(hw, hdr_of(codes_off(120, 4)), 'vk', 1, 1e-3)['ok'], False)
+    check('hdrp white 5: 120 pixels 4 codes off / vk, white 5',
+          compare(hw, hdr_of(codes_off(120, 4)), 'vk', 1, 1e-3, 5.0)['ok'], True)
+    check('hdrp white 5: 0.06% of pixels 2 codes off / vk, white 5',
+          compare(hw, hdr_of(codes_off(int(n * 0.0006), 2)), 'vk', 1, 1e-3, 5.0)['ok'], False)
+    check('hdrp white 5: 0.02% of pixels 12 codes off / vk, white 5',
+          compare(hw, hdr_of(codes_off(int(n * 0.0002), 12)), 'vk', 1, 1e-3, 5.0)['ok'], False)
+    check('hdrp white 5: 120 pixels 4 codes off / hdr, white 5 (no codes there)',
+          compare(hw, hdr_of(codes_off(120, 4)), 'hdr', 1, 1e-3, 5.0)['ok'], False)
+    nan = hw.copy(); nan[5, 5, 0] = np.nan
+    check('hdrp white 5: a NaN fails', compare(hw, nan, 'vk', 1, 1e-3, 5.0)['ok'], False)
 
     with tempfile.TemporaryDirectory(prefix='halimg') as t:
         da, db, ho = os.path.join(t, 'a'), os.path.join(t, 'b'), os.path.join(t, 'heat')
@@ -337,6 +392,10 @@ def main():
     ap.add_argument('--mode', choices=('exact', 'vk', 'hdr'), default='exact')
     ap.add_argument('--tol', type=int, default=1, help='vk: steps of 1/255 a pixel may be off (default 1)')
     ap.add_argument('--hdr-tol', type=float, default=1e-3, help='HDRP: relative tolerance (default 1e-3)')
+    ap.add_argument('--hdr-white', type=float, default=0.0,
+                    help='vk: the HDRP pair\'s paper white in its units (nits / 80); compares in 8-bit codes')
+    ap.add_argument('--hdr-curve', choices=('gamma', 'srgb'), default='gamma',
+                    help='with --hdr-white: the blit\'s decode, gamma 2.2 or the sRGB curve (RSX_HDR_GAMMA=1)')
     ap.add_argument('--out', help='folder for heat maps')
     ap.add_argument('--quiet', action='store_true', help='print failures and the summary only')
     ap.add_argument('--selftest', action='store_true')
@@ -346,7 +405,7 @@ def main():
     if not o.a or not o.b:
         ap.print_usage()
         return 2
-    return run(o.a, o.b, o.mode, o.tol, o.hdr_tol, o.out, o.quiet)
+    return run(o.a, o.b, o.mode, o.tol, o.hdr_tol, o.out, o.quiet, hdr_white=o.hdr_white, hdr_curve=o.hdr_curve)
 
 
 if __name__ == '__main__':

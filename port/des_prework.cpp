@@ -531,6 +531,10 @@ Pass run_passes(const char* root, const std::string& elf, bool force, void (*pol
         s.seconds += one.seconds;
         if (pass_rank(p) > pass_rank(all)) all = p;
     }
+    /* Each pass is reset before the next; the last one too, once it is done: its texts (3,654 on the US disc,
+     * about 45 MB), programs and rows would otherwise stay for the whole session. Its rows are already with the
+     * renderer (rsx_out_pso_index_add), and run_pass has left s_state at 3, so des_prework_status no longer reads. */
+    rsx_shader_precompile_reset();
     return all;
 }
 #endif

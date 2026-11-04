@@ -3,6 +3,7 @@
 
 #include "host.hpp"
 #include "settings.hpp"
+#include "setup_report.hpp"
 #include "ui.hpp"
 #include "version.hpp"
 
@@ -293,6 +294,21 @@ void SetupPage::close_question() {
     mQuestionActionsRun.clear();
     clear_children(mQuestionActions);
     if (!focus_at(mQuestionFrom)) focus();  // (back on the button that opened it)
+}
+
+void SetupPage::ask_report(const setup::Status& failure) {
+    ask("Report the problem",
+        escape("Saves one file and opens the issue page with the details filled in. The file holds setup's logs, "
+               "this PC's processor, memory, graphics card and system, and this program's version. It holds "
+               "nothing from the game."),
+        {{"Save and open the issue page",
+          [this, failure] {
+              const std::string said = setup::send_report(failure);
+              ask("Report the problem", escape(said), {{"Close", {}, Look::Plain}});
+          },
+          Look::Primary},
+         {"Close", {}, Look::Quiet}},
+        0);
 }
 
 Rml::Element* SetupPage::icon(Rml::Element* parent, const char* name) {

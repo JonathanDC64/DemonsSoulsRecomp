@@ -574,6 +574,7 @@ std::vector<std::vector<Button*>> SetupFilesWindow::nav_lines() const {
     out.push_back(line(mChooseButton));
     for (const auto& b : mPlaceButtons) out.push_back({b.get()});
     if (!mDecryptedButton.empty()) out.push_back(line(mDecryptedButton));
+    if (!mReportButton.empty()) out.push_back(line(mReportButton));
     out.push_back(line(mLinkButtons));
     out.push_back(line(mActions));
     return out;
@@ -733,6 +734,7 @@ void SetupFilesWindow::draw_check() {
 
     const bool hadFocus = has_focus();
     mDecryptedButton.clear();  // (their listeners go before their elements)
+    mReportButton.clear();
     clear_children(mCheck);
     if (!mPickProblem.empty()) {
         callout(mCheck, "err", mPickProblem, "");
@@ -787,6 +789,12 @@ void SetupFilesWindow::draw_check() {
             if (mStatus.errorCode == "download") why += " Check the internet connection, then check again.";
             else if (mStatus.errorCode == "disk") why += " Free some space, then check again.";
             found(box, "setup-err", "The check did not finish", why);
+            if (mStatus.result == "failed") {  // (as on every setup error: setup_page.hpp ask_report)
+                auto* row = actions_row(mCheck);
+                row->SetClass("near", true);
+                set_buttons(mReportButton, row,
+                            {{"Report the problem", [this] { ask_report(mStatus); }, Look::Quiet}});
+            }
         }
         if (isGame && !files.empty()) {
             const auto missing = std::count_if(files.begin(), files.end(), bad);

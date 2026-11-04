@@ -12,6 +12,7 @@
 
 #include "button.hpp"
 #include "document.hpp"
+#include "setup_protocol.hpp"
 #include "window.hpp"
 
 #include <functional>
@@ -94,6 +95,9 @@ protected:
     void set_question_actions(std::vector<Action> actions, size_t focused = 0);
     void close_question();
     bool asking() const { return mAsking; }
+    // Report the problem, for any error a page shows: what the report holds, then the report for `failure`
+    // (setup_report.hpp) and where its file is.
+    void ask_report(const setup::Status& failure);
 
     // The parts (setup.rcss), each appended to `parent`.
     static Rml::Element* icon(Rml::Element* parent, const char* name);

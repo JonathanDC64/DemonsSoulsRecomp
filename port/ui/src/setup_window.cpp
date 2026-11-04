@@ -416,7 +416,7 @@ void SetupWindow::draw_failed() {
     const char* again = kind.fix == Fix::CheckAgain ? "Check again" : "Try again";
     std::vector<Action> actions;
     if (kind.fix == Fix::Report) {
-        actions.push_back({"Report the problem", [this] { ask_report(); }, Look::Primary});
+        actions.push_back({"Report the problem", [this] { ask_report(mStatus); }, Look::Primary});
         actions.push_back({again, [this] { start(); }, Look::Plain});
     } else {
         actions.push_back({again, [this] { start(); }, Look::Primary});
@@ -433,6 +433,9 @@ void SetupWindow::draw_failed() {
         actions.push_back(
             {"Show me how", [this] { push(std::make_unique<SetupHelpWindow>(SetupHelpWindow::Props{})); }, Look::Plain});
     }
+    // (on every error: the ones with a fix of the player's own get it too, after that fix)
+    if (kind.fix != Fix::Report)
+        actions.push_back({"Report the problem", [this] { ask_report(mStatus); }, Look::Quiet});
     if (!log_file().empty()) actions.push_back({"Show the full log", [this] { open_log(); }, Look::Quiet});
     actions.push_back({"Close", [this] { close(false); }, Look::Quiet});
     set_actions(std::move(actions));
@@ -528,45 +531,6 @@ std::string SetupWindow::log_tail(size_t lines) const {
     for (size_t i = from; i < mStatus.tail.size(); ++i)
         text += (i > from ? "\n" : "") + mStatus.tail[i].substr(0, 300);
     return text;
-}
-
-void SetupWindow::ask_report() {
-    ask("Report the problem",
-        escape("Saves one file and opens the issue page with the details filled in. The file holds setup's log, "
-               "this PC's processor, memory, graphics card and system, and this program's version. It holds "
-               "nothing from the game."),
-        {{"Save and open the issue page",
-          [this] {
-              const std::string said = send_report();
-              ask("Report the problem", escape(said), {{"Close", {}, Look::Plain}});
-          },
-          Look::Primary},
-         {"Close", {}, Look::Quiet}},
-        0);
-}
-
-// A problem report (report.hpp), as the menu's: a zip in the reports folder with this PC's facts, setup's log, the
-// failed step's log and the journal, all with the player's name and folders hidden; then the issue form, filled in.
-// Nothing of the game: the logs hold step names, counts, addresses and the tools' messages (docs/88 section 6).
-std::string SetupWindow::send_report() {
-    const auto setupDir = setup::data_dir() / "setup";
-    std::vector<report::File> files;
-    files.push_back({"system.txt", report::bytes(report::redact(report::system_info()))});
-    const auto tail_of = [](const std::filesystem::path& path, size_t head, size_t tail) {
-        return report::bytes(report::redact_log(report::read_head_tail(path, head, tail)));
-    };
-    files.push_back({"setup.log", tail_of(setupDir / "logs" / "run.log", 40, 256 * 1024)});
-    if (!mStatus.logPath.empty()) files.push_back({"step.log", tail_of(from_utf8(mStatus.logPath), 20, 64 * 1024)});
-    files.push_back({"journal.json", tail_of(setupDir / "journal.json", 4000, 256 * 1024)});
-    const auto zip = report::write_bundle("setup-" + report::timestamp(), files);
-    std::fprintf(stderr, "[setup] report: %s\n", zip.empty() ? "could not be saved" : utf8(zip).c_str());
-    if (zip.empty()) return "The report could not be saved.";
-    const std::string name = utf8(zip.filename());
-    const std::string body = "**What happened:** " + mStatus.errorText + "\n**Step:** " + mStatus.errorStep +
-                             "\n**Version:** " + kVersion + "\n\nAttach " + name +
-                             " from the folder that opened: it has setup's log and this PC's facts, and no game files.";
-    report::open_issue(report::issue_url("Setup did not finish: " + mStatus.errorStep, report::redact(body)), zip);
-    return "The issue form is open in your browser. Attach " + name + " to it: it is in the folder that opened.";
 }
 
 }  // namespace ui

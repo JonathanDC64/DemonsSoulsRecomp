@@ -678,6 +678,7 @@ void SetupUnlockWindow::draw() {
         actions.push_back({"Try again", [this] { start(); }, Look::Primary});
         actions.push_back(
             {"Show me how", [this] { push(std::make_unique<SetupHelpWindow>(SetupHelpWindow::Props{})); }, Look::Plain});
+        actions.push_back({"Report the problem", [this] { ask_report(mStatus); }, Look::Quiet});
         actions.push_back({mDetailsShown ? "Hide details" : "Details",
                            [this] { mDetailsShown = !mDetailsShown; }, Look::Quiet});
         actions.push_back({"Back", [this] { back(); }, Look::Quiet});

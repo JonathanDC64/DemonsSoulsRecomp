@@ -4,8 +4,8 @@
 
 **Demon's Souls, running natively on PC.**
 
-[![release](https://img.shields.io/github/v/release/JonathanDC64/DemonsSoulsRecomp?filter=v%2A&sort=semver&display_name=tag&label=release&color=orange)](https://github.com/JonathanDC64/DemonsSoulsRecomp/releases/latest)
-[![downloads](https://img.shields.io/github/downloads/JonathanDC64/DemonsSoulsRecomp/latest/total?label=downloads&color=brightgreen)](https://github.com/JonathanDC64/DemonsSoulsRecomp/releases/latest)
+[![release](https://img.shields.io/github/v/release/JonathanDC64/Soulbrandt?filter=v%2A&sort=semver&display_name=tag&label=release&color=orange)](https://github.com/JonathanDC64/Soulbrandt/releases/latest)
+[![downloads](https://img.shields.io/github/downloads/JonathanDC64/Soulbrandt/latest/total?label=downloads&color=brightgreen)](https://github.com/JonathanDC64/Soulbrandt/releases/latest)
 [![Discord](https://img.shields.io/discord/1565536292324769832?label=Discord&logo=discord&logoColor=white&color=5865F2)](https://discord.gg/BzmwDeca8s)
 
 </div>
@@ -16,7 +16,7 @@ You need your own copy of the game: the US version, **BLUS30443** (version 1.00)
 
 ## Status
 
-**0.1.0, the first release, is an alpha.** Download it from the [Releases](https://github.com/JonathanDC64/DemonsSoulsRecomp/releases) page.
+**0.1.0, the first release, is an alpha.** Download it from the [Releases](https://github.com/JonathanDC64/Soulbrandt/releases) page.
 
 The game plays from start to finish (a tester has beaten it), but not every part has been tried on every setting, so expect bugs. What [isn't supported yet](#not-supported-yet) is below; please [report](#problems) anything you find. Questions and help: [Discord](https://discord.gg/BzmwDeca8s).
 
@@ -120,7 +120,7 @@ Online play is on by default and uses this project's own server. Setup asks for 
 
 ### Problems
 
-Use **Report an issue** in the menu (F1), or open an [issue](https://github.com/JonathanDC64/DemonsSoulsRecomp/issues). For questions and help, join the [Discord](https://discord.gg/BzmwDeca8s). Report security problems privately, as [SECURITY.md](SECURITY.md) says.
+Use **Report an issue** in the menu (F1), or open an [issue](https://github.com/JonathanDC64/Soulbrandt/issues). For questions and help, join the [Discord](https://discord.gg/BzmwDeca8s). Report security problems privately, as [SECURITY.md](SECURITY.md) says.
 
 ## Building from source
 
@@ -144,8 +144,8 @@ On Windows, step 4 downloads FFmpeg's MPEG-2 video decoder for the game's movies
 
 1. Get this repository, and its runtime inside it:
    ```sh
-   git clone https://github.com/JonathanDC64/DemonsSoulsRecomp.git
-   cd DemonsSoulsRecomp
+   git clone https://github.com/JonathanDC64/Soulbrandt.git
+   cd Soulbrandt
    git clone https://github.com/JonathanDC64/ps3recomp.git
    ```
    `ps3recomp.pin` names the ps3recomp commit this version of the port needs. `python tools/release/pin_ps3recomp.py local` checks your checkout against it.

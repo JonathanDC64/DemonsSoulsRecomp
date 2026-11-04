@@ -1038,7 +1038,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             [](Pane& pane) {
                 pane.add_button("Open the project page").on_pressed([] {
                     play_sound(kSoundClick);
-                    open_url("https://github.com/JonathanDC64/DemonsSoulsRecomp");
+                    open_url("https://github.com/JonathanDC64/Soulbrandt");
                 });
             });
         bool_row(leftPane, rightPane, "Check for updates", "update_check",

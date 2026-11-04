@@ -12,7 +12,7 @@
 
 namespace ui::report {
 
-constexpr const char* kRepositoryUrl = "https://github.com/JonathanDC64/DemonsSoulsRecomp";
+constexpr const char* kRepositoryUrl = "https://github.com/JonathanDC64/Soulbrandt";
 
 struct File {
     std::string name;  // in the zip

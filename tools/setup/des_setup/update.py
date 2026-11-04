@@ -44,7 +44,7 @@ from pathlib import Path
 from . import fetch, journal, pipeline, protocol, signing
 
 NAME = "DemonsSoulsRecomp"
-REPO = "JonathanDC64/DemonsSoulsRecomp"
+REPO = "JonathanDC64/Soulbrandt"
 FEED = f"https://api.github.com/repos/{REPO}/releases?per_page=20"
 STABLE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 MANIFEST = "release-files.txt"

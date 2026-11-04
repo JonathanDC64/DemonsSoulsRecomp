@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "setup"))
 from des_setup import signing  # noqa: E402
 
-REPO = "JonathanDC64/DemonsSoulsRecomp"
+REPO = "JonathanDC64/Soulbrandt"
 SUMS = "SHA256SUMS"
 KEYS_PATH = "tools/setup/des_setup/release-keys.txt"
 STABLE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")

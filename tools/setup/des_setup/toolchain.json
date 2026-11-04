@@ -13,7 +13,7 @@
   {
    "name": "llvm-win64",
    "version": "22.1.8-1",
-   "url": "https://github.com/JonathanDC64/DemonsSoulsRecomp/releases/download/llvm-22.1.8-1/llvm-win64-22.1.8-1.zip",
+   "url": "https://github.com/JonathanDC64/Soulbrandt/releases/download/llvm-22.1.8-1/llvm-win64-22.1.8-1.zip",
    "size": 49496165,
    "sha256": "019c8dd5b7e5194bdb07b7a609c55032c0888083cff30076e4038c36d99c295a",
    "why": "Compiles and links the game part: clang, lld-link and clang's headers from LLVM 22.1.8 (docs/86).",
@@ -31,11 +31,11 @@
   {
    "name": "llvm-linux-x64",
    "version": "22.1.8-2",
-   "url": "https://github.com/JonathanDC64/DemonsSoulsRecomp/releases/download/llvm-linux-22.1.8-2/llvm-linux-x64-22.1.8-2.tar.xz",
+   "url": "https://github.com/JonathanDC64/Soulbrandt/releases/download/llvm-linux-22.1.8-2/llvm-linux-x64-22.1.8-2.tar.xz",
    "size": 97274644,
    "sha256": "ab7f31065867f984573064315266664fca6bd2521c9209b071803829fd713996",
    "why": "Compiles and links the game part on Linux: clang, ld.lld and clang's headers from LLVM 22.1.8 (docs/86).",
-   "checked": "made by LLVM archive run https://github.com/JonathanDC64/DemonsSoulsRecomp/actions/runs/40160368044 from LLVM-22.1.8-Linux-X64.tar.xz (size, SHA-256, attestation and GPG signature checked), 2026-10-25"
+   "checked": "made by LLVM archive run https://github.com/JonathanDC64/Soulbrandt/actions/runs/40160368044 from LLVM-22.1.8-Linux-X64.tar.xz (size, SHA-256, attestation and GPG signature checked), 2026-10-25"
   }
  ]
 }

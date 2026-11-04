@@ -58,7 +58,7 @@ Press **F1** (or **L3 + R3** on a controller) at any time to open the menu. Most
 **Game**
 - Skip the logos and the opening movie, and go straight into your last save.
 - **Stat respec**: the Maiden in Black, or the statue in front of where you wake in the Nexus, puts your stats back to your class's and gives back the souls your levels cost, to spend again. Off by default: turn on **Stat respec in the Nexus** in Settings > Game.
-- Use several soul items at once, as Drop does. Off by default.
+- Use several soul items at once, as Drop does. On by default: turn off **Use several souls at once** in Settings > Game for the original's one at a time.
 
 **Online**
 - On by default, on this project's own server: messages, bloodstains, ghosts, co-op and invasions.

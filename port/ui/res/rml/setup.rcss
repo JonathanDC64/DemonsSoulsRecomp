@@ -178,7 +178,7 @@ setup-rail-foot {
     display: block;
     font-size: var(--font-size-2xs);
     color: var(--setup-faint);
-    word-break: break-all;
+    word-break: break-word;
 }
 
 setup-main {
@@ -347,7 +347,7 @@ setup-found-text {
 setup-found-value {
     font-size: var(--font-size-sm);
     color: var(--setup-muted);
-    word-break: break-all;
+    word-break: break-word;
 }
 
 setup-tag {
@@ -434,7 +434,7 @@ setup-log {
     font-size: var(--font-size-xs);
     line-height: 1.4;
     color: var(--setup-muted);
-    word-break: break-all;
+    word-break: break-word;
     overflow: hidden auto;
 }
 
@@ -445,7 +445,7 @@ setup-field {
     border: 1dp var(--setup-line-soft);
     background-color: rgba(0, 0, 0, 50%);
     font-size: var(--font-size-xs);
-    word-break: break-all;
+    word-break: break-word;
 }
 
 /* Marks */
@@ -805,7 +805,7 @@ setup-field-text {
     flex: 1 1 0;
     min-width: 0;
     font-size: var(--font-size-sm);
-    word-break: break-all;
+    word-break: break-word;
 }
 
 setup-field-text.none {
@@ -887,7 +887,7 @@ button.setup-place {
     background-color: rgba(0, 0, 0, 45%);
     box-shadow: var(--setup-line-soft) 0 0 0 1dp;
     opacity: 1;
-    word-break: break-all;
+    word-break: break-word;
 }
 
 button.setup-place:not(:disabled):hover,

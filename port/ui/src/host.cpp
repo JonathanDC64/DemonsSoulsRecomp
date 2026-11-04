@@ -160,6 +160,23 @@ std::unique_ptr<Renderer> make_renderer(void* device, void* queue) { return d3d1
 
 // ---- The same everywhere ----
 
+// The UI's scale, before the UI scale setting. Dusklight's (and FFCCEOT-Recomp's) rule: the display's scale (its DPI).
+// The window's size does not scale the UI: a larger window gives the documents more room, as for any program.
+//
+// Except that it is never more than the window holds. That is in quarter steps rounded down, so the documents always
+// have at least 960 x 720 dp (1080p 1.5, 1440p 2), and a window drag lays them out again only every 180 px. Text is
+// drawn at whole pixel sizes, so no step blurs it. A small screen needs this: a Steam Deck's 1280 x 800 says 215 dpi,
+// as SDL gives the panel's real density (Windows gives the scale the player chose), and 2.25 x leaves 320 dp of height.
+//
+// While a full-window page is open (set_follow_height, the setup screens) the scale is simply what the window holds.
+float base_scale(int width, int height, unsigned dpi, bool follow_window) {
+    const float display = std::max(1.0f, float(dpi) / 96.0f);  // (dpi 0 is not known. A TV can say less than 96.)
+    if (width <= 0 || height <= 0) return display;
+    const float fit = std::floor(std::min(float(width) / 960.0f, float(height) / 720.0f) * 4.0f) / 4.0f;
+    const float holds = std::clamp(fit, 0.5f, 4.0f);
+    return follow_window ? holds : std::min(display, holds);
+}
+
 // "res/rml/../fonts/x.ttf" -> "res/fonts/x.ttf"
 std::string normalize(const std::string& path) {
     std::vector<std::string> parts;
@@ -407,7 +424,14 @@ void set_hdr(float scale, bool srgb) {
 }
 void set_follow_height(bool on) { s.follow_height = on; }
 
-unsigned window_dpi() { return dpi_of_window(); }
+unsigned window_dpi() {
+    // DES_UI_DPI=<n>: as if the display said so, to try another PC's on this one.
+    static const int forced = [] {
+        const char* v = std::getenv("DES_UI_DPI");
+        return v ? std::atoi(v) : 0;
+    }();
+    return forced > 0 ? unsigned(forced) : dpi_of_window();
+}
 
 // After a change of the dp ratio. RmlUi works a length out again only where it is written in dp: one taken from a
 // variable (var(--space-md), most of the theme's sizes) keeps its old size. A document given a new copy of its style
@@ -424,15 +448,7 @@ static void restyle_documents() {
 void render(void* back_buffer, unsigned index, int width, int height, const char* shot_path) {
     if (!s.initialised) return;
     if (s.rml->GetDimensions() != Rml::Vector2i{width, height}) s.rml->SetDimensions({width, height});
-    // Dusklight's (and FFCCEOT-Recomp's) rule: the display's scale (its DPI), times the UI scale setting. The
-    // window's size does not scale the UI: a larger window gives the documents more room, as for any program.
-    // Except while a full-window page is open (set_follow_height, the setup screens): then the height scales it too,
-    // in quarter steps rounded down, so the page always has at least 720 dp of height (1080p 1.5, 1440p 2) and a
-    // window drag lays it out again only every 180 px. Text is drawn at whole pixel sizes, so no step blurs it.
-    const unsigned dpi = window_dpi();
-    float base = dpi ? float(dpi) / 96.0f : 1.0f;
-    if (s.follow_height && height > 0)
-        base = std::max(base, std::min(4.0f, std::floor(float(height) / 720.0f * 4.0f) / 4.0f));
+    const float base = base_scale(width, height, window_dpi(), s.follow_height);
     if (const float ratio = (s.ui_scale > 0.0f ? s.ui_scale : 1.0f) * base;
         ratio != s.rml->GetDensityIndependentPixelRatio()) {
         s.rml->SetDensityIndependentPixelRatio(ratio);

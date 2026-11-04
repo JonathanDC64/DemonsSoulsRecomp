@@ -24,7 +24,7 @@ public:
     virtual bool active() const;
     virtual bool permanent() const { return false; }
     virtual bool obscures_game() const { return false; }
-    // While a document that says so is open, the UI's scale follows the window's height (host::set_follow_height):
+    // While a document that says so is open, the UI's scale follows the window's size (host::set_follow_height):
     // the setup screens, drawn as one full-window page.
     virtual bool scales_with_window() const { return false; }
     virtual void cover() {

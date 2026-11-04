@@ -5,14 +5,15 @@ PRODUCT_NAME, at the root, holds the project's shown name. The build, the releas
 read it from there, so a rename is that one line. This fails, with each place named:
   - when a tracked file other than the docs has the name written out (it should read PRODUCT_NAME instead);
   - when one still has a former shown name (FORMER below; a rename adds the old name to it);
-  - when the README's title or PRIVACY.md's server name is not the name. Those two are written by hand, so this is
-    what catches a rename that missed them.
+  - when the README's title, PRIVACY.md's server name or .recomp.json's project (the recomp.fyi listing) is not the
+    name. Those three are written by hand, so this is what catches a rename that missed them.
 The technical name DemonsSoulsRecomp (the downloads, the folders, the signature) is a different thing and is not
 looked for, and neither is the repository's address (JonathanDC64/<repository>, in links and the update feed),
 which has its own name.
 
     python tools/ci/check_product_name.py
 """
+import json
 import os
 import re
 import subprocess
@@ -21,9 +22,10 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FORMER = ["Demon's Souls Recomp", "Demon’s Souls Recomp"]
 # Prose about the project, kept by hand: docs/ (history), Trail's notes, and the Markdown files (the README and
-# PRIVACY.md are checked on their own below). And this file, which lists the former names.
+# PRIVACY.md are checked on their own below). .recomp.json, which recomp.fyi reads from the repository as it is, so it
+# cannot read PRODUCT_NAME (checked below too). And this file, which lists the former names.
 SKIP = (re.compile(r"^docs/"), re.compile(r"^\.trail/"), re.compile(r"\.md$"), re.compile(r"^PRODUCT_NAME$"),
-        re.compile(r"^tools/ci/check_product_name\.py$"))
+        re.compile(r"^\.recomp\.json$"), re.compile(r"^tools/ci/check_product_name\.py$"))
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 '.:-]*$")   # (as port/cmake/DesVersion.cmake takes it)
 REPOSITORY_RE = re.compile(r"JonathanDC64/[A-Za-z0-9._-]+")   # (a repository's address, left out of the lines)
 
@@ -64,11 +66,18 @@ def main():
     privacy = open(os.path.join(ROOT, "PRIVACY.md"), encoding="utf-8").read()
     if f'"{name}"' not in " ".join(privacy.split()):
         problems.append(("PRIVACY.md", f'the server is not called "{name}" (Settings > Network > Server)'))
+    try:
+        with open(os.path.join(ROOT, ".recomp.json"), encoding="utf-8") as f:
+            project = json.load(f).get("project", "")
+        if project != name:
+            problems.append((".recomp.json", f"the project is {project!r}, PRODUCT_NAME says {name!r}"))
+    except (OSError, ValueError) as e:
+        problems.append((".recomp.json", f"cannot read it: {e}"))
     for where, what in problems:
         print(f"::error::{where}: {what}" if os.environ.get("GITHUB_ACTIONS") == "true" else f"{where}: {what}",
               file=sys.stderr)
     if not problems:
-        print(f"the name {name!r} is only in PRODUCT_NAME, the README's title and PRIVACY.md")
+        print(f"the name {name!r} is only in PRODUCT_NAME, the README's title, PRIVACY.md and .recomp.json")
     return 1 if problems else 0
 
 

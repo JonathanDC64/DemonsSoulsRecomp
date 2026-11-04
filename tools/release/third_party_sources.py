@@ -8,26 +8,36 @@ FFMPEG_SHA256), so the two can't drift apart.
 
   third_party_sources.py [--workflow FILE] --out DIR
 
-Downloads each archive into DIR, checks it against the pinned SHA-256, and prints the paths. Exit status: 0 good,
-1 a download or check failed, 2 a usage or file error. Standard library only.
+Downloads each archive into DIR, checks it against the pinned SHA-256, and prints the paths. Each address is tried
+three times, then the next one: the project's own site first, then a copy of the same archive (FFmpeg's is attached
+to the fork's FFmpeg release). The SHA-256 decides, so a copy can't change what ships. Exit status: 0 good, 1 a
+download or check failed, 2 a usage or file error. Standard library only.
 """
 import argparse
 import hashlib
 import os
 import re
 import sys
+import time
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HOST_YML = os.path.join(ROOT, ".github", "workflows", "host.yml")
 
-# name -> (env key of the version, env key of the SHA-256, URL with {v} for the version, file name with {v})
+# name -> (env key of the version, env key of the SHA-256, URLs with {v} for the version (tried in order), file name
+# with {v})
 SOURCES = {
     "vkd3d": ("VKD3D_VERSION", "VKD3D_SHA256",
-              "https://dl.winehq.org/vkd3d/source/vkd3d-{v}.tar.xz", "vkd3d-{v}.tar.xz"),
+              ["https://dl.winehq.org/vkd3d/source/vkd3d-{v}.tar.xz"], "vkd3d-{v}.tar.xz"),
+    # (the fork's FFmpeg release, ffmpeg-archive.yml, attaches the source archive it built from: the same bytes; its
+    # tag carries the package revision, as ps3recomp's cmake/ffmpeg_download.cmake pins it)
     "ffmpeg": ("FFMPEG_VERSION", "FFMPEG_SHA256",
-               "https://ffmpeg.org/releases/ffmpeg-{v}.tar.xz", "ffmpeg-{v}.tar.xz"),
+               ["https://ffmpeg.org/releases/ffmpeg-{v}.tar.xz",
+                "https://github.com/JonathanDC64/ps3recomp/releases/download/ffmpeg-{v}-2/ffmpeg-{v}.tar.xz"],
+               "ffmpeg-{v}.tar.xz"),
 }
+TRIES = 3          # per address
+WAIT_S = (10, 30)  # before the second and the third try
 
 
 def read_env(path):
@@ -58,6 +68,24 @@ def fetch(url, dest, sha256):
     os.replace(tmp, dest)
 
 
+def fetch_any(urls, dest, sha256, name):
+    """fetch from the first address that works; each one TRIES times. Raises the last error."""
+    last = None
+    for url in urls:
+        for i in range(TRIES):
+            if i:
+                time.sleep(WAIT_S[i - 1])
+            try:
+                fetch(url, dest, sha256)
+                return url
+            except (OSError, ValueError) as e:
+                last = e
+                print(f"third_party_sources: {name}: {url}: {e}", file=sys.stderr)
+                if isinstance(e, ValueError):
+                    break  # (the wrong bytes: the same again from there)
+    raise last
+
+
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--workflow", default=HOST_YML, help="host.yml, which pins the versions")
@@ -70,14 +98,14 @@ def main(argv):
         return 2
     os.makedirs(a.out, exist_ok=True)
     status = 0
-    for name, (ver_key, sha_key, url, file) in SOURCES.items():
+    for name, (ver_key, sha_key, urls, file) in SOURCES.items():
         ver, sha = env.get(ver_key), env.get(sha_key)
         if not ver or not sha or not re.fullmatch(r"[0-9a-fA-F]{64}", sha):
             print(f"third_party_sources: {name}: {ver_key} or {sha_key} missing from {a.workflow}", file=sys.stderr)
             return 2
         dest = os.path.join(a.out, file.format(v=ver))
         try:
-            fetch(url.format(v=ver), dest, sha)
+            fetch_any([u.format(v=ver) for u in urls], dest, sha, name)
         except (OSError, ValueError) as e:
             print(f"third_party_sources: {name}: {e}", file=sys.stderr)
             status = 1

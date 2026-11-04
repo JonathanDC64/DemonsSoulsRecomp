@@ -223,11 +223,11 @@ bool start_again(const std::vector<std::string>& set, bool play) {
     envp.push_back(nullptr);
     for (std::string& a : args) argv.push_back(a.data());
     argv.push_back(nullptr);
-    // The program's file where it was started (report::program_path, read at the start): after an update that path
+    // The program's file where it was started (report::program_now, read at the start): after an update that path
     // holds the new version, while /proc/self/exe follows this one's file into .previous/. /proc/self/exe only if
     // the path cannot be started.
     pid_t child = 0;
-    const std::string exe = report::program_path().string();
+    const std::string exe = report::program_now().string();
     if ((exe.empty() || posix_spawn(&child, exe.c_str(), nullptr, nullptr, argv.data(), envp.data()) != 0) &&
         posix_spawn(&child, "/proc/self/exe", nullptr, nullptr, argv.data(), envp.data()) != 0)
         return false;

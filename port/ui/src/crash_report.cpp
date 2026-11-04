@@ -593,8 +593,10 @@ bool start_again(const std::vector<std::string>& set, bool play) {
         startup.StartupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
         startup.StartupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
     }
-    wchar_t exe[MAX_PATH];
-    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    wchar_t self[MAX_PATH];
+    GetModuleFileNameW(nullptr, self, MAX_PATH);
+    const std::wstring now = report::program_now().wstring();
+    const wchar_t* exe = now.empty() ? self : now.c_str();
     std::wstring command = GetCommandLineW();
     PROCESS_INFORMATION process{};
     const BOOL ok = CreateProcessW(exe, command.data(), nullptr, nullptr, listed ? TRUE : FALSE,

@@ -94,8 +94,8 @@ planned frame; the Python one's start up to 0.03 s later (the console's delay).
 
 ## The tester kit (`tools/testkit/`)
 
-`bash tools/testkit/run_tests.sh [game folder]`, from an install (the folder with `des_host`). Its README is for
-testers.
+`bash run_tests.sh <game folder>`. A player's download doesn't hold the kit, so a tester gets `tools/testkit` from the
+repository or the source zip. It finds the program through `setup/release-info.txt`. Its README is for testers.
 
 - **Route:** `DES_ROUTE=look` by default, built into the game. It does no walking: it stays where the save puts the
   player, so it suits any save. It takes a shot, three 5 s turns of the camera at full stick with a shot after each,

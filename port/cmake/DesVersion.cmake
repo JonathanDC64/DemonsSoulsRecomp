@@ -205,8 +205,8 @@ BEGIN
     BEGIN
       VALUE \"FileDescription\", \"${product}\"
       VALUE \"FileVersion\", \"${version}\"
-      VALUE \"InternalName\", \"des_boot\"
-      VALUE \"OriginalFilename\", \"des_boot.exe\"
+      VALUE \"InternalName\", \"${product}\"
+      VALUE \"OriginalFilename\", \"${product}.exe\"
       VALUE \"ProductName\", \"${product}\"
       VALUE \"ProductVersion\", \"${version}\"
       VALUE \"Comments\", \"ps3recomp ${ps3r}; game dump SHA-256 ${dump_text}\"

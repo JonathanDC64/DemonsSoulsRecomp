@@ -11,10 +11,11 @@ hardware.
 
 ## Run it
 
-From the game's folder (the one with `des_host` in it):
+Get this folder (`tools/testkit`) from the repository, or from the release's source zip, and give it the game's folder
+(the one you start the game from):
 
 ```
-bash tools/testkit/run_tests.sh
+bash run_tests.sh "<the game's folder>"
 ```
 
 For each renderer, the game starts, loads a copy of your save, turns the camera around where you stand, saves five

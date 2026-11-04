@@ -19,11 +19,7 @@
 namespace ui::updates {
 namespace {
 
-#ifdef _WIN32
-constexpr const char* kExe = "des_host.exe";  // the player's zip's (tools/release/package.py, update.py's EXE)
-#else
-constexpr const char* kExe = "des_host";
-#endif
+constexpr const char* kInfo = "setup/release-info.txt";  // a player's install's (tools/release/package.py, update.py)
 
 std::string utf8(const std::filesystem::path& p) {
     const std::u8string s = p.u8string();
@@ -129,7 +125,7 @@ bool possible() {
     std::error_code ec;
     const auto dir = install_dir();
     if (dir.empty()) return false;
-    if (!test && (!std::filesystem::is_regular_file(dir / "release-info.txt", ec) ||
+    if (!test && (!std::filesystem::is_regular_file(dir / kInfo, ec) ||
                   std::filesystem::exists(dir / ".git", ec)))
         return false;
     return !setup::python().empty() && !setup::engine_script().empty() && !setup::data_dir().empty();
@@ -206,7 +202,7 @@ std::string kept_version() {
         const std::string name = utf8(it->path().filename());
         long long n[3];
         std::error_code ec2;
-        if (!plain_version(name, n) || !std::filesystem::is_regular_file(it->path() / kExe, ec2)) continue;
+        if (!plain_version(name, n) || !std::filesystem::is_regular_file(it->path() / kInfo, ec2)) continue;
         if (std::lexicographical_compare(bestN, bestN + 3, n, n + 3)) {
             best = name;
             for (int i = 0; i < 3; ++i) bestN[i] = n[i];

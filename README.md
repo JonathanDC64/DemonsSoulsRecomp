@@ -85,7 +85,7 @@ Press **F1** (or **L3 + R3** on a controller) at any time to open the menu. Most
 These steps are for the release download.
 
 1. Download the zip for Windows (`DemonsSoulsRecomp-X.Y.Z-windows.zip`) or the tarball for Linux (`DemonsSoulsRecomp-X.Y.Z-linux.tar.xz`), and unpack it into a folder of its own.
-2. Start `des_host.exe` (on Linux, `des_host`). Setup opens.
+2. Start `Soulbrandt.exe` (on Linux, `Soulbrandt`). Setup opens.
 3. Pick how setup gets your game's files:
    - **Import from RPCS3**: setup finds the game in RPCS3's list and has your RPCS3 unlock its files. It can bring your save, trophies and some settings across too.
    - **I have decrypted files**: your disc copy, plus the 28 files you decrypted yourself (`EBOOT.elf`, the `.sdat` files and `libsre.prx`).
@@ -95,7 +95,7 @@ These steps are for the release download.
 
 Then press **Play**.
 
-Windows may warn you the first time you start `des_host.exe` ("Windows protected your PC"), because the program isn't signed yet. Click **More info**, then **Run anyway**.
+Windows may warn you the first time you start `Soulbrandt.exe` ("Windows protected your PC"), because the program isn't signed yet. Click **More info**, then **Run anyway**.
 
 If setup says your `libsre.prx` came out different, your RPCS3 probably has PS3 system software 4.90. Install 4.93 in RPCS3 (*File > Install Firmware*) and try again. If RPCS3 is set to run as administrator, setup cannot start it: untick that in `rpcs3.exe`'s Properties.
 

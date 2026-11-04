@@ -7,11 +7,9 @@
   package.py build --rev REV [--ps3recomp DIR] [--host EXE] [--linux-host DIR] [--out DIR] [--dry-run]
       Writes <out>/DemonsSoulsRecomp-<version>-source.zip and <out>/SHA256SUMS, and leaves the zipped files in
       <out>/stage for the game-file check. REV is the release tag, or any commit for a dry run. --host: also
-      <out>/DemonsSoulsRecomp-<version>-windows.zip, the player's download: the same files with EXE (host.yml's
-      des_host.exe) and what is beside it (des_host.map, FFmpeg's avcodec and avutil DLLs, their licence in
-      licenses/) at the top, where the exe finds setup's engine (tools/setup),
-      and release-files.txt, the list of the zip's files, which tells the update which files are the program's
-      (tools/setup/des_setup/update.py, docs/105).
+      <out>/DemonsSoulsRecomp-<version>-windows.zip, the player's download (the next paragraph but one), and
+      <out>/DemonsSoulsRecomp-<version>-symbols.zip, the hosts' linker maps, which symbolize crash addresses in a
+      player's report.
 
 The zip, under DemonsSoulsRecomp-<version>/: the port's tracked files at REV (without .github/, .claude/, .trail/ and
 docs/); in ps3recomp/, the fork's tracked files at the pinned commit (without .github/, .trail/, docs/, scratch/,
@@ -20,10 +18,16 @@ GitHub) with a copy of the pin; and release-info.txt (the
 version and both commits; port/cmake/DesVersion.cmake reads it where there is no git). Nothing in either repository
 is made from the game (the game-file check), so nothing in the zip is.
 
---linux-host DIR also writes <out>/DemonsSoulsRecomp-<version>-linux.tar.xz, the Linux player's download: the same
-files with DIR's at the top (host.yml's host-linux folder: des_host, its map, the SDL2, vkd3d and FFmpeg libraries
-it finds beside it, and their licences in licenses/) and its own release-files.txt. A tar, which keeps the execute bits that
-a zip unpacked by Python loses, with the same fixed dates, owner and modes.
+The player's download holds what the program needs and no more (docs/54 section 8.5). At its top: the program, named
+after PRODUCT_NAME (host.yml's des_host.exe, renamed), FFmpeg's DLLs, README.md, LICENSE and licenses/. In setup/: the
+files of the tree that player-files.txt lists, in the tree's layout, where the program finds setup's engine; its
+release-info.txt, with the program's name in exe=; and release-files.txt, the list of the download's files, which tells
+the update which files are the program's (tools/setup/des_setup/update.py, docs/105).
+
+--linux-host DIR also writes <out>/DemonsSoulsRecomp-<version>-linux.tar.xz, the Linux player's download: the same,
+with DIR's files at the top (host.yml's host-linux folder: des_host, renamed, the SDL2, vkd3d and FFmpeg libraries it
+finds beside it, and their licences in licenses/). A tar, which keeps the execute bits that a zip unpacked by Python
+loses, with the same fixed dates, owner and modes.
 
 The same REV gives the same zip: entries sorted, dated with REV's commit time, fixed permissions, LF line endings as
 committed. (Deflate output can differ between zlib versions; the release workflow pins Python.) --ps3recomp takes the
@@ -31,6 +35,7 @@ fork from a local checkout instead of fetching it; --dry-run allows a revision w
 Standard library only.
 """
 import argparse
+import ast
 import hashlib
 import io
 import lzma
@@ -53,6 +58,9 @@ FORK_TAG_RE = re.compile(r"^des-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$")
 PORT_SKIP = (re.compile(r"^\.github/"), re.compile(r"^\.claude/"), re.compile(r"^\.trail/"), re.compile(r"^docs/"))
 PS3RECOMP_SKIP = (re.compile(r"^\.github/"), re.compile(r"^\.trail/"), re.compile(r"^docs/"), re.compile(r"^scratch/"),
                   re.compile(r"^packaging/"), re.compile(r"^runtime/spu/tests/out_[^/]+/"))
+PLAYER_LIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "player-files.txt")
+PLAYER_TOP = ("LICENSE", "README.md")   # of the tree's files, those at the top of the player's download
+SETUP = "setup"                         # the folder beside the program with the rest (setup_engine.cpp, update.py)
 # Plain text, so the archives come out byte for byte as committed (LF) whatever this machine's git settings.
 GIT_PLAIN = ["-c", "core.autocrlf=false", "-c", "core.eol=lf"]
 
@@ -164,9 +172,84 @@ def write_tar_xz(path, files, when):
                     tar.addfile(info, io.BytesIO(data))
 
 
-def linux_host_files(folder, top):
-    """The Linux tarball's extra entries: every file in host.yml's host-linux folder, under the same relative path
-    at the top of the tree; des_host executable, the rest (libraries, map, licences) read-only data."""
+def program_name(rev):
+    """The program's file name in a player's download, without an extension: PRODUCT_NAME at rev, less what a file name
+    cannot hold (des_host, as CI builds it, for a revision before the file)."""
+    name = re.sub(r"[^A-Za-z0-9 ._-]", "", try_git(["show", f"{rev}:PRODUCT_NAME"]) or "").strip(" .")
+    return name or "des_host"
+
+
+def player_patterns():
+    """player-files.txt's lines, each with its regular expression."""
+    patterns = []
+    with open(PLAYER_LIST, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                rx = re.escape(line).replace(r"\*\*", ".*").replace(r"\*", "[^/]*")
+                patterns.append((line, re.compile(rx + r"\Z")))
+    return patterns
+
+
+SCRIPT_FOLDERS = ("scripts", "ps3recomp/tools")   # (the lift's scripts import from these two, build_spu.py from both)
+
+
+def imported_names(source):
+    """The modules a script imports, anywhere in it (build_spu.py imports inside its functions)."""
+    names = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            names.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            names.add(node.module.split(".")[0])
+    return names
+
+
+def check_imports(files, kept, top):
+    """A kept script that imports one of the tree's scripts needs that one kept too: Python would only say so when
+    setup reaches that line on a player's PC."""
+    tree = {name[len(top):] for name, _mode, _data in files}
+    for name, _mode, data in files:
+        rel = name[len(top):]
+        if rel not in kept or not rel.endswith(".py") or not rel.startswith(tuple(f + "/" for f in SCRIPT_FOLDERS)):
+            continue
+        for module in imported_names(data):
+            for folder in SCRIPT_FOLDERS:
+                if f"{folder}/{module}.py" in tree and f"{folder}/{module}.py" not in kept:
+                    raise Error(f"{rel} imports {folder}/{module}.py, which player-files.txt leaves out")
+
+
+def player_tree(files, top, fork):
+    """Of the tree's files, what a player's download holds: PLAYER_TOP where it is, player-files.txt's under setup/.
+    fork: the tree has ps3recomp/ (a dry run of a revision without a pin has not)."""
+    patterns = player_patterns()
+    matched, entries, kept = set(), [], set()
+    for name, mode, data in files:
+        rel = name[len(top):]
+        if rel in PLAYER_TOP:
+            entries.append((name, mode, data))
+        hits = [line for line, rx in patterns if rx.match(rel)]
+        matched.update(hits)
+        if hits:
+            kept.add(rel)
+            entries.append((f"{top}{SETUP}/{rel}", mode, data))
+    check_imports(files, kept, top)
+    unused = [line for line, _rx in patterns if line not in matched and (fork or not line.startswith("ps3recomp/"))]
+    if unused:
+        raise Error(f"player-files.txt: no file for {', '.join(unused)}")
+    have = {name[len(top):] for name, _mode, _data in entries}
+    for desc in ("game_build.json", "game_build_linux.json"):
+        text = next((data for name, _mode, data in entries if name.endswith(f"/des_setup/{desc}")), b"").decode("utf-8")
+        for ref in re.findall(r"\{src\}/([^\"\s]+\.(?:c|cpp|def|h))\b", text):
+            if f"{SETUP}/{ref}" not in have and (fork or not ref.startswith("ps3recomp/")):
+                raise Error(f"{desc} uses {ref}, which player-files.txt leaves out")
+    return entries
+
+
+def linux_host_files(folder, top, program):
+    """The Linux tarball's extra entries: every file in host.yml's host-linux folder but the map (in the symbols zip),
+    under the same relative path at the top of the tree; des_host, as `program`, executable, the rest (libraries,
+    licences) read-only data."""
     if not os.path.isfile(os.path.join(folder, "des_host")):
         raise Error(f"--linux-host {folder}: no des_host in it")
     entries = []
@@ -177,8 +260,11 @@ def linux_host_files(folder, top):
             if os.path.islink(path) or not os.path.isfile(path):
                 raise Error(f"--linux-host: {path} is not a regular file")
             rel = os.path.relpath(path, folder).replace(os.sep, "/")
+            if rel.endswith(".map"):
+                continue
             with open(path, "rb") as f:
-                entries.append((top + rel, 0o755 if rel == "des_host" else 0o644, f.read()))
+                entries.append((top + (program if rel == "des_host" else rel), 0o755 if rel == "des_host" else 0o644,
+                                f.read()))
     return entries
 
 
@@ -213,19 +299,14 @@ def cmd_check_tag(args):
     return 1 if problems else 0
 
 
-def host_files(exe, top):
-    """The player's zip's extra entries, at the top of the tree: the host exe as des_host.exe, its linker map (which
-    symbolizes crash addresses in it) when one is beside it, and what host.yml stages beside it for the movies:
-    FFmpeg's DLLs (avcodec-*.dll, avutil-*.dll) and licenses/ with their licence."""
+def host_files(exe, top, program):
+    """The player's zip's extra entries, at the top of the tree: the host exe as `program`, and what host.yml stages
+    beside it for the movies: FFmpeg's DLLs (avcodec-*.dll, avutil-*.dll) and licenses/ with their licence."""
     if not os.path.isfile(exe):
         raise Error(f"--host {exe}: no such file")
-    entries = []
     folder = os.path.dirname(os.path.abspath(exe))
-    mapfile = os.path.splitext(exe)[0] + ".map"
-    for path, name, mode in ((exe, "des_host.exe", 0o755), (mapfile, "des_host.map", 0o644)):
-        if os.path.isfile(path):
-            with open(path, "rb") as f:
-                entries.append((top + name, mode, f.read()))
+    with open(exe, "rb") as f:
+        entries = [(top + program, 0o755, f.read())]
     for n in sorted(os.listdir(folder)):
         if re.fullmatch(r"(avcodec|avutil)-\d+\.dll", n) and os.path.isfile(os.path.join(folder, n)):
             with open(os.path.join(folder, n), "rb") as f:
@@ -243,11 +324,22 @@ def host_files(exe, top):
     return entries
 
 
-MANIFEST = "release-files.txt"
+MANIFEST = f"{SETUP}/release-files.txt"
+
+
+def host_maps(exe, linux_folder):
+    """The hosts' linker maps, for the symbols zip: (path in it, data)."""
+    maps = []
+    for rel, path in (("windows/des_host.map", os.path.splitext(exe)[0] + ".map" if exe else None),
+                      ("linux/des_host.map", os.path.join(linux_folder, "des_host.map") if linux_folder else None)):
+        if path and os.path.isfile(path):
+            with open(path, "rb") as f:
+                maps.append((rel, f.read()))
+    return maps
 
 
 def manifest(files, top):
-    """release-files.txt for a zip of `files` (itself listed too): the update swaps the names at the top of the
+    """setup/release-files.txt for a zip of `files` (itself listed too): the update swaps the names at the top of the
     install that it lists, and leaves the player's own files alone (docs/105)."""
     names = sorted({f[0][len(top):] for f in files} | {MANIFEST})
     text = ("# Written by tools/release/package.py: the files of this release, which an update replaces (docs/105).\n"
@@ -295,12 +387,23 @@ def cmd_build(args):
         with open(dest, "wb") as f:
             f.write(data)
     zips = [(f"{NAME}-{version}-source.zip", files)]
+    program = program_name(sha)
+    tree = player_tree(files, top, pin is not None) if args.host or args.linux_host else []
+
+    def release_info(exe):
+        """setup/release-info.txt in a player's download: the source's, and the program's file name (update.py)."""
+        return (f"{top}{SETUP}/release-info.txt", 0o644, ("\n".join(info + [f"exe={exe}"]) + "\n").encode())
+
     if args.host:
-        player = files + host_files(args.host, top)
+        player = tree + host_files(args.host, top, program + ".exe") + [release_info(program + ".exe")]
         names = [f[0] for f in player]
         if len(names) != len(set(names)):
             raise Error("--host: a file beside the exe has the path of a packaged file")
         zips.append((f"{NAME}-{version}-windows.zip", player + [manifest(player, top)]))
+    maps = host_maps(args.host, args.linux_host)
+    if maps:
+        zips.append((f"{NAME}-{version}-symbols.zip",
+                     [(f"{NAME}-{version}-symbols/{rel}", 0o644, data) for rel, data in maps]))
     sums = []
     for zip_name, zipped in zips:
         write_zip(os.path.join(out, zip_name), zipped, when)
@@ -312,7 +415,7 @@ def cmd_build(args):
 
     if args.linux_host:
         tar_name = f"{NAME}-{version}-linux.tar.xz"
-        tarred = files + linux_host_files(args.linux_host, top)
+        tarred = tree + linux_host_files(args.linux_host, top, program) + [release_info(program)]
         names = [f[0] for f in tarred]
         if len(names) != len(set(names)):
             raise Error("--linux-host: a file of the host folder has the path of a packaged file")

@@ -78,7 +78,7 @@ screen does not offer it straight back.
   500 characters), then `@done ok`. Nothing newer: `@done ok` alone. No answer: `@error download - <sentence>` and
   `@done failed`. The protocol stays version 2: the host ignores keywords it does not know (protocol.py).
 - **The host starts it** at the UI's start when `updates::wanted()` (`port/ui/src/updates.cpp`): a release version, a player's install
-  (`release-info.txt` beside the exe, no `.git`), the engine and its Python there (setup fetches the Python at its first
+  (`setup/release-info.txt` beside the exe, no `.git`), the engine and its Python there (setup fetches the Python at its first
   run, so a first start before setup does not check), not a test run, and `update_check` on.
 
 ## 4. The update
@@ -92,7 +92,8 @@ screen does not offer it straight back.
    SHA-256 checked before it is used. A zip that does not match is deleted. Free space first: three times the zip, plus
    the game build's size, on both the install's drive and the data folder's.
 4. **Unpack** into `DIR/.update/NEW`, with fetch.py's checks (no absolute paths, no `..`, no links). The zip's
-   `DemonsSoulsRecomp-NEW/` must hold the exe and `tools/setup/run_setup.py`.
+   `DemonsSoulsRecomp-NEW/` must hold the exe that its `setup/release-info.txt` names and
+   `setup/tools/setup/run_setup.py`.
 5. **The game build is copied** into `<data>/previous/OLD`: `game/` (the module, about 280 MB) and `setup/ready.txt`.
    A copy, not a move: the rebuild starts from the module there, and a version whose game code did not change keeps
    it (its journal steps are all skipped).
@@ -230,10 +231,12 @@ An update starts the new version's program with what the old one passes, so thes
 version:
 
 - `DES_UI_OPEN=setup-run` opens setup's progress screen and runs setup at once, with the last run's folders.
-- The player's zip is `DemonsSoulsRecomp-X.Y.Z-windows.zip` with `DemonsSoulsRecomp-X.Y.Z/` inside, the exe
-  `des_host.exe` and `release-files.txt` at its top, beside `SHA256SUMS` in the same release. On Linux it is
-  `DemonsSoulsRecomp-X.Y.Z-linux.tar.xz` (`package.py --linux-host`), the same layout with `des_host` (a tar keeps
-  its execute bit; `fetch.unpack` takes both).
+- The player's zip is `DemonsSoulsRecomp-X.Y.Z-windows.zip` with `DemonsSoulsRecomp-X.Y.Z/` inside, beside
+  `SHA256SUMS` in the same release. Its `setup/release-info.txt` names the program in `exe=`, at the top of that folder,
+  and its `setup/release-files.txt` lists its files (docs/54 section 8.5). The program's name may change from one
+  release to the next: the update follows `exe=`, and `report::program_now` starts the new name. On Linux it is
+  `DemonsSoulsRecomp-X.Y.Z-linux.tar.xz` (`package.py --linux-host`), the same layout (a tar keeps the program's
+  execute bit; `fetch.unpack` takes both).
 - `SHA256SUMS.sig` beside `SHA256SUMS`, an SSHSIG in the namespace `demons-souls-recomp-release`, by a key the
   previous version's `release-keys.txt` lists.
 - `update-back` reads `.previous/<version>` and `<data>/previous/<version>`, as written here.

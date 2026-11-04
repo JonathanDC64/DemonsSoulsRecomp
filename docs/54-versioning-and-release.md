@@ -553,9 +553,9 @@ Nothing is published. You read the draft and publish it. Only this workflow has 
 ### 8.2a The player's zip (10-23)
 
 - **Name.** `DemonsSoulsRecomp-<version>-windows.zip`, beside the source zip, and listed in the same `SHA256SUMS`.
-- **Holds** the source zip's files, plus `des_host.exe` and `des_host.map` at the top of the tree. The exe finds setup's engine (`tools/setup`) beside it (setup_engine.cpp), and setup builds the game from the source next to it. So a player unzips it anywhere and starts the exe.
+- **Holds what the program needs and no more** (since 11-04; section 8.5).
 - **The exe** is host.yml's, built from the tag. release.yml calls host.yml as its first job (`workflow_call`), with all of host.yml's checks: no Visual C++ runtime DLL among the imports, not a developer build, and the game-file check with the host's allow list. The draft job downloads that artifact.
-- **`package.py build --host <exe>`** writes it. The map is taken from beside the exe when it is there. The zip is as deterministic as the source zip, apart from the exe's own bytes.
+- **`package.py build --host <exe>`** writes it. The map beside the exe goes in `-symbols.zip` (section 8.5). The zip is as deterministic as the source zip, apart from the exe's own bytes.
 - **The dry run** (release-check.yml) makes it twice around a stand-in exe, compares the sums, and checks that the exe lands at the top.
 - **Measured (10-23)**, at master f4d0472 with a local host build:
   - 1,037 files, 11.1 MB: the source zip's 1,035 files (6.5 MB), plus the exe and its map.
@@ -596,6 +596,56 @@ Nothing is published. You read the draft and publish it. Only this workflow has 
 5. **Sign it:** `python tools/release/sign_release.py v0.1.0 --key <your key file>` (it checks the draft's files and
    their attestations first). Then read the draft release and publish it.
 6. In the next PR, move `VERSION` to 0.1.1 or 0.2.0.
+
+### 8.5 What a player's download holds (11-04)
+
+The user asked for the download to hold only what the program needs. It used to be the whole source tree with the
+program on top: 1,440 files, with `port/`, `ps3recomp/`, `scripts/` and `tools/` beside the exe, and files like
+`.gitignore`. The source tree stays in its own zip, which also covers the licences' source terms.
+
+At the top of the folder:
+- **The program**, named after `PRODUCT_NAME`: `Soulbrandt.exe`, or `Soulbrandt` on Linux. CI still builds it as
+  `des_host`, as do the developers' builds; `package.py` gives it its name.
+- FFmpeg's DLLs on Windows; the SDL2, vkd3d and FFmpeg libraries on Linux. The program looks for them beside itself.
+- `README.md`, `LICENSE` and `licenses/`.
+- **`setup/`**, which has the rest.
+
+In `setup/`:
+- The files of the tree that `tools/release/player-files.txt` lists, in the tree's layout, so the engine's paths (its
+  `SRC`) are the same as in a source tree.
+- `release-info.txt`: the source's, with `exe=` as well, the program's file name (update.py).
+- `release-files.txt`: the download's files (update.py).
+
+The program looks for setup's engine and for the pipeline list (`port/data/pso_index/`) in `setup/` first.
+
+**The linker maps** are in `DemonsSoulsRecomp-<version>-symbols.zip`, a file of the release of its own. They are 20 MB
+each, unpacked, and only a developer reading a player's crash report needs them.
+
+**How the list was made (measured on the draft of 11-04).** A whole setup from the old zip, with every file opened by
+its Python processes recorded through an audit hook (`sys.addaudithook`), and the compile's own record of the headers
+it read (the journal's `deps`):
+- The engine opened 265 files. Most of its scripts were only summed: `lift.py`'s `toolset` sums every `.py` in
+  `ps3recomp/tools` and `scripts`. What the lift runs and imports is 12 of the 118 tools and 5 of the scripts. Those
+  were found by following the imports, and a real setup from the trimmed zip then found two the first list missed, as
+  `build_spu.py` imports them inside a function.
+- `gen_hle_nids.py --all` reads 93 of the fork's modules (`discover_all`: the `cell*`, `sce*` and `sys*` files).
+- The compile read 17 headers of the tree. The whole of `ps3recomp/include` goes, and the `.h` files beside the runtime's
+  sources, as the Linux build's list differs a little and they are small.
+- The running program reads one file of the tree, the pipeline list (`read_index`). It found its fonts and pages in
+  itself already.
+
+**What holds the list to the truth:**
+- `package.py` fails on a line that matches nothing, on a source or header `game_build*.json` names that no line
+  takes, and on a kept script that imports one of the tree's scripts that no line takes, wherever in the script.
+- release-check.yml starts each of the lift's tools from the packaged tree, and compares `gen_hle_nids.py --all`'s table
+  with the whole tree's.
+- A real setup is the check before a release (`zt` in the release checklist).
+
+**The result** at the fork's `des-0.14.0-2`: 222 files and 9.6 MB, down from 1,440 files and 18.2 MB.
+
+**An install from before this** cannot update itself to this layout: its updater looks for `des_host.exe` at the top
+of the new download, says the download isn't a release, and changes nothing. No version with that layout was ever
+published. The tester's zips of 10-30 are the only ones, and a tester unpacks the new one and copies `gamedata/` across.
 
 ## 9. Game-file check
 

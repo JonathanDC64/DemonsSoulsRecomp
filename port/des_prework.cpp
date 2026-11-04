@@ -168,8 +168,8 @@ bool read_text(const std::filesystem::path& path, std::string& out)
 }
 
 /* The pipeline index for the game's version: DES_PSO_INDEX's file when it is set (0: none), else
- * port/data/pso_index/<game_tag>.tsv in this program's folder or up to three above it (a release has
- * port/ beside the exe, a build tree further up). Empty if there is none; `name` says which it was. */
+ * port/data/pso_index/<game_tag>.tsv in this program's setup/ folder (a release), or in its folder or up to
+ * three above it (a build tree). Empty if there is none; `name` says which it was. */
 std::string read_index(std::string& name)
 {
     std::string text;
@@ -184,6 +184,11 @@ std::string read_index(std::string& name)
     name = game_tag() + ".tsv";
     std::error_code ec;
     std::filesystem::path dir = exe_dir();
+    if (const std::filesystem::path f = dir / "setup" / "port" / "data" / "pso_index" / name;
+        !dir.empty() && std::filesystem::is_regular_file(f, ec)) {
+        read_text(f, text);
+        return text;
+    }
     for (int up = 0; up <= 3 && !dir.empty(); ++up) {
         const std::filesystem::path f = dir / "port" / "data" / "pso_index" / name;
         if (std::filesystem::is_regular_file(f, ec)) {

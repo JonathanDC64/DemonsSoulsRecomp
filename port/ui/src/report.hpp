@@ -28,6 +28,9 @@ void set_data_dir(const std::filesystem::path& dir);  // (the crash dialog proce
 // The folder of the running exe, and the exe itself; empty if it cannot be told.
 std::filesystem::path program_dir();
 std::filesystem::path program_path();
+// The program's file as it is now: program_path, unless an update has given the program another name (a new
+// PRODUCT_NAME), when it is the name in setup/release-info.txt beside it.
+std::filesystem::path program_now();
 // What tells this PC from others, the same at every start: the system's id for this installation (Windows'
 // MachineGuid, Linux's /etc/machine-id), else the PC's and the user's names and the data folder. Never shown or sent:
 // settings.cpp hashes it into the Custom server's mark (custom_chosen_here).

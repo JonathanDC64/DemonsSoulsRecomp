@@ -7,8 +7,9 @@ read it from there, so a rename is that one line. This fails, with each place na
   - when one still has a former shown name (FORMER below; a rename adds the old name to it);
   - when the README's title or PRIVACY.md's server name is not the name. Those two are written by hand, so this is
     what catches a rename that missed them.
-The technical name DemonsSoulsRecomp (the downloads, the folders, the update feed) is a different thing and is not
-looked for.
+The technical name DemonsSoulsRecomp (the downloads, the folders, the signature) is a different thing and is not
+looked for, and neither is the repository's address (JonathanDC64/<repository>, in links and the update feed),
+which has its own name.
 
     python tools/ci/check_product_name.py
 """
@@ -24,6 +25,7 @@ FORMER = ["Demon's Souls Recomp", "Demon’s Souls Recomp"]
 SKIP = (re.compile(r"^docs/"), re.compile(r"^\.trail/"), re.compile(r"\.md$"), re.compile(r"^PRODUCT_NAME$"),
         re.compile(r"^tools/ci/check_product_name\.py$"))
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 '.:-]*$")   # (as port/cmake/DesVersion.cmake takes it)
+REPOSITORY_RE = re.compile(r"JonathanDC64/[A-Za-z0-9._-]+")   # (a repository's address, left out of the lines)
 
 
 def main():
@@ -49,6 +51,7 @@ def main():
             continue   # (a binary file)
         text = data.decode("utf-8", "replace")
         for n, line in enumerate(text.splitlines(), 1):
+            line = REPOSITORY_RE.sub("", line)
             if name and name in line:
                 problems.append((f"{path}:{n}", f"the name {name!r} is written out: read PRODUCT_NAME instead"))
             for old in FORMER:

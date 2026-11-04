@@ -1,8 +1,8 @@
 /* Use several soul items at once (docs/47 section 2, approach C).
  *
- * DES_SOULS_AT_ONCE=1 (Settings, Game; off by default): Use on a stack of soul
- * items (Unknown Soldier's Soul to Legendary Hero's Soul, goods 1025-1032) asks
- * how many, in the game's own count picker, the one Drop opens, with its text
+ * DES_SOULS_AT_ONCE=1 (Settings, Game; on by default, 0 turns it off): Use on
+ * a stack of soul items (Unknown Soldier's Soul to Legendary Hero's Soul, goods
+ * 1025-1032) asks how many, in the game's own count picker, the one Drop opens, with its text
  * changed. OK uses them: one crush animation, and the souls of all of them.
  * Boss souls and every other item are left alone.
  *
@@ -257,8 +257,8 @@ std::atomic<bool> s_later_set{false};
 
 bool on()
 {
-    static int s_on = 0;
-    PS3_KNOB(s_on, ps3_env_int("DES_SOULS_AT_ONCE", 0));
+    static int s_on = 1;
+    PS3_KNOB(s_on, ps3_env_int("DES_SOULS_AT_ONCE", 1));
     return s_on != 0;
 }
 

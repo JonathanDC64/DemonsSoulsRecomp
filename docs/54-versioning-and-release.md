@@ -529,8 +529,9 @@ Nothing is published. You read the draft and publish it. Only this workflow has 
 
 - **Name.** `DemonsSoulsRecomp-<version>-source.zip`, next to `SHA256SUMS`.
 - **Holds:**
-  - the port at the tag (`git archive`), without `.github/` and `.claude/`;
-  - ps3recomp at the pinned commit, in `ps3recomp/`, without `.github/`, `scratch/`, `packaging/` and the SPU test outputs;
+  - the port at the tag (`git archive`), without `.github/`, `.claude/`, `.trail/` and `docs/`;
+  - ps3recomp at the pinned commit, in `ps3recomp/`, without `.github/`, `.trail/`, `docs/`, `scratch/`, `packaging/` and the SPU test outputs;
+  - the docs are read on GitHub. The Windows and Linux downloads are this zip plus the program, so they leave the same folders out.
   - `ps3recomp/ps3recomp.pin`, the copy the CMake check and the version use;
   - `release-info.txt` with version, commit, ps3recomp_tag and ps3recomp_commit.
 - **Does not hold:** anything game-derived, any build output, any binary. Both projects are MIT-licensed (read, their LICENSE files).

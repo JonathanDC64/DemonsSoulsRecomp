@@ -13,9 +13,10 @@
       and release-files.txt, the list of the zip's files, which tells the update which files are the program's
       (tools/setup/des_setup/update.py, docs/105).
 
-The zip, under DemonsSoulsRecomp-<version>/: the port's tracked files at REV (without .github/ and .claude/); in
-ps3recomp/, the fork's tracked files at the pinned commit (without .github/, scratch/, packaging/ and the runtime's
-lifted SPU test programs, none of which a build of the port uses) with a copy of the pin; and release-info.txt (the
+The zip, under DemonsSoulsRecomp-<version>/: the port's tracked files at REV (without .github/, .claude/, .trail/ and
+docs/); in ps3recomp/, the fork's tracked files at the pinned commit (without .github/, .trail/, docs/, scratch/,
+packaging/ and the runtime's lifted SPU test programs, none of which a build of the port uses; the docs are read on
+GitHub) with a copy of the pin; and release-info.txt (the
 version and both commits; port/cmake/DesVersion.cmake reads it where there is no git). Nothing in either repository
 is made from the game (the game-file check), so nothing in the zip is.
 
@@ -49,9 +50,9 @@ NAME = "DemonsSoulsRecomp"
 TAG_RE = re.compile(r"^v([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$")
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 FORK_TAG_RE = re.compile(r"^des-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$")
-PORT_SKIP = (re.compile(r"^\.github/"), re.compile(r"^\.claude/"))
-PS3RECOMP_SKIP = (re.compile(r"^\.github/"), re.compile(r"^scratch/"), re.compile(r"^packaging/"),
-                  re.compile(r"^runtime/spu/tests/out_[^/]+/"))
+PORT_SKIP = (re.compile(r"^\.github/"), re.compile(r"^\.claude/"), re.compile(r"^\.trail/"), re.compile(r"^docs/"))
+PS3RECOMP_SKIP = (re.compile(r"^\.github/"), re.compile(r"^\.trail/"), re.compile(r"^docs/"), re.compile(r"^scratch/"),
+                  re.compile(r"^packaging/"), re.compile(r"^runtime/spu/tests/out_[^/]+/"))
 # Plain text, so the archives come out byte for byte as committed (LF) whatever this machine's git settings.
 GIT_PLAIN = ["-c", "core.autocrlf=false", "-c", "core.eol=lf"]
 

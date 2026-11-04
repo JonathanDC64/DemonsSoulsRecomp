@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # run_tests.sh: the tester kit of the Demon's Souls PC port (docs/128).
 #
-#   bash tools/testkit/run_tests.sh [game folder]
+#   bash run_tests.sh <game folder>
 #
-# The game folder is the one with des_host in it (default: two folders up, the
-# install this script came with). For each renderer the game plays a short
+# The game folder is the one the game starts from (default: two folders up, for
+# a build beside this script). For each renderer the game plays a short
 # route twice, first with an empty shader cache and then with the one the first
 # run made. It loads your save, stays where the save puts you, turns the camera,
 # saves five screenshots and records frame times, then ends by itself. It plays
@@ -35,6 +35,9 @@ case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) OS=windows; EXE=des_host.exe; DEF="d3d12 vulkan" ;;
   *)                    OS=other;   EXE=des_host;     DEF="" ;;
 esac
+# A player's install names its program in setup/release-info.txt.
+named=$(sed -n 's/^exe=//p' "$GAME/setup/release-info.txt" 2>/dev/null | tr -d '')
+[ -n "$named" ] && EXE=$named
 EXE=${DES_KIT_EXE:-$GAME/$EXE}
 RENDERERS=${DES_KIT_RENDERERS:-$DEF}
 ROUTE=${DES_KIT_ROUTE:-look}

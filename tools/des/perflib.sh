@@ -42,11 +42,14 @@ PERF_USER_SAVE="$DES_ROOT/gamedata/dev_hdd0/home/00000001/savedata"   # levelcap
 # The whole listing is read before it is tested: `| grep -q` under pipefail
 # reads false when tasklist is still writing as grep exits. A test run's game
 # is always a staged des_boot.exe (des_stage); a player's start of a split
-# build is des_host.exe, and counts as the user's game too.
+# build is des_host.exe, or a release's program, named after PRODUCT_NAME, and
+# counts as the user's game too.
 perf_game_up() {
-  local out
+  local out name
   out=$(tasklist //NH 2>/dev/null | tr '[:upper:]' '[:lower:]')
-  [[ "$out" == *des_boot.exe* || "$out" == *des_host.exe* ]]
+  name=$(tr -d '
+' < "$DES_ROOT/PRODUCT_NAME" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+  [[ "$out" == *des_boot.exe* || "$out" == *des_host.exe* || ( -n "$name" && "$out" == *"$name.exe"* ) ]]
 }
 
 perf_refuse_if_game() {

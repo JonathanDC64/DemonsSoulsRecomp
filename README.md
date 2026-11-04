@@ -4,6 +4,10 @@
 
 **Demon's Souls, running natively on PC.**
 
+[![release](https://img.shields.io/github/v/release/JonathanDC64/DemonsSoulsRecomp?filter=v%2A&sort=semver&display_name=tag&label=release&color=orange)](https://github.com/JonathanDC64/DemonsSoulsRecomp/releases/latest)
+[![downloads](https://img.shields.io/github/downloads/JonathanDC64/DemonsSoulsRecomp/latest/total?label=downloads&color=brightgreen)](https://github.com/JonathanDC64/DemonsSoulsRecomp/releases/latest)
+[![Discord](https://img.shields.io/discord/1565536292324769832?label=Discord&logo=discord&logoColor=white&color=5865F2)](https://discord.gg/BzmwDeca8s)
+
 </div>
 
 This is a PC port of *Demon's Souls* (PS3, 2009). The game's original code has been converted to run directly on Windows and Linux, with no emulator.
@@ -14,7 +18,15 @@ You need your own copy of the game: the US version, **BLUS30443** (version 1.00)
 
 **0.1.0, the first release, is an alpha.** Download it from the [Releases](https://github.com/JonathanDC64/DemonsSoulsRecomp/releases) page.
 
-The game plays from start to finish (a tester has beaten it), but not every part has been tried on every setting, so expect bugs. The [known problems](#known-problems) are below; please [report](#problems) anything else you find.
+The game plays from start to finish (a tester has beaten it), but not every part has been tried on every setting, so expect bugs. What [isn't supported yet](#not-supported-yet) is below; please [report](#problems) anything you find. Questions and help: [Discord](https://discord.gg/BzmwDeca8s).
+
+## Highlights
+
+- Up to 240 fps or unlocked, with the game's timing fixed. Up to 4K, ultrawide and HDR.
+- Online play on this project's own server: messages, bloodstains, ghosts, co-op and invasions.
+- Roll in any direction while locked on, not only forward, back, left or right.
+- A stat respec in the Nexus (optional): get back the souls your levels cost and spend them again.
+- Keyboard and mouse, Xbox controllers, DualSense and DualShock 4.
 
 ## Features
 
@@ -36,7 +48,7 @@ Press **F1** (or **L3 + R3** on a controller) at any time to open the menu. Most
 - Keyboard and mouse, laid out like the Souls games on PC. To turn the camera with the mouse, turn on **Mouse look** in Settings > Controls.
 - Change which buttons and keys do what.
 - Mouse sensitivity, inverted axes, and switching lock-on targets with a flick of the mouse.
-- Locked-on rolls go where the stick points. Turn this off for the original's four directions.
+- **Roll in any direction while locked on**: the roll goes where the stick points. It's on by default; turn off **Roll toward the stick** in Settings > Controls for the original's four directions.
 - The mouse in the game's own menus: point and click. Experimental, and off by default.
 
 **HUD**
@@ -45,9 +57,14 @@ Press **F1** (or **L3 + R3** on a controller) at any time to open the menu. Most
 
 **Game**
 - Skip the logos and the opening movie, and go straight into your last save.
-- Two optional extras, both off by default:
-  - use several soul items at once, as Drop does;
-  - a stat respec in the Nexus, from the Maiden in Black.
+- **Stat respec**: the Maiden in Black, or the statue in front of where you wake in the Nexus, puts your stats back to your class's and gives back the souls your levels cost, to spend again. Off by default: turn on **Stat respec in the Nexus** in Settings > Game.
+- Use several soul items at once, as Drop does. Off by default.
+
+**Online**
+- On by default, on this project's own server: messages, bloodstains, ghosts, co-op and invasions.
+- Setup asks for your online name. You can change it, or turn online play off, in Settings > Network.
+- A matchmaking password, so you meet only your friends.
+- Show or hide other players' messages, bloodstains and ghosts.
 
 **The program**
 - A setup that builds the game from your copy, with an Original and an Enhanced preset (see [How to play](#how-to-play)).
@@ -84,7 +101,7 @@ If setup says your `libsre.prx` came out different, your RPCS3 probably has PS3 
 
 ### Linux
 
-CI builds the Linux program on every change, and each release will include a Linux download. It needs x86-64 Linux with glibc 2.35 or newer, a Vulkan driver, and `curl` and `tar`. Nothing else needs installing. The game renders through vkd3d (DirectX 12 on Vulkan).
+CI builds the Linux program on every change, and each release includes a Linux download. It needs x86-64 Linux with glibc 2.35 or newer, a Vulkan driver, and `curl` and `tar`. Nothing else needs installing. The game renders through vkd3d (DirectX 12 on Vulkan).
 
 Linux is newer and less tested than Windows. So far it has run in WSL (Ubuntu 24.04), not yet on a real Linux PC or a Steam Deck ([docs/106](docs/106-setup-on-linux.md)).
 
@@ -92,31 +109,18 @@ macOS is not supported.
 
 ### Online play
 
-Online play is not ready. Early work on it is in the game (Settings > Network), but that work is paused and it is largely untested. You can turn it off in Settings > Network > Online. What the project's server would keep about you is in the [privacy note](PRIVACY.md).
+Online play is on by default and uses this project's own server. Setup asks for your online name; you can change it, or turn online play off, in Settings > Network. RPCS3 players use other servers, so you won't meet them. What the server keeps about you is in the [privacy note](PRIVACY.md).
 
-### Known problems
+### Not supported yet
 
-**Not supported yet**
 - Only the US version (BLUS30443) works. The European version is being looked at; other versions are not supported.
 - Setup can't read ISO files, and it needs RPCS3 to unlock the game's files (or files you decrypted yourself).
-- Online play isn't available yet.
 - macOS isn't supported. Running the Windows download through CrossOver stops at setup's first step ("Setup could not start its first download"). Linux is less tested than Windows, and the Steam Deck hasn't been tried yet.
 - On-screen button prompts always show PlayStation buttons, even with a keyboard or an Xbox controller.
 
-**Bugs we know about**
-- The frame rate dips on the 1-2 bridge while the dragon breathes fire.
-- The rain in 5-2 can go missing if you go there straight from the Leechmonger's arena without passing through the Nexus.
-- Some of your character's effects can be missing after warping to the 1-3 and 3-1 archstones.
-- The Palace fog wall's ripple shows thin vertical lines, and a torch behind it can look doubled.
-- Some enemy bodies cast odd shadows.
-- On very wide screens, three small markers can show at the edges of the screen.
-- Above 60 fps is less tested than 30 and 60. Cutscenes judder above 30 fps, which is why they play at 30 by default.
-- The Vulkan renderer is newer: it runs slower than DirectX 12 in busy scenes, and HDR may not turn on with it at a high render resolution. Use DirectX 12 (the default) unless you have a reason not to.
-- Pointing and clicking in the game's menus is experimental: the shops and the blacksmith haven't been tried with it.
-
 ### Problems
 
-Use **Report an issue** in the menu (F1), or open an [issue](https://github.com/JonathanDC64/DemonsSoulsRecomp/issues). Report security problems privately, as [SECURITY.md](SECURITY.md) says.
+Use **Report an issue** in the menu (F1), or open an [issue](https://github.com/JonathanDC64/DemonsSoulsRecomp/issues). For questions and help, join the [Discord](https://discord.gg/BzmwDeca8s). Report security problems privately, as [SECURITY.md](SECURITY.md) says.
 
 ## Building from source
 

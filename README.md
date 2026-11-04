@@ -12,9 +12,9 @@ You need your own copy of the game: the US version, **BLUS30443** (version 1.00)
 
 ## Status
 
-Early, and there is no release yet. The game plays from the start, and testers have played the Nexus, Boletarian Palace and Stonefang Tunnel. Not every area has been tested, so expect bugs.
+**0.1.0, the first release, is an alpha.** Download it from the [Releases](https://github.com/JonathanDC64/DemonsSoulsRecomp/releases) page.
 
-The first release, 0.1.0, will be an alpha. It will appear on the [Releases](https://github.com/JonathanDC64/DemonsSoulsRecomp/releases) page. Until then, you can [build the game from source](#building-from-source).
+The game plays from start to finish (a tester has beaten it), but not every part has been tried on every setting, so expect bugs. The [known problems](#known-problems) are below; please [report](#problems) anything else you find.
 
 ## Features
 
@@ -29,9 +29,10 @@ Press **F1** (or **L3 + R3** on a controller) at any time to open the menu. Most
 - HDR on HDR displays (Windows), with settings for brightness, peak and shadows.
 - Turn off the game's depth of field and motion blur.
 - Window or fullscreen (Alt+Enter switches).
+- Two renderers on Windows: DirectX 12 (the default) and Vulkan (Settings > Display > Renderer).
 
 **Controls**
-- Xbox controllers, DualSense and DualShock 4, over USB or Bluetooth, with vibration.
+- Xbox controllers, DualSense and DualShock 4, over USB or Bluetooth, with vibration. Pick which controller the game uses when several are connected.
 - Keyboard and mouse, laid out like the Souls games on PC. To turn the camera with the mouse, turn on **Mouse look** in Settings > Controls.
 - Change which buttons and keys do what.
 - Mouse sensitivity, inverted axes, and switching lock-on targets with a flick of the mouse.
@@ -51,6 +52,7 @@ Press **F1** (or **L3 + R3** on a controller) at any time to open the menu. Most
 **The program**
 - A setup that builds the game from your copy, with an Original and an Enhanced preset (see [How to play](#how-to-play)).
 - Updates: the game checks for a new version at start and asks before changing anything. Your saves and settings are kept, and you can go back one version.
+- In the menu, the Large Sword of Moonlight is the cursor and a crystal lizard dances in the corner. Both can be turned off.
 - Trophies, with pop-ups. Setup can bring your trophies and save across from RPCS3.
 - **Report an issue** in the menu opens a GitHub issue with your PC's details filled in. It has no save data or game files.
 
@@ -63,7 +65,7 @@ Press **F1** (or **L3 + R3** on a controller) at any time to open the menu. Most
 
 ## How to play
 
-These steps are for the release download, once it is out.
+These steps are for the release download.
 
 1. Download the zip for Windows (`DemonsSoulsRecomp-X.Y.Z-windows.zip`) or the tarball for Linux (`DemonsSoulsRecomp-X.Y.Z-linux.tar.xz`), and unpack it into a folder of its own.
 2. Start `des_host.exe` (on Linux, `des_host`). Setup opens.
@@ -75,6 +77,8 @@ These steps are for the release download, once it is out.
 5. Pick a preset: **Original** plays as on the PS3; **Enhanced** sets 60 fps, a resolution that fits your display, SMAA, 16x anisotropic filtering and fullscreen. You can change anything later in Settings.
 
 Then press **Play**.
+
+Windows may warn you the first time you start `des_host.exe` ("Windows protected your PC"), because the program isn't signed yet. Click **More info**, then **Run anyway**.
 
 If setup says your `libsre.prx` came out different, your RPCS3 probably has PS3 system software 4.90. Install 4.93 in RPCS3 (*File > Install Firmware*) and try again. If RPCS3 is set to run as administrator, setup cannot start it: untick that in `rpcs3.exe`'s Properties.
 
@@ -89,6 +93,26 @@ macOS is not supported.
 ### Online play
 
 Online play is not ready. Early work on it is in the game (Settings > Network), but that work is paused and it is largely untested. You can turn it off in Settings > Network > Online. What the project's server would keep about you is in the [privacy note](PRIVACY.md).
+
+### Known problems
+
+**Not supported yet**
+- Only the US version (BLUS30443) works. The European version is being looked at; other versions are not supported.
+- Setup can't read ISO files, and it needs RPCS3 to unlock the game's files (or files you decrypted yourself).
+- Online play isn't available yet.
+- macOS isn't supported. Running the Windows download through CrossOver stops at setup's first step ("Setup could not start its first download"). Linux is less tested than Windows, and the Steam Deck hasn't been tried yet.
+- On-screen button prompts always show PlayStation buttons, even with a keyboard or an Xbox controller.
+
+**Bugs we know about**
+- The frame rate dips on the 1-2 bridge while the dragon breathes fire.
+- The rain in 5-2 can go missing if you go there straight from the Leechmonger's arena without passing through the Nexus.
+- Some of your character's effects can be missing after warping to the 1-3 and 3-1 archstones.
+- The Palace fog wall's ripple shows thin vertical lines, and a torch behind it can look doubled.
+- Some enemy bodies cast odd shadows.
+- On very wide screens, three small markers can show at the edges of the screen.
+- Above 60 fps is less tested than 30 and 60. Cutscenes judder above 30 fps, which is why they play at 30 by default.
+- The Vulkan renderer is newer: it runs slower than DirectX 12 in busy scenes, and HDR may not turn on with it at a high render resolution. Use DirectX 12 (the default) unless you have a reason not to.
+- Pointing and clicking in the game's menus is experimental: the shops and the blacksmith haven't been tried with it.
 
 ### Problems
 

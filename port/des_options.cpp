@@ -3030,6 +3030,7 @@ static void run_defaults()
         if (!getenv(d.name)) ps3_setenv(d.name, d.value);
 }
 
+extern "C" int des_icon_render(const char* game, const char* out);   /* ui/src/souls_icon.cpp */
 extern "C" int des_prework_shaders(const char* game, const char* eboot);   /* des_prework.cpp */
 extern "C" void des_prework_elf(const char* path);
 
@@ -3047,13 +3048,18 @@ static const char* main_elf(int argc, char** argv)
 
 /* First thing in main (ps3recomp's launch hook, docs/88 section 3): setup's
  * shaders phase (`--shaders <game folder> [<EBOOT.elf>]`: the shader cache
- * filled with no window, then the exit), or the run defaults, then setup's
+ * filled with no window, then the exit), setup's two for the program's icon
+ * (`--icon <game folder> <out.ico>`, and `--program-check`, which only says
+ * that the program starts; tools/setup/des_setup/exe_icon.py), or the run
+ * defaults, then setup's
  * screens alone, or the game (des_ui_launch), whose ELF the shader pass at
  * the start reads too (des_prework_elf). */
 extern "C" int ps3_title_launch(int* argc, char*** argv)
 {
     if ((*argc == 3 || *argc == 4) && std::strcmp((*argv)[1], "--shaders") == 0)
         return des_prework_shaders((*argv)[2], *argc == 4 ? (*argv)[3] : nullptr);
+    if (*argc == 4 && std::strcmp((*argv)[1], "--icon") == 0) return des_icon_render((*argv)[2], (*argv)[3]);
+    if (*argc == 2 && std::strcmp((*argv)[1], "--program-check") == 0) return 0;
     run_defaults();
     const int launch = des_ui_launch(argc, argv);
     if (launch == -1) des_prework_elf(main_elf(*argc, *argv));   /* (-1: PS3_LAUNCH_BOOT) */

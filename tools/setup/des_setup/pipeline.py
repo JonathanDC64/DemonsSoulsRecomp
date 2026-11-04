@@ -40,6 +40,7 @@ import traceback
 from pathlib import Path
 
 from . import compile as compile_step
+from . import exe_icon
 from . import fetch, firmware, gamefiles, journal, lift, protocol, rpcs3, rpcs3_import, rpcs3_library
 
 READY = "ready.txt"
@@ -710,6 +711,8 @@ def _run(data, req, app, jobs, check_only, emit, src, table, manifest, phases, c
             if ready and phase == ("import" if ready_after_import else "compile"):
                 write_ready(data, ready)
                 emit.text(f"ok   the game is ready: {module}")
+        if module and Path(module).is_file():
+            exe_icon.apply(host, rep.root, data, emit)
         if not (module and Path(module).is_file()) and not check_only:
             emit.text("ok   every phase is done; the compile was not in this run, so the game is not built yet")
         emit.overall(1.0)

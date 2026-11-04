@@ -1,12 +1,14 @@
 # 112. The game's own models in the UI: the sword cursor and the crystal lizard
 
 Date: 2026-10-27. Status: first version, for the user to try.
-- While a menu is open, the mouse cursor is the **Large Sword of Moonlight**: the game's own model, drawn live in 3D,
-  with its translucent blade and a soft blue glow about it. Its tip is the cursor's point.
+- While a menu is open, the mouse cursor is one of the game's swords, the **Large Sword of Moonlight** unless the
+  player picks another: the game's own model, drawn live in 3D, with a soft glow about it. Its tip is the cursor's point.
 - The **crystal lizard** dances in the bottom right corner while a menu is open, turning round slowly (once in
   12 s), and it twinkles: its gems flash and star glints come and go on it. That place is for now. In a document it
   is one line of RCSS (section 5).
-- Settings > Interface turns each off: **Sword cursor** and **Crystal lizard**, both on by default, at once.
+- Settings > Interface turns each off: **Sword cursor** and **Crystal lizard**, both on by default, at once. **Cursor
+  sword** picks the sword (section 1.1).
+- The program's **icon** in Explorer is another of them, drawn when setup runs (section 7).
 - Nothing of the game is in the program or in this repository. Both models are read from the player's own copy of
   the game, the first time each is drawn.
 
@@ -18,7 +20,8 @@ set from outside).
 | Knob | Default | What it does |
 |---|---|---|
 | `DES_CURSOR3D` | `1` | `0`: the system's arrow, as before. Its row is Sword cursor. |
-| `DES_CURSOR_SIZE` | `64` | The sword's length, in dp (the UI's units: pixels at 96 DPI, times the UI scale). |
+| `DES_CURSOR_SWORD` | `moonlight` | Which sword (section 1.1). Its row is Cursor sword. |
+| `DES_CURSOR_SIZE` | `64` | The sword's length, in dp (the UI's units: pixels at 96 DPI, times the UI scale). Its row is Cursor size. |
 | `DES_CURSOR_SPIN` | `0` | A slow turn about the blade, in degrees a second (`20` is one turn in 18 s). |
 | `DES_CURSOR_GLOW` | `1` | `0`: no glow about the blade (section 4.1). |
 | `DES_UI_LIZARD` | `1` | The lizard, dancing, in the bottom right corner while a document is up; `0`: none. Its row is Crystal lizard. |
@@ -34,13 +37,32 @@ system's. During mouse look the cursor is hidden as before (no document is up th
 If the game's files are not there, or a model does not read, the log says so once
 (`[ui] model moonlight: ...`), and the system's arrow stays.
 
+### 1.1 The swords
+
+`souls_model.cpp`'s `kSwords` lists them. Each is read the first time it is drawn, and a change shows at once.
+
+| `DES_CURSOR_SWORD` | The sword | File in `parts/` | Brightened | Its glow |
+|---|---|---|---|---|
+| `moonlight` | Large Sword of Moonlight | `wp_a_0258` | no | pale blue, about the blade |
+| `soulbrandt` | Soulbrandt | `wp_a_0251` | 2.6 times | pale blue |
+| `demonbrandt` | Demonbrandt | `wp_a_0254` | no | red |
+| `regalia` | Northern Regalia | `wp_a_0253` | 1.7 times | pale blue |
+| `stormruler` | Storm Ruler | `wp_a_0256` | 1.5 times | blue |
+
+- The files come from the game's weapon table, `param/gameparam/equipparamweapon.param`: the weapons 21600, 20900, 21000,
+  21500 and 21100, whose model number is the 16-bit value at byte 2 of each row. The names are from `msg/na_english`.
+- Only the moonlight has a blended blade. The others are one opaque mesh each, so their glow is around all of the sword
+  (`Look::glow_whole`). In the game these are lit by their surroundings, and with this UI's plain light Soulbrandt
+  is near black, so the opaque meshes can be brightened (`Look::solid`, multiplied in as the blended meshes' tint is).
+  The numbers were picked by eye against a dark and a light background.
+
 ## 2. Where the models come from
 
 From `$PS3_VFS_ROOT/PS3_GAME/USRDIR`, which every run sets to the game's folder:
 
 | Model | Files |
 |---|---|
-| The sword (`moonlight`) | `parts/wp_a_0258.partsbnd`: `WP_A_0258.flver`, `WP_A_0258.tpf` |
+| The swords | `parts/wp_a_<number>.partsbnd`: `WP_A_<number>.flver`, `WP_A_<number>.tpf` (section 1.1) |
 | The lizard (`lizard`) | `chr/c3110/c3110.chrbnd` (`c3110.flver`, `c3110.tpf`), `chr/c3110/c3110.anibnd` (`Skeleton.hkx`, `a00_*.hkx`) |
 
 They are read once and kept in memory.
@@ -166,7 +188,29 @@ Where it goes in the UI is still to be decided. Until then host.cpp draws it in 
 - The sword is drawn with the frame, so it is a frame behind the hardware cursor. While a document is up the UI
   repaints at the display's refresh rate, so this is one display refresh.
 
-## 7. Not done yet
+## 7. The program's icon
+
+The icon a player sees for the program in Explorer is Soulbrandt, drawn the same way. It cannot come with the download
+(docs/51), so setup makes it at the end of each run, on the player's PC, from their own copy of the game
+(`tools/setup/des_setup/exe_icon.py`). This is Windows only: a Linux program file has no icon.
+
+- **The picture:** `<program> --icon <game folder> <out.ico>` (`port/ui/src/souls_icon.cpp`), on the CPU, so setup
+  needs no graphics card and every PC gets the same picture. It uses the cursor's view, light and glow.
+- **Seen properly at any size:** the sword fills the square from corner to corner, leaving 6% each side for the glow.
+  It holds 256, 128, 96, 64, 48, 40, 32, 24, 20 and 16 pixels, each drawn for its size, and below 64 the sword is drawn
+  wider than it is (1.3 times at 48 up to 2.6 at 16), or it would be a line.
+- **If it cannot be drawn,** the game's own `PS3_GAME/ICON0.PNG` is used, as `scripts/make_icon.py` makes it. The window
+  uses the same icon (resource 1); before setup has run it still takes ICON0.PNG at run time, as `rsx_window_icon.c` did.
+- **Into the program:** a copy gets the icon (`UpdateResource`), is started once with `--program-check` to see that it
+  still runs, and takes the program's place. The program may be running, as it started setup: Windows lets a running exe
+  be renamed, so the old file goes to `.update/`, and the next start removes it (`updates.cpp`'s `drop_old_program`).
+- **It never fails setup,** and it runs once: a program with an icon is left alone. An update's new program gets its
+  icon from the setup run that follows the update. A developer's build is left alone too (no `setup/release-info.txt`
+  beside it), and `DES_SETUP_ICON=0` turns it off.
+- **Code signing:** changing the exe would break a signature on it. The program isn't signed today; if it ever is, this
+  has to change (say, a signed launcher with no icon of the game's).
+
+## 8. Not done yet
 
 - The game's own effects (FFX) for the sword's moonlight and the lizard's twinkle. Section 4.1 draws stand-ins.
 - A place for the lizard in the menus.

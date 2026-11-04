@@ -2292,15 +2292,15 @@ bool RendererImpl::render_model(const std::string& name, const ModelView& view, 
         k.flags[0] = blended ? 1.f : 0.f;  // a blended mesh: its faces toward the viewer only
         k.flags[1] = blended ? 0.f : 1.f;
         k.flags[2] = look.alpha_test;
-        for (int c = 0; c < 3; c++) k.tint[c] = blended ? look.tint[c] : 1.f;
+        for (int c = 0; c < 3; c++) k.tint[c] = blended ? look.tint[c] : look.solid[c];
         k.tint[3] = opacity;
     };
-    const auto draw_meshes = [&](bool blended) {
+    const auto draw_meshes = [&](bool blended, bool every = false) {
         gpu_addr constants_at = 0;
         for (size_t i = 0; i < meshes.size(); i++) {
             const ui::models::Mesh& mesh = meshes[i];
             const GpuModel::Part& part = g->parts[i];
-            if (mesh.blend != blended || !part.index_count || !part.vertex_count) continue;
+            if ((!every && mesh.blend != blended) || !part.index_count || !part.vertex_count) continue;
             if (!prepare(blended ? kModelBlend : kModel)) break;
             if (!constants_at && !(constants_at = constants(&k, sizeof k))) break;
             gpu_cmd_bind_cb(mCmd, 0, constants_at);
@@ -2318,8 +2318,8 @@ bool RendererImpl::render_model(const std::string& name, const ModelView& view, 
         }
     };
 
-    // The glow (the sword's moonlight): the blended meshes' alpha in the glow's colour, drawn into the first
-    // postprocess target, blurred there, and put on the layer under the model.
+    // The glow (the sword's moonlight): the blended meshes' alpha, or all the meshes' for a sword with no blended one,
+    // in the glow's colour, drawn into the first postprocess target, blurred there, and put on the layer under the model.
     Target* layer = mBound;
     Target* mask = sigma >= 0.5f ? post(0) : nullptr;
     Target* temp = mask ? post(1) : nullptr;
@@ -2338,7 +2338,7 @@ bool RendererImpl::render_model(const std::string& name, const ModelView& view, 
         std::memcpy(k.tint, look.glow, sizeof look.glow);
         k.tint[3] = look.glow_strength * opacity;
         k.fx[2] = 1.f;
-        draw_meshes(true);
+        draw_meshes(true, look.glow_whole);
         k.fx[2] = 0.f;
         render_blur(sigma, *mask, *temp, window);
         bind(*layer);

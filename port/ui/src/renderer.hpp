@@ -55,7 +55,7 @@ public:
         (void)srgb;
     }
 
-    // One of the game's models (souls_model.hpp: "moonlight", "lizard") over what the frame has so far, between the
+    // One of the game's models (souls_model.hpp: a sword, "lizard") over what the frame has so far, between the
     // context's Render and end_frame, with no scissor or clip. False if it is not drawn: the game's files do not have
     // it, or this renderer draws none (the D3D11 one).
     virtual bool draw_model(const char* name, const ModelView& view) {

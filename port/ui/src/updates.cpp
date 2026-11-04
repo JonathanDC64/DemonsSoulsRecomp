@@ -241,6 +241,20 @@ bool restart_into(const char* open, const std::string& version) {
     return true;
 }
 
+void drop_old_program() {
+    const auto dir = install_dir() / ".update";
+    std::error_code ec;
+    if (install_dir().empty() || !std::filesystem::is_directory(dir, ec)) return;
+    std::filesystem::directory_iterator it(dir, ec), end;
+    for (; !ec && it != end; it.increment(ec)) {
+        if (it->path().filename().string().rfind("program-before-icon", 0) == 0) {
+            std::error_code ignored;
+            std::filesystem::remove(it->path(), ignored);
+        }
+    }
+    clear_empty(dir);
+}
+
 bool recover_swap() {
     std::error_code ec;
     const auto journal = install_dir() / ".update" / "swap.txt";

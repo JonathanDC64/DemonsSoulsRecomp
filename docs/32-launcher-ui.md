@@ -76,6 +76,8 @@ and on every change.
 | Menu hint (Interface) | `menu_hint` | 1 / 0 | at once |
 | Trophy pop-ups (Interface) | `trophy_popups` | 1 / 0 (off hides the toast; the unlock is still kept) | at once |
 | Sword cursor (Interface) | `DES_CURSOR3D` | 1 / 0 (off: the system's arrow, not the Large Sword of Moonlight; docs/112) | at once |
+| Cursor sword (Interface) | `DES_CURSOR_SWORD` | `moonlight`, `soulbrandt`, `demonbrandt`, `regalia`, `stormruler` (docs/112 section 1.1) | at once |
+| Cursor size (Interface) | `DES_CURSOR_SIZE` | 48, 64, 96, 128, 192: the sword's length in dp (the environment's value can be any from 16 to 512) | at once |
 | Crystal lizard (Interface) | `DES_UI_LIZARD` | 1 / 0 (off: no lizard dancing in the corner of the menus; docs/112) | at once |
 | Show hidden trophies (the Trophies window) | `trophies_show_hidden` | 0 / 1 (1 lists hidden trophies with their names before they are unlocked) | at once |
 | Gamepad menu buttons (Interface) | `pad_menu_chord` | 0 = L3 + R3, 1 = Select + Start | at once |
@@ -324,7 +326,7 @@ issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
 | `DES_UI_RENDER=d3d12` | On the `d3d12` route (the default since 2026-11-02, docs/120), the menus draw through the legacy menu renderer (`render_d3d12.cpp`) instead of on the renderer's own device. |
 | `RSX_OVERLAY_REPAINT=0` | The UI moves only with the game's frames, not at the display's refresh rate (live; "The UI's frame rate" below). |
 | `DES_UI_SOUND=0` | No UI sounds. |
-| `DES_CURSOR3D=0` | The system's arrow over the menus, not the Large Sword of Moonlight (its row is Sword cursor). `DES_CURSOR_SIZE=<dp>` (64) is the sword's length, `DES_CURSOR_SPIN=<degrees a second>` (0) turns it about its blade, `DES_CURSOR_GLOW=0` takes away the blue glow about its blade (docs/112). |
+| `DES_CURSOR3D=0` | The system's arrow over the menus, not the Large Sword of Moonlight (its row is Sword cursor). `DES_CURSOR_SIZE=<dp>` (64) is the sword's length (its row is Cursor size), `DES_CURSOR_SPIN=<degrees a second>` (0) turns it about its blade, `DES_CURSOR_GLOW=0` takes away the blue glow about its blade (docs/112). |
 | `DES_UI_LIZARD=0` | No crystal lizard dancing in the bottom right corner while a menu is up (its row is Crystal lizard); `DES_UI_LIZARD_SIZE=<dp>` (160), `DES_UI_LIZARD_SPIN=<degrees a second>` (30, a turn in 12 s; 0 keeps it still) turns it round, `DES_UI_LIZARD_ANIM=<a00_NNNN>` another of its animations, `DES_UI_LIZARD_TWINKLE=0` takes away its twinkle (docs/112). |
 | `DES_MENU_MOUSE=1` | The mouse in the game's own menus, experimental and off by default (its row is Mouse in game menus (experimental)). `DES_MENU_MOUSE_PRESS=<frames>` (1) is how long each press a click makes is held, `DES_MENU_MOUSE_LOG=1` / `2` / `3` prints the menus found and the walks / the arrows too / every dialog with its pieces (docs/114). |
 | `DES_UI_MOUSE=<steps>` | Moves and clicks the mouse (tests; docs/102): `x,y[,down\|up\|rdown\|rup\|wheelup\|wheeldown][;...]` in back buffer pixels. Over a menu of the game they go to it (docs/114). |

@@ -1276,6 +1276,7 @@ void work_in_exe_folder() {
 
 extern "C" int des_ui_launch(int* argc, char*** argv) {
     if (const char* v = std::getenv("DES_UI"); v && !std::strcmp(v, "0")) return -1;
+    ui::updates::drop_old_program();
     // An update's swap cut short (updates.hpp): undone, then the program that is in place now starts.
     if (ui::updates::recover_swap() && ui::crash_report::start_again({}, false)) return 0;
     if (setup_only_open(std::getenv("DES_UI_OPEN"))) return -2;

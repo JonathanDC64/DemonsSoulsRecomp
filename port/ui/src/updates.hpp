@@ -60,6 +60,9 @@ bool restart_into(const char* open, const std::string& version);
 // (<install>/.update/swap.txt), without the engine, which may be half swapped with the rest. True if it undid one: the
 // install holds the version before the update again, which may not be this program, so the caller starts it again.
 bool recover_swap();
+
+// The old file of a program that setup gave its icon (tools/setup/des_setup/exe_icon.py): removed now that it has ended.
+void drop_old_program();
 // While the update puts the files in place (its install step, a few seconds), the window's close button does nothing
 // (des_ui.cpp's WM_CLOSE): ending the program then would end the engine half way.
 void hold_close(bool on);

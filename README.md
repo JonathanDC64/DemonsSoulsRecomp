@@ -174,7 +174,7 @@ On Windows, step 4 downloads FFmpeg's MPEG-2 video decoder for the game's movies
    cmake --build port/build --target des_boot --parallel 4
    ```
    `PS3RECOMP_RSX_HAL=ON` builds the portable renderer: DirectX 12 through it, the default, and Vulkan beside it (Settings > Display > Renderer). Without it the game runs on the legacy renderer only. Its first configure downloads glslang and SPIRV-Tools at their pinned commits. On Linux, see [docs/76](docs/76-native-linux.md#building).
-5. Copy `tools/des/local.env.example` to `tools/des/local.env`, set `PS3_VFS_ROOT` in it to the folder that holds `PS3_GAME`, and start the game with `tools/des/play.sh`.
+5. Copy `tools/des/local.env.example` to `tools/des/local.env`, set `PS3_VFS_ROOT` in it to the folder that holds `PS3_GAME`, and start the game with `tools/des/play.sh`. A direct start of `des_boot.exe` goes through setup instead, and keeps its saves in `port/build/gamedata`.
 
 Everything made from your copy of the game stays in `work/` and `gamedata/`, which git ignores. **Never share your build:** it contains code converted from your game.
 

@@ -3028,6 +3028,18 @@ static void run_defaults()
     };
     for (const auto& d : kDefaults)
         if (!getenv(d.name)) ps3_setenv(d.name, d.value);
+#ifdef DES_LIBSRE_IMAGE
+    /* A source build's libsre glue gives its image from the working folder, and a direct start of des_boot.exe
+     * works in the exe's folder. The image isn't found there, and the game waits forever on a black screen
+     * (issue #355). So this build says where it found the image, if it is still there. A value in the environment
+     * wins. Setup's module has its own path and no such build (port/CMakeLists.txt). */
+    if (!getenv("PS3_LIBSRE_IMAGE")) {
+        if (FILE* image = std::fopen(DES_LIBSRE_IMAGE, "rb")) {
+            std::fclose(image);
+            ps3_setenv("PS3_LIBSRE_IMAGE", DES_LIBSRE_IMAGE);
+        }
+    }
+#endif
 }
 
 extern "C" int des_icon_render(const char* game, const char* out);   /* ui/src/souls_icon.cpp */

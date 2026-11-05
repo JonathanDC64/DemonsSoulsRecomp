@@ -23,7 +23,8 @@ means every fix is made twice, so the new path became the default.
   - `vulkan`: the new path on Vulkan (Settings > Display > Renderer).
   - On Linux the default is `vulkan` (from 2026-11-03; ps3recomp #224, with the next pin), and the Renderer row's
     default follows. `d3d12` there is the legacy renderer on vkd3d: the new path has no D3D12 off Windows. Vulkan on
-    Linux has only had CI's lavapipe runs, no tester yet.
+    Linux has only had CI's lavapipe runs, no tester yet. The Linux download is built this way from 2026-11-04 (issue #351);
+    until then it had the legacy renderer alone, whatever this default said.
 - **Starts that fail fall back,** in the same process, and say why in the log and in problem reports:
   - Vulkan falls back to `d3d12` (on Linux to `legacy`), and so does the start after a Vulkan start that crashed;
   - `d3d12` falls back to `legacy`.

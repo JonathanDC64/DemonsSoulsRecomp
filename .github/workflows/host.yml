@@ -24,8 +24,8 @@ concurrency:
   cancel-in-progress: true
 
 # FFmpeg's release tarball of tag n8.1.3 (commit 1041abdc962f4cc4f394aa8de9dc5236c0c3b9e7, a signed tag): the tag's
-# files plus VERSION. Both hosts' FFmpeg is built from it (host-linux, ffmpeg-windows), and
-# tools/release/third_party_sources.py attaches the same archive to releases.
+# files plus VERSION. Both hosts' FFmpeg is built from it (host-linux, ffmpeg-windows), and the third-party-sources
+# release holds the same archive (tools/release/third_party_sources.py, docs/54 section 8.6).
 env:
   FFMPEG_VERSION: 8.1.3
   FFMPEG_SIZE: '11732036'
@@ -51,7 +51,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.FFMPEG_DIR }}
-          key: ffmpeg-windows-${{ env.FFMPEG_SHA256 }}-mingw-ubuntu-24.04-v1
+          key: ffmpeg-windows-${{ env.FFMPEG_SHA256 }}-mingw-ubuntu-24.04-v2
 
       - name: Install the cross compiler
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
@@ -86,8 +86,8 @@ jobs:
           cp COPYING.LGPLv2.1 LICENSE.md CREDITS "$FFMPEG_DIR/share/licenses/ffmpeg/"
           {
             echo "FFmpeg $FFMPEG_VERSION, unchanged: libavcodec and libavutil, LGPL 2.1 or later."
-            echo "Source: ffmpeg-$FFMPEG_VERSION.tar.xz on this release's page, the same archive as"
-            echo "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz (SHA-256 $FFMPEG_SHA256)."
+            echo "Source: ffmpeg-$FFMPEG_VERSION.tar.xz at https://github.com/JonathanDC64/Soulbrandt/releases/tag/third-party-sources,"
+            echo "the same archive as https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz (SHA-256 $FFMPEG_SHA256)."
             echo "Configured with: ./configure ${opts[*]} ${cross[*]}"
             echo "You may replace these DLLs with your own build of the same major versions."
           } > "$FFMPEG_DIR/share/licenses/ffmpeg/README.txt"
@@ -511,7 +511,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.DEPS_DIR }}
-          key: host-linux-deps-sdl2-${{ env.SDL2_VERSION }}-vkd3d-${{ env.VKD3D_VERSION }}-vulkan-${{ env.VULKAN_HEADERS_VERSION }}-ubuntu-22.04-v2
+          key: host-linux-deps-sdl2-${{ env.SDL2_VERSION }}-vkd3d-${{ env.VKD3D_VERSION }}-vulkan-${{ env.VULKAN_HEADERS_VERSION }}-ubuntu-22.04-v3
 
       - name: Check out the Vulkan headers
         if: steps.deps-cache.outputs.cache-hit != 'true'
@@ -551,6 +551,11 @@ jobs:
           # vkd3d is LGPL 2.1 or later: its licence and notices go with its libraries (SDL2's install has its own).
           mkdir -p "$DEPS_DIR/share/licenses/vkd3d"
           cp LICENSE COPYING AUTHORS "$DEPS_DIR/share/licenses/vkd3d/"
+          {
+            echo "vkd3d $VKD3D_VERSION, unchanged, LGPL 2.1 or later."
+            echo "Source: vkd3d-$VKD3D_VERSION.tar.xz at https://github.com/JonathanDC64/Soulbrandt/releases/tag/third-party-sources,"
+            echo "the same archive as https://dl.winehq.org/vkd3d/source/vkd3d-$VKD3D_VERSION.tar.xz (SHA-256 $VKD3D_SHA256)."
+          } > "$DEPS_DIR/share/licenses/vkd3d/README.txt"
 
       - name: Save SDL2 and vkd3d
         if: steps.deps-cache.outputs.cache-hit != 'true'
@@ -564,7 +569,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.FFMPEG_DIR }}
-          key: host-linux-ffmpeg-${{ env.FFMPEG_SHA256 }}-ubuntu-22.04-v1
+          key: host-linux-ffmpeg-${{ env.FFMPEG_SHA256 }}-ubuntu-22.04-v2
 
       # Only what the movies use: libavcodec with the MPEG-2 video decoder and its parser, and libavutil. LGPL 2.1
       # or later (configure must say so: no --enable-gpl, --enable-version3 or --enable-nonfree), and nothing from
@@ -592,8 +597,8 @@ jobs:
           cp COPYING.LGPLv2.1 LICENSE.md CREDITS "$FFMPEG_DIR/share/licenses/ffmpeg/"
           {
             echo "FFmpeg $FFMPEG_VERSION, unchanged: libavcodec and libavutil, LGPL 2.1 or later."
-            echo "Source: ffmpeg-$FFMPEG_VERSION.tar.xz on this release's page, the same archive as"
-            echo "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz (SHA-256 $FFMPEG_SHA256)."
+            echo "Source: ffmpeg-$FFMPEG_VERSION.tar.xz at https://github.com/JonathanDC64/Soulbrandt/releases/tag/third-party-sources,"
+            echo "the same archive as https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz (SHA-256 $FFMPEG_SHA256)."
             echo "Configured with: ./configure ${opts[*]}"
             echo "You may replace these libraries with your own build of the same major versions."
           } > "$FFMPEG_DIR/share/licenses/ffmpeg/README.txt"

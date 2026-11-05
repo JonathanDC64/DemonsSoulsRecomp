@@ -15,6 +15,7 @@
 
 #include "des_ui.h"
 #include "platform.hpp"
+#include "report.hpp"
 #include "settings.hpp"
 #include "../../des_rsx_route.h"  // the renderer calls below: through rsx_out in a PS3RECOMP_RSX_HAL build
 
@@ -28,6 +29,7 @@
 extern "C" {
 void cellPad_host_mouse_buttons(unsigned mask);  // ps3recomp, libs/input/cellPad.h
 void cellPad_host_mouse_wheel(int notches);
+int cellPad_host_keys_out(void);
 void rsx_d3d12_post_message(unsigned msg, unsigned long long wp, long long lp);  // libs/video/rsx_d3d12_backend.h
 }
 
@@ -112,6 +114,11 @@ void update(const char* why) {
         std::fprintf(stderr, "[mouse] mouse look %s\n",
                      look ? "on" : "off (mouse buttons and wheel with the cursor free)");
     }
+    // A pad that has port 0, with the mouse kept out of it, as on a Steam Deck: Steam's desktop layout also moves the
+    // mouse with the right stick, so the cursor stays hidden and put while the camera runs, as mouse look holds it, and
+    // des_mouse_take drops the counts (issue #351). Game Mode has no such layout, and is left as it is.
+    const bool pad_only = cellPad_host_keys_out() && !ui::report::no_desktop();
+    const bool hold_it = look || pad_only;
     const char* no = !sWindow || SDL_GetKeyboardFocus() != sWindow ? "window in the background"
                      : sMinimised                                   ? "window minimised"
                      : sUiOpen.load(std::memory_order_acquire)      ? "a menu of the UI is open"
@@ -122,11 +129,11 @@ void update(const char* why) {
         let_go(no);
         return;
     }
-    if (look ? sHeld.load() : sFree) return;  // the game has the mouse already, the same way
-    if (sHeld.load() || sFree) let_go(look ? "mouse look on" : "mouse look off");  // the other way: over again
+    if (hold_it ? sHeld.load() : sFree) return;  // the game has the mouse already, the same way
+    if (sHeld.load() || sFree) let_go(hold_it ? "mouse held" : "mouse free");  // the other way: over again
     sWaitButtons = buttons_down();  // the click that brought the window up ends first
     if (sWaitButtons) return;
-    if (look) {
+    if (hold_it) {
         hold(why);
     } else {
         sFree = true;
@@ -237,7 +244,10 @@ void on_frame() {
         ++sIdle;
     }
     const bool camera = sIdle < kIdleFrames;
-    if (sCamera.load(std::memory_order_relaxed) != camera) {
+    static int sKeysOut = 0;  // a pad came or went (update's pad_only)
+    const int keysOut = cellPad_host_keys_out();
+    if (sCamera.load(std::memory_order_relaxed) != camera || sKeysOut != keysOut) {
+        sKeysOut = keysOut;
         sCamera.store(camera, std::memory_order_release);
         post_look_again();
     }
@@ -268,6 +278,7 @@ extern "C" void des_mouse_take(int* dx, int* dy) {
     sTakes.fetch_add(1, std::memory_order_relaxed);
     *dx = sDx.exchange(0, std::memory_order_relaxed);
     *dy = sDy.exchange(0, std::memory_order_relaxed);
+    if (cellPad_host_keys_out()) *dx = *dy = 0;  // (the pad has the camera)
 }
 
 extern "C" void des_mouse_refresh(void) {

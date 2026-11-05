@@ -136,6 +136,8 @@ constexpr long long kHangNoticeMs = 15000;
 constexpr auto kHangNoticeDuration = std::chrono::seconds(30);
 // "Playing offline": a Custom server that was not chosen on this PC (settings::custom_chosen_here).
 constexpr auto kCustomServerNoticeDuration = std::chrono::seconds(15);
+// "Report saved": where a report went with no desktop to open it on (report::no_desktop).
+constexpr auto kReportSavedNoticeDuration = std::chrono::seconds(30);
 
 struct InputEvent {
     enum Type { KeyDown, KeyUp, Char, MouseMove, MouseDown, MouseUp, Wheel, Leave } type;
@@ -754,6 +756,17 @@ void push_custom_server_notice() {
     std::fprintf(stderr, "[ui] the custom server notice is up\n");
 }
 
+// "Report saved": a report with no desktop to open it on (report::no_desktop): where it is, and what to do with it.
+void push_report_saved_notice() {
+    ui::push_toast({
+        .type = "warning",
+        .title = "Report saved",
+        .content = ui::report::take_saved_notice(),
+        .duration = kReportSavedNoticeDuration,
+    });
+    std::fprintf(stderr, "[ui] the report saved notice is up\n");
+}
+
 // The game's frames each second, the last minute, oldest first (the watch thread counts them), for reports.
 std::mutex sRateLock;
 std::vector<unsigned> sRates;
@@ -992,7 +1005,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         !sOpenPending && !sReportCountdown && !(prework && !sPreworkShown) && !privacy && !sCloseRequested.load() &&
         !sOskPending.load(std::memory_order_acquire) && !ui::trophies::pending() && !ui::net_notices::pending() &&
         !sHangNotice.load(std::memory_order_relaxed) &&
-        !sCustomServerNotice.load(std::memory_order_relaxed)) {
+        !sCustomServerNotice.load(std::memory_order_relaxed) && !ui::report::saved_notice_pending()) {
         return;
     }
 
@@ -1007,6 +1020,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
         ui::trophies::discard();  // (the unlocks are saved; only the pop-ups are lost)
         sHangNotice.store(false);
         sCustomServerNotice.store(false);
+        ui::report::take_saved_notice();  // (the zip and its link are saved; only the toast is lost)
         if (ui::privacy::asking()) ui::privacy::answer(false);  // (no way to ask: offline, and the start goes on)
         sActive = false;
         std::lock_guard<std::mutex> lock(sQueueLock);
@@ -1027,6 +1041,7 @@ void frame(void*, void* back_buffer, unsigned index, unsigned width, unsigned he
     }
     if (sHangNotice.exchange(false)) push_hang_notice();
     if (sCustomServerNotice.exchange(false)) push_custom_server_notice();
+    if (ui::report::saved_notice_pending()) push_report_saved_notice();
 
     if (privacy) {
         sPrivacyShown = true;

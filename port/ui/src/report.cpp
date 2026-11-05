@@ -615,6 +615,11 @@ void flush_at_exit() {
 
 std::atomic<bool> g_report_busy{false};
 
+// no_desktop: a report saved with nothing to open it on, for the UI's toast (take_saved_notice).
+std::mutex g_saved_lock;
+std::string g_saved_notice;
+std::atomic<bool> g_saved_pending{false};
+
 // The picture as a PNG, through stb_image_write. On the report's own thread.
 std::vector<uint8_t> encode_png(const std::vector<uint8_t>& rgba, int width, int height) {
     std::vector<uint8_t> rgb(size_t(width) * height * 3), png;
@@ -699,7 +704,9 @@ void make_issue_report(std::vector<uint8_t> rgba, int width, int height, std::st
     std::string body = "## What happened\n(Please describe the problem and what you were doing.)\n\n## What you expected\n\n"
                        "## System\n```\n" + system + game + "```\n\n## Attachments\n";
     body += zip.empty() ? "(The report files could not be saved.)\n"
-                        : "Drag `" + narrow(zip.filename().wstring()) + "` (its folder is open) into this issue: it has "
+                        : "Drag `" + narrow(zip.filename().wstring()) + "` (" +
+                              (no_desktop() ? "beside the file this link came from" : "its folder is open") +
+                              ") into this issue: it has "
                           "a screenshot, your settings, what each part of the game was doing, the game's recent "
                           "messages and your save.\n";
     std::fprintf(stderr, "[report] issue report: %s\n", zip.empty() ? "could not be saved" : narrow(zip.wstring()).c_str());
@@ -1144,6 +1151,9 @@ void platform_facts(std::ostringstream& o, bool) {
         }
     }
     o << "GPU: in the log ([D3D12] vkd3d: ...)\n";
+    o << "Session: " << (no_desktop() ? "gamescope, no desktop" : "desktop") << ", XDG_SESSION_TYPE=" << env("XDG_SESSION_TYPE")
+      << ", XDG_CURRENT_DESKTOP=" << env("XDG_CURRENT_DESKTOP") << ", SteamDeck=" << env("SteamDeck") << "\n";
+    if (const char* driver = SDL_GetCurrentVideoDriver()) o << "SDL video driver: " << driver << "\n";
     for (int i = 0, n = SDL_GetNumVideoDisplays(); i < n; i++) {
         SDL_DisplayMode m{};
         if (SDL_GetCurrentDisplayMode(i, &m) == 0)
@@ -1438,15 +1448,42 @@ void reveal(const std::filesystem::path& path) {
 }
 #endif
 
+bool no_desktop() {
+#ifdef _WIN32
+    return false;
+#else
+    return !env("GAMESCOPE_WAYLAND_DISPLAY").empty() || env("XDG_CURRENT_DESKTOP") == "gamescope";
+#endif
+}
+
+bool saved_notice_pending() { return g_saved_pending.load(std::memory_order_acquire); }
+
+std::string take_saved_notice() {
+    std::lock_guard<std::mutex> lock(g_saved_lock);
+    g_saved_pending.store(false);
+    return std::move(g_saved_notice);
+}
+
 void open_issue(const std::string& url, const std::filesystem::path& zip) {
-    if (env_on("DES_REPORT_NO_OPEN")) {
+    const bool test = env_on("DES_REPORT_NO_OPEN");
+    if (test || no_desktop()) {
         auto where = zip.empty() ? data_dir() / L"reports" / L"last-issue.zip" : zip;
         where += L".url.txt";
         if (FILE* f = open_file(where, "wb")) {
             std::fwrite(url.data(), 1, url.size(), f);
             std::fclose(f);
         }
-        std::fprintf(stderr, "[report] DES_REPORT_NO_OPEN: the issue link is in %s\n", narrow(where.wstring()).c_str());
+        std::fprintf(stderr, "[report] %s: the issue link is in %s\n", test ? "DES_REPORT_NO_OPEN" : "no desktop here",
+                     narrow(where.wstring()).c_str());
+        if (!test) {
+            std::lock_guard<std::mutex> lock(g_saved_lock);
+            g_saved_notice = zip.empty() ? std::string("The report could not be saved.")
+                                         : "Saved as " + narrow(zip.filename().wstring()) + " in " +
+                                               narrow(zip.parent_path().wstring()) +
+                                               ". Game Mode has no browser: in Desktop Mode, open the link in the "
+                                               ".url.txt file beside it and drag the zip into that page.";
+            g_saved_pending.store(true, std::memory_order_release);
+        }
         return;
     }
     open_url(url);

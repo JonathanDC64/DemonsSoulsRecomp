@@ -83,9 +83,14 @@ std::string timestamp();  // "20261017-153012", for file names
 
 // The new-issue page of the repository with the title and text filled in (cut to what a link can hold).
 std::string issue_url(const std::string& title, const std::string& body);
-// Opens the issue form in the browser and shows `zip` in Explorer. With DES_REPORT_NO_OPEN=1 (tests) neither is
-// opened: the link is written to <zip>.url.txt instead.
+// Opens the issue form in the browser and shows `zip` in Explorer. With DES_REPORT_NO_OPEN=1 (tests) or no_desktop()
+// neither is opened: the link is written to <zip>.url.txt instead.
 void open_issue(const std::string& url, const std::filesystem::path& zip);
+// A session with no desktop to open anything on, and where a browser started could take the screen: gamescope, as in a
+// Steam Deck's Game Mode. A report is then only saved, and a toast says where (the frame hook: pending, then take).
+bool no_desktop();
+bool saved_notice_pending();
+std::string take_saved_notice();
 // A web page in the browser: https:// links only (anything else is not opened, and logged).
 void open_url(const std::string& url);
 // A folder, or a .log or .txt file, with the system's viewer; anything else (a program) is not opened.

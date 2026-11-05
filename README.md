@@ -108,6 +108,8 @@ Linux is newer and less tested than Windows. So far it has run in WSL (Ubuntu 24
 
 macOS is not supported.
 
+On a Steam Deck, keys and the mouse stay out of the game while its controls are on, because Steam's desktop layout presses them too. To use a keyboard on a docked Deck, set `PAD_KEYBOARD_WITH_PAD=1`.
+
 ### Online play
 
 Online play is on by default and uses this project's own server. Setup asks for your online name; you can change it, or turn online play off, in Settings > Network. RPCS3 players use other servers, so you won't meet them. What the server keeps about you is in the [privacy note](PRIVACY.md).

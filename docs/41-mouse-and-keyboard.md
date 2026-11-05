@@ -52,6 +52,7 @@ File: `ps3recomp/libs/input/cellPad.c`.
   | Triangle / Circle / Cross / Square | S / X / Z / A |
 
 - With no pad connected, the left stick is built from the D-pad bits (0 or 255 per axis). With a pad connected, an arrow key overrides that axis of the pad's left stick. The keyboard never moves the right stick (always 128). So an arrow key presses the D-pad and moves the stick at the same time.
+- `PAD_KEYBOARD_WITH_PAD` says whether keys and the mouse merge into a pad on port 0: 1 by default, 0 on a Steam Deck (issue #351), where Steam's desktop layout presses them for the same controls, so one press would count twice. With no pad on the port the keys always count.
 - `PAD_KEYS` takes `button=key` pairs. A key is a letter, a digit or a number (`strtol`, line 229). A number is a Windows virtual-key code. So `0x01` (left button), `0x02` (right), `0x04` (middle), `0x05` and `0x06` (side buttons) are valid values. `GetAsyncKeyState` reports mouse buttons too, so `PAD_KEYS="r1=0x01,l1=0x02,r3=0x04"` should already work. Not tested. `PAD_KEYS` is a live knob.
 - `cellPadGetData` (line 707) builds the PS3 report: digital buttons, right and left stick bytes, pressure values. Its test knobs help with the run requests:
   - `PAD_STICK="lx,ly,rx,ry[,from,until]"` (line 916): hold the stick bytes from `from` to `until` seconds. The console's `setenv` changes it live, and the seconds then count from that moment. Only a new value restarts the window.

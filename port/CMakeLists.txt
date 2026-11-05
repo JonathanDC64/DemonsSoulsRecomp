@@ -167,6 +167,7 @@ add_executable(des_boot
     "${PS3RECOMP_DIR}/runtime/ppu/tests/boot_main.cpp"      # entry/boot harness
     "${CMAKE_CURRENT_SOURCE_DIR}/missing_stubs.cpp"         # degenerate external targets
     "${CMAKE_CURRENT_SOURCE_DIR}/des_heap.cpp"              # clean guest allocator (malloc override)
+    "${CMAKE_CURRENT_SOURCE_DIR}/des_cpu_check.cpp"         # a clear message on a processor without SSE4.1
     "${CMAKE_CURRENT_SOURCE_DIR}/des_options.cpp"           # user options (DES_SKIP_INTRO, ...)
     "${CMAKE_CURRENT_SOURCE_DIR}/des_aspect.cpp"            # DES_ASPECT / DES_HUD: wider pictures, the HUD kept 16:9
     "${CMAKE_CURRENT_SOURCE_DIR}/des_hud.cpp"               # the HUD's size, corners and hidden groups
@@ -238,6 +239,13 @@ else()
         message(WARNING "DES_SHADOW_STACK=ON, but scripts/lift_ppu.json lifts without --shadow-stack: "
             "there is no shadow stack to keep")
     endif()
+endif()
+
+# The check for a processor without SSE4.1 has to run on one: the only source here built without it.
+if(MSVC)
+    set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/des_cpu_check.cpp" APPEND PROPERTY COMPILE_OPTIONS /clang:-mno-sse4.1)
+else()
+    set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/des_cpu_check.cpp" APPEND PROPERTY COMPILE_OPTIONS -mno-sse4.1)
 endif()
 
 # Developer builds (docs/55): the dev cheats and the settings window's Developer tab.

@@ -107,6 +107,8 @@ A load made through some other base register would not show up in these scans.
   - Do it in the camera, or in both func_0012EE08 and func_0012F100. Changing only one of those would let culling drift from the picture.
   - Make the HUD canvas taller: top = -T, bottom = 720 + T, with T = (1280/A - 720) / 2.
 
+**Done (2026-11-05), for the Steam Deck:** `DES_ASPECT` from 16:10 down to 4:3 fills the screen with Vert+. Section 9 has how.
+
 ## 2. How a wider picture reaches the screen
 
 ### What the backend does today (read)
@@ -545,3 +547,19 @@ Found while building the first ultrawide version (branch `feat/ultrawide`, 2026-
   - Done (docs/102): they are the HUD's "HP icon", "SP icon" and "MP icon" at x = -168, and are no longer drawn on a widened canvas. docs/102 also moves the HUD's corner groups to the screen's corners (`DES_HUD` "", Corners).
 - **The boot screen was stretched** at a wide aspect ratio (player report, 2026-10-24): it is drawn on one of 0x00096348's canvases. Done (docs/102 section 8).
 - **The HUD in the corners showed during loads**: the loading screen covers only the 16:9 band. Done (docs/102 section 3): the corner groups are not drawn while it is.
+
+## 9. Narrower than 16:9 (Vert+)
+
+`DES_ASPECT` from 16:10 down to 4:3, in `port/des_aspect.cpp`. Settings > Display > Aspect ratio has "16:10 (Steam Deck)", and "Match the display" picks it on a 16:10 screen.
+
+- **The view.** The same view across as at 16:9, and more of it up and down. The cameras and the default words stay 16:9, so whatever eases a camera's FOV works as before.
+- **The picture.** `cam_record_projection` wraps 0x0012EE08, which records a camera's projection from +0x50..+0x5C. For that one call it puts in the taller FOV, fov' = 2 * atan(tan(fov/2) * (16/9) / A), and the shape A, then puts the camera's own back.
+- **The frustum.** 0x0012F100 has one direct caller (0x002A54D0, in 0x002A5238, which is reached only through a table), so a wrapper can't reach it. It reads the FOV and the shape once, at its start. The hook after 0x0012F19C (`lfs f31,0x54(r4)`) scales f1, the FOV times 0.5, by fov'/fov, and puts A in f31, so it is in step with the picture.
+- **Culling (measured 2026-11-05).** The scene's draws don't come from that frustum. At the regression save's start, draws were the same at 16:9, at 16:10 with and without the hook, and with the frustum's FOV cut to 40% (658 a frame). What is drawn follows the projection, so nothing at the top or bottom of a 16:10 picture is missing.
+- **What reaches the screen.** The game still draws 1280x720. `RSX_ASPECT` shows it at the shape A, so the window is 1152x720 at 16:10, and fullscreen fills the display. Render resolution makes it sharper, as for a wide shape.
+- **The HUD.** The canvas is made taller, top -T and bottom 720 + T, with T = (1280 / A - 720) / 2: 40 at 16:10. The HUD stays where it is at 16:9, so it sits a little in from the top and bottom edges. Fades cover the whole taller canvas. WorldToScreen's y spreads onto it, as x does for a wide shape. The HUD editor and the menu mouse use the same canvas.
+
+Not done:
+
+- **The corner groups** don't move up and down to the screen's corners, as they move out at a wide shape (docs/102).
+- **The on-screen tests** (0x007B5AE8 and the others in section 7) test x only. A marker in the extra rows at the very top or bottom may go a little early.

@@ -15,9 +15,13 @@
  *   two words. The game still draws 1280x720, the wider view squeezed into
  *   it, so this also sets RSX_ASPECT (unless it is set already): the D3D12
  *   backend shows the frame at that shape, the window starts in it, and
- *   fullscreen fills an ultrawide display. A shape narrower than 16:9 (16:10,
- *   4:3) is not supported: the picture stays 16:9 with bars, as without the
- *   option. A shape wider than 4:1 is taken as 4:1. auto is the primary
+ *   fullscreen fills an ultrawide display. A shape narrower than 16:9, down
+ *   to 4:3 (16:10, the Steam Deck's screen), shows the same view across and
+ *   more of it up and down (Vert+): the cameras and the default words stay
+ *   16:9, and the taller view goes only into what is drawn and what is culled
+ *   (cam_record_projection, des_frustum_tall). The HUD stays where it is at
+ *   16:9, on a canvas made taller to match. Narrower than 4:3 stays 16:9 with
+ *   bars. A shape wider than 4:1 is taken as 4:1. auto is the primary
  *   display's shape.
  *
  * DES_HUD=stretch - the HUD and menus spread across the full width. By default
@@ -132,6 +136,12 @@ float s_hud_l;        /* the canvas's extra width on each side; 0 = the game's c
 float s_hud_k = 1.0f; /* (1280 + 2L) / 1280 */
 bool  s_widen_plates; /* DES_HUD_FADES=1 */
 
+/* A shape narrower than 16:9: the same view across, more of it up and down (Vert+). */
+float s_tall_aspect;    /* the shape, 0 = not narrower */
+float s_tall_k = 1.0f;  /* (16/9) / shape: the vertical tangent's scale */
+float s_hud_t;          /* the canvas's extra height above and below */
+float s_hud_ky = 1.0f;  /* (720 + 2T) / 720 */
+
 float s_aspect = kGameAspect;   /* what the default words and the listed cameras hold */
 bool  s_off;                    /* the default words were not 16:9 at start: never written */
 bool  s_rsx_pinned;             /* RSX_ASPECT given at start: left alone */
@@ -229,6 +239,15 @@ PlateLog s_back_log = {"CommonBackPlate", {}, 0};
 
 void plate_after_update(uint32_t dlg, PlateLog& log)
 {
+    if (s_hud_t > 0.0f) {   /* a tall canvas: a fade covers all of it */
+        const uint32_t tr = dlg + kDlgRect;
+        if (vm_readf(tr) == 0.0f && vm_readf(tr + 4) == 0.0f && vm_readf(tr + 8) == kCanvasW &&
+            vm_readf(tr + 12) == kCanvasH) {
+            vm_writef(tr + 4, -s_hud_t);
+            vm_writef(tr + 12, kCanvasH + s_hud_t);
+        }
+        return;
+    }
     if (s_hud_l <= 0.0f) return;   /* (wrapped from the start, for a live change to a centred HUD) */
     const uint32_t r = dlg + kDlgRect;
     const float rc[4] = {vm_readf(r), vm_readf(r + 4), vm_readf(r + 8), vm_readf(r + 12)};
@@ -261,6 +280,26 @@ void back_plate_update(ppu_context* ctx)   /* for 0x008F2A58 */
     if (dlg && vm_read32(dlg) == kBackPlateVt) plate_after_update(dlg, s_back_log);
 }
 
+/* For 0x0012EE08, which records a camera's projection (command 0x39) from
+ * +0x50..+0x5C and is only reached through a vtable. A tall picture's FOV and
+ * shape go into that record alone: the camera keeps its own, so whatever eases
+ * its FOV goes on as at 16:9. The frustum (0x0012F100) gets the same view
+ * through des_frustum_tall. */
+void cam_record_projection(ppu_context* ctx)
+{
+    const uint32_t cam = (uint32_t)ctx->gpr[3];
+    if (s_tall_aspect <= 0.0f || !cam || std::fabs(vm_readf(cam + kCamAspect) - kGameAspect) > 1e-4f) {
+        func_0012EE08(ctx);
+        return;
+    }
+    const uint32_t fov_bits = vm_read32(cam + kCamFov), shape_bits = vm_read32(cam + kCamAspect);
+    vm_writef(cam + kCamFov, 2.0f * std::atan(std::tan(vm_readf(cam + kCamFov) * 0.5f) * s_tall_k));
+    vm_writef(cam + kCamAspect, s_tall_aspect);
+    func_0012EE08(ctx);
+    vm_write32(cam + kCamFov, fov_bits);
+    vm_write32(cam + kCamAspect, shape_bits);
+}
+
 } // namespace
 
 /* After 0x00718D84, stfs f13,0(r11): the menu canvas's right word. The words
@@ -273,6 +312,10 @@ extern "C" void des_hud_canvas(ppu_context* ctx, uint32_t addr)
         return;
     s_hud_rec = right - 12;   /* for des_hud_ctx, whatever the canvas is now */
     s_hud_ctx = 0;
+    if (s_hud_t > 0.0f) {
+        vm_writef(right - 12, -s_hud_t);
+        vm_writef(right - 8, kCanvasH + s_hud_t);
+    }
     if (s_hud_l <= 0.0f) return;
     vm_writef(right - 4, -s_hud_l);
     vm_writef(right, kCanvasW + s_hud_l);
@@ -288,6 +331,12 @@ extern "C" void des_hud_canvas(ppu_context* ctx, uint32_t addr)
 extern "C" float des_hud_side_width(void)
 {
     return s_hud_l;
+}
+
+/* The canvas's extra height above and below (0: the game's canvas), for the HUD editor and the menu mouse. */
+extern "C" float des_hud_top_height(void)
+{
+    return s_hud_t;
 }
 
 /* After 0x00CD4854 in the 0x3A handler: r5 = the command's first word, r3 =
@@ -322,6 +371,10 @@ extern "C" void des_hud_ctx(ppu_context* ctx, uint32_t addr)
         vm_writef(rec + 8, l);
         vm_writef(rec + 12, kCanvasW - l);
     }
+    if (s_hud_t > 0.0f) {
+        vm_writef(rec, -s_hud_t);
+        vm_writef(rec + 4, kCanvasH + s_hud_t);
+    }
     if (!known)
         fprintf(stderr, "[des] canvas 0x%08X (render context 0x%08X): x %.2f to %.2f, as the HUD's\n", rec, rctx, l,
                 kCanvasW - l);
@@ -350,12 +403,32 @@ extern "C" void des_cam_own(ppu_context* ctx, uint32_t addr)
         if (s_cams[i] == cam) { s_cams.erase(s_cams.begin() + (long)i); return; }
 }
 
+/* After 0x0012F19C, lfs f31,0x54(r4), in the camera frustum (0x0012F100,
+ * r4 = the camera): f1 is the camera's FOV times a constant and f31 its shape,
+ * both read from the camera at the start and not again. A tall picture's
+ * frustum takes the taller FOV and the narrower shape there, as
+ * cam_record_projection's projection does, so whatever reads that frustum
+ * sees the view that is shown. (f1 = FOV x 0.5. The scene's draws don't come
+ * from it: at the regression save's start they were the same with it at 40%
+ * of the FOV.) */
+extern "C" void des_frustum_tall(ppu_context* ctx, uint32_t addr)
+{
+    (void)addr;
+    if (s_tall_aspect <= 0.0f || std::fabs((float)ctx->fpr[31] - kGameAspect) > 1e-4f) return;
+    const float fov = vm_readf((uint32_t)ctx->gpr[4] + kCamFov);
+    if (!(fov > 0.0f)) return;
+    const float tall = 2.0f * std::atan(std::tan(fov * 0.5f) * s_tall_k);
+    ctx->fpr[1] = (double)((float)ctx->fpr[1] * (tall / fov));
+    ctx->fpr[31] = (double)s_tall_aspect;
+}
+
 /* After 0x0079EF7C, stvx v31,0,r29: WorldToScreen's result, x first. */
 extern "C" void des_hud_w2s(ppu_context* ctx, uint32_t addr)
 {
     (void)addr;
-    if (s_hud_l <= 0.0f) return;
     const uint32_t p = (uint32_t)ctx->gpr[29] & ~0xFu;   /* stvx ignores the low four bits */
+    if (s_hud_t > 0.0f) vm_writef(p + 4, kCanvasH * 0.5f + (vm_readf(p + 4) - kCanvasH * 0.5f) * s_hud_ky);
+    if (s_hud_l <= 0.0f) return;
     vm_writef(p, kCanvasW * 0.5f + (vm_readf(p) - kCanvasW * 0.5f) * s_hud_k);
 }
 
@@ -382,11 +455,12 @@ float aspect_wanted(const char* v)
                 from_display ? "the display's shape is unknown" : "not a shape (w:h, WxH or a number)");
         return kGameAspect;
     }
-    if (a < kGameAspect * 0.999f) {
-        fprintf(stderr, "[des] DES_ASPECT=%s (%.4f:1) is narrower than 16:9, which is not supported yet: "
+    if (a < 4.0f / 3.0f * 0.999f) {
+        fprintf(stderr, "[des] DES_ASPECT=%s (%.4f:1) is narrower than 4:3, which is not supported: "
                 "the picture stays 16:9, with bars\n", v, a);
         return kGameAspect;
     }
+    if (a < kGameAspect * 0.999f) return a;
     if (a <= kGameAspect * 1.001f) {
         if (from_display) fprintf(stderr, "[des] DES_ASPECT=auto: the display is 16:9, the game's own shape\n");
         return kGameAspect;
@@ -453,34 +527,47 @@ void aspect_apply(const char* v, const char* hud, bool live)
     }
     int changed = 0;
     size_t listed = 0;
+    /* A tall picture leaves the default words and the cameras at 16:9 (cam_record_projection). */
+    const float world = a < kGameAspect ? kGameAspect : a;
+    s_tall_aspect = a < kGameAspect ? a : 0.0f;
+    s_tall_k = a < kGameAspect ? kGameAspect / a : 1.0f;
     {
         std::lock_guard<std::mutex> lk(s_cam_mu);
-        const uint32_t was = float_bits(s_aspect), now = float_bits(a);
+        const uint32_t was = float_bits(s_aspect), now = float_bits(world);
         listed = s_cams.size();
         if (was != now) {
-            vm_writef(kCameraAspect, a);
-            vm_writef(kContextAspect, a);
+            vm_writef(kCameraAspect, world);
+            vm_writef(kContextAspect, world);
             for (uint32_t c : s_cams)
                 if (camera_holds(c, was)) {
                     vm_write32(c + kCamAspect, now);
                     changed++;
                 }
-            s_aspect = a;
+            s_aspect = world;
         }
     }
     const char* shown = getenv("RSX_ASPECT");
     if (!s_rsx_pinned) {
         char buf[32] = "";
-        if (a > kGameAspect) snprintf(buf, sizeof buf, "%.6f", a);
+        if (a != kGameAspect) snprintf(buf, sizeof buf, "%.6f", a);
         if (strcmp(shown ? shown : "", buf) != 0) ps3_setenv("RSX_ASPECT", buf);   /* ("" unsets it) */
     }
     const bool stretch = hud && strcmp(hud, "stretch") == 0;
+    s_hud_t = !stretch && a < kGameAspect ? (kCanvasW / a - kCanvasH) * 0.5f : 0.0f;
+    s_hud_ky = (kCanvasH + 2.0f * s_hud_t) / kCanvasH;
+    if (a < kGameAspect) {
+        const double half = std::tan(vm_readf(kCameraFov) * 0.5), deg = 360.0 / 3.14159265358979;
+        fprintf(stderr, "[des] DES_ASPECT=%s: the picture is %.4f:1, as wide a view as 16:9 and %.0f degrees high at the "
+                "default FOV (16:9: %.0f); HUD canvas y %.2f to %.2f\n", v, a, std::atan(half * s_tall_k) * deg,
+                std::atan(half) * deg, -s_hud_t, kCanvasH + s_hud_t);
+    }
     const float was_l = s_hud_l, l = !stretch && a > kGameAspect ? (kCanvasH * a - kCanvasW) * 0.5f : 0.0f;
     s_hud_l = l;
     s_hud_k = (kCanvasW + 2.0f * l) / kCanvasW;
     s_widen_plates = l > 0.0f && ps3_env_int("DES_HUD_FADES", 0) != 0;
     const bool hud_moved = live && l != was_l && hud_rewrite(was_l, l);
 
+    if (a < kGameAspect) return;   /* (said above) */
     if (!live && a == kGameAspect) return;   /* (the game's own picture: nothing to say at start) */
     const char* name = v && *v ? v : "(unset)";
     if (a == kGameAspect) {
@@ -515,6 +602,7 @@ extern "C" void des_aspect_init(void)
     /* Wrapped whatever the HUD is at start: a live change can centre it. */
     ppu_register_function(kDlgBaseUpdate, fade_plate_update);
     ppu_register_function(kBackPlateUpdate, back_plate_update);
+    ppu_register_function(0x0012EE08u, cam_record_projection);
     aspect_apply(getenv("DES_ASPECT"), getenv("DES_HUD"), false);
 }
 

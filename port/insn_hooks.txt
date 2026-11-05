@@ -96,6 +96,8 @@
 0x0012F0DC=des_cam_ctor       # stfs f12,0x54(r29): the other camera constructor, the same
 0x000D5B24=des_cam_own        # stfs f0,0x54(r19): 0x000D5980 gives its camera its target's shape; off the list
 0x00CD4854=des_hud_ctx        # rldicl r5,r9,0,32: the 0x3A handler, r5 = the command's first word, r3 = the context
+# DES_ASPECT narrower than 16:9 (16:10): the frustum takes the taller view the picture shows.
+0x0012F19C=des_frustum_tall   # lfs f31,0x54(r4): the camera frustum has read the FOV (f1, scaled) and the shape (f31)
 
 # ChrFollowCam update (0x00122C40).
 0x00123100=des_cam_rate   # k = +0x114

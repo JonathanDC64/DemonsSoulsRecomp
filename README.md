@@ -22,7 +22,7 @@ The game plays from start to finish (a tester has beaten it), but not every part
 
 ## Highlights
 
-- Up to 240 fps or unlocked, with the game's timing fixed. Up to 4K, ultrawide and HDR.
+- Up to 240 fps or unlocked, with the game's timing fixed. Up to 4K, ultrawide, 16:10 and HDR.
 - Online play on this project's own server: messages, bloodstains, ghosts, co-op and invasions.
 - Roll in any direction while locked on, not only forward, back, left or right.
 - A stat respec in the Nexus (optional): get back the souls your levels cost and spend them again.
@@ -36,7 +36,7 @@ Press **F1** (or **L3 + R3** on a controller) at any time to open the menu. Most
 - Frame rates of 30 (the original), 60, 120, 144, 165 or 240 fps, a number of your own, or unlocked. The game's timing is fixed so it still plays the way it should. Above 60 fps is less tested.
 - Cutscenes play at 30 fps by default, as they judder above it. You can play them at your frame rate instead.
 - V-sync on or off, "Even frames" for smooth motion, and G-Sync / FreeSync.
-- Render resolution up to 300% (4K), and ultrawide aspect ratios (21:9 and 32:9).
+- Render resolution up to 300% (4K), ultrawide aspect ratios (21:9 and 32:9), and 16:10 for the Steam Deck's screen.
 - Anti-aliasing (FXAA or SMAA), anisotropic filtering up to 16x, texture filtering and a sharp scaling filter.
 - HDR on HDR displays (Windows), with settings for brightness, peak and shadows.
 - Turn off the game's depth of field and motion blur.

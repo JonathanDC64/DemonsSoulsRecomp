@@ -331,6 +331,7 @@ issue text is cut to fit a link (about 6.5 KB encoded); the zip has the rest.
 | `DES_UI_KEYS=<frame>:<KEY>[,...]` | Press keys at presented frames: F1 ESC UP DOWN LEFT RIGHT ENTER PGUP PGDN TAB SPACE. OSK opens the on-screen keyboard as the game would, and a digit (0-9) is typed, for a number field. With DES_UI_SHOT, a test can walk the menus. |
 | `DES_UI_PICK=<folder>[;<folder>...]` | The setup screens' folder dialogs answer in turn with these folders, and none is shown; past the list's end, as if closed without a choice. With DES_UI_KEYS and DES_UI_SHOT, a test can walk the game folder pages. |
 | `DES_UI_NO_ANIM=1` | No transitions. |
+| `DES_TEST_OLD_CPU=1` | As if the processor had no SSE4.1: the message, then the exit (`port/des_cpu_check.cpp`). |
 | `DES_UI_DPI=<n>` | As if the display said this DPI (96 is 100%). A Steam Deck says 215. |
 | `DES_UI_RENDER=d3d11` | The menus and the crash dialog draw through D3D11On12, as before the D3D12 renderer (Windows; kept for one release, with no settings row). |
 | `DES_UI_RENDER=d3d12` | On the `d3d12` route (the default since 2026-11-02, docs/120), the menus draw through the legacy menu renderer (`render_d3d12.cpp`) instead of on the renderer's own device. |

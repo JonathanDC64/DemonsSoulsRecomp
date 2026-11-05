@@ -78,6 +78,7 @@ Press **F1** (or **L3 + R3** on a controller) at any time to open the menu. Most
 - Your own copy of Demon's Souls for the PS3, US version (BLUS30443, version 1.00), as a folder with `PS3_GAME` in it. Setup cannot use ISO files yet.
 - RPCS3, the free PS3 emulator, with the PS3 system software installed (4.93, the version Sony offers now). Setup has it unlock the game's encrypted files. (Or decrypt the files yourself: see below.)
 - Windows 10 or 11 (64-bit) with a graphics card that supports DirectX 12, or Linux (see [Linux](#linux)).
+- A processor with SSE4.1, which most have since about 2011.
 - An internet connection during setup. Setup downloads a compiler and Python (about 60 MB on Windows, about 130 MB on Linux).
 
 ## How to play

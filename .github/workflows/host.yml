@@ -359,6 +359,16 @@ jobs:
       - name: Not a developer build
         run: python tools/ci/check_release_no_dev.py build/host/des_host.exe
 
+      # port/des_cpu_check.cpp: a processor without SSE4.1 gets a message, before anything else in the program runs.
+      - name: The check for an old processor
+        shell: bash
+        run: |
+          rc=0
+          DES_TEST_OLD_CPU=1 PS3_NO_USER_INPUT=1 build/host/des_host.exe --program-check 2> old_cpu.txt || rc=$?
+          cat old_cpu.txt
+          [ "$rc" = 1 ] && grep -q "too old" old_cpu.txt
+          PS3_NO_USER_INPUT=1 build/host/des_host.exe --program-check
+
       # The map symbolizes crash addresses in the exe (des_game.map is the DLL's, made on the player's PC).
       # FFmpeg's DLLs go beside the exe, under the names the runtime opens (the majors its headers name), and
       # their licence in licenses/ffmpeg (package.py takes both into the player's zip).
@@ -792,6 +802,15 @@ jobs:
 
       - name: Not a developer build
         run: python tools/ci/check_release_no_dev.py dist/host-linux/des_host
+
+      # port/des_cpu_check.cpp: a processor without SSE4.1 gets a message, before anything else in the program runs.
+      - name: The check for an old processor
+        run: |
+          rc=0
+          DES_TEST_OLD_CPU=1 PS3_NO_USER_INPUT=1 dist/host-linux/des_host --program-check 2> old_cpu.txt || rc=$?
+          cat old_cpu.txt
+          [ "$rc" = 1 ] && grep -q "too old" old_cpu.txt
+          PS3_NO_USER_INPUT=1 dist/host-linux/des_host --program-check
 
       - name: No game-derived files in the artifact
         run: >

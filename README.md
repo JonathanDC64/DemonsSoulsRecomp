@@ -41,7 +41,7 @@ Press **F1** (or **L3 + R3** on a controller) at any time to open the menu. Most
 - HDR on HDR displays (Windows), with settings for brightness, peak and shadows.
 - Turn off the game's depth of field and motion blur.
 - Window or fullscreen (Alt+Enter switches).
-- Two renderers on Windows: DirectX 12 (the default) and Vulkan (Settings > Display > Renderer).
+- Two renderers (Settings > Display > Renderer): DirectX 12 and Vulkan. Windows starts on DirectX 12, Linux on Vulkan.
 
 **Controls**
 - Xbox controllers, DualSense and DualShock 4, over USB or Bluetooth, with vibration. Pick which controller the game uses when several are connected.
@@ -101,9 +101,9 @@ If setup says your `libsre.prx` came out different, your RPCS3 probably has PS3 
 
 ### Linux
 
-CI builds the Linux program on every change, and each release includes a Linux download. It needs x86-64 Linux with glibc 2.35 or newer, a Vulkan driver, and `curl` and `tar`. Nothing else needs installing. The game renders through vkd3d (DirectX 12 on Vulkan).
+CI builds the Linux program on every change, and each release includes a Linux download. It needs x86-64 Linux with glibc 2.35 or newer, a Vulkan driver, and `curl` and `tar`. Nothing else needs installing. The game renders on Vulkan, and setup prepares its shaders. If Vulkan can't start, the game falls back to its older renderer on vkd3d (DirectX 12 on Vulkan), which compiles shaders as it goes, with long pauses when a new area loads.
 
-Linux is newer and less tested than Windows. So far it has run in WSL (Ubuntu 24.04), not yet on a real Linux PC or a Steam Deck ([docs/106](docs/106-setup-on-linux.md)).
+Linux is newer and less tested than Windows. So far it has run in WSL (Ubuntu 24.04) and, on the older renderer, on one Steam Deck. The Vulkan renderer hasn't run on a real Linux graphics driver yet ([docs/106](docs/106-setup-on-linux.md)).
 
 macOS is not supported.
 
@@ -115,7 +115,7 @@ Online play is on by default and uses this project's own server. Setup asks for 
 
 - Only the US version (BLUS30443) works. The European version is being looked at; other versions are not supported.
 - Setup can't read ISO files, and it needs RPCS3 to unlock the game's files (or files you decrypted yourself).
-- macOS isn't supported, and running the Windows download through CrossOver hasn't been tested all the way through. Linux is less tested than Windows, and the Steam Deck hasn't been tried yet.
+- macOS isn't supported, and running the Windows download through CrossOver hasn't been tested all the way through. Linux is less tested than Windows, and the Steam Deck has had one test so far.
 - On-screen button prompts always show PlayStation buttons, even with a keyboard or an Xbox controller.
 
 ### Problems

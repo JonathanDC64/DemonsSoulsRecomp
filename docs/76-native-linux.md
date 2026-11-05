@@ -1,5 +1,10 @@
 # 76. Native Linux: the D3D12 backend on vkd3d (2026-10-21)
 
+**2026-11-04:** the Linux download now starts on the portable renderer's Vulkan backend (docs/120). The renderer this page
+describes, the legacy one on vkd3d, is what a Vulkan start that fails falls back to, or `RSX_BACKEND=d3d12`. What this page
+says about the program, the libraries and the build still holds. Its "Missing" list is about the legacy renderer: setup's
+shader step, for one, runs on the Vulkan route.
+
 Demon's Souls runs as a native Linux program, built from the same code as
 the Windows exe. It boots, loads the save's level and renders it as on
 Windows. This page says how, what is missing, and how to build and run it.

@@ -711,21 +711,55 @@ jobs:
           key: sccache-host-${{ runner.os }}-${{ github.sha }}
           restore-keys: sccache-host-${{ runner.os }}-
 
+      # The runtime library des_host links, with the portable renderer (PS3RECOMP_RSX_HAL, docs/120), as on Windows.
+      # Vulkan is Linux's default there (ps3recomp's rsx_out.c), setup's shader step has its spv target, and the legacy
+      # renderer on vkd3d (PS3RECOMP_RSX_D3D12_VKD3D) is what a Vulkan start that fails falls back to. Issue #351: with
+      # the legacy renderer alone, a Steam Deck compiled each scene's shaders as it loaded, for 16-23 s. The Vulkan
+      # backend opens the system's loader at run time, as vkd3d does.
+      #
+      # The GPU layer's sources are cached as in the Windows job above (its comment says why).
+      - name: Cache the GPU layer's sources
+        id: gpu-src
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/.ci-cache/gpu-src
+          key: gpu-src-${{ runner.os }}-${{ hashFiles('ps3recomp/cmake/gpu_deps.cmake') }}-v1
+
       - name: Configure the runtime library
-        run: >
-          cmake -S ps3recomp -B ps3recomp/build_split -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DPS3RECOMP_BUILD_TESTS=OFF
-          -DPS3RECOMP_RSX_D3D12_VKD3D=ON
-          -DPS3RECOMP_GAME_SPLIT=ON
-          -DPS3RECOMP_FFMPEG_RUNTIME=ON
-          "-DPS3RECOMP_FFMPEG_INCLUDE_DIR=$FFMPEG_DIR/include"
+        id: rt_cfg
+        run: |
+          set -o pipefail
+          src=()
+          if [ "${{ steps.gpu-src.outputs.cache-hit }}" = true ]; then
+            for n in vulkan_headers spirv_headers spirv_tools glslang; do
+              d="$GITHUB_WORKSPACE/.ci-cache/gpu-src/$n"
+              [ -f "$d/CMakeLists.txt" ] || { echo "::error::the cached $n has no CMakeLists.txt"; exit 1; }
+              src+=("-DFETCHCONTENT_SOURCE_DIR_${n^^}=$d")
+            done
+          fi
+          cmake -S ps3recomp -B ps3recomp/build_split -G Ninja -DCMAKE_BUILD_TYPE=Release -DPS3RECOMP_BUILD_TESTS=OFF \
+            -DPS3RECOMP_RSX_D3D12_VKD3D=ON -DPS3RECOMP_RSX_HAL=ON -DPS3RECOMP_GAME_SPLIT=ON \
+            -DPS3RECOMP_FFMPEG_RUNTIME=ON "-DPS3RECOMP_FFMPEG_INCLUDE_DIR=$FFMPEG_DIR/include" "${src[@]}" | tee rt_cfg.log
+          grep -q "D3D12: *RSX backend on vkd3d" rt_cfg.log
+          grep -q "Renderer: *the GPU layer's Vulkan backend" rt_cfg.log
+          grep -q "Renderer: *the compile service's spv target" rt_cfg.log
+
+      # Never in the way: a copy that fails is removed, so no half copy is saved, and the job goes on.
+      - name: Keep the GPU layer's sources for the cache
+        if: steps.gpu-src.outputs.cache-hit != 'true' && steps.rt_cfg.outcome == 'success'
+        continue-on-error: true
+        run: |
+          trap 'rm -rf .ci-cache/gpu-src' ERR
+          for n in vulkan_headers spirv_headers spirv_tools glslang; do
+            mkdir -p ".ci-cache/gpu-src/$n"
+            tar -C "ps3recomp/build_split/_deps/$n-src" --exclude=.git -cf - . | tar -C ".ci-cache/gpu-src/$n" -xf -
+          done
+          du -sh .ci-cache/gpu-src/*
 
       - name: Build the runtime library
         run: cmake --build ps3recomp/build_split --target ps3recomp_runtime
 
-      # The wrapper UI's sources, cached as in the Windows job above (its comment says why). On a miss, the copy the
-      # step after this configure keeps also serves the both-routes configure below.
+      # The wrapper UI's sources, cached as in the Windows job above (its comment says why).
       - name: Cache the wrapper UI's sources
         id: ui-src
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -734,13 +768,17 @@ jobs:
           key: ui-src-${{ runner.os }}-${{ hashFiles('port/ui/CMakeLists.txt') }}-v1
 
       # des_host alone (DES_HOST_ONLY), exactly the pinned ps3recomp, no developer code, and RUNPATH $ORIGIN only.
+      # DES_RSX_HAL=AUTO finds the renderer's option in the runtime's build: the port calls through the route switch.
       - name: Configure des_host
         id: host_cfg
         run: |
+          set -o pipefail
           mapfile -t src < <(python tools/ci/fetch_src.py args .ci-cache/ui-src freetype rmlui stb)
           cmake -S port -B build/host -G Ninja -DCMAKE_BUILD_TYPE= "-DRECOMP_DIR=$HOST_LIFT" \
             -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON "-DCMAKE_INSTALL_RPATH=\$ORIGIN" -DDES_SPLIT=ON \
-            -DDES_SPLIT_FREESTANDING=ON -DDES_HOST_ONLY=ON -DDES_VKD3D=ON -DDES_REQUIRE_PIN=ON -DDES_DEV=OFF "${src[@]}"
+            -DDES_SPLIT_FREESTANDING=ON -DDES_HOST_ONLY=ON -DDES_VKD3D=ON -DDES_REQUIRE_PIN=ON -DDES_DEV=OFF "${src[@]}" \
+            | tee host_cfg.log
+          grep -q "renderer calls through the route switch (DES_RSX_HAL=AUTO): ON" host_cfg.log
 
       - name: Keep the wrapper UI's sources for the cache
         if: steps.ui-src.outputs.cache-hit != 'true' && steps.host_cfg.outcome == 'success'
@@ -781,6 +819,23 @@ jobs:
           [ -f ps3recomp/third_party/smaa/LICENSE.txt ] || { echo "::error::no licence file for SMAA"; exit 1; }
           mkdir -p dist/host-linux/licenses/smaa
           cp ps3recomp/third_party/smaa/LICENSE.txt dist/host-linux/licenses/smaa/
+          # The portable renderer compiles in glslang and SPIRV-Tools, with SPIRV-Headers, volk and the Vulkan headers:
+          # each licence goes along, from where the build took the sources, as in the Windows job.
+          src_of() {
+            local v
+            v=$(sed -n "s/^FETCHCONTENT_SOURCE_DIR_$1:[A-Z]*=//p" ps3recomp/build_split/CMakeCache.txt)
+            echo "${v:-ps3recomp/build_split/_deps/$2-src}"
+          }
+          for d in glslang:$(src_of GLSLANG glslang) spirv-tools:$(src_of SPIRV_TOOLS spirv_tools) \
+                   spirv-headers:$(src_of SPIRV_HEADERS spirv_headers) \
+                   vulkan-headers:$(src_of VULKAN_HEADERS vulkan_headers) volk:ps3recomp/third_party/volk; do
+            n=${d%%:*}; src=${d#*:}; f=
+            for c in LICENSE.txt LICENSE.md LICENSE; do [ -f "$src/$c" ] && { f=$src/$c; break; }; done
+            [ -n "$f" ] || { echo "::error::no licence file for $n in $src"; exit 1; }
+            mkdir -p "dist/host-linux/licenses/$n"
+            cp "$f" "dist/host-linux/licenses/$n/"
+            if [ -d "$src/LICENSES" ]; then cp -r "$src/LICENSES" "dist/host-linux/licenses/$n/"; fi
+          done
           ls -laR dist/host-linux
           find dist/host-linux -type f -exec sha256sum {} +
 
@@ -805,90 +860,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # The Linux host with both routes (docs/120), after the artifact above, which stays today's build (as the
-      # Windows host has both routes; on Linux the default build changes only after testers): a second runtime build with host-linux's options and
-      # PS3RECOMP_RSX_HAL (its spv target and Vulkan backend on by default), as the Windows HAL builds are, and a
-      # second des_host on it. ps3recomp's route switch then has RSX_BACKEND=d3d12 (the default, which on Linux is
-      # still the legacy renderer on vkd3d), legacy, null and vulkan, with the Vulkan start's fallback to the default. Its folder must pass the checks
-      # above. Not on a release tag.
-      # The GPU layer's sources, cached as in the Windows job above (its comment says why).
-      - name: Cache the GPU layer's sources
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        id: gpu-src
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ${{ github.workspace }}/.ci-cache/gpu-src
-          key: gpu-src-${{ runner.os }}-${{ hashFiles('ps3recomp/cmake/gpu_deps.cmake') }}-v1
-
-      - name: Both routes, configure the runtime library
-        id: routes_rt_cfg
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      # The switch and the core's null and vulkan tables linked in, and the switch's line for Vulkan.
+      - name: The renderer's routes in des_host
         run: |
-          set -o pipefail
-          src=()
-          if [ "${{ steps.gpu-src.outputs.cache-hit }}" = true ]; then
-            for n in vulkan_headers spirv_headers spirv_tools glslang; do
-              d="$GITHUB_WORKSPACE/.ci-cache/gpu-src/$n"
-              [ -f "$d/CMakeLists.txt" ] || { echo "::error::the cached $n has no CMakeLists.txt"; exit 1; }
-              src+=("-DFETCHCONTENT_SOURCE_DIR_${n^^}=$d")
-            done
-          fi
-          cmake -S ps3recomp -B ps3recomp/build_routes -G Ninja -DCMAKE_BUILD_TYPE=Release -DPS3RECOMP_BUILD_TESTS=OFF \
-            -DPS3RECOMP_RSX_D3D12_VKD3D=ON -DPS3RECOMP_RSX_HAL=ON -DPS3RECOMP_GAME_SPLIT=ON \
-            -DPS3RECOMP_FFMPEG_RUNTIME=ON "-DPS3RECOMP_FFMPEG_INCLUDE_DIR=$FFMPEG_DIR/include" "${src[@]}" | tee routes_rt.log
-          grep -q "D3D12: *RSX backend on vkd3d" routes_rt.log
-          grep -q "Renderer: *the GPU layer's Vulkan backend" routes_rt.log
-          grep -q "Renderer: *the compile service's spv target" routes_rt.log
-
-      # Never in the way: a copy that fails is removed, so no half copy is saved, and the job goes on.
-      - name: Keep the GPU layer's sources for the cache
-        if: ${{ !startsWith(github.ref, 'refs/tags/') && steps.gpu-src.outputs.cache-hit != 'true' && steps.routes_rt_cfg.outcome == 'success' }}
-        continue-on-error: true
-        run: |
-          trap 'rm -rf .ci-cache/gpu-src' ERR
-          for n in vulkan_headers spirv_headers spirv_tools glslang; do
-            mkdir -p ".ci-cache/gpu-src/$n"
-            tar -C "ps3recomp/build_routes/_deps/$n-src" --exclude=.git -cf - . | tar -C ".ci-cache/gpu-src/$n" -xf -
-          done
-          du -sh .ci-cache/gpu-src/*
-
-      - name: Both routes, build the runtime library
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        run: cmake --build ps3recomp/build_routes --target ps3recomp_runtime
-
-      # DES_RSX_HAL=AUTO finds the option in that runtime's build: the port calls through the switch.
-      - name: Both routes, configure and build des_host
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        run: |
-          set -o pipefail
-          mapfile -t src < <(python tools/ci/fetch_src.py args .ci-cache/ui-src freetype rmlui stb)
-          cmake -S port -B build/host-routes -G Ninja -DCMAKE_BUILD_TYPE= "-DRECOMP_DIR=$HOST_LIFT" \
-            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON "-DCMAKE_INSTALL_RPATH=\$ORIGIN" -DDES_SPLIT=ON \
-            -DDES_SPLIT_FREESTANDING=ON -DDES_HOST_ONLY=ON -DDES_VKD3D=ON -DDES_REQUIRE_PIN=ON -DDES_DEV=OFF \
-            "-DPS3RECOMP_SPLIT_LIB=$PWD/ps3recomp/build_routes/libps3recomp_runtime.a" "${src[@]}" | tee routes_host.log
-          grep -q "renderer calls through the route switch (DES_RSX_HAL=AUTO): ON" routes_host.log
-          cmake --build build/host-routes --target des_host
-
-      # The switch and the core's null and vulkan tables linked in (ps3recomp's rsx_out.c references the vulkan
-      # one on Linux from the commit that offers it there), and the switch's line for it.
-      - name: Both routes, the routes in des_host
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        run: |
-          nm build/host-routes/des_host > routes_syms.txt
+          nm build/host/des_host > routes_syms.txt
           for s in rsx_out_backend_init rsxc_route_null rsxc_route_vk rsxc_vk_start_failed; do
-            grep " $s$" routes_syms.txt || { echo "::error::des_host with both routes has no $s"; exit 1; }
+            grep " $s$" routes_syms.txt || { echo "::error::des_host has no $s"; exit 1; }
           done
-          grep -c "the new path on its Vulkan backend" build/host-routes/des_host
-
-      # The release folder with this des_host in its place: nothing more needed (the Vulkan backend opens the
-      # loader at run time, as vkd3d does), no developer code.
-      - name: Both routes, what each file needs, not a developer build
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        run: |
-          cp -r dist/host-linux dist/host-linux-routes
-          cp build/host-routes/des_host dist/host-linux-routes/des_host
-          python tools/ci/check_host_elf.py --glibc 2.35 dist/host-linux-routes
-          python tools/ci/check_release_no_dev.py dist/host-linux-routes/des_host
+          grep -c "the new path on its Vulkan backend" build/host/des_host
 
       # Setup's engine (tools/setup) on Linux at the glibc floor (docs/87), with Python 3.13, setup's own line (a 3.13
       # standalone build): independent of the host above, so it runs after a failure there too. Not on a release tag.

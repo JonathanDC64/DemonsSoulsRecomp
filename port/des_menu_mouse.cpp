@@ -65,6 +65,7 @@
 extern "C" unsigned des_flip_count(void);                                       /* des_options.cpp */
 extern "C" int des_hud_obj_rect(ppu_context* ctx, uint32_t obj, float out[4]);  /* des_hud.cpp */
 extern "C" float des_hud_side_width(void);                                      /* des_aspect.cpp */
+extern "C" float des_hud_top_height(void);                                      /* des_aspect.cpp */
 extern "C" volatile unsigned g_pad0_reads, g_pad0_empty_reads;                  /* cellPad.c */
 
 namespace {
@@ -1372,11 +1373,11 @@ extern "C" int des_menu_mouse_open(void)
 /* The canvas the picture shows: left, top, right, bottom. */
 extern "C" void des_menu_mouse_view(float view[4])
 {
-    const float side = des_hud_side_width();
+    const float side = des_hud_side_width(), top = des_hud_top_height();
     view[0] = -side;
-    view[1] = 0.0f;
+    view[1] = -top;
     view[2] = kCanvasW + side;
-    view[3] = kCanvasH;
+    view[3] = kCanvasH + top;
 }
 
 /* The spot under (x, y): its box, and 1; 0 if none. */

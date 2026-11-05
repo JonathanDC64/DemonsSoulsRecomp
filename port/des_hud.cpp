@@ -89,6 +89,7 @@
 
 extern "C" void ppu_register_function(uint64_t addr, void (*fn)(ppu_context*));
 extern "C" float des_hud_side_width(void);   /* des_aspect.cpp: the canvas's extra width on each side */
+extern "C" float des_hud_top_height(void);   /* des_aspect.cpp: its extra height above and below */
 #ifndef PS3_GAME_SPLIT   /* DES_SPLIT: the game DLL's (ps3emu/game_split.h) */
 extern "C" PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);
 #endif
@@ -377,10 +378,11 @@ std::atomic<int> s_edit_left{0};
 
 void view_of(float side, float view[4])
 {
+    const float top = des_hud_top_height();
     view[0] = -side;
-    view[1] = 0.0f;
+    view[1] = -top;
     view[2] = kCanvasW + side;
-    view[3] = kCanvasH;
+    view[3] = kCanvasH + top;
 }
 
 /* Group g's draw rect at size and move, from the dialog's current rect: the

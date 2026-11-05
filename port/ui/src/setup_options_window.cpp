@@ -305,7 +305,8 @@ SetupChoicesWindow::SetupChoicesWindow(Props props)
         static const struct {
             const char* value;
             const char* label;
-        } kAspects[] = {{"2560:1080", "21:9 (2560x1080)"},
+        } kAspects[] = {{"16:10", "16:10 (Steam Deck)"},
+                        {"2560:1080", "21:9 (2560x1080)"},
                         {"3440:1440", "21:9 (3440x1440)"},
                         {"3840:1600", "21:9 (3840x1600)"},
                         {"32:9", "32:9"}};  // (the Aspect ratio row's, settings_window.cpp)
@@ -407,7 +408,8 @@ void SetupChoicesWindow::draw_hints() {
             if (shape <= 0.f) hint = "Match the display fills a wide display.";
             else if (std::fabs(shape - 16.f / 9.f) < 0.02f) hint = "Your display is 16:9, so both look the same.";
             else if (shape > 16.f / 9.f) hint = "Your display is wider: Match the display shows more at the sides.";
-            else hint = "Your display is narrower, so the picture stays 16:9.";
+            else if (shape >= 4.f / 3.f - 0.01f) hint = "Your display is narrower: Match the display shows more above and below.";
+            else hint = "Your display is narrower than 4:3, so the picture stays 16:9.";
         } else if (!std::strcmp(o.key, "RSX_HDR")) {
             if (!d.hdr) hint = "HDR is off for your display in Windows. The game shows HDR only while it is on there.";
             else hint = v == "1" ? "Your display has HDR on in Windows." : "Off keeps the PS3's picture, in SDR.";

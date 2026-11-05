@@ -468,9 +468,10 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "Vulkan or D3D12. Restart to apply.<br/><br/>(RSX_BACKEND)");
 #endif
         choice_row(leftPane, rightPane, "Aspect ratio", "DES_ASPECT",
-            {"", "2560:1080", "3440:1440", "3840:1600", "32:9", "auto"},
-            {"16:9 (original)", "21:9 (2560x1080)", "21:9 (3440x1440)", "21:9 (3840x1600)", "32:9", "Match the display"},
-            "The shape of the picture, for ultrawide displays. Wider shows more at the sides. Raise Render "
+            {"", "16:10", "2560:1080", "3440:1440", "3840:1600", "32:9", "auto"},
+            {"16:9 (original)", "16:10 (Steam Deck)", "21:9 (2560x1080)", "21:9 (3440x1440)", "21:9 (3840x1600)", "32:9",
+             "Match the display"},
+            "The shape of the picture. Wider shows more at the sides, 16:10 more above and below. Raise Render "
             "resolution to keep a wide picture sharp.<br/><br/>(DES_ASPECT)");
         choice_row(leftPane, rightPane, "Render resolution", "RSX_SCALE", {"100", "150", "200", "300"},
             {"100% (original)", "150%", "200%", "300%"},

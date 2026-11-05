@@ -28,6 +28,7 @@ DES_GAME_CALLS(DES_GAME_CALL_DECL_)
 #define func_00023750 des_game_calls::f_00023750
 #define func_000B14C8 des_game_calls::f_000B14C8
 #define func_000B15C8 des_game_calls::f_000B15C8
+#define func_0012EE08 des_game_calls::f_0012EE08
 #define func_0015AE10 des_game_calls::f_0015AE10
 #define func_001D17A0 des_game_calls::f_001D17A0
 #define func_001D35D8 des_game_calls::f_001D35D8

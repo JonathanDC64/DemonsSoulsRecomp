@@ -103,6 +103,7 @@ std::string summary(Preset preset, const std::function<std::string(std::string_v
     const std::string aspect = get("DES_ASPECT");
     if (aspect == "auto") s += ", the display's shape";
     else if (aspect == "32:9") s += ", 32:9";
+    else if (aspect == "16:10") s += ", 16:10";
     else if (!aspect.empty()) s += ", 21:9";
     if (get("RSX_HDR") == "1") s += ", HDR";
     s += get("DES_FULLSCREEN") == "1" ? ", fullscreen" : ", window";

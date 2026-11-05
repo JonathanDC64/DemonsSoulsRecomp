@@ -6,5 +6,5 @@
 # that needs a newer one moves it forward in the same pull request; the commit has to be on the fork's
 # master, so the ps3recomp pull request merges first. Change it with tools/release/pin_ps3recomp.py.
 repo=https://github.com/JonathanDC64/ps3recomp
-tag=des-0.14.0-3
-commit=63a7197a2c129a3af7567a5f811ce2b624df0796
+tag=none
+commit=7ac7715fbeac38cc51b9a75d5705b63d43485303

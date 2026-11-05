@@ -162,6 +162,7 @@ All are live: the debug console's `setenv` sets them in a running game.
 | `DES_REPORT_AT_FRAME=n` | starts Report an issue at frame n, once per value |
 | `DES_UI_PRESS=KEY` | presses F1, ESC, ENTER, UP/DOWN/LEFT/RIGHT, TAB, SPACE as the window procedure would, then clears itself. Test runs set `PS3_NO_USER_INPUT=1`, which drops keys posted to the window. |
 | `DES_REPORT_NO_OPEN=1` | no browser or Explorer; the issue link goes to `<zip>.url.txt` |
+| `GAMESCOPE_WAYLAND_DISPLAY` set, or `XDG_CURRENT_DESKTOP=gamescope` | not a knob: the session says so, as a Steam Deck's Game Mode does. Nothing is opened (no desktop to open it on, and a browser could take the screen); the issue link goes to `<zip>.url.txt`, and a toast says where the zip is and to send it from Desktop Mode. `system.txt` has a `Session:` line |
 | `DES_CRASH_DIALOG_REPORT=1`, `_DETAILS=1`, `_SHOT=<bmp>`, `_EXIT_MS=<ms>` | the dialog presses Report or Show details by itself, saves its picture, closes after that long |
 | `PS3_FREEZE_SNAPSHOT=<s>` | seconds without a frame before the log snapshot (default 10, 0 = off) |
 

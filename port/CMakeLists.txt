@@ -135,6 +135,11 @@ if(EXISTS "${LIBSRE_LIFTED}" AND EXISTS "${LIBSRE_GLUE}")
     # is (a copy, a link, setup's install).
     set_source_files_properties("${LIBSRE_GLUE}" PROPERTIES
         INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/prx")
+    # The glue's default path for libsre's image is from the working folder, and a direct start of des_boot.exe works
+    # in the exe's folder, where it finds nothing (issue #355). So this build also says where it found the lifted
+    # libsre, and run_defaults (des_options.cpp) gives the image from there.
+    set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/des_options.cpp" APPEND PROPERTY COMPILE_DEFINITIONS
+        "DES_LIBSRE_IMAGE=\"${CMAKE_CURRENT_SOURCE_DIR}/../work/libsre/libsre_image.bin\"")
     message(STATUS "des_boot: libsre LLE available (run with LIBSRE_LLE=1)")
 else()
     message(STATUS "des_boot: libsre LLE not built (HLE cellSpurs only)")

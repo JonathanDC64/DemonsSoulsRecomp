@@ -81,9 +81,7 @@ jobs:
           cmp names-whole.cpp names-packaged.cpp
 
       - name: Third-party sources
-        run: |
-          python tools/release/third_party_sources.py --out dist/third-party
-          ls -l dist/third-party
+        run: python tools/release/third_party_sources.py --check
 
       - name: No game-derived files in the package
         run: |

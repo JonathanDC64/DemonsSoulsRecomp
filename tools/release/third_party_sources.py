@@ -1,28 +1,35 @@
 #!/usr/bin/env python3
-"""The source archives of the LGPL libraries a release ships, for the release page.
+"""The source archives of the LGPL libraries a release ships, on a release of their own (docs/54 section 8.6).
 
-The Linux tarball carries vkd3d's and FFmpeg's libraries beside des_host. Both are LGPL 2.1 or later, which asks
-for their source to go with the binaries, so every release attaches the exact archives host.yml built them from.
-The versions and SHA-256s are read from host.yml's env (VKD3D_VERSION, VKD3D_SHA256, FFMPEG_VERSION,
-FFMPEG_SHA256), so the two can't drift apart.
+The downloads carry FFmpeg's libraries, and the Linux one vkd3d's too. Both are LGPL 2.1 or later, which asks for their
+source to be offered with the binaries. The third-party-sources release holds the exact archives host.yml built them
+from, so that each game release's page has only what a player needs. The versions and SHA-256s are read from host.yml's
+env (VKD3D_VERSION, VKD3D_SHA256, FFMPEG_VERSION, FFMPEG_SHA256), so the two can't drift apart.
 
+  third_party_sources.py [--workflow FILE] --check
   third_party_sources.py [--workflow FILE] --out DIR
 
-Downloads each archive into DIR, checks it against the pinned SHA-256, and prints the paths. Each address is tried
-three times, then the next one: the project's own site first, then a copy of the same archive (FFmpeg's is attached
-to the fork's FFmpeg release). The SHA-256 decides, so a copy can't change what ships. Exit status: 0 good, 1 a
-download or check failed, 2 a usage or file error. Standard library only.
+--check: that release has each archive, by the pinned SHA-256. release.yml stops on a version with no archive there.
+--out: downloads each archive into DIR from its own project, checks it, and prints the paths: what to add to the release
+after moving to a new version (gh release upload third-party-sources DIR/*). Each address is tried three times, then the
+next one: the project's own site first, then a copy of the same archive (FFmpeg's is attached to the fork's FFmpeg
+release). The SHA-256 decides, so a copy can't change what ships.
+
+Exit status: 0 good, 1 a download or check failed, 2 a usage or file error. Standard library only.
 """
 import argparse
 import hashlib
 import os
 import re
 import sys
+import tempfile
 import time
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HOST_YML = os.path.join(ROOT, ".github", "workflows", "host.yml")
+
+HOME = "https://github.com/JonathanDC64/Soulbrandt/releases/download/third-party-sources"
 
 # name -> (env key of the version, env key of the SHA-256, URLs with {v} for the version (tried in order), file name
 # with {v})
@@ -89,28 +96,39 @@ def fetch_any(urls, dest, sha256, name):
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--workflow", default=HOST_YML, help="host.yml, which pins the versions")
-    ap.add_argument("--out", required=True, help="where the archives go")
+    mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--check", action="store_true", help="the third-party-sources release has each archive")
+    mode.add_argument("--out", help="where the archives go, from their own projects")
     a = ap.parse_args(argv)
     try:
         env = read_env(a.workflow)
     except OSError as e:
         print(f"third_party_sources: {e}", file=sys.stderr)
         return 2
-    os.makedirs(a.out, exist_ok=True)
+    if a.out:
+        os.makedirs(a.out, exist_ok=True)
     status = 0
     for name, (ver_key, sha_key, urls, file) in SOURCES.items():
         ver, sha = env.get(ver_key), env.get(sha_key)
         if not ver or not sha or not re.fullmatch(r"[0-9a-fA-F]{64}", sha):
             print(f"third_party_sources: {name}: {ver_key} or {sha_key} missing from {a.workflow}", file=sys.stderr)
             return 2
-        dest = os.path.join(a.out, file.format(v=ver))
+        filename = file.format(v=ver)
         try:
-            fetch_any([u.format(v=ver) for u in urls], dest, sha, name)
+            if a.check:
+                with tempfile.TemporaryDirectory() as tmp:
+                    fetch_any([f"{HOME}/{filename}"], os.path.join(tmp, filename), sha, name)
+                print(f"ok   {filename} is on the third-party-sources release")
+            else:
+                dest = os.path.join(a.out, filename)
+                fetch_any([u.format(v=ver) for u in urls], dest, sha, name)
+                print(dest)
         except (OSError, ValueError) as e:
             print(f"third_party_sources: {name}: {e}", file=sys.stderr)
+            if a.check:
+                print(f"third_party_sources: add {filename} to the third-party-sources release (this script's --out, "
+                      "then gh release upload)", file=sys.stderr)
             status = 1
-            continue
-        print(dest)
     return status
 
 

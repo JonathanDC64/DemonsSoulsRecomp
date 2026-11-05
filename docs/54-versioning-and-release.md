@@ -647,6 +647,26 @@ it read (the journal's `deps`):
 of the new download, says the download isn't a release, and changes nothing. No version with that layout was ever
 published. The tester's zips of 10-30 are the only ones, and a tester unpacks the new one and copies `gamedata/` across.
 
+### 8.6 The LGPL libraries' source (11-04)
+
+FFmpeg's libraries are in both downloads and vkd3d's in the Linux one. Both are LGPL 2.1 or later, which asks for their
+source to be offered with the binaries. The archives used to be attached to every game release, which left two files on
+its page that a player could take for downloads of the game. The user asked for them to go on a release of their own,
+like the compiler's.
+
+- **Where:** [`third-party-sources`](https://github.com/JonathanDC64/Soulbrandt/releases/tag/third-party-sources), holding the exact archives `host.yml` builds from.
+- **What points there:** `README.md`, and `licenses/ffmpeg/README.txt` and `licenses/vkd3d/README.txt` in the download.
+  v0.1.0's zip was built before this, and its FFmpeg note says "on this release's page", so its release notes hold the
+  link.
+- **The check:** `release.yml` and `release-check.yml` run `third_party_sources.py --check`, which downloads each archive
+  from that release and compares it with `host.yml`'s pinned SHA-256. A new version with no archive there stops a release.
+- **Moving to a new version:** `third_party_sources.py --out DIR`, then `gh release upload third-party-sources DIR/*`.
+  Keep the old archives for as long as a published release uses them.
+- **Not a game release:** the update check reads only `vX.Y.Z` tags, and `release-latest.yml` keeps "Latest" on those.
+
+The LGPL's wording is that the source is offered "from the same place". A release of the same repository, linked from
+the places above, is taken to meet that. This is not a lawyer's reading.
+
 ## 9. Game-file check
 
 ### 9.1 What it flags

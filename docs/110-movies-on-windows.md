@@ -14,7 +14,7 @@ Windows too). Background: docs/109 section 5. Builds from source download the sa
   - `avcodec-62.dll` and `avutil-60.dll`: FFmpeg 8.1.3 with only the MPEG-2 video decoder and its parser,
     LGPL 2.1 or later;
   - `licenses/ffmpeg/`: FFmpeg's licence, CREDITS, and a note with the source archive and the configure line.
-  - Each release page has the source archive (`tools/release/third_party_sources.py`).
+  - The `third-party-sources` release has the source archive (docs/54 section 8.6).
 - **At run time:** each movie tries FFmpeg's decoder first, and uses Windows' own (Media Foundation) only when the
   DLLs can't be loaded. `PS3RECOMP_FFMPEG=0` skips FFmpeg.
 - **Licence and patents:** the DLLs are loaded at run time and can be replaced with another build of the same

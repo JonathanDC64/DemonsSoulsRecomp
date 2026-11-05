@@ -158,6 +158,34 @@ class RunTest(unittest.TestCase):
         (self.s.data / "game" / "des_game.dll").write_bytes(b"MZ")
         self.assertEqual(pipeline.status(self.s.data, "1.0")["state"], "damaged")
 
+    def test_ready_watches_the_libsre_image(self):
+        image = self.s.data / "work" / "libsre" / "libsre_image.bin"
+
+        def with_image(data, jr, jobs, step):
+            image.parent.mkdir(parents=True, exist_ok=True)
+            image.write_bytes(b"image")
+            return fake_compile(data, jr, jobs, step)
+
+        rc, lines = self.s.run(phases=PHASES + ["compile"], compile_fn=with_image)
+        self.assertEqual(rc, 0, lines)
+        ready = pipeline.read_ready(self.s.data)
+        self.assertEqual((ready["libsre_image"], ready["libsre_image_size"]), (str(image), "5"))
+        self.assertEqual(pipeline.status(self.s.data, "1.0")["state"], "ready")
+        image.write_bytes(b"cut")
+        self.assertEqual(pipeline.status(self.s.data, "1.0")["state"], "damaged")
+        image.unlink()
+        self.assertEqual(pipeline.status(self.s.data, "1.0")["state"], "damaged")
+
+    def test_no_system_software_no_image_to_watch(self):
+        def without_image(data, jr, jobs, step):
+            (data / "work" / "libsre" / "libsre_image.bin").unlink(missing_ok=True)
+            return fake_compile(data, jr, jobs, step)
+
+        rc, lines = self.s.run(phases=PHASES + ["compile"], compile_fn=without_image)
+        self.assertEqual(rc, 0, lines)
+        self.assertNotIn("libsre_image", pipeline.read_ready(self.s.data))
+        self.assertEqual(pipeline.status(self.s.data, "1.0")["state"], "ready")
+
     def test_a_run_that_fails_leaves_no_ready_file(self):
         self.assertEqual(self.s.run(phases=PHASES + ["compile"], compile_fn=fake_compile)[0], 0)
 

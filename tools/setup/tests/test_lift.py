@@ -52,7 +52,7 @@ TOOLS = {
         'if "--only" in sys.argv: put(arg("--out-dir") + "/" + arg("--only") + "/spu_recomp.c")\n'
         'put(arg("--out-dir") + "/_gen/spu_workloads.cpp")',
     "scripts/build_libsre.py":
-        'put(arg("--work") + "/lifted/ppu_recomp.c"); put(arg("--glue"))',
+        'put(arg("--work") + "/lifted/ppu_recomp.c"); put(arg("--work") + "/libsre_image.bin"); put(arg("--glue"))',
 }
 
 
@@ -140,6 +140,13 @@ class LiftTest(unittest.TestCase):
         self.t.lift().run_all("e" * 64, "f" * 64)
         args = next(c for c in self.t.call_lines() if c.startswith("build_libsre.py ")).split(" ")
         self.assertEqual(args[args.index("--runtime-image") + 1], "@module/../work/libsre/libsre_image.bin")
+
+    def test_a_lost_libsre_image_is_built_again(self):
+        self.t.lift().run_all("e" * 64, "f" * 64)
+        self.t.reset_calls()
+        (self.t.data / "work" / "libsre" / "libsre_image.bin").unlink()
+        self.t.lift().run_all("e" * 64, "f" * 64)
+        self.assertCalls(["build_libsre.py"])
 
     def test_new_eboot_redoes_the_lift(self):
         self.t.lift().run_all("e" * 64, "f" * 64)

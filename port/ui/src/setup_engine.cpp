@@ -174,7 +174,13 @@ Launch launch_state() {
     out.eboot = from_utf8(ready["eboot"]);
     out.module = from_utf8(ready["module"]);
     const auto size = std::filesystem::file_size(out.module, ec);
-    if (ec || std::to_string(size) != ready["module_size"] || !std::filesystem::is_regular_file(out.eboot, ec))
+    bool whole = !ec && std::to_string(size) == ready["module_size"] && std::filesystem::is_regular_file(out.eboot, ec);
+    // The game reads libsre's image at its start. Without it the game runs on, on a black screen (issue #355).
+    if (whole && !ready["libsre_image"].empty()) {
+        const auto image_size = std::filesystem::file_size(from_utf8(ready["libsre_image"]), ec);
+        whole = !ec && std::to_string(image_size) == ready["libsre_image_size"];
+    }
+    if (!whole)
         out.state = State::Damaged;
     else if (ready["format"] != "1" || ready["app"] != kVersion)
         out.state = State::Outdated;

@@ -227,4 +227,4 @@ class Lift:
             self._step("libsre", {"libsre": libsre_sha}, [str(lw), image], lambda: self._run(
                 "libsre", [self.src / "scripts" / "build_libsre.py", fw, "--ps3recomp", ps3r, "--work", lw,
                            "--glue", glue, "--runtime-image", image]),
-                [lw / "lifted" / "ppu_recomp.c", glue])
+                [lw / "lifted" / "ppu_recomp.c", lw / "libsre_image.bin", glue])

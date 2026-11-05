@@ -110,11 +110,13 @@ eboot=<data>\inputs\PS3_GAME\USRDIR\EBOOT.elf
 module=<data>\game\des_game.dll
 module_size=<bytes>
 module_sha256=<sum>
+libsre_image=<data>\work\libsre\libsre_image.bin   (with the PS3 system software only)
+libsre_image_size=<bytes>
 ```
 
 | State | When (in this order) | Start screen |
 |---|---|---|
-| Damaged | `ready.txt` names a module whose size differs, or that is gone, or an EBOOT that is gone | Repair: a run, which rebuilds only what is missing or changed |
+| Damaged | `ready.txt` names a module or a libsre image whose size differs, or that is gone, or an EBOOT that is gone | Repair: a run, which rebuilds only what is missing or changed |
 | Outdated | `app` is not this host's version, or `format` is not 1 | Set up again: a run with the kept inputs, nothing to pick |
 | GameMoved | the `game` folder is gone | Choose the folder again; nothing to rebuild |
 | Ready | otherwise | Play |

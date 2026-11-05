@@ -708,6 +708,9 @@ def _run(data, req, app, jobs, check_only, emit, src, table, manifest, phases, c
                 ready = {"format": 1, "app": app, "game": str(rep.root), "eboot": str(data / "inputs" / lift.EBOOT),
                          "module": str(module), "module_size": Path(module).stat().st_size,
                          "module_sha256": gamefiles.sha256_file(module)}
+                image = data / "work" / "libsre" / "libsre_image.bin"    # (only with the PS3 system software)
+                if image.is_file():
+                    ready.update(libsre_image=str(image), libsre_image_size=image.stat().st_size)
             if ready and phase == ("import" if ready_after_import else "compile"):
                 write_ready(data, ready)
                 emit.text(f"ok   the game is ready: {module}")
@@ -824,6 +827,9 @@ def _state(ready, steps, running, app) -> str:
     if ready:
         module = Path(ready.get("module", ""))
         if not module.is_file() or str(module.stat().st_size) != ready.get("module_size"):
+            return "damaged"
+        image = Path(ready.get("libsre_image", ""))
+        if ready.get("libsre_image") and (not image.is_file() or str(image.stat().st_size) != ready.get("libsre_image_size")):
             return "damaged"
         if app and ready.get("app") != app:
             return "outdated"

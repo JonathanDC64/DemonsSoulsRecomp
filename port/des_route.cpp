@@ -23,6 +23,17 @@
  *   hold <s> lx ly rx ry   hold the sticks (0-255, 128 centred; ly 0 is
  *                          forward) for s game seconds
  *   set KNOB=value         set a knob live (an empty value unsets it)
+ *   press <s> <b>[+<b>..]  hold buttons on port 0 for s game seconds: start,
+ *                          select, cross, circle, triangle, square, up, down,
+ *                          left, right, l1, l2, r1, r2 (press 0.15 r2+cross)
+ *   continue               after a Quit Game: once the level is gone, press
+ *                          through the title into the last save
+ *                          (DES_AUTO_CONTINUE's presses), wait for the next
+ *                          level to load and anchor again as `anchor` does;
+ *                          the steps after it time from the new anchor
+ * DES_ROUTE=loads plays loads_text below: DES_ROUTE_LOADS (default 5) times
+ * Quit Game and continue, with a shot after each load (load0 before the
+ * first). Its route.txt names each load; summary.json counts them ("loads").
  * Every time is game time: the sum of the steps the game was handed, 1/30 s a
  * frame at the original 30 fps and the frame's own time under DES_FPS. So a
  * step is the same game moment at any frame rate and on a slow PC. Each step
@@ -44,6 +55,7 @@
 
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
@@ -63,6 +75,7 @@ extern "C" void ps3_exit_now(const char* tag); /* ppu_hle.cpp: flush and end the
 extern "C" float des_frame_step(void);         /* des_options.cpp: the step this frame was handed, s */
 extern "C" int des_cutscene_playing(void);     /* des_options.cpp */
 extern "C" int des_player_xyz(float* x, float* y, float* z);   /* des_options.cpp: 0 with no player */
+extern "C" void des_auto_continue_again(void); /* des_options.cpp: DES_AUTO_CONTINUE's presses, once more */
 
 namespace {
 
@@ -78,16 +91,37 @@ constexpr double kStop = 2.30;   /* game s from the end of a hold to its shot */
 constexpr double kNoCut = 10.0;      /* game s with the player present and no cutscene: anchor there */
 constexpr double kCutDone = 2.0;     /* game s with no cutscene after one: it has ended */
 constexpr double kShotWait = 20.0;   /* wall s for a shot's file */
+constexpr unsigned kGoneFrames = 30; /* frames in a row with no player: a Quit Game's level has gone */
 
-enum class Op { Anchor, Wait, Shot, Hold, Set };
+enum class Op { Anchor, Wait, Shot, Hold, Set, Press, Continue };
 
 struct Step {
     Op op;
     double secs = 0;
-    std::string text;            /* the shot's name, or KNOB=value */
+    std::string text;            /* the shot's name, KNOB=value, or a press's buttons */
     unsigned stick[4] = {128, 128, 128, 128};
+    unsigned mask = 0;           /* a press's buttons, CELL_PAD_CTRL_* as (DIGITAL2 << 8) | DIGITAL1 */
     int line = 0;
 };
+
+/* A press step's button names. */
+unsigned button_bit(const std::string& b)
+{
+    static const struct { const char* name; unsigned bit; } kButtons[] = {
+        {"select", 0x0001}, {"start", 0x0008}, {"up", 0x0010}, {"right", 0x0020}, {"down", 0x0040},
+        {"left", 0x0080}, {"l2", 0x0100}, {"r2", 0x0200}, {"l1", 0x0400}, {"r1", 0x0800},
+        {"triangle", 0x1000}, {"circle", 0x2000}, {"cross", 0x4000}, {"square", 0x8000},
+    };
+    for (const auto& k : kButtons)
+        if (b == k.name) return k.bit;
+    return 0;
+}
+
+/* What a press step holds, for the pad (des_route_buttons, on cellPad's
+ * thread), and the level script a continue step waits for (des_route_on_open,
+ * on the file system's). */
+std::atomic<unsigned> s_buttons{0};
+std::atomic<bool> s_level_opened{false};
 
 struct Hold {
     bool on = false;
@@ -104,6 +138,18 @@ struct Shot {
     Clock::time_point asked;
     double g = 0;
 };
+
+struct Press {
+    bool on = false;
+    double want = 0, got = 0;
+    unsigned frames = 0;
+    std::string spec;
+};
+
+/* A continue step in flight: the level going (no player for kGoneFrames
+ * flips), then the title's presses until the next level's script opens, then
+ * the anchor's own wait. */
+enum class Cont { Off, Going, Loading, Anchoring };
 
 struct Route {
     std::vector<Step> steps;
@@ -122,6 +168,12 @@ struct Route {
     /* steps in flight */
     Hold hold;
     Shot shot;
+    Press press;
+    Cont cont = Cont::Off;
+    unsigned gone = 0;               /* flips in a row with no player, while the level goes */
+    Clock::time_point cont_t0;       /* when the continue step began */
+    int loads = 0;                   /* continue steps done */
+    double g_on = 0;                 /* game time on the frames counted in iv */
     int shots = 0, missing = 0;
     std::string dump_dir_was;
     bool dump_dir_set = false;
@@ -202,6 +254,28 @@ std::string look_text()
     return b;
 }
 
+/* DES_ROUTE=loads: Quit Game from the pause menu, then continue, n times
+ * (DES_ROUTE_LOADS, default 5), with a shot of each level. Start opens the
+ * menu's bar on Inventory, and L2 turns it to System, the last tab. Cross
+ * opens System's rows (Options, Load Profile, Quit Game): two downs to Quit
+ * Game, Cross. Its question, "Quit game & return to Title Screen?", shows OK
+ * left of CANCEL with CANCEL chosen: left, then Cross. */
+std::string loads_text()
+{
+    const int n = std::max(1, std::min(50, ps3_env_int("DES_ROUTE_LOADS", 5)));
+    std::string t = "anchor\nwait 8\nshot load0\n";
+    char b[512];
+    for (int i = 1; i <= n; i++) {
+        snprintf(b, sizeof b,
+                 "press 0.15 start\nwait 1.5\npress 0.15 l2\nwait 1.0\npress 0.15 cross\nwait 1.0\n"
+                 "press 0.15 down\nwait 0.6\npress 0.15 down\nwait 0.6\npress 0.15 cross\nwait 1.0\n"
+                 "press 0.15 left\nwait 0.6\npress 0.15 cross\nwait 1\n"
+                 "continue\nwait 8\nshot load%d\n", i);
+        t += b;
+    }
+    return t;
+}
+
 /* The steps, or an empty list and a message when a line does not parse. */
 bool parse(const std::string& text, std::vector<Step>& steps, std::string& err)
 {
@@ -232,6 +306,18 @@ bool parse(const std::string& text, std::vector<Step>& steps, std::string& err)
         } else if (op == "set") {
             s.op = Op::Set;
             ok = static_cast<bool>(w >> s.text) && s.text.find('=') != std::string::npos && s.text[0] != '=';
+        } else if (op == "press") {
+            s.op = Op::Press;
+            ok = static_cast<bool>(w >> s.secs >> s.text) && s.secs > 0;
+            for (size_t at = 0; ok && at <= s.text.size();) {
+                const size_t plus = std::min(s.text.find('+', at), s.text.size());
+                const unsigned bit = button_bit(s.text.substr(at, plus - at));
+                ok = bit != 0;
+                s.mask |= bit;
+                at = plus + 1;
+            }
+        } else if (op == "continue") {
+            s.op = Op::Continue;
         } else {
             ok = false;
         }
@@ -339,6 +425,22 @@ void hold_tick(Route& r, double step)
     if (h.got >= h.want - step / 2) hold_end(r);
 }
 
+void press_end(Route& r)
+{
+    s_buttons.store(0, std::memory_order_relaxed);
+    say(r, "press %s: %.2f s wanted, %.2f s held (%u frames)", r.press.spec.c_str(), r.press.want, r.press.got,
+        r.press.frames);
+    r.press.on = false;
+}
+
+/* At each flip while a press is on: as hold_tick. */
+void press_tick(Route& r, double step)
+{
+    r.press.got += step;
+    r.press.frames++;
+    if (r.press.got >= r.press.want - step / 2) press_end(r);
+}
+
 void summary(Route& r, const char* result)
 {
     std::vector<float> v = r.iv;
@@ -351,10 +453,11 @@ void summary(Route& r, const char* result)
         if (x > 2.5 * med) hitches++;
         worst = std::max(worst, x);
     }
-    const double wall = r.route_wall, game = r.g - r.known_g;
+    const double wall = r.route_wall, game = r.g_on;
     FILE* f = fopen((r.out / "summary.json").string().c_str(), "w");
     if (!f) return;
-    fprintf(f, "{\n  \"result\": \"%s\",\n  \"shots\": %d,\n  \"missing\": %d,\n", result, r.shots, r.missing);
+    fprintf(f, "{\n  \"result\": \"%s\",\n  \"shots\": %d,\n  \"missing\": %d,\n  \"loads\": %d,\n", result, r.shots,
+            r.missing, r.loads);
     fprintf(f, "  \"frames\": %zu,\n  \"seconds\": %.3f,\n  \"fps\": %.2f,\n", r.iv.size(), wall,
             wall > 0 ? r.iv.size() / wall : 0.0);
     fprintf(f, "  \"median_ms\": %.3f,\n  \"low_1pct_fps\": %.2f,\n  \"low_01pct_fps\": %.2f,\n", med,
@@ -367,6 +470,7 @@ void summary(Route& r, const char* result)
 void finish(Route& r, const char* result)
 {
     if (r.hold.on) hold_end(r);
+    if (r.press.on) press_end(r);
     r.done = true;
     summary(r, result);
     say(r, "done: %s, %d shot(s) saved, %d missing", result, r.shots, r.missing);
@@ -411,6 +515,49 @@ void anchor_tick(Route& r)
     if (pos) say(r, "  the player at %.2f %.2f %.2f", x, y, z);
 }
 
+/* At each flip of a continue step; true once the next level is anchored. */
+bool continue_tick(Route& r)
+{
+    float x, y, z;
+    const bool pos = des_player_xyz(&x, &y, &z) != 0;
+    switch (r.cont) {
+    case Cont::Off:
+        r.cont = Cont::Going;
+        r.cont_t0 = Clock::now();
+        r.gone = 0;
+        r.anchored = false;   /* the title and the load are not counted in the frame times */
+        say(r, "continue: waiting for the level to go at %s", g_str(r, r.g).c_str());
+        return false;
+    case Cont::Going:
+        r.gone = pos ? 0 : r.gone + 1;
+        if (r.gone < kGoneFrames) break;
+        s_level_opened.store(false, std::memory_order_relaxed);
+        des_auto_continue_again();
+        r.cont = Cont::Loading;
+        say(r, "continue: the level has gone; pressing through the title");
+        break;
+    case Cont::Loading:
+        if (!s_level_opened.load(std::memory_order_relaxed)) break;
+        r.cont = Cont::Anchoring;
+        r.cut_seen = r.pos_seen = r.prev_cut = false;
+        say(r, "continue: the next level is loading");
+        break;
+    case Cont::Anchoring:
+        anchor_tick(r);
+        if (!r.anchored) break;
+        r.cont = Cont::Off;
+        r.loads++;
+        say(r, "load %d: anchored after %.1f s", r.loads,
+            std::chrono::duration<double>(Clock::now() - r.cont_t0).count());
+        return true;
+    }
+    if (std::chrono::duration<double>(Clock::now() - r.cont_t0).count() > r.wait_wall) {
+        say(r, "continue: no level after %.0f s", r.wait_wall);
+        finish(r, "no_level");
+    }
+    return false;
+}
+
 }  // namespace
 
 extern "C" void des_route_init(void)
@@ -424,6 +571,8 @@ extern "C" void des_route_init(void)
         text = regress_text();
     } else if (!strcmp(e, "look")) {
         text = look_text();
+    } else if (!strcmp(e, "loads")) {
+        text = loads_text();
     } else {
         std::ifstream f{fs::path(e)};   /* (UTF-8: des_utf8.manifest on Windows) */
         if (!f) {
@@ -463,15 +612,18 @@ extern "C" void des_route_on_flip(void)
     if (!rp || rp->done) return;
     Route& r = *rp;
     const double step = des_frame_step();
-    r.g += step > 0 && step < 1 ? step : 0;
+    const double counted = step > 0 && step < 1 ? step : 0;
+    r.g += counted;
     if (r.shot.on) shot_poll(r);
     if (r.hold.on) hold_tick(r, step);
+    if (r.press.on) press_tick(r, step);
     if (r.anchored) {
         const Clock::time_point now = Clock::now();
         const double ms = std::chrono::duration<double, std::milli>(now - r.last_flip).count();
         r.last_flip = now;
         r.iv.push_back((float)ms);
         r.route_wall += ms / 1000.0;
+        r.g_on += counted;
     }
     while (r.next < r.steps.size()) {
         const Step& s = r.steps[r.next];
@@ -491,6 +643,12 @@ extern "C" void des_route_on_flip(void)
         }
         if (s.op == Op::Wait) {
             r.at += s.secs;
+            r.next++;
+            continue;
+        }
+        if (s.op == Op::Continue) {   /* at its time, with nothing in flight; then until the next anchor */
+            if (r.cont == Cont::Off && (r.g + 1e-9 < r.at || r.shot.on || r.hold.on || r.press.on)) return;
+            if (!continue_tick(r)) return;
             r.next++;
             continue;
         }
@@ -519,11 +677,35 @@ extern "C" void des_route_on_flip(void)
             say(r, "set %s at %s", s.text.c_str(), g_str(r, r.g).c_str());
             break;
         }
+        case Op::Press:
+            if (r.press.on) press_end(r);
+            r.press = Press{};
+            r.press.on = true;
+            r.press.want = s.secs;
+            r.press.spec = s.text;
+            s_buttons.store(s.mask, std::memory_order_relaxed);
+            r.at += s.secs;
+            break;
         default:
             break;
         }
         r.next++;
     }
-    if (r.next >= r.steps.size() && !r.shot.on && !r.hold.on)
+    if (r.next >= r.steps.size() && !r.shot.on && !r.hold.on && !r.press.on)
         finish(r, r.missing ? "missing" : "ok");
+}
+
+/* For the pad (des_options.cpp's title_buttons, on every poll): what a press
+ * step holds down, 0 with none. */
+extern "C" unsigned des_route_buttons(void)
+{
+    return s_buttons.load(std::memory_order_relaxed);
+}
+
+/* For a continue step (des_options.cpp's g_fs_open_hook): a level's script
+ * opening, as DES_AUTO_CONTINUE's end. */
+extern "C" void des_route_on_open(const char* path)
+{
+    if (s_route && strstr(path, "/script/m") && strstr(path, ".luabnd"))
+        s_level_opened.store(true, std::memory_order_relaxed);
 }

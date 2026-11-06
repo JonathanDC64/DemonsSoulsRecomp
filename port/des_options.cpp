@@ -165,6 +165,8 @@ extern "C" void des_aspect_poll(void);         /* des_aspect.cpp: their live cha
 extern "C" void des_hud_init(void);            /* des_hud.cpp: DES_HUD_SIZE, the corners, hidden groups */
 extern "C" void des_route_init(void);          /* des_route.cpp: DES_ROUTE */
 extern "C" void des_route_on_flip(void);       /* des_route.cpp: its game clock and steps */
+extern "C" void des_route_on_open(const char* path);   /* des_route.cpp: a level's script opening (continue) */
+extern "C" unsigned des_route_buttons(void);   /* des_route.cpp: the buttons a press step holds */
 extern "C" volatile unsigned g_pad0_reads, g_pad0_empty_reads, g_pad0_buttons, g_pad0_lstick;   /* cellPad.c */
 extern "C" void cellPad_host_stick(int stick, unsigned char x, unsigned char y, unsigned reads);   /* cellPad.c */
 #ifdef _WIN32
@@ -724,12 +726,13 @@ extern "C" void des_respec_on_open(const char* path);   /* des_respec.cpp: the m
 
 unsigned title_buttons()
 {
-    return auto_continue_buttons() | des_mm_pad_buttons();
+    return auto_continue_buttons() | des_mm_pad_buttons() | des_route_buttons();
 }
 
 void auto_continue_on_open(const char* path)
 {
     des_respec_on_open(path);
+    des_route_on_open(path);
     if (!s_auto_done && strstr(path, "/script/m") && strstr(path, ".luabnd")) {
         s_auto_done = true;   /* on or not: from the first level on there is nothing left to press through */
         if (auto_continue_on()) fprintf(stderr, "[des] DES_AUTO_CONTINUE: level loading (%s), pad released\n", path);
@@ -1040,6 +1043,14 @@ extern "C" float des_frame_step(void)
 }
 
 extern "C" int des_cutscene_playing(void) { return cutscene_playing() ? 1 : 0; }
+
+/* For des_route.cpp's continue step: DES_AUTO_CONTINUE's presses again, from
+ * the title back into the last save, until the next level's script opens. */
+extern "C" void des_auto_continue_again(void)
+{
+    ps3_setenv("DES_AUTO_CONTINUE", "1");
+    s_auto_done = false;
+}
 
 extern "C" int des_player_xyz(float* x, float* y, float* z)
 {

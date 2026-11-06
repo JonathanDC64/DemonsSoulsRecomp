@@ -145,10 +145,17 @@ say() { echo "[regress] t=$((SECONDS - t0))s $*"; }
 # any fixed grace.
 # A build configured without port/gen/libsre_glue.c or work/libsre (ignored
 # files a fresh worktree lacks) links, then hangs at the title on HLE SPURS:
-# say so once the modules have loaded, not after the 400 s wait.
+# say so once the modules have loaded, not after the 400 s wait. Only when
+# this run asks for libsre: a build since docs/133's switch loads none unless
+# LIBSRE_OWN is 0 (or one family), and an older one needs no knob to load it.
+case "${LIBSRE_LLE:-}:${LIBSRE_OWN:-}" in
+  0:*) LLE_ASKED=0 ;;
+  1:*|*:0|*:lf|*:queue) LLE_ASKED=1 ;;
+  *) LLE_ASKED=0 ;;
+esac
 until grep -aq luabnd "$OUT"; do
   kill -0 "$DR" 2>/dev/null || des_running || { say "run ended before the level"; exit 2; }
-  if [ "${LIBSRE_LLE:-1}" != 0 ] && grep -aq "after prx; before ppu_hle_init" "$OUT" &&
+  if [ "$LLE_ASKED" = 1 ] && grep -aq "after prx; before ppu_hle_init" "$OUT" &&
      ! grep -aq "LLE load: ok=1" "$OUT"; then
     say "no libsre LLE in this build (configure said \"libsre LLE not built\": port/gen or work/libsre missing)"; exit 2
   fi

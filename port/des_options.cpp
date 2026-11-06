@@ -3014,10 +3014,13 @@ extern "C" void des_souls_use_init(void);  /* des_souls_use.cpp */
 static void run_defaults()
 {
     static const struct { const char* name; const char* value; } kDefaults[] = {
-        /* The known-good boot (docs/25): load libsre (read by the generated
-         * libsre glue, scripts/gen_libsre_exports.py), these families (LFQueue,
-         * SpursQueue) on Sony's code, the rest on HLE, and no round notify. */
-        {"LIBSRE_LLE", "1"},
+        /* The boot (docs/25, docs/133): libsre's LFQueue and SpursQueue
+         * families on ps3recomp's own code (LIBSRE_OWN), the rest of libsre on
+         * HLE, and no round notify. libsre itself isn't loaded (LIBSRE_LLE,
+         * below). LIBSRE_LLE_ONLY is for LIBSRE_OWN=0: those families on Sony's
+         * code again, read from libsre by the generated glue
+         * (scripts/gen_libsre_exports.py). */
+        {"LIBSRE_OWN", "1"},
         {"LIBSRE_LLE_ONLY", "011EE38B,1656D49F,8A85674D,73E06F91,082BFB09,E5443BE7,039D70B7,91066667"},
         {"SPURS_NO_ROUND_NOTIFY", "1"},
         /* The level's busiest frames need ~850k vertices; growing the buffer
@@ -3048,8 +3051,14 @@ static void run_defaults()
         {"RSX_CORE", "auto"},
 #endif
     };
+    /* libsre is loaded only for a family that isn't on our code: LIBSRE_OWN=0
+     * (both on Sony's code, the old boot) or lf / queue (one of them). Read
+     * before the table: unset, it is the table's 1. */
+    const char* own_env = getenv("LIBSRE_OWN");
+    const std::string own = own_env ? own_env : "1";
     for (const auto& d : kDefaults)
         if (!getenv(d.name)) ps3_setenv(d.name, d.value);
+    if (!getenv("LIBSRE_LLE")) ps3_setenv("LIBSRE_LLE", own == "1" || own == "all" ? "0" : "1");
 #ifdef DES_LIBSRE_IMAGE
     /* A source build's libsre glue gives its image from the working folder, and a direct start of des_boot.exe
      * works in the exe's folder. The image isn't found there, and the game waits forever on a black screen

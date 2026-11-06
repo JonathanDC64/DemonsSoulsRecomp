@@ -58,9 +58,12 @@ des_window_launch() {
 
 des_env_defaults() {
   export PS3_VFS_ROOT="${PS3_VFS_ROOT:-$DES_ROOT/work/disc}"
-  # Known-good boot config (docs/25): the LFQueue + SpursQueue families on
-  # real libsre, and no round-notify heuristic.
-  export LIBSRE_LLE="${LIBSRE_LLE:-1}"
+  # The boot (docs/25), and no round-notify heuristic. Where libsre's LFQueue
+  # and SpursQueue families run, and so whether libsre is loaded (LIBSRE_OWN,
+  # LIBSRE_LLE), is left to the build's own defaults (run_defaults in
+  # port/des_options.cpp): a build with our own code for them (docs/133) loads
+  # no libsre, an older one (an A/B's other side) still needs it. LIBSRE_OWN=0
+  # puts a new build back on libsre.
   export LIBSRE_LLE_ONLY="${LIBSRE_LLE_ONLY:-011EE38B,1656D49F,8A85674D,73E06F91,082BFB09,E5443BE7,039D70B7,91066667}"
   export SPURS_NO_ROUND_NOTIFY="${SPURS_NO_ROUND_NOTIFY:-1}"
   # The main thread's stack in the stack region, as lv2 places it: the lifter's

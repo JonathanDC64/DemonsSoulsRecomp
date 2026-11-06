@@ -116,6 +116,34 @@ previous Present was taken. A window the compositor is not showing (behind
 another window, or covered) never takes it, so the overlay froze there. Once
 the game has stopped, the repaint no longer waits.
 
+## Getting the zip attached (2026-11-06)
+
+A link can fill in an issue's text, but GitHub has no way to attach a file
+from one. So the player has to drag the zip in themselves, and most reports
+arrived without it. Two parts on GitHub's side:
+
+- **The report form**, `.github/ISSUE_TEMPLATE/report.yml`, has three boxes:
+  - "What happened" (required);
+  - "Report file (.zip)" (required, empty, so the issue can't be sent until
+    something is in it);
+  - "Details" (filled in by the program).
+- **The reminder**, `.github/workflows/report-zip.yml` with
+  `.github/scripts/report_zip.py`:
+  - **Which issues:** the form's, plus older versions' reports, which name
+    their zip (`setup-…`, `issue-…`, `crash-…`).
+  - **A new report with no `.zip` attached** gets the label "needs report
+    zip" and one comment saying where the file is.
+  - **A zip attached later**, in the text or in a comment, takes the label
+    off.
+  - **Later events never add the label again**, so a label taken off by
+    hand stays off.
+  - **Local test:** `REPORT_ZIP_DRY=1` prints what the script would do, with
+    the comments read from `REPORT_ZIP_COMMENTS`.
+
+The form is read from the default branch only, so it takes effect once
+merged. The game's links open it (`template=report.yml`) from the next
+version on; older versions keep opening a blank issue with the text in it.
+
 ## Privacy and copyright
 
 Reports are posted on a public GitHub issue, so:

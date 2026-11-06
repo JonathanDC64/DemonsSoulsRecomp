@@ -16,6 +16,7 @@ tools/setup/des_setup/**
 scripts/apply_boot_patches.py
 scripts/build_libsre.py
 scripts/build_spu.py
+scripts/des_region.py
 scripts/gen_libsre_exports.py
 scripts/make_icon.py
 scripts/lift_ppu.json
@@ -24,6 +25,7 @@ scripts/spu_table.json
 # The game module's own source, and what the lift and the compile read (game_build.json).
 port/des_game_module.cpp
 port/insn_hooks.txt
+port/regions/**
 port/compat/**
 
 # The pipeline list the program reads to prepare its shaders (port/des_prework.cpp).

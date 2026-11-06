@@ -183,6 +183,19 @@ rather than AppData on C:.
   (`data_space` reads `data_dir()`), and the engine's own check (its `--data`).
 - **A chosen folder that is gone** (an unplugged drive): the start screen says "The build folder is missing", with
   its path. Setup builds nowhere else unless the player changes the folder.
+- **Measured (2026-11-06):** a des_host build, hidden, in a made-up portable install, with the stand-in engine
+  (tools/setup/tests/fake_engine.py), the dialog answered by `DES_UI_PICK` and the keys by `DES_UI_KEYS`:
+  - the start screen's Change, a folder with a file in it picked: setup's folder became `DemonsSoulsRecomp` in it,
+    named in full in `setup-folder.txt`, the file left alone;
+  - the next start used it (the log names it);
+  - Start, the check, Ready to build showing that folder; Change there to a new folder; Start building: the stand-in's
+    `ready.txt` landed in the new folder, and the next start read "ready";
+  - in an interrupted folder: the question, then Cancel (no change, the folder the check made removed again), and
+    the question then "Use the new folder" (the old folder's journal kept);
+  - a folder in the program's `setup` folder: refused, with the sentence on the page;
+  - the usual folder picked again: `setup-folder.txt` removed.
+
+  The shared folder wasn't touched.
 - **Not done:**
   - A build that exists can't be moved from the screens: Ready, Outdated, Damaged and Game moved show no Change.
   - After a change on Ready to build, the old folder keeps what the game check put there: the first Python (its

@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from des_setup import __main__ as cli, pipeline, protocol, rpcs3, rpcs3_import, rpcs3_library as lib  # noqa: E402
 from des_setup import gamefiles, sfo, yaml_subset  # noqa: E402
 from test_lift import FakeTree  # noqa: E402
-from test_unlock import FAST, Tree, put, sha, snapshot  # noqa: E402
+from test_unlock import FAST, PROGRAM, Tree, put, sha, snapshot  # noqa: E402
 
 RUN_SETUP = Path(__file__).resolve().parents[1] / "run_setup.py"
 T0 = 1792000000                 # the fixture save's times, Unix seconds
@@ -174,6 +174,7 @@ class Base(unittest.TestCase):
         self._free = pipeline.free_bytes
         pipeline.free_bytes = lambda p: 1 << 50
         self.src = None
+        self.compiled = []
 
     def tearDown(self):
         pipeline.free_bytes = self._free
@@ -196,7 +197,7 @@ class Base(unittest.TestCase):
             if self.src is None:
                 self.src = FakeTree()
             kw.setdefault("src", self.src.src)
-            kw.setdefault("compile_fn", fake_compile)
+            kw.setdefault("compile_fn", self.fake_compile)
         out = io.StringIO()
         rc = pipeline.run(self.t.data, req, app="1.0", emit=protocol.Emitter(out), table=self.t.table,
                           manifest={"tools": []}, phases=list(phases) if phases else None, quiet=False,
@@ -204,11 +205,16 @@ class Base(unittest.TestCase):
                           from_library=library, **kw)
         return rc, out.getvalue().splitlines()
 
+    def fake_compile(self, data, jr, jobs, progress, libsre):
+        """fake_compile, and the libsre choice kept in self.compiled."""
+        self.compiled.append(libsre)
+        return fake_compile(data, jr, jobs, progress, libsre)
+
     def port_save(self) -> Path:
         return self.gamedata / "dev_hdd0" / "home" / "00000001" / "savedata" / lib.SAVE_DIR
 
 
-def fake_compile(data, jr, jobs, progress):
+def fake_compile(data, jr, jobs, progress, libsre=True):
     progress("compile", 1, 1)
     out = data / "game" / "des_game.dll"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -670,7 +676,7 @@ class CommandLineRunTest(Base):
                 self.assertEqual(rc, 1)
                 self.assertIn(f"@library folder {self.t.dump}", lines)
                 self.assertIn("@found settings none 0", lines)    # (no config: all RPCS3's defaults, none brought across)
-                self.assertIn("@check missing libsre.prx " + gamefiles.NO_FIRMWARE, lines)
+                self.assertFalse([x for x in lines if " libsre.prx " in x])   # (optional: RPCS3 has none, not a word)
                 self.assertTrue(lines[-2].startswith("@error game check "), lines[-2])
                 self.assertEqual(lines[-1], "@done fix")
         self.assertFalse(self.t.calls())                  # nothing unlocked: the check stopped the run
@@ -706,32 +712,73 @@ class FirmwareUnlockTest(Base):
         self.assertEqual(len(self.t.calls()), 1)
 
     def test_rpcs3_without_system_software(self):
+        # Optional (docs/133): the game files alone are unlocked, and the build goes on without libsre.prx.
         rc, lines = self.run_route(check_only=True)
-        self.assertEqual(rc, 1)
-        sentence = ("RPCS3 has no PS3 system software installed. Install it in RPCS3 (File, then Install Firmware), "
-                    "then press Check again.")
-        self.assertIn(f"@check missing libsre.prx {sentence}", lines)
-        self.assertEqual(lines[-2:], [f"@error game check {sentence}", "@done fix"])
+        self.assertEqual(rc, 0, lines)
+        self.assertFalse([x for x in lines if " libsre.prx " in x])
+        rc, lines = self.run_route(phases=("check", "unlock", "stage", "lift", "compile"))
+        self.assertEqual(rc, 0, lines)
+        self.assertEqual([[Path(i).name for i in c["inputs"]] for c in self.t.calls()],
+                         [["EBOOT.BIN", "m02.chresdbnd.dcx.sdat", "m01.luabnd.dcx.sdat"]])
+        self.assertFalse((self.t.data / "inputs" / "firmware").exists())
+        self.assertIn("ok   3 file(s) unlocked by RPCS3 and checked", lines)
+        self.assertEqual(self.compiled, [False])                    # (the module without the lifted libsre)
+        self.assertNotIn("libsre_image", pipeline.read_ready(self.t.data))
 
     def test_another_version_of_the_system_software(self):
+        # A libsre.prx that does not come out right is left out, and the run goes on (optional, docs/133).
         self.lib.firmware()
         put(self.t.base / "fixtures" / "libsre.sprx", b"\x7fELF" + b"O" * 36)
-        rc, lines = self.run_route(phases=("check", "unlock"))
-        self.assertEqual(rc, 1)
-        self.assertIn("@error rpcs3 unlock libsre.prx came out different from the known good version. Your RPCS3's "
-                      "PS3 system software may be another version; setup works with 4.93, the one Sony offers now. "
-                      "Install it in RPCS3 (File, then Install Firmware), then try again.", lines)
         put(self.lib.root / "dev_flash" / "vsh" / "etc" / "version.txt",
-            b"release:04.9000:\nbuild:00000,20230101:x\n")        # (made up beyond the first line)
-        rc, lines = self.run_route(phases=("check", "unlock"))
-        self.assertEqual(rc, 1)
-        self.assertIn("@error rpcs3 unlock libsre.prx came out different from the known good version. Your RPCS3 "
-                      "has PS3 system software 4.90; setup works with 4.93, the one Sony offers now. Install it in "
-                      "RPCS3 (File, then Install Firmware), then try again.", lines)
-        put(self.lib.root / "dev_flash" / "vsh" / "etc" / "version.txt", b"release:04.9300:\n")
-        rc, lines = self.run_route(phases=("check", "unlock"))
-        self.assertEqual(rc, 1)
-        self.assertIn("@error rpcs3 unlock libsre.prx came out different from the known good version.", lines)
+            b"release:04.9200:\nbuild:00000,20230101:x\n")        # (made up beyond the first line)
+        rc, lines = self.run_route(phases=("check", "unlock", "stage"))
+        self.assertEqual(rc, 0, lines)
+        self.assertIn("@check unused libsre.prx libsre.prx does not match the known good version. " + gamefiles.LEFT_OUT,
+                      lines)
+        self.assertIn("ok   3 file(s) unlocked by RPCS3 and checked", lines)
+        self.assertFalse([x for x in lines if x.startswith("@error")])
+        log = (self.t.data / "setup" / "logs" / "unlock.log").read_text(encoding="utf-8")
+        self.assertIn("libsre.prx from PS3 system software 4.92: not the known good version; left out", log)
+        self.assertFalse((self.t.data / "inputs" / "firmware").exists())
+        # A later run tries once more (RPCS3 may have other system software by then), and again goes on without it.
+        rc, lines = self.run_route(phases=("check", "unlock", "stage"))
+        self.assertEqual(rc, 0, lines)
+        self.assertEqual([[Path(i).name for i in c["inputs"]] for c in self.t.calls()[-2:]],
+                         [["libsre.sprx"], ["libsre.sprx"]])
+        self.assertIn("ok   0 file(s) unlocked by RPCS3 and checked", lines)
+
+    def test_rpcs3_fails_on_libsre_only(self):
+        # RPCS3 does not decrypt libsre.sprx: the game files are unlocked, libsre.prx is left out, the run goes on.
+        self.lib.firmware()
+        self.t.mode("fail=libsre.sprx")
+        rc, lines = self.run_route(phases=("check", "unlock", "stage"))
+        self.assertEqual(rc, 0, lines)
+        self.assertIn("ok   3 file(s) unlocked by RPCS3 and checked", lines)
+        self.assertIn("@check unused libsre.prx Your RPCS3 could not unlock libsre.prx. " + gamefiles.LEFT_OUT, lines)
+        self.assertFalse((self.t.data / "inputs" / "firmware").exists())
+        # Then an RPCS3 that cannot start at all, with only libsre.prx left to unlock: still no stop.
+        self.t.mode("abort")
+        rc, lines = self.run_route(phases=("check", "unlock", "stage"))
+        self.assertEqual(rc, 0, lines)
+        self.assertFalse([x for x in lines if x.startswith("@error")])
+        self.assertIn("RPCS3 could not start; left out",
+                      (self.t.data / "setup" / "logs" / "unlock.log").read_text(encoding="utf-8"))
+
+    def test_unlocked_libsre_goes_into_the_build(self):
+        self.lib.firmware()
+        rc, lines = self.run_route(phases=("check", "unlock", "stage", "lift", "compile"))
+        self.assertEqual(rc, 0, lines)
+        self.assertEqual(self.compiled, [True])
+
+    def test_rpcs3_gone_after_the_files_are_kept(self):
+        # Every game file kept in inputs/ and no libsre.prx: a run needs nothing from RPCS3, so its going is no stop.
+        rc, lines = self.run_route(phases=("check", "unlock", "stage"))
+        self.assertEqual(rc, 0, lines)
+        (self.t.rpcs3 / PROGRAM).unlink()
+        rc, lines = self.run_route(phases=("check", "unlock", "stage"), library=False)
+        self.assertEqual(rc, 0, lines)
+        self.assertIn("@rpcs3 missing " + rpcs3.where(self.t.rpcs3), lines)
+        self.assertIn("@step unlock skip", lines)
 
     def test_a_copy_tested_as_it_is(self):
         # 4.90's libsre.prx cannot be made into the table's (docs/90 9.2): the entry's "also" copy is taken as it is,

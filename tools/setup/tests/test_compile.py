@@ -484,6 +484,65 @@ class TestCompile(unittest.TestCase):
         self.assertIn("made to fail", e.exception.message)
         self.assertEqual(self.t.calls("ld"), ["lib"])
 
+    # The description with the lifted libsre's objects and the port's flag for them, as the real ones have them.
+    WITH_LIBSRE = dict(DESC, objects=DESC["objects"][:2] + [
+        {"name": "libsre", "src": "{work}/libsre/lifted/ppu_recomp.c", "args": ["/O2", "-I{src}/inc"]},
+        {"name": "libsre_glue", "src": "{work}/gen/libsre_glue.c", "args": ["-I{src}/inc"]},
+        DESC["objects"][2], dict(DESC["objects"][3], args=DESC["objects"][3]["args"] + [cc.LIBSRE_FLAG])])
+
+    def test_without_libsre(self):
+        """No PS3 system software (docs/133): no lift of libsre, so the module is built without its objects and the
+        port's flag for them. Once the lift has made it, with them."""
+        c = self.t.make(desc=self.WITH_LIBSRE)
+        self.assertFalse(c.libsre)
+        c._gen()
+        plan = c.plan()
+        self.assertEqual([o.name for o in plan], ["ppu_recomp_000", "ppu_recomp_001", "spu_0000_at_01760280",
+                                                  "spujob_0177B480", "spu_workloads", "des_game_module"])
+        self.assertNotIn(cc.LIBSRE_FLAG, plan[-1].args)
+        dll = c.run_all()
+        self.assertNotIn("libsre", dll.read_text())
+
+        self.t.put(self.t.data / "work/libsre/lifted/ppu_recomp.c", '#include "rt.h"\n')
+        self.t.put(self.t.data / "work/gen/libsre_glue.c", "// the glue\n")
+        c = self.t.make(desc=self.WITH_LIBSRE)
+        self.assertTrue(c.libsre)
+        plan = c.plan()
+        self.assertEqual([o.name for o in plan][4:6], ["libsre", "libsre_glue"])
+        self.assertEqual(plan[-1].args[-1], cc.LIBSRE_FLAG)
+        self.t.calls("cc")
+        dll = c.run_all()
+        self.assertIn("libsre.obj", dll.read_text())
+        self.assertIn("libsre_glue.obj", dll.read_text())
+        self.assertEqual(sorted(self.t.calls("cc")), ["des_game_module.obj", "libsre.obj", "libsre_glue.obj"])
+
+    def test_without_libsre_when_asked(self):
+        """The run's choice wins: a lift of libsre left from an earlier setup is not built in when the check found no
+        good libsre.prx this time; and asked for with none lifted, the lift has to run first."""
+        self.t.put(self.t.data / "work/libsre/lifted/ppu_recomp.c", '#include "rt.h"\n')
+        self.t.put(self.t.data / "work/gen/libsre_glue.c", "// the glue\n")
+        self.assertIn("libsre.obj", self.t.make(desc=self.WITH_LIBSRE).run_all().read_text())
+        self.t.calls("cc")
+        dll = self.t.make(desc=self.WITH_LIBSRE, libsre=False).run_all()
+        self.assertNotIn("libsre", dll.read_text())
+        self.assertEqual(self.t.calls("cc"), ["des_game_module.obj"])      # (its flag went: rebuilt)
+        (self.t.data / "work/gen/libsre_glue.c").unlink()
+        c = self.t.make(desc=self.WITH_LIBSRE, libsre=True)
+        with self.assertRaises(journal.StepFailed) as e:
+            c.plan()
+        self.assertIn("run the lift first", e.exception.message)
+
+    def test_real_descriptions_name_libsre(self):
+        """The objects and the flag a build without libsre leaves out are the ones both real descriptions have."""
+        for name in ("game_build.json", "game_build_linux.json"):
+            d = json.loads(cc.DESC.with_name(name).read_text(encoding="utf-8"))
+            names = [o["name"] for o in d["objects"]]
+            for n in cc.LIBSRE_OBJECTS:
+                self.assertIn(n, names, name)
+            mod = next(o for o in d["objects"] if o["name"] == "des_game_module")
+            self.assertIn(cc.LIBSRE_FLAG, mod["args"], name)
+            self.assertEqual([o["name"] for o in d["objects"] if cc.LIBSRE_FLAG in o["args"]], ["des_game_module"])
+
     def test_no_lift(self):
         import shutil
         shutil.rmtree(self.t.data / "work/recomp")

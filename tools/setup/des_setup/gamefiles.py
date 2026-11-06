@@ -8,6 +8,13 @@ route (docs/90) the player's own RPCS3 makes the missing ones in the unlock
 phase (rpcs3.py), and libsre.prx too when RPCS3 has the PS3 system software,
 so the check only says which.
 
+The firmware's libsre.prx (one file of the PS3 system software) is optional
+(docs/133): the game runs the part of libsre it used on ps3recomp's own code.
+A good copy, given or found, is still staged, so the build links the lifted
+libsre for the LIBSRE_OWN=0 fallback. When none is found there is no item;
+one that is not right is "unused", which is not a problem: the build goes on
+without it.
+
 The table (game_table.json) holds sizes and SHA-256 sums only. A decrypted
 file whose sum is not in the table yet (null) is checked by its first bytes
 instead, and reported as such. Its top level is the US disc's; "titles" has the
@@ -26,16 +33,16 @@ TABLE = Path(__file__).with_name("game_table.json")
 
 # First bytes of files that are still encrypted.
 ENCRYPTED_MAGIC = {b"SCE\0": "an encrypted SELF", b"NPD\0": "an encrypted SDATA file"}
-# The RPCS3 route when RPCS3 has no PS3 system software, so it cannot unlock the firmware's file.
-NO_FIRMWARE = ("RPCS3 has no PS3 system software installed. Install it in RPCS3 (File, then Install Firmware), then "
-               "press Check again.")
+# The end of an optional file's sentence when setup leaves it out (the firmware's, docs/133).
+LEFT_OUT = "The game does not need it; setup leaves it out."
 
 
 @dataclass
 class Item:
     kind: str        # "game", "original", "decrypted", "firmware"
     name: str        # the table's path or name
-    state: str       # "ok", "unmeasured", "missing", "mismatch", "encrypted", "wrong"
+    state: str       # "ok", "unmeasured", "missing", "mismatch", "encrypted", "wrong", or "unused": an optional
+                     # file (the firmware's) that is not right, so the build goes on without it
     message: str     # what to tell the player, in plain words
     found: str = ""  # where the file was found
     sha256: str = "" # its SHA-256, when it was hashed
@@ -60,10 +67,10 @@ class Report:
 
     @property
     def ok(self) -> bool:
-        return self.root is not None and bool(self.items) and all(i.good for i in self.items)
+        return self.root is not None and bool(self.items) and not self.problems()
 
     def problems(self) -> list:
-        return [i for i in self.items if not i.good]
+        return [i for i in self.items if not i.good and i.state != "unused"]
 
     def inputs(self) -> list:
         """The decrypted files and the firmware file the build reads: their items."""
@@ -195,7 +202,9 @@ def check(folder, decrypted_dirs=(), firmware=None, table=None, progress=None, u
     A file is good when any of the places has a good copy.
     firmware_unlock, on the RPCS3 route: True when RPCS3 has the PS3 system
     software, so the unlock makes a missing or wrong libsre.prx; False when it
-    has none, so the player installs it first. None: the folder route."""
+    has none (or the unlock has run). None: the folder route. libsre.prx is
+    optional (the module's docstring): unless the unlock makes it, none found
+    gives no item, and one that is not right an "unused" one."""
     t = table or load_table()
     rep = Report()
     root = find_root(folder)
@@ -260,36 +269,37 @@ def check(folder, decrypted_dirs=(), firmware=None, table=None, progress=None, u
         item.unlock = unlocks
         rep.items.append(item)
 
-    # The firmware's file: the one given, else one by its name in the game's folder (beside PS3_GAME) or in a
-    # folder of decrypted files. The build needs it (the lifted libsre), so it is always checked.
+    # The firmware's file, optional (the module's docstring): the one given, else one by its name in the game's folder
+    # (beside PS3_GAME) or in a folder of decrypted files. On the RPCS3 route the unlock makes it when RPCS3 has the
+    # PS3 system software; otherwise a copy that is not right is left out, and none found is not mentioned.
     for e in t.get("firmware", []):
-        mismatch = f"{e['name']} does not match the copy the port was tested with ({e['from']})."
         unlockable = firmware is None and firmware_unlock is True
         if firmware is not None:
             places = [Path(firmware)]
-            missing = f"{e['name']} was not found at {firmware}."
         else:
             places = [d / _find_ci(d, e["name"]) for d in [root] + [Path(x) for x in decrypted_dirs]
                       if _find_ci(d, e["name"])]
             places += [Path(p) for p in (also or {}).get(e["name"], ())]
-            missing = (f"{e['name']} is missing. It is one file of the PS3 system software: decrypt "
-                       f"{e['from'].split(',')[0]} with RPCS3 (Utilities, Decrypt PS3 Binaries), then put "
-                       f"{e['name']} in the game's folder, next to PS3_GAME.")
-            if unlockable:
-                missing = f"{e['name']} is missing: your RPCS3 unlocks it next."
-                mismatch = f"{e['name']} does not match: your RPCS3 unlocks it again."
-            elif firmware_unlock is False:
-                missing = mismatch = NO_FIRMWARE
+        places = [p for p in places if p.is_file()]
+        if not places and not unlockable and firmware is None:
+            continue
+        if unlockable:
+            texts = dict(missing=f"{e['name']} is missing: your RPCS3 unlocks it next.",
+                         mismatch=f"{e['name']} does not match: your RPCS3 unlocks it again.")
+        else:
+            texts = dict(missing=f"{e['name']} was not found at {firmware}.",
+                         mismatch=f"{e['name']} does not match the known good version.")
         first = None
         for p in places:
-            if not p.is_file():
-                continue
-            item = _check_file("firmware", e, p, progress, missing=missing, mismatch=mismatch)
+            item = _check_file("firmware", e, p, progress, **texts)
             if item.good:
                 break
             first = first or item
         else:
-            item = first or _check_file("firmware", e, None, progress, missing=missing, mismatch=mismatch)
+            item = first or _check_file("firmware", e, None, progress, **texts)
+        if not item.good and not unlockable:
+            why = (f"{Path(item.found).name} is still encrypted." if item.state == "encrypted" else item.message)
+            item = Item("firmware", item.name, "unused", f"{why} {LEFT_OUT}", item.found, item.sha256)
         item.unlock = unlockable
         rep.items.append(item)
     return rep

@@ -103,7 +103,8 @@ const char* state_name(setup::State s) {
 // Which part of the check a @check line is, by its table name (tools/setup/des_setup/game_table.json): the files the
 // player decrypts from the disc end in .elf or .unedat, and the firmware's (from the PS3 system software) in .prx;
 // the disc's own files are paths under PS3_GAME; the rest (PS3_GAME, PARAM.SFO, TITLE_ID, APP_VER) are the folder and
-// the title.
+// the title. The firmware's file is optional (docs/133): the engine names it only when it found one, good or "unused"
+// (not right, so setup leaves it out).
 enum class Part { Game, Disc, Decrypted, Firmware };
 
 bool ends_with(const std::string& s, const char* tail) {
@@ -484,8 +485,8 @@ SetupSourceWindow::SetupSourceWindow(Props props)
          "trophies and settings across.",
          [this] { open_rpcs3(); }},
         {"I have decrypted files", "No RPCS3 needed",
-         "Your disc copy (the folder with PS3_GAME in it) and the 28 files you decrypted: EBOOT.elf, the "
-         ".sdat.unedat files and libsre.prx, next to the originals or in a folder of their own.",
+         "Your disc copy (the folder with PS3_GAME in it) and the 27 files you decrypted: EBOOT.elf and the "
+         ".sdat.unedat files, next to the originals or in a folder of their own.",
          [this] { open_folder(); }},
         {"Show me how", "I have neither yet",
          "Step by step: copy your disc to a folder, get RPCS3 ready, then import. Free tools only.",
@@ -944,17 +945,12 @@ void SetupFilesWindow::draw_check() {
             }
             if (!missing) decrypted_button(Look::Quiet);
         }
-        // The firmware's file is not the disc's: found, one more row in the game's panel; not, its own part with the
-        // engine's sentence, which says where it comes from and where it goes.
+        // The firmware's file is optional and not the disc's: when the engine found one, one more row in the game's
+        // panel, good or left out (its sentence says why). None found: not a word.
         if (isGame && !firmware.empty()) {
             const setup::Line* c = firmware.front();
-            if (good(c->key)) {
-                found(box, "setup-ok", "The PS3 system software's libsre.prx", "Found, matches");
-            } else {
-                text(mCheck, "setup-heading", "One file of the PS3 system software");
-                found(panel(mCheck), look_of(c->key).mark, list_name(c->key2) + ": " + look_of(c->key).words,
-                      c->text);
-            }
+            if (good(c->key)) found(box, "setup-ok", "The PS3 system software's libsre.prx", "Found, matches");
+            else found(box, "setup-info", "The PS3 system software's libsre.prx", c->text);
         }
     }
 
@@ -998,22 +994,17 @@ SetupHelpWindow::SetupHelpWindow(Props props) : SetupPage("setup-help"), mProps(
                   "RPCS3 is the free PS3 emulator. Setup has it unlock the game's encrypted files; setup never "
                   "decrypts anything itself."),
           {"Download RPCS3 from rpcs3.net and unzip it into a folder of its own, for example C:\\RPCS3.",
-           "Download the PS3 system software, the file PS3UPDAT.PUP, from Sony's PlayStation site. RPCS3's Quickstart "
-           "page links to it.",
-           "Start RPCS3. Choose File, then Install Firmware, and pick PS3UPDAT.PUP. Wait until it is done.",
-           "Choose File, then Add Games, and pick your disc copy. Demon's Souls shows in RPCS3's list. You do not "
-           "need to play it there."});
+           "Start RPCS3. Choose File, then Add Games, and pick your disc copy. Demon's Souls shows in RPCS3's list. "
+           "You do not need to play it there."});
     callout(stack, "info", "Step 3: come back here",
             "Press Import from RPCS3. Setup finds RPCS3 and the game, and RPCS3 unlocks the game's files for it. Your "
             "RPCS3 save, trophies and settings can come across too.");
     guide(callout(stack, "info", "Or decrypt the files yourself",
-                  "In place of step 3: decrypt the 28 files with RPCS3, then press I have decrypted files."),
+                  "In place of step 3: decrypt the 27 files with RPCS3, then press I have decrypted files."),
           {"In RPCS3, choose Utilities, then Decrypt PS3 Binaries, and pick EBOOT.BIN in your disc copy's "
            "PS3_GAME\\USRDIR folder. RPCS3 writes EBOOT.elf next to it.",
            "Do the same for the .sdat files in USRDIR's chr, chr\\c0000, menu, script and script\\talk folders: 26 "
            "files. You can pick all the .sdat files of a folder at once.",
-           "Do the same for libsre.sprx in RPCS3's own dev_flash\\sys\\external folder, then copy the libsre.prx "
-           "it writes into your disc copy, next to PS3_GAME.",
            "Press I have decrypted files. Choose your disc copy, and the decrypted files if they are not next to the "
            "originals."});
     std::vector<Action> actions;

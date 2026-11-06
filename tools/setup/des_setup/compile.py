@@ -19,6 +19,12 @@ linker are the same program and there are no import libraries. The description's
 "system" says which, and so how an object is named (-o, -MF) and what it is
 called (.o).
 
+The lifted libsre (the objects in LIBSRE_OBJECTS, and LIBSRE_FLAG on the
+port's part of the module) goes in only when the lift made it, which it does
+only from the PS3 system software's libsre.prx. That file is optional
+(docs/133): without it the game runs libsre's part on ps3recomp's own code,
+and the module is built without these objects and the flag.
+
 An object's fingerprint covers its command, the compiler, its source's sum and
 the sums of the headers it read the last time (clang's dependency file), so a
 changed header rebuilds only the objects that read it.
@@ -57,9 +63,13 @@ DESC = Path(__file__).resolve().parent / ("game_build.json" if os.name == "nt" e
 GB = 1 << 30
 KEEP = 2 * GB                                      # left free for the rest of the PC (docs/52 4.4)
 # A job's peak memory before it has been measured, by its kind: a lifted PPU chunk up to 2.4 GB of commit, an SPU
-# program 0.3 GB, libsre 1.7 GB (docs/53 section 2: clang-cl 22.1.8, /O2, no /Zi), each with some room; the port's
-# small files and the workload table well under.
+# program 0.3 GB, libsre 1.7 GB (docs/53 section 2: clang-cl 22.1.8, /O2, no /Zi; only in a build with it), each with
+# some room; the port's small files and the workload table well under.
 NEED = {"ppu": 26 * GB // 10, "spu": GB // 2, "libsre": 2 * GB}
+# The description's objects of the lifted libsre and its glue, and the port's flag for them (des_game_module.cpp):
+# left out of a build without libsre (the module's docstring).
+LIBSRE_OBJECTS = ("libsre", "libsre_glue")
+LIBSRE_FLAG = "-DDES_GAME_HAS_LIBSRE"
 NEED_OTHER = GB // 2
 # A PPU chunk's peak before it has been measured, from its source's size. The 53 chunks (#158, 6.7 to 10.7 MB of
 # source) took 0.15 GB plus 0.012 to 0.118 GB a MB, most of them 0.055 to 0.068 (a player's setup, 10-23): with 10%
@@ -246,10 +256,11 @@ class Obj:
 
 class Compile:
     def __init__(self, data: Path, jr: journal.Journal, cc, ld, src: Path = SRC, desc: Path = DESC, jobs: int = 0,
-                 progress=None, memory=None, free=None):
+                 progress=None, memory=None, free=None, libsre=None):
         """cc and ld: the compiler and the linker, each a path or a command list. jobs: that many at a time,
         whatever the memory (0: by the memory). memory(short): told when memory starts and stops holding the
-        compile back. free(): the memory free now (free_memory; the tests' stand-in)."""
+        compile back. free(): the memory free now (free_memory; the tests' stand-in). libsre: with the lifted libsre
+        or without it (the module's docstring); None: with it when the lift made its sources."""
         self.data, self.jr, self.src = Path(data), jr, Path(src)
         self.cc = [str(cc)] if isinstance(cc, (str, Path)) else [str(c) for c in cc]
         self.ld = [str(ld)] if isinstance(ld, (str, Path)) else [str(c) for c in ld]
@@ -269,6 +280,10 @@ class Compile:
         self._seen = {}                            # kind -> the largest peak measured in this run
         self._rates = {}                           # kind -> the peaks per MB of source measured in this run (ppu)
         self._sums, self._sums_lock = {}, threading.Lock()
+        if libsre is None:
+            srcs = [Path(self.expand(o["src"])) for o in self.desc["objects"] if o["name"] in LIBSRE_OBJECTS]
+            libsre = bool(srcs) and all(p.is_file() for p in srcs)
+        self.libsre = libsre
 
     # ---- the description ----
     def expand(self, s: str, pattern: bool = False) -> str:
@@ -280,10 +295,13 @@ class Compile:
 
     def plan(self) -> list:
         """The objects, in the description's order (sources of a glob sorted by
-        name, as CMake's glob is). A missing lift output is an error: run the lift."""
+        name, as CMake's glob is), without the lifted libsre's in a build without
+        it. A missing lift output is an error: run the lift."""
         objs = []
         for o in self.desc["objects"]:
-            args = [self.expand(a) for a in o["args"]]
+            if not self.libsre and o["name"] in LIBSRE_OBJECTS:
+                continue
+            args = [self.expand(a) for a in o["args"] if self.libsre or a != LIBSRE_FLAG]
             if "glob" in o:
                 found = sorted(globmod.glob(self.expand(o["glob"], pattern=True)))
                 if not found:

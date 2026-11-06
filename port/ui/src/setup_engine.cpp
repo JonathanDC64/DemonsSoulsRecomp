@@ -244,7 +244,8 @@ Launch launch_state() {
     out.module = ready_path(ready["module"], eboot);
     const auto size = std::filesystem::file_size(out.module, ec);
     bool whole = !ec && std::to_string(size) == ready["module_size"] && std::filesystem::is_regular_file(out.eboot, ec);
-    // The game reads libsre's image at its start. Without it the game runs on, on a black screen (issue #355).
+    // A game built with libsre reads its image at its start. Without it the game runs on, on a black screen (issue
+    // #355). ready.txt names one only then: the PS3 system software is optional (docs/133).
     if (whole && !ready["libsre_image"].empty()) {
         const auto image_size = std::filesystem::file_size(ready_path(ready["libsre_image"], eboot), ec);
         whole = !ec && std::to_string(image_size) == ready["libsre_image_size"];

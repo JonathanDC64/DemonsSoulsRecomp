@@ -32,9 +32,10 @@ the fetch, on copies in <data>/setup/unlock/ and with a folder of setup's own
 for RPCS3's files, so neither the dump nor RPCS3's folder is written to (an
 install with a `portable` folder is run only while it is closed). Without
 GAME the game is the one in RPCS3's library. libsre.prx comes from RPCS3's
-PS3 system software the same way. `check --rpcs3` only says what RPCS3 has
-and which files it would unlock. `run --unlock-only` does the check and the
-unlock (the unlock page's run).
+PS3 system software the same way when RPCS3 has it (it is optional: the game
+does not need it, docs/133). `check --rpcs3` only says what RPCS3 has and
+which files it would unlock. `run --unlock-only` does the check and the unlock
+(the unlock page's run).
 
 --import save,trophies,settings brings those across from that RPCS3 once, at
 the end of the build (docs/90 3.5): the save into the game's gamedata folder
@@ -77,7 +78,8 @@ def _print_report(rep, unlocks=False):
     """One line per problem, but the many files that share a state (the disc's
     files that match, decrypted files found or missing) on one line each.
     unlocks: the RPCS3 route, where RPCS3 makes the missing decrypted files (and
-    libsre.prx, when it has the PS3 system software)."""
+    libsre.prx, when it has the PS3 system software). An optional file that is
+    left out (gamefiles' "unused") is a note."""
     def names(items):
         return ", ".join(i.name.rsplit("/", 1)[-1] for i in items)
 
@@ -87,7 +89,9 @@ def _print_report(rep, unlocks=False):
     for i in rep.items:
         if i in n_orig or i in unmeasured or (len(missing) > 1 and i in missing):
             continue
-        print(f"{'ok  ' if i.good else 'next' if unlocks and (i.kind == 'decrypted' or i.unlock) else 'FIX '} {i.message}")
+        mark = ('ok  ' if i.good else 'note' if i.state == 'unused' else
+                'next' if unlocks and (i.kind == 'decrypted' or i.unlock) else 'FIX ')
+        print(f"{mark} {i.message}")
     if n_orig:
         print(f"ok   {len(n_orig)} of the disc's files match the US disc, version 1.00.")
     if unmeasured:
@@ -170,7 +174,7 @@ def _print_found(found, from_library) -> str:
     print("ok   Settings that come across: " + ", ".join(f"{k}={v}" for k, v in found.settings.items())
           if found.settings else "     Settings: none differ from the game's own.")
     print(f"ok   PS3 system software: {found.firmware}" if found.firmware else
-          "     PS3 system software: not installed in RPCS3.")
+          "     PS3 system software: not installed in RPCS3 (the game does not need it).")
     return game
 
 
@@ -204,7 +208,7 @@ def cmd_lift(a) -> int:
         return 1
     if not rep.ok:
         _print_report(rep)
-        print("     The lift needs only EBOOT.elf (and libsre.prx); the game needs the rest to run. Lifting now.")
+        print("     The lift needs only EBOOT.elf; the game needs the rest to run. Lifting now.")
     data = Path(a.data)
     jr = journal.Journal(data / "setup" / "journal.json")
     shown = {}
@@ -338,7 +342,7 @@ def main(argv=None) -> int:
             sp.add_argument("game", help="the folder of the disc dump that holds PS3_GAME")
         sp.add_argument("--decrypted", action="append", default=[], metavar="DIR",
                         help="also look here for the decrypted files, by name (repeatable)")
-        sp.add_argument("--firmware", metavar="FILE", help="the decrypted libsre.prx")
+        sp.add_argument("--firmware", metavar="FILE", help="the decrypted libsre.prx (optional)")
 
     def rpcs3_arg(sp):
         sp.add_argument("--rpcs3", metavar="PATH", help="the RPCS3 route: this RPCS3 (its folder or program) unlocks "
@@ -375,7 +379,7 @@ def main(argv=None) -> int:
     sp.add_argument("game", nargs="?", help="the folder of the disc dump (default: the last run's)")
     sp.add_argument("--decrypted", action="append", default=[], metavar="DIR",
                     help="also look here for the decrypted files, by name (repeatable)")
-    sp.add_argument("--firmware", metavar="FILE", help="the decrypted libsre.prx")
+    sp.add_argument("--firmware", metavar="FILE", help="the decrypted libsre.prx (optional)")
     rpcs3_arg(sp)
     data_arg(sp)
     sp.add_argument("-j", "--jobs", type=int, default=0, help="workers for the lift and the compile (default: auto)")

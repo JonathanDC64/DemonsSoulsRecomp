@@ -54,6 +54,11 @@ def make_table(sfo_bytes):
     }
 
 
+def firmware_items(rep):
+    """The check's firmware items: (state, message)."""
+    return [(i.state, i.message) for i in rep.items if i.kind == "firmware"]
+
+
 class GameTree:
     """A fake disc dump in a temporary folder."""
 
@@ -253,13 +258,26 @@ class CheckTest(unittest.TestCase):
             t.close()
 
     def test_firmware(self):
+        """Given and right, it is staged; given and wrong, or not there, it is left out and the check is still ok
+        (optional, docs/133)."""
         t = GameTree(firmware=False)
         try:
             fw = Path(t.tmp.name) / "libsre.prx"
             fw.write_bytes(LIBSRE)
-            self.assertTrue(self.check(t, firmware=fw).ok)
+            rep = self.check(t, firmware=fw)
+            self.assertTrue(rep.ok)
+            self.assertEqual([i.kind for i in rep.inputs() if i.kind == "firmware"], ["firmware"])
             fw.write_bytes(b"\x7fELFsrX")
-            self.assertFalse(self.check(t, firmware=fw).ok)
+            rep = self.check(t, firmware=fw)
+            self.assertTrue(rep.ok, [i.message for i in rep.problems()])
+            self.assertEqual(firmware_items(rep), [("unused", "libsre.prx does not match the known good version. "
+                                                    + gamefiles.LEFT_OUT)])
+            self.assertNotIn("firmware", [i.kind for i in rep.inputs()])
+            fw.unlink()
+            rep = self.check(t, firmware=fw)
+            self.assertTrue(rep.ok)
+            self.assertEqual(firmware_items(rep), [("unused", f"libsre.prx was not found at {fw}. "
+                                                    + gamefiles.LEFT_OUT)])
         finally:
             t.close()
 
@@ -275,15 +293,14 @@ class CheckTest(unittest.TestCase):
             t.close()
 
     def test_firmware_missing(self):
-        """Always checked: the build lifts it (a game without it hangs at its loading screen)."""
+        """Optional (docs/133): none found is not a problem, and not mentioned at all."""
         t = GameTree(firmware=False)
         try:
             rep = self.check(t)
-            self.assertEqual([(i.kind, i.state) for i in rep.problems()], [("firmware", "missing")])
-            msg = rep.problems()[0].message
-            for words in ("libsre.prx is missing", "dev_flash/sys/external/libsre.sprx", "next to PS3_GAME"):
-                self.assertIn(words, msg)
-            self.assertEqual([i.kind for i in lift_blockers(rep)], ["firmware"])
+            self.assertTrue(rep.ok, [i.message for i in rep.problems()])
+            self.assertEqual(firmware_items(rep), [])
+            self.assertEqual(lift_blockers(rep), [])
+            self.assertEqual(len(rep.inputs()), len(t.table["decrypted"]))
         finally:
             t.close()
 
@@ -299,8 +316,9 @@ class CheckTest(unittest.TestCase):
             (t.root / "libsre.prx").write_bytes(b"\x7fELFsrX")
             self.assertTrue(self.check(t, decrypted_dirs=[dec]).ok)
             (dec / "LIBSRE.PRX").unlink()
-            self.assertEqual([(i.kind, i.state) for i in self.check(t, decrypted_dirs=[dec]).problems()],
-                             [("firmware", "mismatch")])
+            rep = self.check(t, decrypted_dirs=[dec])
+            self.assertTrue(rep.ok, [i.message for i in rep.problems()])
+            self.assertEqual([state for state, _ in firmware_items(rep)], ["unused"])
         finally:
             t.close()
 
@@ -308,7 +326,9 @@ class CheckTest(unittest.TestCase):
         t = GameTree(firmware=False)
         try:
             (t.root / "libsre.prx").write_bytes(b"SCE\0" + b"q" * 3)
-            self.assertEqual([(i.kind, i.state) for i in self.check(t).problems()], [("firmware", "encrypted")])
+            rep = self.check(t)
+            self.assertTrue(rep.ok, [i.message for i in rep.problems()])
+            self.assertEqual(firmware_items(rep), [("unused", "libsre.prx is still encrypted. " + gamefiles.LEFT_OUT)])
         finally:
             t.close()
 

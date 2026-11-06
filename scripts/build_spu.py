@@ -233,13 +233,14 @@ def main(argv=None):
         if bad:
             return 1
 
-    elfs = sorted(glob.glob(os.path.join(a.elf_dir, "*.elf")))
+    # (glob.escape: a build folder named "Games [PS3]" is a character class otherwise)
+    elfs = sorted(glob.glob(os.path.join(glob.escape(a.elf_dir), "*.elf")))
     if not elfs:
         print(f"ERROR: no SPU images in {a.elf_dir}\n"
               f"  run: python scripts/build_spu.py --eboot work/game/EBOOT.ELF",
               file=sys.stderr)
         return 1
-    jobs = sorted(glob.glob(os.path.join(a.job_dir, "*.bin")))
+    jobs = sorted(glob.glob(os.path.join(glob.escape(a.job_dir), "*.bin")))
     names = [os.path.splitext(os.path.basename(f))[0] for f in elfs + jobs]
     unknown = [n for n in a.only if n not in names]
     if unknown:

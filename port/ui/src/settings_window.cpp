@@ -467,7 +467,7 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "The window opens maximized, and comes back maximized from Fullscreen.<br/><br/>(DES_MAXIMIZED)");
 #if DES_RSX_VULKAN  // (with a runtime that has the Vulkan renderer: port/CMakeLists.txt)
         choice_row(leftPane, rightPane, "Renderer", "RSX_BACKEND", {"d3d12", "vulkan"}, {"D3D12", "Vulkan"},
-            "Vulkan or D3D12. Restart to apply.<br/><br/>(RSX_BACKEND)");
+            "Vulkan or D3D12. On a GeForce GTX 1070, Vulkan is the default. Restart to apply.<br/><br/>(RSX_BACKEND)");
 #endif
         choice_row(leftPane, rightPane, "Aspect ratio", "DES_ASPECT",
             {"", "16:10", "2560:1080", "3440:1440", "3840:1600", "32:9", "auto"},

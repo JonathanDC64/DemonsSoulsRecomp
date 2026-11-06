@@ -1,7 +1,9 @@
 // settings.cpp on its own (its report and privacy calls stubbed below): settings.ini files and environments in, the
 // environment the game's runtime then reads out. For the Renderer row (Settings > Display, docs/120): RSX_BACKEND from
 // the row reaches the runtime the way every Apply::Restart row does, an RSX_BACKEND from the environment wins, the data
-// folder becomes RSX_STATE_DIR, and the row exists only in a build whose runtime has the Vulkan route.
+// folder becomes RSX_STATE_DIR, and the row exists only in a build whose runtime has the Vulkan route. On Windows, on
+// a GeForce GTX 1070 (DES_RENDERER_GPU names the GPU here; the other cases name none of the rule's), the default is
+// Vulkan, and a saved D3D12 becomes Vulkan once.
 //
 //   settings_check --row      a build with the row (DES_RSX_VULKAN: port/CMakeLists.txt found the Vulkan route)
 //   settings_check --no-row   a build without it: nothing of it, and settings.ini's RSX_BACKEND is not applied
@@ -142,6 +144,41 @@ int run_case(const std::string& name) {
         check(env("RSX_STATE_DIR") == "elsewhere", "the environment's RSX_STATE_DIR kept: " + env("RSX_STATE_DIR"));
     } else if (name == "test-run") {  // no data folder
         check(env("RSX_STATE_DIR").empty(), "no RSX_STATE_DIR in a test run: " + env("RSX_STATE_DIR"));
+    } else if (name.rfind("gtx1070", 0) == 0) {
+#if defined(_WIN32)
+        const bool rule = g_row && name != "gtx1070ti";  // the 1070 Ti is not in the rule
+#else
+        const bool rule = false;                         // (Windows only: elsewhere Vulkan is every GPU's default)
+#endif
+        const std::string ini = read_text(std::filesystem::path(data) / "settings.ini");
+        if (name == "gtx1070-saved-d3d12" || name == "gtx1070-laptop" || name == "gtx1070ti") {
+            // 0.1.0's settings.ini: "d3d12" whether picked or not
+            const std::string want = !g_row ? "" : rule ? "vulkan" : "d3d12";
+            check(env("RSX_BACKEND") == want, "RSX_BACKEND " + want + ": " + env("RSX_BACKEND"));
+            check((ini.find("RSX_BACKEND = vulkan\n") != std::string::npos) == rule, "settings.ini's line switched");
+            check((ini.find("renderer_rule = 1\n") != std::string::npos) == rule, "the rule noted");
+            check(!rule || settings::is_default("RSX_BACKEND"), "Vulkan shows as the default");
+        } else if (name == "gtx1070-picked-d3d12") {  // D3D12 picked after the check: it stays
+            check(env("RSX_BACKEND") == (g_row ? "d3d12" : ""), "RSX_BACKEND d3d12 kept: " + env("RSX_BACKEND"));
+            check(ini.find("RSX_BACKEND = d3d12\n") != std::string::npos, "settings.ini kept");
+            check(!rule || !settings::is_default("RSX_BACKEND"), "D3D12 shows as changed");
+        } else if (name == "gtx1070-no-ini") {  // never changed a setting
+            check(env("RSX_BACKEND") == (rule ? "vulkan" : ""), "RSX_BACKEND: " + env("RSX_BACKEND"));
+#if defined(_WIN32)
+            const std::string def = rule ? "vulkan" : "d3d12";
+#else
+            const std::string def = "vulkan";
+#endif
+            check(settings::get("RSX_BACKEND") == (g_row ? def : ""), "the row's default: " + settings::get("RSX_BACKEND"));
+            const std::string d = settings::describe();
+            check((d.find("RSX_BACKEND = " + def + "\n") != std::string::npos) == g_row, "settings.txt's line: " + d);
+        } else if (name == "gtx1070-env-wins") {  // RSX_BACKEND=d3d12 in the environment
+            check(env("RSX_BACKEND") == "d3d12", "the environment's RSX_BACKEND kept: " + env("RSX_BACKEND"));
+            check(ini.find("renderer_rule") == std::string::npos, "nothing noted");
+        } else {
+            std::printf("    unknown case %s\n", name.c_str());
+            return 2;
+        }
     } else if (name == "set-saves") {  // the row changed in the menu: kept for the next start, not applied now
         settings::set("RSX_BACKEND", "vulkan");
         check(env("RSX_BACKEND").empty(), "not applied before a restart: " + env("RSX_BACKEND"));
@@ -171,6 +208,12 @@ const Case kCases[] = {
     {"state-env-wins", nullptr, {{"RSX_STATE_DIR", "elsewhere"}}},
     {"test-run", nullptr, {}, false},
     {"set-saves", nullptr, {}},
+    {"gtx1070-saved-d3d12", "RSX_BACKEND = d3d12\n", {{"DES_RENDERER_GPU", "NVIDIA GeForce GTX 1070"}}},
+    {"gtx1070-laptop", "RSX_BACKEND = d3d12\n", {{"DES_RENDERER_GPU", "NVIDIA GeForce GTX 1070 with Max-Q Design"}}},
+    {"gtx1070ti", "RSX_BACKEND = d3d12\n", {{"DES_RENDERER_GPU", "NVIDIA GeForce GTX 1070 Ti"}}},
+    {"gtx1070-picked-d3d12", "RSX_BACKEND = d3d12\nrenderer_rule = 1\n", {{"DES_RENDERER_GPU", "NVIDIA GeForce GTX 1070"}}},
+    {"gtx1070-no-ini", nullptr, {{"DES_RENDERER_GPU", "NVIDIA GeForce GTX 1070"}}},
+    {"gtx1070-env-wins", nullptr, {{"DES_RENDERER_GPU", "NVIDIA GeForce GTX 1070"}, {"RSX_BACKEND", "d3d12"}}},
 };
 
 }  // namespace
@@ -192,6 +235,7 @@ int main(int argc, char** argv) {
         if (c.ini) std::ofstream(dir / "settings.ini") << c.ini;
         for (const char* k : {"RSX_BACKEND", "RSX_STATE_DIR", "DES_SETTINGS", "DES_DATA_DIR", "PS3_PIDFILE"})
             ps3_setenv(k, "");
+        ps3_setenv("DES_RENDERER_GPU", "Test GPU");  // (not this PC's: a case names the rule's GPU itself)
         ps3_setenv("TEST_DATA_DIR", c.data ? dir.string().c_str() : "");
         ps3_setenv("DES_SETTINGS", c.data ? (dir / "settings.ini").string().c_str() : "");
         for (const auto& e : c.env)

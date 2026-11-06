@@ -17,6 +17,15 @@
 #include <set>
 #include <string>
 
+#if DES_RSX_VULKAN && defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+// (after windows.h)
+#include <dxgi1_6.h>
+#endif
+
 extern "C" void ps3_setenv(const char* name, const char* value);  // boot_main.cpp: through the getenv cache
 
 namespace ui::settings {
@@ -32,9 +41,11 @@ constexpr Def kDefs[] = {
     {"DES_MAXIMIZED", "1", Apply::Restart},    // 1 = the window opens maximized (apply_window: RSX_MAXIMIZED)
 #if DES_RSX_VULKAN
     // Renderer: d3d12 or vulkan; the runtime's route switch, once at start. Its default is the runtime's: D3D12 on
-    // Windows, Vulkan off it (ps3recomp's rsx_out.c), where d3d12 is the legacy renderer on vkd3d.
+    // Windows, Vulkan off it (ps3recomp's rsx_out.c), where d3d12 is the legacy renderer on vkd3d. On a GeForce GTX
+    // 1070 the default is Vulkan (default_of, apply_renderer).
 #if defined(_WIN32)
     {"RSX_BACKEND", "d3d12", Apply::Restart},
+    {"renderer_rule", "", Apply::UiOnly},      // apply_renderer: the GPU rule the saved Renderer was checked against
 #else
     {"RSX_BACKEND", "vulkan", Apply::Restart},
 #endif
@@ -133,6 +144,52 @@ bool env_set(const char* name) {
     return v && *v;
 }
 
+#if DES_RSX_VULKAN && defined(_WIN32)
+// The GPU the renderer draws on: the first that is not a software adapter, in DXGI's high-performance order (as
+// ps3recomp's gpu_d3d12.c adapter_pick takes it). DES_RENDERER_GPU=<name> stands in for its name (settings_check).
+const std::string& renderer_gpu() {
+    static const std::string name = [] {
+        if (const char* v = std::getenv("DES_RENDERER_GPU"); v && *v) return std::string(v);
+        std::string n;
+        IDXGIFactory6* f = nullptr;
+        if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory6), reinterpret_cast<void**>(&f)))) return n;
+        IDXGIAdapter1* a = nullptr;
+        for (UINT i = 0; n.empty() && f->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+                                                                    __uuidof(IDXGIAdapter1),
+                                                                    reinterpret_cast<void**>(&a)) != DXGI_ERROR_NOT_FOUND;
+             i++) {
+            DXGI_ADAPTER_DESC1 d{};
+            if (SUCCEEDED(a->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) n = report::narrow(d.Description);
+            a->Release();
+        }
+        f->Release();
+        return n;
+    }();
+    return name;
+}
+
+// A GeForce GTX 1070 (desktop or laptop, not the 1070 Ti) hangs on the D3D12 renderer: Windows resets its driver in
+// the middle of a frame, again and again, while Vulkan draws on it fine (issues #205 and #372). So its Renderer
+// default is Vulkan.
+bool vulkan_by_default() {
+    const std::string& g = renderer_gpu();
+    const size_t at = g.find("GTX 1070");
+    return at != std::string::npos && g.compare(at, 11, "GTX 1070 Ti") != 0;
+}
+
+// renderer_rule's value once a saved Renderer was checked against the rule above. A rule for more GPUs takes the next
+// number, so the saved D3D12 of a player whose GPU it adds is switched once too.
+constexpr const char* kRendererRule = "1";
+#endif
+
+// A setting's default: the table's, but for the Renderer on a GPU the rule above names.
+const char* default_of(const Def& d) {
+#if DES_RSX_VULKAN && defined(_WIN32)
+    if (std::strcmp(d.key, "RSX_BACKEND") == 0 && vulkan_by_default()) return "vulkan";
+#endif
+    return d.def;
+}
+
 std::string trim(const std::string& s) {
     const size_t a = s.find_first_not_of(" \t\r\n");
     if (a == std::string::npos) return {};
@@ -228,7 +285,8 @@ std::string describe() {
         const std::string value = get(d.key);
         out += std::string(d.key) + " = " + shown(value);
         if (pinned(d.key)) out += "    # set in the environment: " + shown(pinned_value(d.key));
-        else if (value != d.def && !hide) out += std::string("    # changed; default: ") + (*d.def ? d.def : "(none)");
+        else if (const char* def = default_of(d); value != def && !hide)
+            out += std::string("    # changed; default: ") + (*def ? def : "(none)");
         out += '\n';
     }
     return out;
@@ -493,6 +551,22 @@ void apply_window() {
 // one died in the graphics driver) uses D3D12 and says so (libs/video/rsx_out.c). Not in a test run (no data folder);
 // an RSX_STATE_DIR from the environment wins.
 void apply_renderer() {
+#if defined(_WIN32)
+    // On a GPU whose default is Vulkan (default_of), a saved D3D12 becomes Vulkan once: 0.1.0 wrote "d3d12" into every
+    // settings.ini, picked or not. renderer_rule notes the check, so a D3D12 picked after it stays.
+    if (!pinned("RSX_BACKEND") && vulkan_by_default()) {
+        if (get("renderer_rule") != kRendererRule) {
+            if (get("RSX_BACKEND") == "d3d12") {
+                sValues["RSX_BACKEND"] = "vulkan";
+                std::fprintf(stderr, "[ui] renderer: Vulkan, the default on this GPU (%s hangs on D3D12); Settings > "
+                             "Display > Renderer can pick D3D12\n", renderer_gpu().c_str());
+            }
+            sValues["renderer_rule"] = kRendererRule;
+            save();
+        }
+        ps3_setenv("RSX_BACKEND", get("RSX_BACKEND").c_str());  // (with no settings.ini, the runtime's own is D3D12)
+    }
+#endif
     if (env_set("RSX_STATE_DIR")) return;
     const auto& dir = report::data_dir();
     if (dir.empty()) return;
@@ -547,7 +621,7 @@ void load_and_apply_env() {
 std::string get(std::string_view key) {
     if (const auto it = sValues.find(key); it != sValues.end()) return it->second;
     const Def* d = find(key);
-    return d ? d->def : "";
+    return d ? default_of(*d) : "";
 }
 
 int get_int(std::string_view key) {
@@ -556,7 +630,7 @@ int get_int(std::string_view key) {
 
 bool is_default(std::string_view key) {
     const Def* d = find(key);
-    return d && get(key) == d->def;
+    return d && get(key) == default_of(*d);
 }
 
 void set(std::string_view key, const std::string& value) {
@@ -564,7 +638,7 @@ void set(std::string_view key, const std::string& value) {
     if (!d) return;
     sValues[std::string(key)] = value;
     if ((d->apply == Apply::Live || d->apply == Apply::Session) && !pinned(key))
-        apply_env(key, value.empty() ? d->def : value);
+        apply_env(key, value.empty() ? default_of(*d) : value);
     if (key == "DES_NET_PASSWORD" && !pinned(key)) apply_match_group();
     save();
     write_in_use();

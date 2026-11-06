@@ -14,12 +14,21 @@ firmware's libsre.prx). It does not count as a run below.
 FAKE_SETUP_MODES ("hold,fail,ok"): one mode for each run in turn, counted in fake_runs.txt in DES_SETUP_DATA (the last
 one repeats), so that one test goes through a stop, a failure and a finished run. A failed run writes its step's log
 in DES_SETUP_DATA/setup/logs. FAKE_SETUP_APP (the host's version, des_version.h's DES_VERSION): a finished run leaves
-setup/ready.txt for it, so the host finds the game Ready. The run's arguments are accepted and ignored."""
+setup/ready.txt for it, so the host finds the game Ready. Setup's folder (DATA above) is the run's --data, as the host
+passes it (the build folder the player chose, docs/88 section 3), else DES_SETUP_DATA, else this folder. The run's
+other arguments are accepted and ignored."""
 import os
 import sys
 import time
 
-DATA = os.environ.get("DES_SETUP_DATA") or os.getcwd()
+
+def _data():
+    if "--data" in sys.argv[:-1]:
+        return sys.argv[sys.argv.index("--data") + 1]
+    return os.environ.get("DES_SETUP_DATA") or os.getcwd()
+
+
+DATA = _data()
 
 
 def pick_mode():

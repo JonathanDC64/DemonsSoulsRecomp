@@ -156,6 +156,57 @@ def read_ready(data: Path):
     return out
 
 
+def _inside(path: Path, folder: Path) -> bool:
+    try:
+        path.relative_to(folder)
+        return True
+    except ValueError:
+        return False
+
+
+def ready_text(data: Path, path, program=None) -> str:
+    """A path as ready.txt keeps it (issue #364): relative to setup's folder when it is in it, so the folder can move;
+    also when it and setup's folder are both in the program's folder (program: a portable install's, whose game is
+    often kept beside it), so the whole install can move or be renamed; else in full."""
+    p, d = Path(os.path.abspath(path)), Path(os.path.abspath(data))
+    if _inside(p, d):
+        return p.relative_to(d).as_posix()
+    if program:
+        prog = Path(os.path.abspath(program))
+        if _inside(d, prog) and _inside(p, prog):
+            return Path(os.path.relpath(p, d)).as_posix()
+    return str(p)
+
+
+def _written_in(eboot: str):
+    """<data>/inputs/PS3_GAME/USRDIR/EBOOT.elf -> <data>: the folder an older ready.txt (full paths) was written in."""
+    p = Path(eboot) if eboot else None
+    if not p or not p.is_absolute():
+        return None
+    for q in p.parents:
+        if q.name == "inputs":
+            return q.parent
+    return None
+
+
+def ready_path(data: Path, ready: dict, key: str):
+    """ready.txt's path for key, as the host reads it (setup_engine.cpp ready_path): a relative one is setup's
+    folder's; a full one that is gone, in the folder an older ready.txt was written in, is in the same place in this
+    one (a folder moved by hand). None when ready.txt has no such key."""
+    value = (ready or {}).get(key) or ""
+    if not value:
+        return None
+    p = Path(value)
+    if not p.is_absolute():
+        return Path(os.path.normpath(Path(data) / p))
+    if p.exists():
+        return p
+    old = _written_in(ready.get("eboot", ""))
+    if old is None or os.path.normcase(str(old)) == os.path.normcase(os.path.abspath(data)) or not _inside(p, old):
+        return p
+    return Path(data) / p.relative_to(old)
+
+
 class _Held:
     """A held lock; close() lets it go."""
 
@@ -376,7 +427,19 @@ def _game_check(req, t, data, unlocks, progress=None, unlocked=False):
         if exe:
             also[lift.EBOOT] = [p for tid in gamefiles.titles(t) for p in rpcs3.ppu_debug_eboots(exe, tid)]
             fw = rpcs3_library.firmware(rpcs3_library.folders(exe)) is not None
-    return gamefiles.check(req["game"], dirs, req.get("firmware"), table=t, progress=progress, unlocks=unlocks,
+    firmware = req.get("firmware")
+    if not unlocks and data is not None:
+        # A folder or file chosen before that is gone (the install moved, issue #364): the copies an earlier run
+        # kept in inputs/ count in its place, as on the RPCS3 route.
+        gone = [d for d in dirs if not Path(d).is_dir()]
+        if firmware and not Path(firmware).is_file():
+            gone.append(firmware)
+            firmware = None
+        if gone:
+            dirs = [d for d in dirs if d not in gone] + [str(data / "inputs")]
+            for e in t.get("firmware", []):
+                also[e["name"]] = [data / "inputs" / _firmware_rel(e["name"])]
+    return gamefiles.check(req["game"], dirs, firmware, table=t, progress=progress, unlocks=unlocks,
                            also=also or None, firmware_unlock=fw)
 
 
@@ -604,6 +667,12 @@ def _request(data, request, rpcs3_path, imports, no_import, gamedata, from_libra
         req["game"] = None
     else:
         req = dict(request or saved or {})
+        game = req.get("game")
+        if game and not (request or {}).get("game") and not Path(game).is_dir():
+            # The last run's game folder moved with the install (issue #364): ready.txt still finds it.
+            moved = ready_path(data, read_ready(data), "game")
+            if moved is not None and moved.is_dir():
+                req["game"] = str(moved)
     if rpcs3_path:
         req["rpcs3"] = os.path.abspath(rpcs3_path)
     pending = (saved or {}).get("import") or {}
@@ -706,12 +775,15 @@ def _run(data, req, app, jobs, check_only, emit, src, table, manifest, phases, c
             # Ready once the game is built (and anything to bring across is across), before the shaders: a pass that
             # is stopped leaves a game that plays (it prepares the rest at its start).
             if phase == "compile" and module and Path(module).is_file():
-                ready = {"format": 1, "app": app, "game": str(rep.root), "eboot": str(data / "inputs" / lift.EBOOT),
-                         "module": str(module), "module_size": Path(module).stat().st_size,
+                prog = host[-1] if isinstance(host, (list, tuple)) and host else host   # (a command list ends in it)
+                program = Path(prog).parent if prog else None
+                ready = {"format": 1, "app": app, "game": ready_text(data, rep.root, program),
+                         "eboot": ready_text(data, data / "inputs" / lift.EBOOT),
+                         "module": ready_text(data, module), "module_size": Path(module).stat().st_size,
                          "module_sha256": gamefiles.sha256_file(module)}
                 image = data / "work" / "libsre" / "libsre_image.bin"    # (only with the PS3 system software)
                 if image.is_file():
-                    ready.update(libsre_image=str(image), libsre_image_size=image.stat().st_size)
+                    ready.update(libsre_image=ready_text(data, image), libsre_image_size=image.stat().st_size)
             if ready and phase == ("import" if ready_after_import else "compile"):
                 write_ready(data, ready)
                 emit.text(f"ok   the game is ready: {module}")
@@ -819,23 +891,24 @@ def status(data, app=None) -> dict:
         if held:
             held.close()
     ready = read_ready(data)
-    return {"protocol": protocol.VERSION, "data": str(data), "state": _state(ready, steps, running, app),
+    return {"protocol": protocol.VERSION, "data": str(data), "state": _state(data, ready, steps, running, app),
             "ready": ready, "request": load_request(data), "steps": steps}
 
 
-def _state(ready, steps, running, app) -> str:
+def _state(data, ready, steps, running, app) -> str:
     if running:
         return "running"
     if ready:
-        module = Path(ready.get("module", ""))
+        module = ready_path(data, ready, "module") or Path("")
         if not module.is_file() or str(module.stat().st_size) != ready.get("module_size"):
             return "damaged"
-        image = Path(ready.get("libsre_image", ""))
-        if ready.get("libsre_image") and (not image.is_file() or str(image.stat().st_size) != ready.get("libsre_image_size")):
+        image = ready_path(data, ready, "libsre_image")
+        if image is not None and (not image.is_file() or str(image.stat().st_size) != ready.get("libsre_image_size")):
             return "damaged"
         if app and ready.get("app") != app:
             return "outdated"
-        if not Path(ready.get("game", "")).is_dir():
+        game = ready_path(data, ready, "game")
+        if game is None or not game.is_dir():
             return "game-moved"
         return "ready"
     if any(s.get("state") == "running" for s in steps.values()):

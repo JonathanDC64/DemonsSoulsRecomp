@@ -39,9 +39,14 @@ inline constexpr const char* kPythonProgram = "python/bin/python3";
 
 // Setup's data folder (docs/81): DES_SETUP_DATA, else %LOCALAPPDATA%\DemonsSoulsRecomp, on Linux
 // $XDG_DATA_HOME/DemonsSoulsRecomp (or ~/.local/share/...), as des_setup's own default; the host always passes it to
-// the engine. Not the player's folder of settings, logs and reports (report::data_dir): this one holds the copied
-// inputs, the lift and the build.
+// the engine. In a portable install (report::portable) it is data\setup-data beside the program, unless the game was
+// built in the shared folder before. Not the player's folder of settings, logs and reports (report::data_dir): this
+// one holds the copied inputs, the lift and the build.
 const std::filesystem::path& data_dir();
+// A path from setup/ready.txt: a relative one is in setup's folder (or, the game's folder of a portable install,
+// beside it); a full one written before the folder moved is found in the same place in the folder now.
+// eboot_as_written: ready.txt's eboot, as written, which tells the folder it was written in.
+std::filesystem::path ready_path(const std::string& value, const std::filesystem::path& eboot_as_written);
 
 // What the player chose. An empty game folder: the folders the last run used (the engine keeps them), or on the RPCS3
 // route the game in RPCS3's library.

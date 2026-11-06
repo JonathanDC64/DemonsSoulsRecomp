@@ -25,6 +25,9 @@ struct File {
 // saves are not here: they stay in the PS3 file system (gamedata/dev_hdd0).
 const std::filesystem::path& data_dir();
 void set_data_dir(const std::filesystem::path& dir);  // (the crash dialog process: the crashed game's)
+// A portable install: portable.txt next to the exe. The player's data (data_dir) and setup's folder (setup::data_dir)
+// are then both in data\ beside the exe, so the whole install moves as one folder.
+bool portable();
 // The folder of the running exe, and the exe itself; empty if it cannot be told.
 std::filesystem::path program_dir();
 std::filesystem::path program_path();

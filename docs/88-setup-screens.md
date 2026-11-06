@@ -106,13 +106,40 @@ The host decides from files in setup's data folder, never from timing (read, set
 format=1
 app=<the host's version>
 game=<the dump folder>
-eboot=<data>\inputs\PS3_GAME\USRDIR\EBOOT.elf
-module=<data>\game\des_game.dll
+eboot=inputs/PS3_GAME/USRDIR/EBOOT.elf
+module=game/des_game.dll
 module_size=<bytes>
 module_sha256=<sum>
-libsre_image=<data>\work\libsre\libsre_image.bin   (with the PS3 system software only)
+libsre_image=work/libsre/libsre_image.bin   (with the PS3 system software only)
 libsre_image_size=<bytes>
 ```
+
+**Paths (issue #364, 2026-11-06).** Setup's folder can move, so `ready.txt` doesn't name it:
+- **Files in setup's folder** are written relative to it.
+- **The game's folder** is written relative too when it and setup's folder are both in the program's folder (a
+  portable install, below). That way the whole install can be renamed or moved. Elsewhere it is written in full.
+- **0.1.0 wrote every path in full.** Such a file still works after its folder is moved by hand. The EBOOT's path
+  (`<old folder>/inputs/...`) gives the old folder, and a path in it that is gone is looked up in the same place in
+  the folder now.
+- **Who reads them:** the host (`setup_engine.cpp` `ready_path`) and des_setup (`pipeline.py` `ready_path`) read them
+  the same way.
+- **A later run** (an update's rebuild) finds what moved with the install:
+  - the game's folder from `ready.txt`, when the request's is gone;
+  - on the manual route, the copies in `inputs/`, when the decrypted files' folder or the firmware's file it names is
+    gone (the RPCS3 route already counted them).
+
+**A portable install** (`portable.txt` beside the program) keeps setup's folder in `data/setup-data` beside the
+program, next to the player's settings and logs in `data/`. Updates leave `data/` in place.
+- **One built in the shared folder by 0.1.0** keeps using that folder, so nothing is built again. The log says so.
+  Moving the folder to `data/setup-data` by hand takes it along.
+- **Measured (2026-11-06):** a des_host build, hidden, in a made-up portable install. Its start screen read:
+  - "ready" with relative paths;
+  - "ready" after the install's folder was renamed;
+  - "ready" with 0.1.0's full paths from a folder that no longer exists;
+  - "damaged" with the module gone;
+  - "game moved" with the game's folder gone.
+
+  The shared folder wasn't touched.
 
 | State | When (in this order) | Start screen |
 |---|---|---|

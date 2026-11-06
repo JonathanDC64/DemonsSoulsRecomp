@@ -318,6 +318,13 @@ jobs:
           done
           exit $fail
 
+      # The European disc (BLES00932): every guest address the port uses has its European address in
+      # port/regions/BLES00932.inc, and is read through DES_AT (des_region.h). tools/region/region_table.py.
+      - name: European disc's address table
+        run: |
+          python tools/region/region_table.py check
+          python -m unittest discover -s tools/region/tests
+
       # The name people see is only in PRODUCT_NAME (and the README's title and PRIVACY.md, by hand): docs/130.
       - name: The shown name in one place
         run: python tools/ci/check_product_name.py

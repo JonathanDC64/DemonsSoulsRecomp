@@ -172,6 +172,7 @@ add_executable(des_boot
     "${PS3RECOMP_DIR}/runtime/ppu/tests/boot_main.cpp"      # entry/boot harness
     "${CMAKE_CURRENT_SOURCE_DIR}/missing_stubs.cpp"         # degenerate external targets
     "${CMAKE_CURRENT_SOURCE_DIR}/des_heap.cpp"              # clean guest allocator (malloc override)
+    "${CMAKE_CURRENT_SOURCE_DIR}/des_region.cpp"            # which disc: US or European (des_region.h)
     "${CMAKE_CURRENT_SOURCE_DIR}/des_cpu_check.cpp"         # a clear message on a processor without SSE4.1
     "${CMAKE_CURRENT_SOURCE_DIR}/des_options.cpp"           # user options (DES_SKIP_INTRO, ...)
     "${CMAKE_CURRENT_SOURCE_DIR}/des_aspect.cpp"            # DES_ASPECT / DES_HUD: wider pictures, the HUD kept 16:9

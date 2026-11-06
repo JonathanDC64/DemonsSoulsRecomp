@@ -13,6 +13,7 @@ extern const uint64_t function_table_count;
 const uint64_t function_table[2] = {0, 0};
 const uint64_t function_table_count = 0;
 uint32_t g_last_hle_nid = 0;
+uint8_t g_des_region = 0;  // the US disc (des_region.cpp)
 const char* g_last_hle_name = nullptr;
 
 void ps3_diag_report(FILE* out, unsigned sample_sec) {

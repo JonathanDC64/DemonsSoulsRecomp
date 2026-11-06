@@ -126,20 +126,20 @@ class Library:
         put(self.root / "GuiConfigs" / "persistent_settings.dat",
             f"[LastPlayed]\nBLUS30443=2026-10-22T19:02:09\n\n[Users]\nactive_user={uid}\n".encode("utf-8"))
 
-    def save_folder(self, uid) -> Path:
-        return self.hdd0 / "home" / uid / "savedata" / lib.SAVE_DIR
+    def save_folder(self, uid, save_dir=lib.SAVE_DIR) -> Path:
+        return self.hdd0 / "home" / uid / "savedata" / save_dir
 
-    def save(self, uid, files=None):
+    def save(self, uid, files=None, save_dir=lib.SAVE_DIR):
         files = dict(SAVE_FILES if files is None else files)
-        folder = self.save_folder(uid)
+        folder = self.save_folder(uid, save_dir)
         for k, (name, data) in enumerate(files.items()):
             put(folder / name, data)
             os.utime(folder / name, (T0 + 100 * k, T0 + 100 * k))
         put(folder / "PARAM.SFO", psf_save(files))
         return folder
 
-    def trophies(self, uid, unlocked, count=38):
-        put(self.hdd0 / "home" / uid / "trophy" / lib.TROPHY_DIR / "TROPUSR.DAT", tropusr(unlocked, count))
+    def trophies(self, uid, unlocked, count=38, trophy_dir=lib.TROPHY_DIR):
+        put(self.hdd0 / "home" / uid / "trophy" / trophy_dir / "TROPUSR.DAT", tropusr(unlocked, count))
 
     def settings(self, config=CONFIG, custom=CUSTOM, patches=PATCHES):
         put(self.conf / "config.yml", config.encode("utf-8"))
@@ -247,6 +247,26 @@ class ReaderTest(Base):
         (self.lib.hdd0 / "game" / lib.STORE_ID).mkdir(parents=True)
         got = lib.library(lib.folders(self.lib.exe), "BLUS30443")
         self.assertEqual((got.kind, got.path), ("store", self.lib.hdd0 / "game" / lib.STORE_ID))
+
+    def test_european_disc(self):
+        """The European disc in RPCS3's library: its save and trophies, under its own names, are the ones read."""
+        table = gamefiles.load_table()
+        eu = lib.TITLES[lib.EU_ID]
+        self.lib.games(f"BLES00932: {self.t.dump.as_posix()}/\n")
+        self.lib.user("00000001", "User")
+        self.lib.active("00000001")
+        self.lib.save("00000001", save_dir=eu.save_dir)
+        self.lib.trophies("00000001", {3: T0}, trophy_dir=eu.trophy_dir)
+        got = lib.read(self.lib.exe, table)
+        self.assertEqual((got.title, got.library.title, got.library.path), (lib.EU_ID, lib.EU_ID, self.t.dump))
+        self.assertEqual(got.save.state, "ok")
+        self.assertEqual(got.trophies.unlocked, {3: T0})
+        # The US disc's save is another game's: not read for the European disc, and the other way round.
+        self.assertEqual(lib.read(self.lib.exe, table, title=lib.US_ID).save.state, "none")
+        # With both discs listed, the US disc first, unless the game folder says which.
+        self.lib.games(f"BLES00932: {self.t.dump.as_posix()}/\nBLUS30443: C:/us/\n")
+        self.assertEqual(lib.read(self.lib.exe, table).title, lib.US_ID)
+        self.assertEqual(lib.read(self.lib.exe, table, title=lib.EU_ID).library.title, lib.EU_ID)
 
     def test_older_games_yml_place(self):
         put(self.lib.root / "games.yml", f"BLUS30443: {self.t.dump.as_posix()}/\n".encode())

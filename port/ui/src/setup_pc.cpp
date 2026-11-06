@@ -316,7 +316,7 @@ std::vector<Place> likely_places(const std::filesystem::path& library) {
         scan.check(root);
         scan.look_in(root, 2);  // (so <root>/RPCS3/games/<dump> too)
     }
-    std::stable_partition(scan.found.begin(), scan.found.end(), [](const Place& p) { return p.title == kTitleId; });
+    std::stable_partition(scan.found.begin(), scan.found.end(), [](const Place& p) { return disc_of(p.title); });
     if (scan.found.size() > kMaxPlaces) scan.found.resize(kMaxPlaces);
     return scan.found;
 }

@@ -1,4 +1,4 @@
-"""Check the player's game folder: BLUS30443 version 1.00 only, by SHA-256.
+"""Check the player's game folder: BLUS30443 or BLES00932, version 1.00, by SHA-256.
 
 Setup accepts only files the player has already decrypted (docs/51, plan (c)):
 EBOOT.elf beside EBOOT.BIN and a .sdat.unedat beside each of the 26 .sdat
@@ -10,7 +10,8 @@ so the check only says which.
 
 The table (game_table.json) holds sizes and SHA-256 sums only. A decrypted
 file whose sum is not in the table yet (null) is checked by its first bytes
-instead, and reported as such.
+instead, and reported as such. Its top level is the US disc's; "titles" has the
+European disc's, as the files that differ from the US disc's (for_title).
 """
 import hashlib
 import json
@@ -51,6 +52,11 @@ class Item:
 class Report:
     root: Path = None
     items: list = field(default_factory=list)
+    table: dict = None   # the disc's table (for_title), once PARAM.SFO is read
+
+    @property
+    def title_id(self) -> str:
+        return (self.table or {}).get("title_id", "")
 
     @property
     def ok(self) -> bool:
@@ -90,6 +96,16 @@ def find_root(folder) -> Path:
     if p.name.upper() == "PS3_GAME" and _find_ci(p, "PARAM.SFO"):
         return p.parent
     return None
+
+
+def title_of(folder) -> str:
+    """The TITLE_ID of the game in a folder (find_root's), or "" when there is none or it cannot be read."""
+    root = find_root(folder) if folder else None
+    p = _resolve(root, "PS3_GAME/PARAM.SFO") if root else None
+    try:
+        return sfo.parse(p.read_bytes()).get("TITLE_ID", "") if p else ""
+    except (OSError, sfo.SfoError):
+        return ""
 
 
 def _find_ci(folder: Path, name: str) -> str:
@@ -136,10 +152,35 @@ def _magic(path: Path, n=4) -> bytes:
         return f.read(n)
 
 
+def titles(t) -> list:
+    """The TITLE_IDs of the discs the port supports: the US disc first."""
+    return [t["title_id"]] + list(t.get("titles", {}))
+
+
+def for_title(t, tid):
+    """The table of the disc `tid`: the US disc's as it is, another supported disc's with its own files in place of
+    the US disc's (its "files"), or None."""
+    if tid == t["title_id"]:
+        return t
+    o = t.get("titles", {}).get(tid)
+    if o is None:
+        return None
+    files = o.get("files", {})
+    tt = dict(t, title_id=tid, app_ver=o["app_ver"], version=o["version"], disc=o["disc"])
+    for k in ("originals", "decrypted"):
+        tt[k] = [dict(e, **files.get(e["path"], {})) for e in t[k]]
+    return tt
+
+
+def supported(t) -> str:
+    """The supported discs in words: "the US disc (BLUS30443) or the European disc (BLES00932)"."""
+    return " or ".join(f"{for_title(t, tid).get('disc', 'the US disc')} ({tid})" for tid in titles(t))
+
+
 def other_title(t, tid) -> str:
     """The sentence for a copy of another title or version of the game, by its TITLE_ID."""
     what = t["other_titles"].get(tid, f"a game with the ID {tid or 'none'}")
-    return f"This is {what} ({tid}). The port supports the US disc, {t['title_id']}, only."
+    return f"This is {what} ({tid}). The port supports {supported(t)}."
 
 
 def check(folder, decrypted_dirs=(), firmware=None, table=None, progress=None, unlocks=False, also=None,
@@ -172,22 +213,25 @@ def check(folder, decrypted_dirs=(), firmware=None, table=None, progress=None, u
         rep.items.append(Item("game", "PARAM.SFO", "wrong", f"PARAM.SFO cannot be read ({e})."))
         return rep
     tid = vals.get("TITLE_ID", "")
-    if tid != t["title_id"]:
+    tt = for_title(t, tid)
+    if tt is None:
         rep.items.append(Item("game", "TITLE_ID", "wrong", other_title(t, tid)))
         return rep
+    t = rep.table = tt
     ver = vals.get("APP_VER", ""), vals.get("VERSION", "")
     if ver != (t["app_ver"], t["version"]):
         rep.items.append(Item("game", "APP_VER", "wrong",
                               f"This copy is version {ver[0] or '?'}. The port supports version "
                               f"{t['app_ver']} only."))
         return rep
-    rep.items.append(Item("game", "TITLE_ID", "ok", f"{t['title_id']}, version {t['app_ver']}."))
+    disc = t.get("disc", "the US disc")
+    rep.items.append(Item("game", "TITLE_ID", "ok", f"{t['title_id']}, version {t['app_ver']} ({disc})."))
 
     # The disc's own files: proof that the dump is this version and intact.
     for e in t["originals"]:
         rep.items.append(_check_file("original", e, _resolve(root, e["path"]), progress,
                                      missing=f"{e['path']} is missing from the game folder.",
-                                     mismatch=f"{e['path']} does not match the US disc, version 1.00. The dump may "
+                                     mismatch=f"{e['path']} does not match {disc}, version {t['app_ver']}. The dump may "
                                               f"be damaged: dump the disc again."))
 
     # The decrypted files the build reads: the first good copy, else what is wrong with the first one found.

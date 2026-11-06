@@ -35,6 +35,7 @@
  * they change, and each Use, Drop and OK. */
 
 #include "ps3emu/ppu_lift.h"
+#include "des_region.h"      /* DES_AT: the running disc's addresses */
 #include "des_game_calls.h"
 #include "ps3emu/ps3_knob.h"
 #include <algorithm>
@@ -90,7 +91,7 @@ struct Entry { uint32_t cat = 0, id = 0; int32_t count = 0; };
 
 uint32_t pgd()
 {
-    const uint32_t root = vm_read32(kPgdRoot);
+    const uint32_t root = vm_read32(DES_AT(kPgdRoot));
     return guest_ok(root) && guest_ok(vm_read32(root + 8)) ? vm_read32(root + 8) : 0;
 }
 
@@ -124,7 +125,7 @@ int32_t selected(uint32_t dlg)
 
 uint32_t menu_state()
 {
-    const uint32_t t = vm_read32(kToc - 0x72F0u);
+    const uint32_t t = vm_read32(DES_AT(kToc) - 0x72F0u);
     const uint32_t holder = guest_ok(t) ? vm_read32(t - 0x8000u) : 0;
     return guest_ok(holder) ? vm_read32(holder) : 0;
 }
@@ -147,10 +148,10 @@ uint32_t call_game(ppu_context* ctx, void (*fn)(ppu_context*), std::initializer_
     memcpy(g, ctx->gpr, sizeof g); memcpy(f, ctx->fpr, sizeof f); memcpy(v, ctx->vr, sizeof v);
     const uint64_t lr = ctx->lr, ctr = ctx->ctr;
     const uint32_t cr = ppu_cr_pack(ctx), xer = ctx->xer;
-    ctx->gpr[1] -= 0x1000; ctx->gpr[2] = kToc;
+    ctx->gpr[1] -= 0x1000; ctx->gpr[2] = DES_AT(kToc);
     int i = 0;
     for (int64_t x : a) if (i < 8) ctx->gpr[3 + i++] = (uint64_t)x;
-    ctx->lr = 0x00724E40u;
+    ctx->lr = DES_AT(0x00724E40u);
     fn(ctx);
     drain(ctx);
     const uint32_t r3 = (uint32_t)ctx->gpr[3];
@@ -232,7 +233,7 @@ uint32_t use_arg(ppu_context* ctx)
 {
     static uint32_t s_arg = 0;
     if (!s_arg && !(s_arg = guest_alloc(ctx, 16))) return 0;
-    const uint32_t menus = vm_read32(kToc - 0x7134u);
+    const uint32_t menus = vm_read32(DES_AT(kToc) - 0x7134u);
     vm_write32(s_arg, guest_ok(menus) ? vm_read32(menus - 0x7F6Cu) : 0);
     vm_write32(s_arg + 4, 0);
     vm_write32(s_arg + 8, 2);
@@ -242,7 +243,7 @@ uint32_t use_arg(ppu_context* ctx)
 /* The inventory dialog the menus hold now (*(*(menus - 0x8000)), 0x0081E110's), 0 if none. */
 uint32_t inventory()
 {
-    const uint32_t menus = vm_read32(kToc - 0x7134u);
+    const uint32_t menus = vm_read32(DES_AT(kToc) - 0x7134u);
     const uint32_t holder = guest_ok(menus) ? vm_read32(menus - 0x8000u) : 0;
     const uint32_t inv = guest_ok(holder) ? vm_read32(holder) : 0;
     return guest_ok(inv) ? inv : 0;
@@ -330,7 +331,7 @@ void cmd_choice(ppu_context* ctx)   /* for 0x0081E110 */
 {
     const uint32_t cmd = (uint32_t)ctx->gpr[3];
     if (on() && vm_read32(cmd + kCmdRow) == 0 && vm_read8(cmd + kCmdUseOff) == 0) {
-        const uint32_t menus = vm_read32(kToc - 0x7134u);
+        const uint32_t menus = vm_read32(DES_AT(kToc) - 0x7134u);
         const uint32_t mode = guest_ok(menus) && guest_ok(vm_read32(menus - 0x7FFCu)) ? vm_read32(vm_read32(menus - 0x7FFCu)) : 2;
         const uint32_t inv = inventory();
         if (inv && offer(ctx, inv, mode)) return;
@@ -413,9 +414,9 @@ void use_goods(ppu_context* ctx)   /* for 0x002DD368 */
 /* From ps3_title_options_init, before the guest runs. Always wrapped: the knob is read at each Use. */
 extern "C" void des_souls_use_init(void)
 {
-    ppu_register_function(kCmdChoice, cmd_choice);
-    ppu_register_function(kInvMessage, inv_message);
-    ppu_register_function(kUseGoods, use_goods);
+    DES_REGISTER_FUNCTION(kCmdChoice, cmd_choice);
+    DES_REGISTER_FUNCTION(kInvMessage, inv_message);
+    DES_REGISTER_FUNCTION(kUseGoods, use_goods);
 }
 
 /* From des_menu_tick (des_menu_sfx.cpp), on the main thread just before the menus' update (0x00724AD0): the Use

@@ -20,6 +20,7 @@ outputs without an encoding, so the code page would otherwise pick it
 (docs/52). Each step's output goes to setup/logs/<step>.log.
 """
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -33,6 +34,7 @@ from . import journal
 
 SRC = Path(__file__).resolve().parents[3]          # the source tree: tools/setup/des_setup/lift.py
 EBOOT = "PS3_GAME/USRDIR/EBOOT.elf"                  # its place under inputs/ (gamefiles' name)
+US = "BLUS30443"                                     # the disc whose addresses the port is written with
 PROGRESS = re.compile(r"lifted (\d+)/(\d+) functions")
 
 
@@ -44,11 +46,17 @@ def _sha_file(p: Path) -> str:
     return h.hexdigest()
 
 
+def hooks_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
 def toolset(src: Path = SRC) -> str:
     """One sum over the scripts and tables that do the lifting: ps3recomp's
-    tools, this tree's scripts and the instruction hooks."""
+    tools, this tree's scripts, the instruction hooks and the European disc's
+    addresses."""
     files = sorted(list((src / "ps3recomp" / "tools").rglob("*.py")) + list((src / "scripts").glob("*.py")) +
-                   list((src / "scripts").glob("*.json")) + [src / "port" / "insn_hooks.txt"])
+                   list((src / "scripts").glob("*.json")) + [src / "port" / "insn_hooks.txt"] +
+                   list((src / "port" / "regions").glob("*.inc")))
     files = [f for f in files if "__pycache__" not in f.parts and f.is_file()]
     return journal.fingerprint([(str(f.relative_to(src)).replace("\\", "/"), _sha_file(f)) for f in files])
 
@@ -130,9 +138,12 @@ class Lift:
         return self.jr.run(name, fp, fn, outputs=outputs, log=self.logs / (name.replace(":", "_") + ".log"))
 
     # ---- the steps ----
-    def run_all(self, eboot_sha: str, libsre_sha: str = None):
+    def run_all(self, eboot_sha: str, libsre_sha: str = None, title: str = None):
         """Every step. eboot_sha (and libsre_sha) are the staged files' sums
-        from the game check, so the inputs are not hashed again.
+        from the game check, so the inputs are not hashed again. title: the
+        disc's TITLE_ID (BLUS30443 when not given); the European disc's EBOOT
+        is lifted with the hooks, overrides and boot patch at its own addresses
+        (scripts/des_region.py).
 
         The SPU steps and libsre read only the EBOOT and the firmware, so they
         run on a thread of their own beside the PPU steps (loader, ppu,
@@ -148,7 +159,7 @@ class Lift:
                                                                                    side.progress),), daemon=True)
         thread.start()
         try:
-            self._ppu_steps(eboot, eboot_sha)
+            self._ppu_steps(eboot, eboot_sha, title or US)
         except BaseException:
             side.stop()                            # (it ends after the step it is in)
             raise
@@ -158,7 +169,14 @@ class Lift:
         if side.failed is not None:
             raise side.failed
 
-    def _ppu_steps(self, eboot, eboot_sha):
+    def _region(self):
+        """scripts/des_region.py of the source tree, which the lift's scripts import too."""
+        spec = importlib.util.spec_from_file_location("des_region", self.src / "scripts" / "des_region.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _ppu_steps(self, eboot, eboot_sha, title=US):
         ps3r, w = self.src / "ps3recomp", self.work
         loader = w / "loader"
         self._step("loader", {"eboot": eboot_sha}, [], lambda: self._run(
@@ -166,11 +184,21 @@ class Lift:
             [loader / "EBOOT.functions.json", loader / "EBOOT.imports.json"])
 
         flags = json.loads((self.src / "scripts" / "lift_ppu.json").read_text(encoding="utf-8"))
+        hooks, overrides, patch_args = self.src / flags["insn_hooks"], flags["override_funcs"], []
+        if title != US:
+            # The European disc: the hooks and overrides at its addresses, each hook called with its US address.
+            reg = self._region()
+            table = reg.load_table(self.src / "port" / "regions" / f"{title}.inc")
+            hooks = w / "region" / "insn_hooks.txt"
+            hooks.parent.mkdir(parents=True, exist_ok=True)
+            hooks.write_text(reg.insn_hooks(hooks_text(self.src / flags["insn_hooks"]), table), encoding="utf-8")
+            overrides = reg.override_funcs(overrides, table)
+            patch_args = ["--title", title]
         raw = w / "recomp_raw"
         args = [ps3r / "tools" / "ppu_lifter.py", eboot,
                 "--functions", loader / "EBOOT.functions.json", "--hle-stubs", loader / "EBOOT.imports.json",
-                "--override-funcs", ",".join(flags["override_funcs"]),
-                "--insn-hooks", "@" + str(self.src / flags["insn_hooks"])] + \
+                "--override-funcs", ",".join(overrides),
+                "--insn-hooks", "@" + str(hooks)] + \
                (["--shadow-stack"] if flags.get("shadow_stack") else []) + \
                (["--chunk-lines", str(flags["chunk_lines"])] if flags.get("chunk_lines") else []) + \
                ["--output", raw, "-j", self.workers]
@@ -181,7 +209,7 @@ class Lift:
                 self.progress("ppu", int(m.group(1)), int(m.group(2)))
 
         # The flags, not the command line: the worker count does not change the output.
-        self._step("ppu", {"eboot": eboot_sha}, flags,
+        self._step("ppu", {"eboot": eboot_sha}, flags if title == US else [flags, title],
                    lambda: self._run("ppu", args, parse=parse), [raw / "ppu_recomp.h"])
 
         rec = w / "recomp"
@@ -190,8 +218,8 @@ class Lift:
             if rec.exists():
                 shutil.rmtree(rec)
             shutil.copytree(raw, rec)
-            self._run("patches", [self.src / "scripts" / "apply_boot_patches.py", rec])
-        self._step("patches", {"eboot": eboot_sha}, [], patch, [rec / "ppu_recomp.h"])
+            self._run("patches", [self.src / "scripts" / "apply_boot_patches.py", rec] + patch_args)
+        self._step("patches", {"eboot": eboot_sha}, patch_args, patch, [rec / "ppu_recomp.h"])
 
         nid = rec / "hle_nid_table.cpp"
         self._step("nids", {}, [], lambda: self._run(

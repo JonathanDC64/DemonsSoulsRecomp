@@ -58,6 +58,7 @@
  * player's. The sites and their registers are in docs/55 section 2.4; each
  * was checked against the instructions around it. */
 #include "ps3emu/ppu_lift.h"   /* ppu_context: the fixed part of the lift's header */
+#include "des_region.h"      /* DES_AT: the running disc's addresses */
 #include "des_game_calls.h"     /* the lifted functions below (the game DLL's with DES_SPLIT) */
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include "ps3emu/ps3_net.h"    /* ps3_net_lock_offline */
@@ -107,7 +108,7 @@ float vm_readf(uint32_t ea)
 
 uint32_t player_chr()
 {
-    uint32_t p = vm_read32(kChrMan);
+    uint32_t p = vm_read32(DES_AT(kChrMan));
     if (!guest_ptr_ok(p) || !guest_ptr_ok(p = vm_read32(p + 0x1BC))) return 0;
     return p;
 }
@@ -405,7 +406,7 @@ static void warp_chr(ppu_context* ctx, uint32_t chr, const float* p)
     }
     memcpy(&ctx->vr[2], be, 16);
     ctx->gpr[3] = chr;
-    ctx->lr = 0x00724E40u;
+    ctx->lr = DES_AT(0x00724E40u);
     func_00273BE0(ctx);
     while (g_trampoline_fn) {
         void (*tf)(void*) = g_trampoline_fn;
@@ -432,9 +433,9 @@ static uint32_t call_game(ppu_context* ctx, void (*fn)(ppu_context*), const uint
     memcpy(g, ctx->gpr, sizeof g); memcpy(f, ctx->fpr, sizeof f); memcpy(v, ctx->vr, sizeof v);
     const uint64_t lr = ctx->lr, ctr = ctx->ctr;
     const uint32_t cr = ppu_cr_pack(ctx), xer = ctx->xer;
-    ctx->gpr[1] -= 0x1000; ctx->gpr[2] = 0x019B5040u;
+    ctx->gpr[1] -= 0x1000; ctx->gpr[2] = DES_AT(0x019B5040u);
     for (int i = 0; i < na && i < 6; i++) ctx->gpr[3 + i] = a[i];
-    ctx->lr = 0x00724E40u;
+    ctx->lr = DES_AT(0x00724E40u);
     fn(ctx);
     while (g_trampoline_fn) {
         void (*tf)(void*) = g_trampoline_fn;
@@ -466,7 +467,7 @@ static void give_tick(ppu_context* ctx)
     if (!e || !*e || !strcmp(e, done)) return;
     /* The player's game data, read the way the AddInventoryItem script binding (0x00447748) reads it:
      * *(*(*(*(TOC - 0x7884) - 0x8000)) + 8). */
-    const uint32_t man = vm_read32(kChrMan), base = vm_read32(0x019B5040u - 0x7884u);
+    const uint32_t man = vm_read32(DES_AT(kChrMan)), base = vm_read32(DES_AT(0x019B5040u) - 0x7884u);
     uint32_t slot_p = 0, gm = 0, pgd = 0;
     if (!guest_ptr_ok(man) || !guest_ptr_ok(vm_read32(man + 0x1BC)) || !guest_ptr_ok(base) ||
         !guest_ptr_ok(slot_p = vm_read32(base - 0x8000u)) || !guest_ptr_ok(gm = vm_read32(slot_p)) ||
@@ -475,7 +476,7 @@ static void give_tick(ppu_context* ctx)
     /* AddItem checks the item burden, so wait for the character's stats (the burden limit AddItem reads,
      * *(inv + 0x1A8) + 0x498) and for no cutscene (RemoMan 0x01B3A28C's slots), held for 90 frames. */
     static int ready = 0;
-    const uint32_t stats = vm_read32(pgd + 0x128 + 0x1A8), remo = vm_read32(0x01B3A28Cu);
+    const uint32_t stats = vm_read32(pgd + 0x128 + 0x1A8), remo = vm_read32(DES_AT(0x01B3A28Cu));
     const bool cut = guest_ptr_ok(remo) && (vm_read32(remo + 0x28) || vm_read32(remo + 0x40) ||
                                             vm_read32(remo + 0x58) || vm_read32(remo + 0x70));
     if (!guest_ptr_ok(stats) || !(vm_readf(stats + 0x498) > 0.0f) || cut) { ready = 0; return; }
@@ -521,7 +522,7 @@ extern "C" void des_debug_tick(ppu_context* ctx)
     float p[3];
     if (sscanf(e, "%f,%f,%f", &p[0], &p[1], &p[2]) != 3) return;
     if (refused("DES_WARP")) return;
-    const uint32_t man = vm_read32(kChrMan);
+    const uint32_t man = vm_read32(DES_AT(kChrMan));
     uint32_t chr;
     if (!guest_ptr_ok(man) || !guest_ptr_ok(chr = vm_read32(man + 0x1BC))) return;
     mark_used("DES_WARP");
@@ -533,7 +534,7 @@ extern "C" void des_debug_tick(ppu_context* ctx)
         for (uint32_t i = 0; i < 64; i++) {
             const uint32_t q = vm_read32(list + 4 * i);
             float qp[3];
-            if (!guest_ptr_ok(q) || q == chr || vm_read32(q) != 0x0185AF98u || !chr_pos(q, qp)) continue;
+            if (!guest_ptr_ok(q) || q == chr || vm_read32(q) != DES_AT(0x0185AF98u) || !chr_pos(q, qp)) continue;
             const float d = std::sqrt((qp[0] - p[0]) * (qp[0] - p[0]) + (qp[1] - p[1]) * (qp[1] - p[1]) +
                                       (qp[2] - p[2]) * (qp[2] - p[2]));
             if (d > r) continue;

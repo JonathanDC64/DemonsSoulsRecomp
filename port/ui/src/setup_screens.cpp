@@ -206,8 +206,8 @@ void SetupStartWindow::refresh() {
                                             " of free space while it works.");
         auto* box = panel(mBody);
         found(box, "setup-info", "You need your copy of the game",
-              "The US disc, BLUS30443 version 1.00, copied to a folder. If you already play it in RPCS3, that is "
-              "enough. If not, setup shows you how.");
+              "The US disc (BLUS30443) or the European disc (BLES00932), version 1.00, copied to a folder. If you "
+              "already play it in RPCS3, that is enough. If not, setup shows you how.");
         found(box, "setup-info", "Setup downloads its build tools once",
               "The compiler and the tools it needs, each checked before it is used. Later builds use the same copy.");
         found(box, "setup-info", "You can stop and come back",
@@ -704,7 +704,7 @@ void SetupFilesWindow::draw_places() {
     std::vector<Action> actions;
     for (const setup::Place& p : mPlaces) {
         std::string label = p.title + (p.version.empty() ? "" : " version " + p.version) + " in " + utf8(p.folder);
-        if (p.title != setup::kTitleId) label += " (not supported)";
+        if (!setup::disc_of(p.title)) label += " (not supported)";
         else if (p.library) label += ", from RPCS3's library";
         actions.push_back({label, [this, folder = p.folder] {
                                mRequest.game = folder;
@@ -740,7 +740,7 @@ void SetupFilesWindow::draw_check() {
         callout(mCheck, "err", mPickProblem, "");
     } else if (mRequest.game.empty() && !mRequest.decrypted.empty()) {  // (the decrypted files were chosen first)
         const bool found = std::any_of(mPlaces.begin(), mPlaces.end(),
-                                       [](const setup::Place& p) { return p.title == setup::kTitleId; });
+                                       [](const setup::Place& p) { return setup::disc_of(p.title) != nullptr; });
         callout(mCheck, "info", "Now your disc copy",
                 std::string("The decrypted files are only part of the game. The rest (its maps, models and sounds) is "
                             "in your disc copy: the folder with PS3_GAME in it. ") +
@@ -872,8 +872,8 @@ SetupHelpWindow::SetupHelpWindow(Props props) : SetupPage("setup-help"), mProps(
     using S = RailStep::State;
     set_rail({{"Your game", "", S::Now}, {"Build", build_time(), S::Todo}, options_step(), {"Play", "", S::Todo}});
     set_heading("Getting your game's files",
-                "Setup builds the game from your own copy of Demon's Souls: the US disc, BLUS30443 version 1.00. It "
-                "takes three steps, once.");
+                "Setup builds the game from your own copy of Demon's Souls: the US disc (BLUS30443) or the European "
+                "disc (BLES00932), version 1.00. It takes three steps, once.");
     const auto guide = [](Rml::Element* body, std::initializer_list<const char*> steps) {
         auto* list = append(body, "setup-guide");
         int n = 0;

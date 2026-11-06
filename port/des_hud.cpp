@@ -76,6 +76,7 @@
  */
 
 #include "ps3emu/ppu_lift.h"   /* ppu_context, vm_read32 */
+#include "des_region.h"      /* DES_AT: the running disc's addresses */
 #include "des_game_calls.h"     /* func_00F60BD0... (the game DLL's with DES_SPLIT) */
 #include "ps3emu/ps3_knob.h"   /* ps3_env_gen */
 #include <algorithm>
@@ -642,11 +643,11 @@ void dialog_draw_inner(ppu_context* ctx)
 {
     const uint32_t dlg = (uint32_t)ctx->gpr[3];
     const uint32_t vt = guest_ok(dlg, 4) ? vm_read32(dlg) : 0u;
-    if (vt == kLoadingVt && vm_read8(dlg + kDlgVisible) != 0) {
+    if (vt == DES_AT(kLoadingVt) && vm_read8(dlg + kDlgVisible) != 0) {
         loading_draw(ctx, dlg);
         return;
     }
-    if (vt != kHudDialogVt || vm_read8(dlg + kDlgVisible) == 0) {
+    if (vt != DES_AT(kHudDialogVt) || vm_read8(dlg + kDlgVisible) == 0) {
         func_00F60BD0(ctx);
         return;
     }
@@ -843,11 +844,11 @@ extern "C" int des_hud_obj_rect(ppu_context* ctx, uint32_t obj, float out[4])
  * knobs say at start, so the settings window can change them while playing. */
 extern "C" void des_hud_init(void)
 {
-    ppu_register_function(kDialogDraw, dialog_draw);
-    ppu_register_function(kFontBegin, font_begin);
-    ppu_register_function(kFontPlay, font_play);
-    ppu_register_function(kFontSpacing, line_spacing);
-    ppu_register_function(kSpacingPlay, spacing_play);
+    DES_REGISTER_FUNCTION(kDialogDraw, dialog_draw);
+    DES_REGISTER_FUNCTION(kFontBegin, font_begin);
+    DES_REGISTER_FUNCTION(kFontPlay, font_play);
+    DES_REGISTER_FUNCTION(kFontSpacing, line_spacing);
+    DES_REGISTER_FUNCTION(kSpacingPlay, spacing_play);
     s_want_gen = ps3_env_gen;
     want_read();
 }

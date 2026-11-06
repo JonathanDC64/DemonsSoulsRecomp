@@ -154,31 +154,43 @@ def _load_segments(buf):
 def cut(eboot, elf_dir, job_dir, ps3recomp, table=TABLE):
     """Cut the SPU images and the SPURS job blobs out of EBOOT.ELF into elf_dir
     and job_dir, each checked against the table. Returns the problems, one line
-    each (none: everything matched)."""
+    each (none: everything matched).
+
+    An image is the table's by its fingerprint and keeps the table's name, the
+    US EBOOT's index and offset: the European EBOOT has the same images at other
+    offsets, so both discs lift them alike. A job is looked for at its vaddr,
+    then at its vaddr_eu."""
     sys.path.insert(0, os.path.join(ps3recomp, "tools"))
     from extract_spu_images import find_spu_images
     t = json.load(open(table, encoding="utf-8"))
     buf = open(eboot, "rb").read()
     os.makedirs(elf_dir, exist_ok=True)
     os.makedirs(job_dir, exist_ok=True)
+    by_fnv = {int(v["fnv"], 16): name for name, v in t["images"].items()}
     bad, found = [], set()
     for idx, (off, size) in enumerate(find_spu_images(buf)):
-        name = f"spu_{idx:04d}_at_{off:08X}"
         b = buf[off:off + size]
-        want = t["images"].get(name)
-        if want is None or int(want["fnv"], 16) != fnv(b[:img_size(b)]):
-            bad.append(f"{name}: not an SPU image the table lists")
+        name = by_fnv.get(fnv(b[:img_size(b)]))
+        if name is None:
+            bad.append(f"spu_{idx:04d}_at_{off:08X}: not an SPU image the table lists")
             continue
         found.add(name)
         _write_if_changed(os.path.join(elf_dir, name + ".elf"), b)
     bad += [f"{name}: not found in the EBOOT" for name in t["images"] if name not in found]
     segs = _load_segments(buf)
     for name, j in t["jobs"].items():
-        va, size = int(j["vaddr"], 16), j["size"]
-        fo = next((off + va - sva for sva, off, fs in segs if sva <= va and va + size <= sva + fs), None)
-        raw = buf[fo:fo + size] if fo is not None else b""
-        if fnv(raw) != int(j["fnv"], 16):
-            bad.append(f"{name}: the bytes at 0x{va:08X} are not the job the table lists")
+        size, raw = j["size"], None
+        for key in ("vaddr", "vaddr_eu"):
+            if key not in j:
+                continue
+            va = int(j[key], 16)
+            fo = next((off + va - sva for sva, off, fs in segs if sva <= va and va + size <= sva + fs), None)
+            got = buf[fo:fo + size] if fo is not None else b""
+            if fnv(got) == int(j["fnv"], 16):
+                raw = got
+                break
+        if raw is None:
+            bad.append(f"{name}: the bytes at {j['vaddr']} are not the job the table lists")
             continue
         _write_if_changed(os.path.join(job_dir, name + ".bin"), raw)
     return bad

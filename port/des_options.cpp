@@ -134,6 +134,7 @@
  *   builds only (cmake -DDES_DEV=ON; docs/55).
  */
 #include "ps3emu/ppu_lift.h"   /* ppu_context: the fixed part of the lift's header */
+#include "des_region.h"      /* DES_AT: the running disc's addresses */
 #include "des_game_calls.h"     /* the lifted functions below (the game DLL's with DES_SPLIT) */
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include "ui/include/des_ui.h"  /* the wrapper UI: settings.ini and the overlay (docs/32) */
@@ -177,13 +178,23 @@ constexpr uint32_t kLogoUpdate   = 0x008EF430u;
 constexpr uint32_t kElapseTime   = 0x0F8u;
 constexpr uint32_t kCurLogType   = 0x0FCu;
 constexpr uint32_t kAnimState    = 0x100u;
-constexpr uint32_t kLastLogType  = 4u;
+/* The last boot logo's m_curLogType: the European disc has one logo more. */
+uint32_t last_log_type() { return des_region() == DesRegion::EU ? 5u : 4u; }
 constexpr const char* kOpeningMovie = "ds_advertise.pam";   /* PS3_SAIL_SKIP_FIRST for DES_SKIP_INTRO_MOVIE */
 
 bool env_on(const char* name)
 {
     const char* v = getenv(name);
     return v && *v && strcmp(v, "0") != 0;
+}
+
+/* The instruction an instruction hook runs after. ADDR is the hook's key, the
+ * US disc's address (des_region.h), so the European disc reads its own. 0 if
+ * there is none. */
+static uint32_t hook_insn(uint32_t addr)
+{
+    const uint32_t at = des_region_addr(addr);
+    return at ? vm_read32(at) : 0;
 }
 
 /* DES_SKIP_INTRO as it is now: 0, 1 or 2. The settings window changes it
@@ -204,14 +215,14 @@ void logo_update_skip(ppu_context* ctx)
         vm_write32(dlg + kAnimState, 3);   /* to the next logo, or out after the last */
     } else if (dlg && mode == 2) {
         const uint32_t state = vm_read32(dlg + kAnimState);
-        if (state == 0 && vm_read32(dlg + kCurLogType) < kLastLogType) {
+        if (state == 0 && vm_read32(dlg + kCurLogType) < last_log_type()) {
             static bool said = false;
             if (!said) {
                 said = true;
                 fprintf(stderr, "[des] DES_SKIP_INTRO: logo %u -> last logo\n",
                         vm_read32(dlg + kCurLogType));
             }
-            vm_write32(dlg + kCurLogType, kLastLogType);
+            vm_write32(dlg + kCurLogType, last_log_type());
         }
         if (state == 2) {
             const float done = 1.0e9f;   /* past any hold threshold */
@@ -283,7 +294,7 @@ int fps_vblank_mhz(int fps)
 
 bool cutscene_playing()
 {
-    const uint32_t man = vm_read32(kRemoMan);
+    const uint32_t man = vm_read32(DES_AT(kRemoMan));
     if (!man) return false;
     for (uint32_t off : kRemoSlots)
         if (vm_read32(man + off)) return true;
@@ -440,7 +451,7 @@ void fps_on_flip_request()
     static int in_cutscene = 0;   /* 0 none, 1 at 30 (the lock), 2 unlocked (DES_CUTFPS) */
     static clock::time_point last;
     const Sync sync = sync_wanted();
-    const uint32_t obj = vm_read32(kFlipModeObj);
+    const uint32_t obj = vm_read32(DES_AT(kFlipModeObj));
     if (!obj) {
         pacing_apply(pacing_for(0, 0, sync), obj, sync);
         return;
@@ -453,7 +464,7 @@ void fps_on_flip_request()
         if (s_fps < 0) {
             orig60 = vm_read8(obj + kFlipMode60);
             orig_noskip = vm_read8(obj + kFlipNoSkip);
-            orig_dt = vm_read32(kFrameDt);
+            orig_dt = vm_read32(DES_AT(kFrameDt));
         }
         if (want) {
             vm_write8(obj + kFlipNoSkip, 1);
@@ -463,7 +474,7 @@ void fps_on_flip_request()
         } else if (s_fps > 0) {
             vm_write8(obj + kFlipMode60, orig60);
             vm_write8(obj + kFlipNoSkip, orig_noskip);
-            vm_write32(kFrameDt, orig_dt);
+            vm_write32(DES_AT(kFrameDt), orig_dt);
             s_paced.mode60 = -1;
             fprintf(stderr, "[des] DES_FPS off: the game's own 30 fps mode\n");
         }
@@ -508,7 +519,7 @@ void fps_on_flip_request()
     }
     uint32_t bits;
     memcpy(&bits, &dt, 4);
-    vm_write32(kFrameDt, bits);
+    vm_write32(DES_AT(kFrameDt), bits);
     last = now;
 }
 
@@ -530,7 +541,7 @@ bool guest_ptr_ok(uint32_t a)
  * asks for (float m/s, +0xCCC): found by dumping it while dashing. */
 bool player_pos(float* x, float* y, float* z, int* stamina, float* speed)
 {
-    uint32_t p = vm_read32(kChrMan);
+    uint32_t p = vm_read32(DES_AT(kChrMan));
     if (!guest_ptr_ok(p) || !guest_ptr_ok(p = vm_read32(p + 0x1BC))) return false;
     const uint32_t chr = p, sp = vm_read32(chr + 0xCCC);
     *stamina = (int)vm_read32(chr + 0x3D4);
@@ -557,7 +568,7 @@ void movement_dump(const char* kind, double ms)
 {
     static int n = 0;
     if (n >= 40) return;
-    uint32_t chr = vm_read32(kChrMan);
+    uint32_t chr = vm_read32(DES_AT(kChrMan));
     if (!guest_ptr_ok(chr) || !guest_ptr_ok(chr = vm_read32(chr + 0x1BC))) return;
     const uint32_t mv = vm_read32(chr + 0x20);
     if (!guest_ptr_ok(mv)) return;
@@ -610,7 +621,7 @@ void frame_log()
     static bool have_pos = false, f8_down = false;
     static float px, pz;
     const double ms = std::chrono::duration<double, std::milli>(clock::now() - t0).count();
-    uint32_t bits = vm_read32(kFrameDt);
+    uint32_t bits = vm_read32(DES_AT(kFrameDt));
     float dt; memcpy(&dt, &bits, 4);
     float x = 0, y = 0, z = 0, want = 0;
     int stamina = 0;
@@ -624,7 +635,7 @@ void frame_log()
     last_reads = reads; last_empty = empty;
     if (pos) fprintf(s_framelog, " %.3f %.3f %.3f %d %.2f", x, y, z, stamina, want);
     if (pos) {   /* the movement object's root-motion factor (see des_move_post), then HP and MP */
-        const uint32_t chr = vm_read32(vm_read32(kChrMan) + 0x1BC);
+        const uint32_t chr = vm_read32(vm_read32(DES_AT(kChrMan)) + 0x1BC);
         const uint32_t fb = vm_read32(vm_read32(chr + 0x20) + 0x128);
         float f; memcpy(&f, &fb, 4);
         fprintf(s_framelog, " %.3f %d %d", f, (int)vm_read32(chr + 0x3C4), (int)vm_read32(chr + 0x3CC));
@@ -820,7 +831,7 @@ void load_souls_rate(ppu_context* ctx)
 {
     const uint32_t obj = (uint32_t)ctx->gpr[3];
     static float carry = 0.5f;   /* so the cells round: one a frame at 30 fps */
-    const float dt = vm_readf(kFrameDt);
+    const float dt = vm_readf(DES_AT(kFrameDt));
     const int n = ui_fix_on() && obj ? souls_steps(dt, carry) : -1;
     if (n >= 0) {
         for (const uint32_t off : kSoulCell) {
@@ -969,7 +980,7 @@ void gauge_fill_rate(ppu_context* ctx)
     const uint32_t obj = (uint32_t)ctx->gpr[3];
     const float was = obj ? vm_readf(obj + kGaugeFill) : 0.0f;
     Draw(ctx);
-    const float steps = vm_readf(kFrameDt) * 30.0f;
+    const float steps = vm_readf(DES_AT(kFrameDt)) * 30.0f;
     if (!obj || !ui_fix_on() || !(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
     const float now = vm_readf(obj + kGaugeFill), target = vm_readf(obj + kGaugeTarget);
     const float down = vm_readf(obj + kGaugeStepDown), up = vm_readf(obj + kGaugeStepUp);
@@ -1022,7 +1033,7 @@ void gauge_len_rate(ppu_context* ctx)
  * cutscene playing, the player's place (0 with no player). */
 extern "C" float des_frame_step(void)
 {
-    const uint32_t bits = vm_read32(kFrameDt);
+    const uint32_t bits = vm_read32(DES_AT(kFrameDt));
     float dt;
     memcpy(&dt, &bits, 4);
     return dt;
@@ -1070,7 +1081,7 @@ extern "C" void des_move_post(ppu_context* ctx)
     const float dt = (float)ctx->fpr[1];
     const float f0 = vm_readf(mv + kMoveSpeedFactor);
     ctx->gpr[3] = mv;
-    ctx->lr = 0x00273D4Cu;
+    ctx->lr = DES_AT(0x00273D4Cu);
     func_002EC2B8(ctx);
     while (g_trampoline_fn) {
         void (*tf)(void*) = g_trampoline_fn;
@@ -1114,17 +1125,17 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
         for (int i = 0; i < 32; i++)
             if (sites[i] == addr || !sites[i]) { sites[i] = addr; counts[i]++; break; }
         if (++total % 20000 == 0) {
-            fprintf(stderr, "[camlog] dt=%.4f", vm_readf(kFrameDt));
+            fprintf(stderr, "[camlog] dt=%.4f", vm_readf(DES_AT(kFrameDt)));
             for (int i = 0; i < 32 && sites[i]; i++) fprintf(stderr, " %X:%u", sites[i], counts[i]);
             fputc('\n', stderr);
         }
     }
     if (!on || s_fps <= 0) return;
-    const uint32_t insn = vm_read32(addr);
+    const uint32_t insn = hook_insn(addr);
     if ((insn >> 26) != 48) return;   /* lfs only */
     const int fd = (insn >> 21) & 31;
     const double k = ctx->fpr[fd];
-    const float steps = vm_readf(kFrameDt) * 30.0f;
+    const float steps = vm_readf(DES_AT(kFrameDt)) * 30.0f;
     if (!(k > 0.0 && k < 1.0) || !(steps > 0.0f) || steps == 1.0f) return;
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
 }
@@ -1154,7 +1165,7 @@ static void ik_log(ppu_context* ctx, uint32_t addr)
             fprintf(f, "# ms dt offset error (air: neither foot hits)\n");
     }
     if (!f) return;
-    uint32_t chr = vm_read32(kChrMan);
+    uint32_t chr = vm_read32(DES_AT(kChrMan));
     if (!guest_ptr_ok(chr) || !guest_ptr_ok(chr = vm_read32(chr + 0x1BC)) || vm_read32(chr + 0x20) != ctx->gpr[31])
         return;   /* r31 is the movement object at both sites; only the player's */
     static const auto t0 = std::chrono::steady_clock::now();
@@ -1262,7 +1273,7 @@ extern "C" void des_ik_rate(ppu_context* ctx, uint32_t addr)
     if (addr == 0x002F5B14u) {   /* fmr f30, f1: the driver's dt; r3 is still the movement object */
         s_ik_dt = (float)ctx->fpr[30];
         if (foot_log_file()) {
-            uint32_t chr = vm_read32(kChrMan);
+            uint32_t chr = vm_read32(DES_AT(kChrMan));
             s_ik_player = guest_ptr_ok(chr) && guest_ptr_ok(chr = vm_read32(chr + 0x1BC)) &&
                           vm_read32(chr + 0x20) == (uint32_t)ctx->gpr[3];
         }
@@ -1273,7 +1284,9 @@ extern "C" void des_ik_rate(ppu_context* ctx, uint32_t addr)
     static int on = 1;
     PS3_KNOB(on, ps3_env_int("DES_IKFIX", 1) != 0);
     if (!on || s_fps <= 0) return;
-    const int fd = (vm_read32(addr) >> 21) & 31;   /* the lfs's or the fmuls's target */
+    const uint32_t insn = hook_insn(addr);
+    if (!insn) return;
+    const int fd = (insn >> 21) & 31;   /* the lfs's or the fmuls's target */
     const double k = ctx->fpr[fd];
     const float steps = s_ik_dt * 30.0f;
     if (!(k > 0.0 && k < 1.0) || !(steps > 0.0f) || steps == 1.0f) return;
@@ -1298,9 +1311,11 @@ extern "C" void des_twist_rate(ppu_context* ctx, uint32_t addr)
     static int on = 1;
     PS3_KNOB(on, ps3_env_int("DES_TWISTFIX", 1) != 0);
     if (!on || s_fps <= 0) return;
-    const int fd = (vm_read32(addr) >> 21) & 31;   /* the lfs's target */
+    const uint32_t insn = hook_insn(addr);
+    if ((insn >> 26) != 48) return;   /* lfs only */
+    const int fd = (insn >> 21) & 31;
     const double k = ctx->fpr[fd];
-    const float steps = vm_readf(kFrameDt) * 30.0f;
+    const float steps = vm_readf(DES_AT(kFrameDt)) * 30.0f;
     if (!(k > 0.0 && k < 1.0) || !(steps > 0.0f) || steps == 1.0f) return;
     ctx->fpr[fd] = (float)(1.0 - std::pow(1.0 - k, (double)steps));
 }
@@ -1377,12 +1392,12 @@ static std::atomic<double> s_phys_world_now{0.0}; /* under the cap: the world's 
  * start and end. */
 static uint32_t player_moving_body(uint32_t world)
 {
-    uint32_t p = vm_read32(kChrMan);
+    uint32_t p = vm_read32(DES_AT(kChrMan));
     if (!guest_ptr_ok(p) || !guest_ptr_ok(p = vm_read32(p + 0x1BC)) || !guest_ptr_ok(p = vm_read32(p + 0x20)) ||
         !guest_ptr_ok(p = vm_read32(p + 0x10)))
         return 0;
     const float pos[3] = {vm_readf(p + 0x10), vm_readf(p + 0x14), vm_readf(p + 0x18)};
-    if (!guest_ptr_ok(world) || vm_read32(world) != 0x018B4F98u) return 0;
+    if (!guest_ptr_ok(world) || vm_read32(world) != DES_AT(0x018B4F98u)) return 0;
     const uint32_t bp = vm_read32(world + 0x54);
     if (!guest_ptr_ok(bp)) return 0;
     double off[3], scale[3];
@@ -1399,7 +1414,7 @@ static uint32_t player_moving_body(uint32_t world)
         if (!guest_ptr_ok(bodies) || n > 4096) continue;
         for (uint32_t j = 0; j < n; j++) {
             const uint32_t b = vm_read32(bodies + 4 * j);
-            if (!guest_ptr_ok(b) || vm_read32(b) != 0x018B4810u || vm_readf(b + 0x19C) != 0.0f) continue;
+            if (!guest_ptr_ok(b) || vm_read32(b) != DES_AT(0x018B4810u) || vm_readf(b + 0x19C) != 0.0f) continue;
             const uint32_t layer = vm_read32(b + 0x2C) & 31;
             if (layer == 8 || layer == 6) continue;
             float v = 0.0f, w = 0.0f;
@@ -1463,7 +1478,7 @@ extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
      * the time, +0x14) */
     uint32_t pw = vm_read32((uint32_t)ctx->gpr[31] + 0x10);
     pw = guest_ptr_ok(pw) ? vm_read32(pw + 4) : 0;
-    const uint32_t sim = guest_ptr_ok(pw) && vm_read32(pw) == 0x018B4F98u ? vm_read32(pw + 8) : 0;
+    const uint32_t sim = guest_ptr_ok(pw) && vm_read32(pw) == DES_AT(0x018B4F98u) ? vm_read32(pw + 8) : 0;
     const double wt = guest_ptr_ok(sim) ? vm_readf(sim + 0x14) : 0.0;
     acc += dt;
     if (acc < h) {
@@ -1609,7 +1624,7 @@ extern "C" void des_body_xform(ppu_context* ctx, uint32_t)
 {
     if (!rag_interp_on()) return;
     const uint32_t src = (uint32_t)ctx->gpr[3] - 0x30, dst = (uint32_t)ctx->gpr[4] - 0x30, body = src - 0xE0;
-    if (!guest_ptr_ok(body) || !guest_ptr_ok(dst) || vm_read32(body) != 0x018B4810u || !(vm_readf(body + 0x19C) > 0.0f)) return;
+    if (!guest_ptr_ok(body) || !guest_ptr_ok(dst) || vm_read32(body) != DES_AT(0x018B4810u) || !(vm_readf(body + 0x19C) > 0.0f)) return;
     float pos[3], q[4];
     if (!body_pose_between(body, pos, q)) return;
     const float x = q[0], y = q[1], z = q[2], w = q[3];
@@ -1649,7 +1664,7 @@ extern "C" void des_body_sample(ppu_context* ctx, uint32_t)
     PS3_KNOB(log, ps3_env_int("DES_PARTINTERP_LOG", 0));
     if (!on || !s_phys_capped.load()) return;
     const uint32_t body = (uint32_t)ctx->gpr[3] - 0xD0;
-    if (!guest_ptr_ok(body) || vm_read32(body) != 0x018B4810u) return;
+    if (!guest_ptr_ok(body) || vm_read32(body) != DES_AT(0x018B4810u)) return;
     float c0[4], c1[4];
     vm_read4f(body + 0x120, c0); vm_read4f(body + 0x130, c1);
     if (!(c1[3] > 0.0f)) return;
@@ -1658,7 +1673,7 @@ extern "C" void des_body_sample(ppu_context* ctx, uint32_t)
     double add;
     if (keyframed) {
         const uint32_t world = vm_read32(body + 8);
-        const uint32_t sim = guest_ptr_ok(world) && vm_read32(world) == 0x018B4F98u ? vm_read32(world + 8) : 0;
+        const uint32_t sim = guest_ptr_ok(world) && vm_read32(world) == DES_AT(0x018B4F98u) ? vm_read32(world + 8) : 0;
         if (!guest_ptr_ok(sim)) return;
         const float dx = c1[0] - c0[0], dy = c1[1] - c0[1], dz = c1[2] - c0[2];
         add = s_phys_world_now.load() - vm_readf(sim + 0x14);
@@ -1794,7 +1809,7 @@ static float net_remote_gait(const NetRemote* r)
  * turns it all off. Main thread. */
 extern "C" void des_net_sync(ppu_context* ctx, uint32_t addr)
 {
-    const float dt = vm_readf(kFrameDt);
+    const float dt = vm_readf(DES_AT(kFrameDt));
     static int log = 0;
     PS3_KNOB(log, env_on("DES_NETLOG"));
     if (addr == 0x00313B24u) {   /* li r0, 5: the send counter's reload */
@@ -1891,7 +1906,7 @@ extern "C" void des_qwc_local(ppu_context* ctx, uint32_t)
     if (!own) return;
     const uint32_t out = (uint32_t)ctx->gpr[4], area = (uint32_t)ctx->gpr[5];
     if (!guest_ptr_ok(out) || area < 1 || area > 7) return;
-    uint32_t q = vm_read32(0x01B4EF9Cu);
+    uint32_t q = vm_read32(DES_AT(0x01B4EF9Cu));
     if (!guest_ptr_ok(q) || !guest_ptr_ok(q = vm_read32(q + 0x24))) return;
     const uint32_t own_at = q + 0x48 + 8 * (area - 1);
     vm_write32(out, vm_read32(own_at));
@@ -2106,10 +2121,10 @@ extern "C" void des_cam_step(ppu_context* ctx, uint32_t addr)
     static int on = 1;
     PS3_KNOB(on, ps3_env_int("DES_CAMFIX", 1) != 0);
     if (!on || s_fps <= 0) return;
-    const uint32_t insn = vm_read32(addr);
+    const uint32_t insn = hook_insn(addr);
     if ((insn >> 26) != 48) return;   /* lfs only */
     const int fd = (insn >> 21) & 31;
-    const float steps = vm_readf(kFrameDt) * 30.0f;
+    const float steps = vm_readf(DES_AT(kFrameDt)) * 30.0f;
     if (!(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
     ctx->fpr[fd] = (float)(ctx->fpr[fd] * steps);
 }
@@ -2121,11 +2136,11 @@ extern "C" void des_cam_step(ppu_context* ctx, uint32_t addr)
  * 30 fps or without DES_FPS. */
 static void keep_rate(ppu_context* ctx, uint32_t addr)
 {
-    const uint32_t insn = vm_read32(addr);
+    const uint32_t insn = hook_insn(addr);
     if ((insn >> 26) != 48) return;   /* lfs only */
     const int fd = (insn >> 21) & 31;
     const double r = ctx->fpr[fd];
-    const float steps = vm_readf(kFrameDt) * 30.0f;
+    const float steps = vm_readf(DES_AT(kFrameDt)) * 30.0f;
     if (!(r > 0.0 && r < 1.0) || !(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
     ctx->fpr[fd] = (float)std::pow(r, (double)steps);
 }
@@ -2171,10 +2186,10 @@ extern "C" void des_fade_rate(ppu_context* ctx, uint32_t addr)
     static int on = 1, log = 0;
     PS3_KNOB(on, ps3_env_int("DES_FADEFIX", 1) != 0);
     PS3_KNOB(log, env_on("DES_FADELOG"));
-    const uint32_t insn = vm_read32(addr);
+    const uint32_t insn = hook_insn(addr);
     if ((insn >> 26) != 48) return;   /* lfs only */
     const int fd = (insn >> 21) & 31;
-    const float dt = vm_readf(kFrameDt), steps = dt * 30.0f;
+    const float dt = vm_readf(DES_AT(kFrameDt)), steps = dt * 30.0f;
     const bool scale = on && s_fps > 0 && steps > 0.0f && steps < 30.0f && steps != 1.0f;
     if (log) {
         using clock = std::chrono::steady_clock;
@@ -2247,7 +2262,7 @@ extern "C" void des_slide_rate(ppu_context* ctx, uint32_t addr)
  * DES_ROLLLOG=1 prints each of the player's calls. */
 static uint32_t player_controller()
 {
-    uint32_t p = vm_read32(kChrMan);
+    uint32_t p = vm_read32(DES_AT(kChrMan));
     if (!guest_ptr_ok(p) || !guest_ptr_ok(p = vm_read32(p + 0x1BC))) return 0;
     p = vm_read32(p + 0x20);
     return guest_ptr_ok(p) ? p : 0;
@@ -2271,7 +2286,7 @@ extern "C" void des_roll_dir(ppu_context* ctx, uint32_t addr)
         }
         s.yaw = vm_readf(xf + 4);
         ctx->fpr[1] = (float)(ctx->fpr[1] + s.turn);
-        const float dt = vm_readf(kFrameDt);
+        const float dt = vm_readf(DES_AT(kFrameDt));
         s.left -= dt > 0.0f && dt < 0.25f ? dt : 1.0f / 30.0f;
         return;
     }
@@ -2423,7 +2438,7 @@ extern "C" void des_viewport_room(ppu_context* ctx, uint32_t)
 extern "C" void des_viewer_rate(ppu_context* ctx, uint32_t addr)
 {
     (void)addr;
-    const float steps = vm_readf(kFrameDt) * 30.0f;
+    const float steps = vm_readf(DES_AT(kFrameDt)) * 30.0f;
     if (!ui_fix_on() || !(steps > 0.0f && steps < 30.0f) || steps == 1.0f) return;
     ctx->fpr[1] = (float)(ctx->fpr[1] * steps);
     ctx->fpr[2] = (float)(ctx->fpr[2] * steps);
@@ -2491,7 +2506,7 @@ extern "C" void des_ghost_rate(ppu_context* ctx, uint32_t addr)
 {
     static int on = 1;
     PS3_KNOB(on, ps3_env_int("DES_GHOSTFIX", 1) != 0);
-    const float dt = vm_readf(kFrameDt);
+    const float dt = vm_readf(DES_AT(kFrameDt));
     if (!on || s_fps <= 0 || !(dt > 0.0f && dt <= kMaxFrameDt)) return;
     int n = (int)(1.0f / (3.0f * dt) + 0.5f);
     if (n < 1) n = 1;
@@ -3092,10 +3107,15 @@ extern "C" void ps3_title_window_only_init(void)
     des_ui_setup_only_init();
 }
 
+extern "C" void des_region_check_title(void);   /* des_region.cpp */
+extern "C" void des_region_language(void);
+
 extern "C" void ps3_title_options_init(void)
 {
+    des_region_check_title();   /* which disc: the log line, and a warning for a mismatched PARAM.SFO */
     /* First: settings.ini fills in the options not set in the environment. */
     des_ui_early_init();
+    des_region_language();   /* the European disc's language (DES_LANGUAGE), before the game asks */
 #if DES_DEV
     des_dev_boot();        /* developer build: the marker (log, window title) and the cheats' offline rule (docs/55) */
 #endif
@@ -3106,7 +3126,7 @@ extern "C" void ps3_title_options_init(void)
     des_souls_use_init();  /* DES_SOULS_AT_ONCE: Use several soul items at once */
     /* DES_SKIP_INTRO and DES_AUTO_CONTINUE are read as they are used, so the
      * settings window changes them live; their hooks are always on. */
-    ppu_register_function(kLogoUpdate, logo_update_skip);
+    DES_REGISTER_FUNCTION(kLogoUpdate, logo_update_skip);
     if (const int mode = skip_intro())
         fprintf(stderr, "[des] DES_SKIP_INTRO=%d: boot logos %s\n", mode, mode == 1 ? "skipped" : "shortened");
     if (env_on("DES_SKIP_INTRO_MOVIE") && !getenv("PS3_SAIL_SKIP_FIRST")) {
@@ -3118,15 +3138,15 @@ extern "C" void ps3_title_options_init(void)
      * cap. */
     s_vblank_pinned = getenv("VBLANK_MHZ") != nullptr;
     g_gcm_flip_request_hook = on_flip_request;
-    ppu_register_function(kLoadSouls, load_souls_rate);   /* the loading screens' souls, in 30 Hz steps */
-    ppu_register_function(kNowLoadingUpdate, nowloading_souls_rate);
-    ppu_register_function(kScrollMsgUpdate, scroll_msg_rate);   /* menu text scroll, 1.5 px per 30 Hz step */
-    ppu_register_function(kGetSoulUpdate, get_soul_rate);   /* the HUD's soul counter, a step per 30 Hz step */
-    ppu_register_function(kGaugeDraw[0], gauge_fill_rate<func_0078EDC8>);   /* HUD bars' fill */
-    ppu_register_function(kGaugeDraw[1], gauge_fill_rate<func_0078EB60>);
-    ppu_register_function(kGaugeDraw[2], gauge_fill_rate<func_0078F020>);
-    ppu_register_function(kGaugeUpdate, gauge_len_rate<func_00789BC0>);   /* HUD bars' length */
-    ppu_register_function(kSmoothGaugeUpdate, gauge_len_rate<func_0078E2E8>);
+    DES_REGISTER_FUNCTION(kLoadSouls, load_souls_rate);   /* the loading screens' souls, in 30 Hz steps */
+    DES_REGISTER_FUNCTION(kNowLoadingUpdate, nowloading_souls_rate);
+    DES_REGISTER_FUNCTION(kScrollMsgUpdate, scroll_msg_rate);   /* menu text scroll, 1.5 px per 30 Hz step */
+    DES_REGISTER_FUNCTION(kGetSoulUpdate, get_soul_rate);   /* the HUD's soul counter, a step per 30 Hz step */
+    DES_REGISTER_FUNCTION(kGaugeDraw[0], gauge_fill_rate<func_0078EDC8>);   /* HUD bars' fill */
+    DES_REGISTER_FUNCTION(kGaugeDraw[1], gauge_fill_rate<func_0078EB60>);
+    DES_REGISTER_FUNCTION(kGaugeDraw[2], gauge_fill_rate<func_0078F020>);
+    DES_REGISTER_FUNCTION(kGaugeUpdate, gauge_len_rate<func_00789BC0>);   /* HUD bars' length */
+    DES_REGISTER_FUNCTION(kSmoothGaugeUpdate, gauge_len_rate<func_0078E2E8>);
     if (const int fps = fps_wanted())
         fprintf(stderr, "[des] DES_FPS=%s: real frame time, no skip frames%s\n", fps_name(fps).c_str(),
                 fps_vblank_mhz(fps) ? ", vblank at the cap" : "");

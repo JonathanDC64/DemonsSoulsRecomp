@@ -41,6 +41,7 @@
  * whose souls would pass the cap is refused, and nothing changes. */
 
 #include "ps3emu/ppu_lift.h"
+#include "des_region.h"      /* DES_AT: the running disc's addresses */
 #include "des_game_calls.h"
 #include "ps3emu/ps3_knob.h"
 #include <algorithm>
@@ -98,20 +99,20 @@ bool guest_ok(uint32_t a) { return a >= 0x00010000u && a < 0xD0000000u && !(a & 
 
 uint32_t pgd()
 {
-    const uint32_t root = vm_read32(kPgdRoot);
+    const uint32_t root = vm_read32(DES_AT(kPgdRoot));
     return guest_ok(root) && guest_ok(vm_read32(root + 8)) ? vm_read32(root + 8) : 0;
 }
 
 uint32_t player_chr()
 {
-    const uint32_t man = vm_read32(kChrMan);
+    const uint32_t man = vm_read32(DES_AT(kChrMan));
     const uint32_t c = guest_ok(man) ? vm_read32(man + 0x1BC) : 0;
     return guest_ok(c) ? c : 0;
 }
 
 uint32_t menus()
 {
-    const uint32_t t = vm_read32(kToc - 0x72F0u);
+    const uint32_t t = vm_read32(DES_AT(kToc) - 0x72F0u);
     const uint32_t h = guest_ok(t) ? vm_read32(t - 0x8000u) : 0;
     const uint32_t m = guest_ok(h) ? vm_read32(h) : 0;
     return guest_ok(m) ? m : 0;
@@ -144,10 +145,10 @@ uint32_t call_game(ppu_context* ctx, void (*fn)(ppu_context*), std::initializer_
     memcpy(g, ctx->gpr, sizeof g); memcpy(f, ctx->fpr, sizeof f); memcpy(v, ctx->vr, sizeof v);
     const uint64_t lr = ctx->lr, ctr = ctx->ctr;
     const uint32_t cr = ppu_cr_pack(ctx), xer = ctx->xer;
-    ctx->gpr[1] -= 0x1000; ctx->gpr[2] = kToc;
+    ctx->gpr[1] -= 0x1000; ctx->gpr[2] = DES_AT(kToc);
     int i = 0;
     for (int64_t x : a) if (i < 8) ctx->gpr[3 + i++] = (uint64_t)x;
-    ctx->lr = 0x00724E40u;
+    ctx->lr = DES_AT(0x00724E40u);
     fn(ctx);
     drain(ctx);
     const uint32_t r3 = (uint32_t)ctx->gpr[3];
@@ -322,16 +323,16 @@ bool s_title = false;
 void title_on()
 {
     static_assert(sizeof kTitle <= kNoNameUnits, "the title must fit the missing-name text");
-    if (s_title || vm_read16(kNoName) != (uint16_t)'?') return;
-    for (uint32_t i = 0; i < kNoNameUnits; i++) s_no_name[i] = vm_read16(kNoName + 2 * i);
-    for (uint32_t i = 0; i < sizeof kTitle; i++) vm_write16(kNoName + 2 * i, (uint16_t)(uint8_t)kTitle[i]);
+    if (s_title || vm_read16(DES_AT(kNoName)) != (uint16_t)'?') return;
+    for (uint32_t i = 0; i < kNoNameUnits; i++) s_no_name[i] = vm_read16(DES_AT(kNoName) + 2 * i);
+    for (uint32_t i = 0; i < sizeof kTitle; i++) vm_write16(DES_AT(kNoName) + 2 * i, (uint16_t)(uint8_t)kTitle[i]);
     s_title = true;
 }
 
 void title_off()
 {
     if (!s_title) return;
-    for (uint32_t i = 0; i < kNoNameUnits; i++) vm_write16(kNoName + 2 * i, s_no_name[i]);
+    for (uint32_t i = 0; i < kNoNameUnits; i++) vm_write16(DES_AT(kNoName) + 2 * i, s_no_name[i]);
     s_title = false;
 }
 

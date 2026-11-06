@@ -45,6 +45,7 @@
  * with the UI's DES_UI_MOUSE (des_ui.cpp). */
 
 #include "ps3emu/ppu_lift.h"
+#include "des_region.h"      /* DES_AT: the running disc's addresses */
 #include "des_game_calls.h"
 #include "ps3emu/ps3_knob.h"
 #include <algorithm>
@@ -173,7 +174,7 @@ struct Drawn {
  * sits on): the cursor class, or a plain dialog with the cursor's layout. */
 bool cursor_like(const Drawn& d)
 {
-    return d.vis && (d.vt == kCursorVt || (d.lay[0] == 0.0f && d.lay[1] == 0.0f && d.lay[2] == kCursorLayout &&
+    return d.vis && (d.vt == DES_AT(kCursorVt) || (d.lay[0] == 0.0f && d.lay[1] == 0.0f && d.lay[2] == kCursorLayout &&
                                            d.lay[3] == kCursorLayout));
 }
 
@@ -378,7 +379,7 @@ void build_menus(ppu_context* ctx)
     std::vector<Menu> menus;
     std::vector<LeftOut> left;   /* (logged only) */
     bool any_cursor = false;
-    for (const Drawn& d : ds) any_cursor |= d.vis && (d.vt == kTitleVt || has_cursor_piece(d.dlg));
+    for (const Drawn& d : ds) any_cursor |= d.vis && (d.vt == DES_AT(kTitleVt) || has_cursor_piece(d.dlg));
     if (any_cursor || s_log >= 3) {
         std::vector<std::vector<Piece>> pcs(n);
         for (size_t i = 0; i < n; i++)
@@ -664,7 +665,7 @@ void build_menus(ppu_context* ctx)
         menus.swap(top);
         /* The title before Start: its line, the one spot. */
         for (size_t i = 0; i < n && menus.empty(); i++) {
-            if (!ds[i].vis || ds[i].vt != kTitleVt) continue;
+            if (!ds[i].vis || ds[i].vt != DES_AT(kTitleVt)) continue;
             for (const Piece& p : pcs[i]) {
                 float lay[4];
                 if (!p.drawn || name_of(p.obj) != "text_press_start_button" || !rect_of(p.obj, lay)) continue;

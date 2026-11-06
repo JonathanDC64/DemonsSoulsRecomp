@@ -55,6 +55,7 @@
 #include "ui/include/des_ui.h"  /* des_ui_privacy_wait */
 #include "rsx_shader_precompile.h"
 #include "des_rsx_route.h"  /* the renderer calls below: through rsx_out in a PS3RECOMP_RSX_HAL build */
+#include "des_region.h"     /* the two discs' title IDs */
 
 #ifdef _WIN32
 #include <windows.h>
@@ -134,12 +135,15 @@ bool read_file(const std::string& path, std::vector<uint8_t>& out)
 }
 
 /* The game and its version as PARAM.SFO has them, TITLE_ID-APP_VER ("BLUS30443-01.00"): what the
- * pipeline index is kept by. */
+ * pipeline index is kept by. The European disc (BLES00932) has the US disc's shaders, so it shares the
+ * US disc's index, and the pipelines found in its play go to it. */
 std::string game_tag()
 {
     const char* id = cellGame_get_title_id();
     const char* ver = cellGame_get_app_ver();
-    return std::string(id ? id : "") + "-" + (ver ? ver : "");
+    std::string title = id ? id : "";
+    if (title == des_region_title_id(DesRegion::EU)) title = des_region_title_id(DesRegion::US);
+    return title + "-" + (ver ? ver : "");
 }
 
 /* This program's folder; empty if it cannot be told. */

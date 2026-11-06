@@ -131,6 +131,33 @@ class LiftTest(unittest.TestCase):
         self.assertEqual(self.t.calls(), [])
         self.assertEqual((w / "recomp" / "ppu_recomp.h").read_text(), "// lifted\n// patched\n")
 
+    def test_european_disc(self):
+        """The European EBOOT: the hooks and overrides at its addresses (each hook called with its US address), the
+        boot patch told the disc, and a lift of the other disc made again."""
+        src = self.t.src
+        (src / "scripts" / "des_region.py").write_text((REAL / "scripts" / "des_region.py").read_text())
+        flags = json.loads((src / "scripts" / "lift_ppu.json").read_text())
+        rows = {0x100: 0x180}
+        for o in flags["override_funcs"]:
+            rows[int(o.partition("=")[0], 0)] = int(o.partition("=")[0], 0) + 0x1000
+        (src / "port" / "regions").mkdir()
+        (src / "port" / "regions" / "BLES00932.inc").write_text(
+            "".join(f"DES_REGION_ADDR(0x{u:08X}, 0x{e:08X})\n" for u, e in sorted(rows.items())))
+        self.t.lift().run_all("e" * 64, "f" * 64, title="BLES00932")
+        hooks = self.t.data / "work" / "region" / "insn_hooks.txt"
+        self.assertEqual(hooks.read_text().strip(), "0x00000180=hook@0x00000100")
+        lines = self.t.call_lines()
+        lifter = next(c for c in lines if c.startswith("ppu_lifter.py"))
+        self.assertIn("@" + str(hooks), lifter)
+        first = flags["override_funcs"][0].partition("=")
+        self.assertIn(f"0x{int(first[0], 0) + 0x1000:X}={first[2]}", lifter)
+        self.assertTrue(next(c for c in lines if c.startswith("apply_boot_patches.py")).endswith("--title BLES00932"))
+        # The US disc's lift after it is a new lift, with the port's own hook list.
+        self.t.reset_calls()
+        self.t.lift().run_all("e" * 64, "f" * 64)
+        lifter = next(c for c in self.t.call_lines() if c.startswith("ppu_lifter.py"))
+        self.assertIn("@" + str(src / "port" / "insn_hooks.txt"), lifter)
+
     def test_no_firmware_no_libsre(self):
         self.t.lift().run_all("e" * 64, None)
         self.assertNotIn("build_libsre.py", self.t.calls())

@@ -701,16 +701,15 @@ void make_issue_report(std::vector<uint8_t> rgba, int width, int height, std::st
     }
     for (File& f : save) files.push_back(std::move(f));
     const auto zip = write_bundle("issue-" + stamp, files);
-    std::string body = "## What happened\n(Please describe the problem and what you were doing.)\n\n## What you expected\n\n"
-                       "## System\n```\n" + system + game + "```\n\n## Attachments\n";
-    body += zip.empty() ? "(The report files could not be saved.)\n"
-                        : "Drag `" + narrow(zip.filename().wstring()) + "` (" +
-                              (no_desktop() ? "beside the file this link came from" : "its folder is open") +
-                              ") into this issue: it has "
-                          "a screenshot, your settings, what each part of the game was doing, the game's recent "
-                          "messages and your save.\n";
+    // (What happened is the player's to write; the form asks for it, and for the zip)
+    std::string details = "## System\n```\n" + system + game + "```\n\n";
+    details += zip.empty() ? "(The report file could not be saved.)\n"
+                           : "Report file: `" + narrow(zip.filename().wstring()) + "` (" +
+                                 (no_desktop() ? "beside the file this link came from" : "its folder is open") +
+                                 "). It has a screenshot, your settings, what each part of the game was doing, the "
+                                 "game's recent messages and your save.\n";
     std::fprintf(stderr, "[report] issue report: %s\n", zip.empty() ? "could not be saved" : narrow(zip.wstring()).c_str());
-    open_issue(issue_url("", body), zip);
+    open_issue(issue_url("", "", details), zip);
     end_report_thread();
     g_report_busy.store(false);
 }
@@ -1365,14 +1364,20 @@ std::filesystem::path write_bundle(const std::string& stem, const std::vector<Fi
     return write_zip(path, files) ? path : std::filesystem::path{};
 }
 
-std::string issue_url(const std::string& title, const std::string& body) {
+std::string issue_url(const std::string& title, const std::string& what, const std::string& details) {
     // (GitHub refuses very long links, and browsers cut them: keep the encoded text under about 7000 bytes)
-    std::string text = body;
-    while (url_encode(text).size() > 6500 && text.size() > 200) {
-        text.resize(text.size() * 9 / 10);
-        text += "\n[...cut: the attached report has the rest]";
+    std::string w = what, d = details;
+    const auto size = [&] { return url_encode(w).size() + url_encode(d).size(); };
+    while (size() > 6400 && d.size() > 200) {
+        d.resize(d.size() * 9 / 10);
+        d += "\n[...cut: the report file has the rest]";
     }
-    return std::string(kRepositoryUrl) + "/issues/new?title=" + url_encode(title) + "&body=" + url_encode(text);
+    while (size() > 6400 && w.size() > 200) {
+        w.resize(w.size() * 9 / 10);
+        w += "\n[...cut]";
+    }
+    return std::string(kRepositoryUrl) + "/issues/new?template=report.yml&title=" + url_encode(title) +
+           "&what=" + url_encode(w) + "&details=" + url_encode(d);
 }
 
 namespace {

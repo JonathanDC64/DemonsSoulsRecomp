@@ -54,11 +54,14 @@ std::string send_report(const Status& failure) {
     const std::string where = !failure.errorStep.empty() ? failure.errorStep
                               : !failure.errorCode.empty() ? failure.errorCode
                                                            : std::string("setup");
-    const std::string body = "**What happened:** " + failure.errorText + "\n**Step:** " + where +
-                             "\n**Version:** " + kVersion + "\n\nAttach " + name +
-                             " from the folder that opened: it has setup's logs and this PC's facts, and no game files.";
-    report::open_issue(report::issue_url("Setup did not finish: " + where, report::redact(body)), zip);
-    return "The issue form is open in your browser. Attach " + name + " to it: it is in the folder that opened.";
+    const std::string details = "**Step:** " + where + "\n**Version:** " + kVersion + "\n\nReport file: `" + name +
+                                "` (in the folder that opened). It has setup's logs and this PC's facts, and no game "
+                                "files.";
+    report::open_issue(report::issue_url("Setup did not finish: " + where, report::redact(failure.errorText),
+                                         report::redact(details)),
+                       zip);
+    return "The issue page is open in your browser. Drag " + name + ", from the folder that opened, into its Report "
+           "file box.";
 }
 
 }  // namespace ui::setup

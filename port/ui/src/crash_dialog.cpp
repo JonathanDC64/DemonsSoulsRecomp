@@ -8,6 +8,7 @@
 #include "host.hpp"
 #include "input.hpp"
 #include "modal.hpp"
+#include "report_ack.hpp"
 #include "ui.hpp"
 #include "version.hpp"
 
@@ -22,6 +23,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 
 namespace ui::crash_dialog {
@@ -262,7 +264,9 @@ bool show(const Content& content, const Actions& actions) {
                         .label = "Report on GitHub",
                         .onPressed =
                             [&actions](Modal& modal) {
-                                if (actions.report) modal.set_body_text(actions.report());
+                                with_zip_ack([&actions, &modal] {
+                                    if (actions.report) modal.set_body_text(actions.report());
+                                });
                             },
                     },
                     ModalAction{.label = "Show details", .onPressed = details},
@@ -294,7 +298,9 @@ bool show(const Content& content, const Actions& actions) {
                         .label = "Report on GitHub",
                         .onPressed =
                             [&actions](Modal& modal) {
-                                if (actions.report) modal.set_body_text(actions.report());
+                                with_zip_ack([&actions, &modal] {
+                                    if (actions.report) modal.set_body_text(actions.report());
+                                });
                             },
                     },
                     ModalAction{.label = "Show details", .onPressed = details},
@@ -332,7 +338,9 @@ bool show(const Content& content, const Actions& actions) {
                         .label = "Report on GitHub",
                         .onPressed =
                             [&actions](Modal& modal) {
-                                if (actions.report) modal.set_body_text(actions.report());
+                                with_zip_ack([&actions, &modal] {
+                                    if (actions.report) modal.set_body_text(actions.report());
+                                });
                             },
                     },
                     ModalAction{.label = "Show details", .onPressed = details},
@@ -353,6 +361,8 @@ bool show(const Content& content, const Actions& actions) {
         const char* exit_ms = std::getenv("DES_CRASH_DIALOG_EXIT_MS");
         const char* auto_report = std::getenv("DES_CRASH_DIALOG_REPORT");
         const char* auto_details = std::getenv("DES_CRASH_DIALOG_DETAILS");
+        const char* shot_frame = std::getenv("DES_CRASH_DIALOG_SHOT_FRAME");
+        const unsigned long long shot_at = shot_frame && *shot_frame ? std::strtoull(shot_frame, nullptr, 10) : 40;
         const auto start = std::chrono::steady_clock::now();
         const long long close_after = exit_ms && *exit_ms ? std::atoll(exit_ms) : 0;
         unsigned long long frame = 0;
@@ -366,7 +376,12 @@ bool show(const Content& content, const Actions& actions) {
             }
             ++frame;
             if (frame == 10 && auto_report && *auto_report && *auto_report != '0' && actions.report) {
-                if (auto* modal = dynamic_cast<Modal*>(top_document())) modal->set_body_text(actions.report());
+                if (auto* modal = dynamic_cast<Modal*>(top_document())) {
+                    if (std::strcmp(auto_report, "ask") == 0)  // (as the button: the first report's question first)
+                        with_zip_ack([&actions, modal] { modal->set_body_text(actions.report()); });
+                    else
+                        modal->set_body_text(actions.report());
+                }
             }
             if (frame == 10 && auto_details && *auto_details && *auto_details != '0') {
                 if (auto* modal = dynamic_cast<Modal*>(top_document())) details(*modal);
@@ -375,7 +390,7 @@ bool show(const Content& content, const Actions& actions) {
             ui::update();
             const UINT index = gpu.swapchain->GetCurrentBackBufferIndex();
             gpu.clear(index);
-            const bool take = shot && *shot && frame == 40;
+            const bool take = shot && *shot && frame == shot_at;
             host::render(gpu.buffers[index], index, kWidth, kHeight, take ? shot : nullptr);
             gpu.swapchain->Present(1, 0);
             gpu.wait();

@@ -87,6 +87,14 @@ icon.celebration {
     decorator: text("&#xea65;" center center);
 }
 
+icon.check-box {
+    decorator: text("&#xe834;" center center);
+}
+
+icon.check-box-blank {
+    decorator: text("&#xe835;" center center);
+}
+
 icon.question-mark {
     decorator: text("&#xeb8b;" center center);
 }

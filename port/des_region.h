@@ -15,7 +15,8 @@
  * What stays a US address:
  * - instruction hook keys (insn_hooks.txt, the handlers' `addr ==` and
  *   `case`): setup lifts the European EBOOT with each hook at its European
- *   address but called with its US key (ppu_lifter.py's sym@key);
+ *   address but called with its US key (ppu_lifter.py's sym@key). A handler
+ *   that reads guest memory at its key reads it at des_region_addr(addr);
  * - the lifted functions the port calls by name (func_XXXXXXXX): the split
  *   build resolves them at the European address when the game DLL loads
  *   (des_game_host.cpp).
@@ -73,6 +74,15 @@ inline uint32_t des_at()
     return g_des_region == static_cast<uint8_t>(DesRegion::EU) ? eu : US;
 }
 #define DES_AT(us) (des_at<(us)>())
+
+/* The running disc's address for a US address known only at run time: an
+ * instruction hook's key (the handlers' addr), to read the instruction the
+ * hook runs after. 0 if the European disc's table doesn't have it (CI checks
+ * that every hook is there). */
+inline uint32_t des_region_addr(uint32_t us)
+{
+    return g_des_region == static_cast<uint8_t>(DesRegion::EU) ? des_region_detail::eu_of(us) : us;
+}
 
 /* ppu_register_function at the running disc's address of a US address. */
 extern "C" void ppu_register_function(uint64_t addr, void (*fn)(struct ppu_context*));

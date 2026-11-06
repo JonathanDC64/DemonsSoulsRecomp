@@ -188,6 +188,15 @@ bool env_on(const char* name)
     return v && *v && strcmp(v, "0") != 0;
 }
 
+/* The instruction an instruction hook runs after. ADDR is the hook's key, the
+ * US disc's address (des_region.h), so the European disc reads its own. 0 if
+ * there is none. */
+static uint32_t hook_insn(uint32_t addr)
+{
+    const uint32_t at = des_region_addr(addr);
+    return at ? vm_read32(at) : 0;
+}
+
 /* DES_SKIP_INTRO as it is now: 0, 1 or 2. The settings window changes it
  * live; the logos only play at start, so a change shows there or at the
  * next start. */
@@ -1122,7 +1131,7 @@ extern "C" void des_cam_rate(ppu_context* ctx, uint32_t addr)
         }
     }
     if (!on || s_fps <= 0) return;
-    const uint32_t insn = vm_read32(addr);
+    const uint32_t insn = hook_insn(addr);
     if ((insn >> 26) != 48) return;   /* lfs only */
     const int fd = (insn >> 21) & 31;
     const double k = ctx->fpr[fd];
@@ -1275,7 +1284,9 @@ extern "C" void des_ik_rate(ppu_context* ctx, uint32_t addr)
     static int on = 1;
     PS3_KNOB(on, ps3_env_int("DES_IKFIX", 1) != 0);
     if (!on || s_fps <= 0) return;
-    const int fd = (vm_read32(addr) >> 21) & 31;   /* the lfs's or the fmuls's target */
+    const uint32_t insn = hook_insn(addr);
+    if (!insn) return;
+    const int fd = (insn >> 21) & 31;   /* the lfs's or the fmuls's target */
     const double k = ctx->fpr[fd];
     const float steps = s_ik_dt * 30.0f;
     if (!(k > 0.0 && k < 1.0) || !(steps > 0.0f) || steps == 1.0f) return;
@@ -1300,7 +1311,9 @@ extern "C" void des_twist_rate(ppu_context* ctx, uint32_t addr)
     static int on = 1;
     PS3_KNOB(on, ps3_env_int("DES_TWISTFIX", 1) != 0);
     if (!on || s_fps <= 0) return;
-    const int fd = (vm_read32(addr) >> 21) & 31;   /* the lfs's target */
+    const uint32_t insn = hook_insn(addr);
+    if ((insn >> 26) != 48) return;   /* lfs only */
+    const int fd = (insn >> 21) & 31;
     const double k = ctx->fpr[fd];
     const float steps = vm_readf(DES_AT(kFrameDt)) * 30.0f;
     if (!(k > 0.0 && k < 1.0) || !(steps > 0.0f) || steps == 1.0f) return;
@@ -2108,7 +2121,7 @@ extern "C" void des_cam_step(ppu_context* ctx, uint32_t addr)
     static int on = 1;
     PS3_KNOB(on, ps3_env_int("DES_CAMFIX", 1) != 0);
     if (!on || s_fps <= 0) return;
-    const uint32_t insn = vm_read32(addr);
+    const uint32_t insn = hook_insn(addr);
     if ((insn >> 26) != 48) return;   /* lfs only */
     const int fd = (insn >> 21) & 31;
     const float steps = vm_readf(DES_AT(kFrameDt)) * 30.0f;
@@ -2123,7 +2136,7 @@ extern "C" void des_cam_step(ppu_context* ctx, uint32_t addr)
  * 30 fps or without DES_FPS. */
 static void keep_rate(ppu_context* ctx, uint32_t addr)
 {
-    const uint32_t insn = vm_read32(addr);
+    const uint32_t insn = hook_insn(addr);
     if ((insn >> 26) != 48) return;   /* lfs only */
     const int fd = (insn >> 21) & 31;
     const double r = ctx->fpr[fd];
@@ -2173,7 +2186,7 @@ extern "C" void des_fade_rate(ppu_context* ctx, uint32_t addr)
     static int on = 1, log = 0;
     PS3_KNOB(on, ps3_env_int("DES_FADEFIX", 1) != 0);
     PS3_KNOB(log, env_on("DES_FADELOG"));
-    const uint32_t insn = vm_read32(addr);
+    const uint32_t insn = hook_insn(addr);
     if ((insn >> 26) != 48) return;   /* lfs only */
     const int fd = (insn >> 21) & 31;
     const float dt = vm_readf(DES_AT(kFrameDt)), steps = dt * 30.0f;

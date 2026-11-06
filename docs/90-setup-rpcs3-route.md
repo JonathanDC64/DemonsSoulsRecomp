@@ -160,7 +160,6 @@ These are the first sentences of `@error rpcs3 unlock ...` (section 3.4) and `@e
 | An output's size or SHA-256 is wrong | "EBOOT.elf came out different from the known good version." |
 | RPCS3 ended on an abort (exit status 3 or 0xC0000409) | "RPCS3 could not start." |
 | Windows will not start rpcs3.exe because it is set to run as administrator (WinError 740) | "Your RPCS3 is set to run as administrator, so setup cannot start it. In rpcs3.exe's Properties, Compatibility, untick "Run this program as an administrator"." |
-| libsre.prx does not match, and RPCS3's system software is not 4.93 | "libsre.prx came out different from the known good version. Your RPCS3 has PS3 system software 4.90; setup works with 4.93, the one Sony offers now. Install it in RPCS3 (File, then Install Firmware), then try again." (section 9.2) |
 | Import: RPCS3's save changed during the copy | "RPCS3 saved the game while setup was copying it." |
 | Import: a copy, conversion or rename failed | "Bringing your save across failed." |
 
@@ -758,7 +757,7 @@ Only 4.86 and 4.89 have been measured. Inferred: other 4.x versions differ the s
 - 4.90 fails the sum every time. A likely reason, not measured: its version, 0x00490000, has a zero low half, so its code has no `ori` at those places and the file is laid out differently.
 - 4.93, the version Sony offers now, works.
 
-So when libsre.prx fails the sum, the sentence names the version from RPCS3's `dev_flash/vsh/etc/version.txt` ("release:04.9000:") and says to install 4.93. Setup keeps working with 4.86 and 4.89 as before.
+So when libsre.prx failed the sum, the sentence named the version from RPCS3's `dev_flash/vsh/etc/version.txt` ("release:04.9000:") and said to install 4.93. Since 11-06 the file is optional (the end of this section), and that sentence is gone.
 
 **4.90 measured, and taken as it is (11-06, issue #369, a second player on 4.90).** 4.90 was installed into a copy of RPCS3 from Sony's PS3UPDAT.PUP (`--headless --installfw`), and its libsre.sprx decrypted with `--decrypt`.
 
@@ -780,6 +779,12 @@ The lift then lifts 4.90's own file. It needs no change, since its TOC comes fro
 - Setup's real check, unlock and stage from no files, with the RPCS3 copy on 4.90: 28 files unlocked, and 4.90's libsre.prx staged as it is.
 - The 0.1.0 package's setup, with 4.90's sum in its table, built the game on 4.90's libsre: libsre lifted and compiled, 757 functions, 267 exports, 32 imports patched.
 - That game played from the regression save into the level and a cutscene: 6 minutes, 3.2 million draws, no stall.
+
+**Optional since 11-06 (docs/133's setup phase A, docs/88 "The firmware").** The game runs libsre's 8 queue functions on ps3recomp's own code, so the RPCS3 route no longer needs the system software:
+- RPCS3 with no system software: the check names no `libsre.prx`, and the unlock makes the 27 game files only. The old "RPCS3 has no PS3 system software installed" stop is gone.
+- RPCS3 with it: the unlock still makes `libsre.prx` beside the game files, as above, so `LIBSRE_OWN=0` stays a fallback.
+- One that does not come out right (another version that `firmware.py` cannot make into the table's, or RPCS3 failing on that file alone) is left out. `unlock.log` notes the version and why, the check says `@check unused libsre.prx ...`, and the run goes on. The unlock's count and the unlock page leave it out. A later run tries once more, since RPCS3 may have other system software by then.
+- RPCS3 gone after an earlier run kept every game file in `inputs/`: nothing needs it, so the run goes on.
 
 ### 9.3 The host's pages
 

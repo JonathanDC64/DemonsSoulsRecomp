@@ -338,11 +338,12 @@ void SetupRpcs3Window::draw() {
             check_again(found(box, "setup-err", "The check did not finish", why));
         }
 
-        // A file the unlock cannot make (the PS3 system software not installed in RPCS3, a file that does not match):
-        // the check's sentence says what to do.
+        // A file the unlock cannot make (a file that does not match): the check's sentence says what to do. Not the
+        // PS3 system software's libsre.prx, which is optional: one that is not right is left out ("unused").
         if (isGame && mStatus.result != "ok")
             for (const setup::Line* c : other)
-                if (bad(c) && c->key != "missing") found(box, "setup-err", c->key2.substr(c->key2.rfind('/') + 1), c->text);
+                if (bad(c) && c->key != "missing" && c->key != "unused")
+                    found(box, "setup-err", c->key2.substr(c->key2.rfind('/') + 1), c->text);
 
         if (supported()) draw_imports(mBody);
     }
@@ -445,10 +446,12 @@ void SetupRpcs3Window::go_on() {
     for (int i = 0; i < kItems; ++i)
         if (mTicked[i]) request.imports.push_back(kNames[i]);
 
+    // What the unlock makes: what the check found missing or wrong. libsre.prx only when RPCS3 has the PS3 system
+    // software to make it from; otherwise the engine says nothing of it, or "unused" (it is optional, docs/133).
     bool eboot = false, firmware = false;
     int scripts = 0;
     for (const setup::Line& c : mStatus.checks) {
-        if (good(c.key)) continue;
+        if (good(c.key) || c.key == "unused") continue;
         switch (part_of(c.key2)) {
         case Part::Eboot: eboot = true; break;
         case Part::Script: ++scripts; break;
@@ -646,14 +649,22 @@ void SetupUnlockWindow::draw() {
         actions.push_back({"Unlock", [this] { start(); }, Look::Primary});
         actions.push_back({"Back", [this] { back(); }, Look::Quiet});
     } else if (running || done) {
+        // libsre.prx is optional (docs/133): when the unlock did not make it right, the engine's last line for it is
+        // "unused", and the build goes on without it.
+        const setup::Line* fw = nullptr;
+        for (const setup::Line& c : mStatus.checks)
+            if (part_of(c.key2) == Part::Firmware) fw = &c;
+        const bool leftOut = done && mProps.firmware && fw && fw->key == "unused";
+        const bool firmware = mProps.firmware && !leftOut;
         auto* box = panel(mBody, true);
         auto* row = append(box, "setup-row");
         const bool unlocking = mStatus.progress == "unlock" && mStatus.progressM > 0;
-        const long long m = unlocking ? mStatus.progressM : total;
-        std::string left = done ? "All " + std::to_string(m) + " files unlocked and checked"
-                                : unlocking ? "File " + std::to_string(std::min(m, mStatus.progressN + 1)) + " of " +
-                                                  std::to_string(m)
-                                            : std::string("Checking the game files first...");
+        const long long m = (unlocking ? mStatus.progressM : total) - (leftOut ? 1 : 0);
+        std::string left = done && m <= 0 ? std::string("The game files were already unlocked")
+                           : done         ? "All " + std::to_string(m) + " files unlocked and checked"
+                           : unlocking    ? "File " + std::to_string(std::min(m, mStatus.progressN + 1)) + " of " +
+                                             std::to_string(m)
+                                          : std::string("Checking the game files first...");
         text(row, "setup-text", left);
         if (!done && unlocking && !mStatus.file.empty()) text(row, "setup-eta", mStatus.file);
         auto* bar = append(box, "progress");
@@ -662,10 +673,11 @@ void SetupUnlockWindow::draw() {
         if (done) {
             std::string files = mProps.eboot ? "EBOOT.elf" : "";
             if (mProps.scripts)
-                files += (files.empty() ? "" : mProps.firmware ? ", " : " and ") + std::to_string(mProps.scripts) +
+                files += (files.empty() ? "" : firmware ? ", " : " and ") + std::to_string(mProps.scripts) +
                          (mProps.scripts == 1 ? " script file" : " script files");
-            if (mProps.firmware) files += (files.empty() ? "" : " and ") + std::string("libsre.prx");
-            found(box, "setup-ok", files, "All match the known good version. The copies are deleted.");
+            if (firmware) files += (files.empty() ? "" : " and ") + std::string("libsre.prx");
+            if (!files.empty()) found(box, "setup-ok", files, "All match the known good version. The copies are deleted.");
+            if (leftOut) found(box, "setup-info", "The PS3 system software's libsre.prx", fw->text);
             actions.push_back({"Continue", [this] { go_on(); }, Look::Primary});
         } else {
             actions.push_back({"Stop", [this] { back(); }, Look::Danger});

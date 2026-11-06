@@ -34,7 +34,7 @@ Setup supports one game: **BLUS30443, version 1.00**, checked by hash. It accept
    - the 26 `.sdat.unedat` files.
 
    Setup looks for each one beside its original, where RPCS3's Decrypt PS3 Binaries writes it, and then by name in any folder the player picks. Names match whatever the case (`EBOOT.ELF` or `EBOOT.elf`).
-5. **The firmware file**, always (since 10-23; the build lifts it): the decrypted `libsre.prx`, by SHA-256. The one `--firmware` names, else one by its name beside `PS3_GAME` or in a folder of decrypted files. When it is missing, the sentence says where it comes from (the PS3 system software's `dev_flash/sys/external/libsre.sprx`, decrypted with RPCS3) and where it goes (the game's folder).
+5. **The firmware file**, optional since 11-06 (docs/133, docs/88 "The firmware"): the decrypted `libsre.prx`, by SHA-256. The one `--firmware` names, else one by its name beside `PS3_GAME` or in a folder of decrypted files. A good one is staged and built in, for the `LIBSRE_OWN=0` fallback. None found is not reported; one that is not right is an `unused` item, not a problem, and the build goes on without it. (From 10-23 to 11-06 it was always asked for.)
 
 A file that is still encrypted gets its own message: it starts with `SCE\0` (a SELF) or `NPD\0` (SDATA). Every problem is one line in plain words that says what to do.
 
@@ -105,7 +105,7 @@ Entries today:
 | `nids` | `gen_hle_nids.py --all` | `work/recomp/hle_nid_table.cpp` |
 | `spu-cut` | `build_spu.py --eboot`: the 12 SPU images and the 2 SPURS job blobs, each checked by `scripts/spu_table.json` | `work/spu_images`, `work/spu_jobs` |
 | `spu:<name>` | `build_spu.py --only <name>`, one step per image or job | `work/spu/<name>` |
-| `libsre` | `build_libsre.py`, with the firmware file (the check always asks for it since 10-23) | `work/libsre`, `work/gen/libsre_glue.c` |
+| `libsre` | `build_libsre.py`, only with a good firmware file (optional since 11-06) | `work/libsre`, `work/gen/libsre_glue.c` |
 
 - **Fingerprints.** A step's fingerprint covers its input sums, one sum over every script that does the lifting (ps3recomp's `tools/`, this tree's `scripts/` and `port/insn_hooks.txt`) and its flags. So a new release redoes the lift, and a lift stopped anywhere resumes at the step it was in. The lifter's worker count is not part of it.
 - **Two sides at once (10-23).** The SPU steps and `libsre` read only the EBOOT and the firmware, so they run on a thread beside the first four steps instead of after them.

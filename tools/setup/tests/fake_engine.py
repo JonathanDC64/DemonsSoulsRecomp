@@ -9,8 +9,9 @@ FAKE_SETUP_MODE (from the environment the host passes down):
   hold    the same, but it stops at 40% of the compile and waits there (until the host ends it)
   check   as `run --check-only`
 `run --check-only` reads the game's files for a second, then says each is fine (FAKE_SETUP_CHECK=ok: @done ok) or
-that 3 of the 27 decrypted files are missing (the default: @done fix; FAKE_SETUP_CHECK=firmware: only the
-firmware's libsre.prx). It does not count as a run below.
+that 3 of the 27 decrypted files are missing (the default: @done fix). It says nothing of the firmware's libsre.prx,
+which is optional (docs/133), as when the player has none; FAKE_SETUP_CHECK=firmware: all fine, with a libsre.prx
+beside PS3_GAME that is not right, so setup leaves it out (@done ok). It does not count as a run below.
 FAKE_SETUP_MODES ("hold,fail,ok"): one mode for each run in turn, counted in fake_runs.txt in DES_SETUP_DATA (the last
 one repeats), so that one test goes through a stop, a failure and a finished run. A failed run writes its step's log
 in DES_SETUP_DATA/setup/logs. FAKE_SETUP_APP (the host's version, des_version.h's DES_VERSION): a finished run leaves
@@ -96,12 +97,12 @@ def check(missing):
     say("@check ok TITLE_ID BLUS30443, version 01.00.")
     for i in range(4):
         say(f"@check ok PS3_GAME/USRDIR/disc{i}.bin Matches.")
-    gone = set(DECRYPTED[2:5]) if missing == "missing" else {FIRMWARE} if missing == "firmware" else set()
+    gone = set(DECRYPTED[2:5]) if missing == "missing" else set()
     for name in DECRYPTED:
         say(f"@check missing {name} Not found." if name in gone else f"@check ok {name} Matches.")
-    say(f"@check missing {FIRMWARE} {FIRMWARE} is missing. It is one file of the PS3 system software: decrypt "
-        f"dev_flash/sys/external/libsre.sprx with RPCS3 (Utilities, Decrypt PS3 Binaries), then put {FIRMWARE} in "
-        f"the game's folder, next to PS3_GAME." if FIRMWARE in gone else f"@check ok {FIRMWARE} Matches.")
+    if missing == "firmware":
+        say(f"@check unused {FIRMWARE} {FIRMWARE} does not match the known good version. The game does not need it; "
+            f"setup leaves it out.")
     if gone:
         say(f"@error game check {len(gone)} of the game files have a problem.")
         say("@done fix")

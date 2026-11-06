@@ -15,10 +15,12 @@ A `portable` folder beside the program wins over that redirect (RPCS3 checks
 it first), so such an install is "shared": setup starts it in its own folder,
 and only while it is closed (docs/90 section 6, question 1 (a)).
 
-The firmware's libsre.prx comes the same way when it is missing: a copy of
-the player's <dev_flash>/sys/external/libsre.sprx goes in with the game's
-files, and RPCS3 writes libsre.prx beside it (decrypt_binaries.cpp names the
-output of a .sprx <name>.prx).
+The firmware's libsre.prx comes the same way when it is missing and RPCS3 has
+the PS3 system software: a copy of the player's
+<dev_flash>/sys/external/libsre.sprx goes in with the game's files, and RPCS3
+writes libsre.prx beside it (decrypt_binaries.cpp names the output of a .sprx
+<name>.prx). It is optional (docs/133), so when it does not come out right it
+is left out and the unlock goes on.
 
 Of the player's RPCS3 files, only the first line of its log, PPU Debug's
 dumps of the EBOOT and libsre.sprx are read here (rpcs3_library.py reads the
@@ -47,9 +49,6 @@ NO_MESSAGE_BOXES = {"QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES": "1"}
 ERROR_ELEVATION_REQUIRED = 740
 NEEDS_ADMIN = ("Your RPCS3 is set to run as administrator, so setup cannot start it. In rpcs3.exe's Properties, "
                "Compatibility, untick \"Run this program as an administrator\".")
-# The PS3 system software Sony offers now, whose libsre.prx firmware.py makes into the table's (a tester's run, 10-30).
-# 4.90's cannot be made into it, so it is taken as it is, as the firmware entry's "also" copy (docs/90 9.2).
-FIRMWARE_WORKS = "4.93"
 
 
 class UnlockFailed(journal.StepFailed):
@@ -83,14 +82,8 @@ def usrdir(path: str) -> str:
     return path.split("USRDIR/", 1)[-1]
 
 
-def different(name: str, kind="decrypted", version="") -> str:
-    """The sentence for an output that is not the known good one. version: for the firmware's file, the PS3 system
-    software RPCS3 has ("4.90"), or "" when not known."""
-    if kind == "firmware" and version != FIRMWARE_WORKS:
-        has = (f"Your RPCS3 has PS3 system software {version}" if version else
-               "Your RPCS3's PS3 system software may be another version")
-        return (f"{name} came out different from the known good version. {has}; setup works with {FIRMWARE_WORKS}, "
-                f"the one Sony offers now. Install it in RPCS3 (File, then Install Firmware), then try again.")
+def different(name: str) -> str:
+    """The sentence for an output that is not the known good one."""
     return f"{name} came out different from the known good version."
 
 
@@ -448,23 +441,33 @@ class Unlock:
 
     def _unlock(self) -> dict:
         why = self._why(self._rpcs3(self.jobs), first=True)
-        if why:
+        if why and any(j.kind != "firmware" for j in self.jobs):
             self._fail(why)
+        left = []
         for j in self.jobs:
             if self._good(j):
                 continue
             self._note(f"{j.out_name} did not come out right: once more, on its own")
             j.out.unlink(missing_ok=True)
             why = self._why(self._rpcs3([j]))
+            if j.kind == "firmware" and (why or not self._good(j)):
+                # The firmware's file is optional (docs/133): the game is built without it.
+                self._note(f"{j.out_name} from PS3 system software {j.version or '(version unknown)'}: "
+                           f"{(why or 'not the known good version').rstrip('.')}; left out, the build goes on "
+                           f"without it")
+                left.append(j)
+                continue
             if why:
                 self._fail(why)
             if not j.out.is_file():
                 self._fail(f"RPCS3 could not unlock {j.name}.")
             if not self._good(j):
-                self._fail(different(j.out_name, j.kind, j.version))
+                self._fail(different(j.out_name))
         for j in self.jobs:
-            self._note(f"{j.out_name}: {j.out.stat().st_size} bytes, matches")
-        return {"files": len(self.jobs), "redirect": "ignored" if self.ignored else "shared" if self.shared else "ok"}
+            if j not in left:
+                self._note(f"{j.out_name}: {j.out.stat().st_size} bytes, matches")
+        return {"files": len(self.jobs) - len(left),
+                "redirect": "ignored" if self.ignored else "shared" if self.shared else "ok"}
 
     def _why(self, r: _Ran, first=False) -> str:
         """The sentence for a run of RPCS3 that went wrong as a whole, or '' (then

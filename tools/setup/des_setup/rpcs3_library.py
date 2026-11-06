@@ -15,7 +15,8 @@ Where things are (Windows; on Linux the .yml files sit in <R> itself):
   <hdd0>home/<8 digits>/      each user: localusername, savedata/, trophy/
   <hdd0>game/NPUB30910/       the PlayStation Store version, which the port does not support
   <R>config/config.yml, custom_configs/config_<title>.yml, patch_config.yml   the settings and patches
-  <dev_flash>sys/external/libsre.sprx     the PS3 system software's file the build lifts
+  <dev_flash>sys/external/libsre.sprx     the PS3 system software's file the build lifts when there is one
+                                          (optional: the game does not need it, docs/133)
   <dev_flash>vsh/etc/version.txt          its version
 """
 import os

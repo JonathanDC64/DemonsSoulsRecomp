@@ -323,7 +323,8 @@ std::vector<Place> likely_places(const std::filesystem::path& library) {
 
 namespace {
 
-// One of the decrypted files' names (case ignored): EBOOT.elf, libsre.prx, or a script file's .sdat.unedat.
+// One of the decrypted files' names (case ignored): EBOOT.elf, a script file's .sdat.unedat, or libsre.prx (from the
+// PS3 system software: optional, docs/133, but setup still takes it).
 bool decrypted_name(const std::string& name) {
     constexpr const char* kTail = ".sdat.unedat";
     const size_t n = std::strlen(kTail);
@@ -371,7 +372,8 @@ Space data_space() {
 }
 
 // The build's numbers, measured on one PC (docs/53: 8 cores, 16 threads, 31 GB). The game part's compile is about
-// 1,500 s of CPU, one job at a time (docs/53 16.4: every object, PPU chunks, SPU programs and libsre; the 53 chunks
+// 1,500 s of CPU, one job at a time (docs/53 16.4: every object, PPU chunks, SPU programs and libsre, which is only
+// built from the optional PS3 system software since docs/133, a few tens of seconds of it; the 53 chunks
 // of #158 do the same work). With 53 chunks its longest job is short: about 60 s (inferred: 008, the slowest of the
 // 14, took 172 s, and is four chunks now). The check, the copy, the lift and the shaders add about 75 s (docs/53 16.6:
 // run G's 443 s less its 371 s compile). The jobs are the PPU chunks the compile can run at once in the memory free

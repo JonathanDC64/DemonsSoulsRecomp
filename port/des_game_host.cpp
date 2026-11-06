@@ -13,10 +13,13 @@
  * it is the European one, and this sets the region before any guest code runs. */
 #ifdef PS3_GAME_SPLIT
 #include "ps3emu/ppu_lift.h"   /* ppu_context, function_table: the fixed part of the lift's header */
+#include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include "des_game_calls.h"
 #include "des_region.h"
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 namespace des_game_calls {
 #define DES_GAME_CALL_DEF_(a)                                                    \
@@ -79,5 +82,26 @@ extern "C" int ps3_game_title_loaded(const void* func_table, uint64_t count)
     DES_GAME_CALLS(DES_GAME_CALL_RESOLVE_)
 #undef DES_GAME_CALL_RESOLVE_
     return missing;
+}
+
+/* The game DLL calls this from des_game_init when it was built without the
+ * lifted libsre: setup had no PS3 system software, which is optional
+ * (docs/133). libsre's LFQueue and SpursQueue families must then run on
+ * ps3recomp's own code (LIBSRE_OWN=1). LIBSRE_OWN=0, or one family, would send
+ * them to the old HLE, and the game would hang at the title. This runs as the
+ * DLL loads, before any guest code, so before the first queue call reads
+ * LIBSRE_OWN (libs/spurs/spurs_queue.c). */
+extern "C" void des_game_without_libsre(void)
+{
+    const char* own = std::getenv("LIBSRE_OWN");
+    if (own && (std::strcmp(own, "1") == 0 || std::strcmp(own, "all") == 0)) {
+        std::fprintf(stderr, "[des_game] the game DLL has no libsre (setup had no PS3 system software): libsre's "
+                     "queue families run on ps3recomp's own code%c", 10);
+        return;
+    }
+    std::fprintf(stderr, "[des_game] LIBSRE_OWN=%s needs libsre, and the game DLL has none (setup had no PS3 system "
+                 "software): libsre's queue families run on ps3recomp's own code instead (LIBSRE_OWN=1)%c",
+                 own ? own : "(unset)", 10);
+    ps3_setenv("LIBSRE_OWN", "1");
 }
 #endif

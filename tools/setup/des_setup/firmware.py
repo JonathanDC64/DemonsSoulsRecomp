@@ -6,7 +6,10 @@ decrypted from 4.89 is the same as the one from 4.86, byte for byte (measured 10
 
 The port is built and tested with 4.86's copy, the one game_table.json's sum names. So a copy from another version is
 made into that one: the version is set back to the table's at each place, and then the whole file must match the
-table's SHA-256. A copy that differs anywhere else still does not match, so this can never let a wrong file through."""
+table's SHA-256. A copy that differs anywhere else still does not match, so this can never let a wrong file through.
+
+The file itself is optional (docs/133): the game runs the part of libsre it used on ps3recomp's own code. A copy that
+matches is still built in, for the LIBSRE_OWN=0 fallback; one that does not is left out (gamefiles.py)."""
 import hashlib
 import struct
 from collections import Counter

@@ -3,12 +3,13 @@ made of journal steps, with the screens' line protocol on standard output.
 
   check     the game folder and the decrypted files (gamefiles.py); on the RPCS3 route also what the player's
             RPCS3 has (rpcs3_library.py): its user, the game in its library, the save, trophies and settings
-  unlock    on the RPCS3 route only: the missing decrypted files (and libsre.prx), made by the player's RPCS3
-            (rpcs3.py, docs/90)
+  unlock    on the RPCS3 route only: the missing decrypted files (and libsre.prx when RPCS3 has the PS3 system
+            software), made by the player's RPCS3 (rpcs3.py, docs/90)
   fetch     the pinned tools the build needs (fetch.py); Python is the host's to fetch
   stage     the decrypted files copied into the data folder
   lift      the game's code converted to C (lift.py)
-  compile   the lift built into the game module (compile.py, docs/81 section 7), when this tree has it
+  compile   the lift built into the game module (compile.py, docs/81 section 7), when this tree has it; with the
+            lifted libsre only when the check found a good libsre.prx, which is optional (gamefiles.py, docs/133)
   import    on the RPCS3 route, while request.json has a pending import: the save, trophies and settings the
             player ticked, brought across once (rpcs3_import.py, docs/90 3.5)
   shaders   the game's shader cache filled by the host with no window (`<host> --shaders <game folder> <EBOOT.elf>`,
@@ -432,7 +433,8 @@ def _game_check(req, t, data, unlocks, progress=None, unlocked=False):
     """gamefiles.check on the request's folders. On the RPCS3 route the files an
     earlier run kept in inputs/ count too (docs/90 3.3), as does PPU Debug's
     dump of the EBOOT; after an unlock (`unlocked`), its outputs. There the
-    unlock also makes libsre.prx when RPCS3 has the PS3 system software."""
+    unlock also makes libsre.prx when RPCS3 has the PS3 system software; once
+    it has run, a libsre.prx that is not right is left out (it is optional)."""
     dirs, also, fw = list(req.get("decrypted") or []), {}, None
     if unlocks:
         dirs.append(str(data / "inputs"))
@@ -441,10 +443,10 @@ def _game_check(req, t, data, unlocks, progress=None, unlocked=False):
         for e in t.get("firmware", []):
             also[e["name"]] = [data / "inputs" / _firmware_rel(e["name"])]
         exe = rpcs3.find(req.get("rpcs3"))
-        fw = True                       # (RPCS3 gone: the run says so, not that it lacks the system software)
+        fw = False                      # (RPCS3 gone: nothing unlocks it, and the build goes on without it)
         if exe:
             also[lift.EBOOT] = [p for tid in gamefiles.titles(t) for p in rpcs3.ppu_debug_eboots(exe, tid)]
-            fw = rpcs3_library.firmware(rpcs3_library.folders(exe)) is not None
+            fw = not unlocked and rpcs3_library.firmware(rpcs3_library.folders(exe)) is not None
     firmware = req.get("firmware")
     if not unlocks and data is not None:
         # A folder or file chosen before that is gone (the install moved, issue #364): the copies an earlier run
@@ -486,7 +488,10 @@ def _unlock(rep, req, data, jr, emit, total, table, kw):
     not find, made by the player's RPCS3 from copies of the originals. Returns
     the check again, which now finds them, and whether there was nothing to do.
     The journal skips the step while its originals and outputs are unchanged.
-    libsre.prx comes the same way, from a copy of RPCS3's libsre.sprx."""
+    libsre.prx comes the same way, from a copy of RPCS3's libsre.sprx, when
+    RPCS3 has the PS3 system software. It is optional: one that does not come
+    out right is left out (an "unused" item, told on its own line), and the
+    run goes on."""
     need = [i for i in rep.items if i.kind == "decrypted" and not i.good]
     fw = [i for i in rep.items if i.kind == "firmware" and not i.good and i.unlock]
     if not need and not fw:
@@ -501,35 +506,49 @@ def _unlock(rep, req, data, jr, emit, total, table, kw):
     origs = {e["path"]: e for e in t["originals"]}
     decs = {e["path"]: e for e in t["decrypted"]}
     jobs = [rpcs3.Job(Path(found[decs[i.name]["of"]]), origs[decs[i.name]["of"]], decs[i.name]) for i in need]
-    jobs += [_firmware_job(exe, t, i) for i in fw]
+    jobs += [j for j in (_firmware_job(exe, t, i) for i in fw) if j is not None]
+    if not jobs:
+        return _game_check(req, t, data, True, unlocked=True), True
     u = rpcs3.Unlock(exe, data / "setup" / UNLOCK, jobs, emit, data / "setup" / "logs" / "unlock.log",
                      shared=state == "shared", progress=total.part, **(kw or {}))
     fp = journal.fingerprint("unlock", sorted((j.orig["path"], j.orig.get("sha256")) for j in jobs))
     try:
-        ran, _ = jr.run("unlock", fp, u.run, outputs=u.outputs(), log=u.log)
+        ran, res = jr.run("unlock", fp, u.run, outputs=u.outputs(), log=u.log)
         rep = _game_check(req, t, data, True, unlocked=True)
         if not ran and _made_by_unlock(rep):
             jr.forget("unlock")                      # a kept output went bad since: unlock again
-            ran, _ = jr.run("unlock", fp, u.run, outputs=u.outputs(), log=u.log)
+            ran, res = jr.run("unlock", fp, u.run, outputs=u.outputs(), log=u.log)
             rep = _game_check(req, t, data, True, unlocked=True)
     finally:
         if u.ignored:
             rpcs3.remember_shared(data, exe)
-    left = _made_by_unlock(rep)
+    left = _made_by_unlock(rep)                      # (the decrypted files: the firmware's is never left)
     if left:
-        ver = next((j.version for j in jobs if j.kind == left[0].kind == "firmware"), "")
-        raise rpcs3.UnlockFailed("unlock", rpcs3.different(rpcs3.usrdir(left[0].name), left[0].kind, ver), u.log)
-    emit.text(f"ok   {len(jobs)} file(s) unlocked by RPCS3 and checked" if ran else
-              f"ok   the {len(jobs)} file(s) RPCS3 unlocked last time are unchanged")
+        raise rpcs3.UnlockFailed("unlock", rpcs3.different(rpcs3.usrdir(left[0].name)), u.log)
+    # A libsre.prx the unlock did not make right is left out: its own line, so the unlock page can say so.
+    for j in jobs:
+        if j.kind != "firmware":
+            continue
+        item = next((i for i in rep.items if i.kind == "firmware" and i.name == j.dec["name"]), None)
+        if item is None:                             # (nothing came out)
+            item = gamefiles.Item("firmware", j.dec["name"], "unused",
+                                  f"Your RPCS3 could not unlock {j.dec['name']}. {gamefiles.LEFT_OUT}")
+            rep.items.append(item)
+        if not item.good:
+            emit.check(item)
+    n = res.get("files", len(jobs))
+    emit.text(f"ok   {n} file(s) unlocked by RPCS3 and checked" if ran else
+              f"ok   the {n} file(s) RPCS3 unlocked last time are unchanged")
     return rep, not ran
 
 
 def _firmware_job(exe, t, item):
-    """The unlock of libsre.prx from the player's <dev_flash>/sys/external/libsre.sprx."""
+    """The unlock of libsre.prx from the player's <dev_flash>/sys/external/libsre.sprx, or None when RPCS3 has no PS3
+    system software now (it is optional: the build goes on without it)."""
     f = rpcs3_library.folders(exe)
     sprx = rpcs3_library.firmware(f)
     if sprx is None:
-        raise rpcs3.UnlockFailed("unlock", gamefiles.NO_FIRMWARE)
+        return None
     return rpcs3.firmware_job(sprx, next(e for e in t["firmware"] if e["name"] == item.name),
                               rpcs3_library.firmware_version(f))
 
@@ -568,11 +587,13 @@ def _fetch(data, emit, total, manifest, cc=None, ld=None) -> bool:
     return did
 
 
-def _compile(data, jr, jobs, progress, cc=None, ld=None, memory=None):
+def _compile(data, jr, jobs, progress, libsre, cc=None, ld=None, memory=None):
     """The compile phase (compile.py): the downloaded compiler, unpacked by the fetch phase, or a developer's.
-    memory(short): the screens' hint that closing other programs makes it faster (@memory)."""
+    libsre: with the lifted libsre (the check found a good libsre.prx). memory(short): the screens' hint that closing
+    other programs makes it faster (@memory)."""
     cc, ld = compile_step.toolchain(data, cc, ld)
-    return compile_step.Compile(data, jr, cc, ld, jobs=jobs, progress=progress, memory=memory).run_all()
+    return compile_step.Compile(data, jr, cc, ld, jobs=jobs, progress=progress, memory=memory,
+                                libsre=libsre).run_all()
 
 
 def _shaders(host, game, data, emit, total) -> bool:
@@ -653,8 +674,8 @@ def run(data, request=None, app="", jobs=0, check_only=False, emit=None, src=Non
     data = Path(data)
     emit = emit or protocol.Emitter()
     if compile_fn is None:
-        def compile_fn(d, j, n, p):
-            return _compile(d, j, n, p, cc, ld, emit.memory)
+        def compile_fn(d, j, n, p, libsre):
+            return _compile(d, j, n, p, libsre, cc, ld, emit.memory)
     held = lock(data / "setup" / "run.lock")
     if held is None:
         emit.setup()
@@ -776,7 +797,8 @@ def _run(data, req, app, jobs, check_only, emit, src, table, manifest, phases, c
                 lift.Lift(data, jr, src=src or lift.SRC, workers=jobs, progress=total.step).run_all(
                     sums.get(lift.EBOOT), sums.get("libsre.prx"), title=rep.title_id)
             elif phase == "compile":
-                module = compile_fn(data, jr, jobs, total.step)
+                libsre = any(i.kind == "firmware" for i in rep.inputs())   # (optional: docs/133)
+                module = compile_fn(data, jr, jobs, total.step, libsre)
             elif phase == "import":
                 skipped = True
                 if importing:
@@ -800,7 +822,7 @@ def _run(data, req, app, jobs, check_only, emit, src, table, manifest, phases, c
                          "module": ready_text(data, module), "module_size": Path(module).stat().st_size,
                          "module_sha256": gamefiles.sha256_file(module)}
                 image = data / "work" / "libsre" / "libsre_image.bin"    # (only with the PS3 system software)
-                if image.is_file():
+                if libsre and image.is_file():
                     ready.update(libsre_image=ready_text(data, image), libsre_image_size=image.stat().st_size)
             if ready and phase == ("import" if ready_after_import else "compile"):
                 write_ready(data, ready)

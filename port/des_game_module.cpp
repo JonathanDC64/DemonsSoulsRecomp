@@ -5,7 +5,9 @@
  * the port functions the lifted code calls by name (DES_GAME_TITLE_FUNCS)
  * from the exe, and hands back the startup work a single exe did on its own:
  * the SPU workload registration (a static constructor there) and the lifted
- * libsre's glue (ps3_load_prx_modules). */
+ * libsre's glue (ps3_load_prx_modules). A DLL built without the lifted libsre
+ * (setup without the PS3 system software, docs/133) says so to the exe
+ * instead (des_game_without_libsre, des_game_host.cpp). */
 #ifndef PS3_GAME_MODULE
 #define PS3_GAME_MODULE 1
 #endif
@@ -52,6 +54,9 @@ extern "C" DES_GAME_EXPORT int des_game_init(const ps3_host_api* host, ps3_game_
     game->register_spu = des_spu_register_all;
 #ifdef DES_GAME_HAS_LIBSRE
     game->load_prx_modules = ps3_load_prx_modules;
+#else
+    /* (An exe from before docs/133 has no such function: nothing to tell.) */
+    if (void (*without)(void) = (void (*)(void))host->title_fn("des_game_without_libsre")) without();
 #endif
     return 0;
 }

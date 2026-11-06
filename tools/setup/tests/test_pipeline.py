@@ -48,8 +48,8 @@ class Setup:
         self.game.close()
 
 
-def fake_compile(data, jr, jobs, progress):
-    """A compile phase that writes a module (as compile.py's link would)."""
+def fake_compile(data, jr, jobs, progress, libsre=True):
+    """A compile phase that writes a module (as compile.py's link would). libsre: with the lifted libsre or not."""
     progress("compile", 1, 1)
     out = data / "game" / "des_game.dll"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -162,10 +162,10 @@ class RunTest(unittest.TestCase):
     def test_ready_watches_the_libsre_image(self):
         image = self.s.data / "work" / "libsre" / "libsre_image.bin"
 
-        def with_image(data, jr, jobs, step):
+        def with_image(data, jr, jobs, step, libsre):
             image.parent.mkdir(parents=True, exist_ok=True)
             image.write_bytes(b"image")
-            return fake_compile(data, jr, jobs, step)
+            return fake_compile(data, jr, jobs, step, libsre)
 
         rc, lines = self.s.run(phases=PHASES + ["compile"], compile_fn=with_image)
         self.assertEqual(rc, 0, lines)
@@ -178,14 +178,52 @@ class RunTest(unittest.TestCase):
         self.assertEqual(pipeline.status(self.s.data, "1.0")["state"], "damaged")
 
     def test_no_system_software_no_image_to_watch(self):
-        def without_image(data, jr, jobs, step):
+        def without_image(data, jr, jobs, step, libsre):
             (data / "work" / "libsre" / "libsre_image.bin").unlink(missing_ok=True)
-            return fake_compile(data, jr, jobs, step)
+            return fake_compile(data, jr, jobs, step, libsre)
 
         rc, lines = self.s.run(phases=PHASES + ["compile"], compile_fn=without_image)
         self.assertEqual(rc, 0, lines)
         self.assertNotIn("libsre_image", pipeline.read_ready(self.s.data))
         self.assertEqual(pipeline.status(self.s.data, "1.0")["state"], "ready")
+
+    def test_no_firmware_builds_without_libsre(self):
+        """The PS3 system software is optional (docs/133): without libsre.prx the check has no problem, the lift has
+        no libsre step, and the compile builds the module without it; an image an earlier setup left is not named in
+        ready.txt. With libsre.prx, the compile builds it in."""
+        self.s.close()
+        self.s = Setup(firmware=False)
+        image = self.s.data / "work" / "libsre" / "libsre_image.bin"
+        image.parent.mkdir(parents=True)
+        image.write_bytes(b"an older setup's")
+        asked = []
+
+        def recording(data, jr, jobs, step, libsre):
+            asked.append(libsre)
+            return fake_compile(data, jr, jobs, step, libsre)
+
+        rc, lines = self.s.run(phases=PHASES + ["compile"], compile_fn=recording)
+        self.assertEqual(rc, 0, lines)
+        self.assertFalse([x for x in lines if " libsre.prx " in x])
+        self.assertNotIn("build_libsre.py", self.s.tree.calls())
+        self.assertFalse((self.s.data / "inputs" / "firmware").exists())
+        self.assertEqual(asked, [False])
+        self.assertNotIn("libsre_image", pipeline.read_ready(self.s.data))
+        (self.s.game.root / "libsre.prx").write_bytes(LIBSRE)
+        rc, lines = self.s.run(phases=PHASES + ["compile"], compile_fn=recording)
+        self.assertEqual(rc, 0, lines)
+        self.assertIn("@check ok libsre.prx libsre.prx matches.", lines)
+        self.assertIn("build_libsre.py", self.s.tree.calls())
+        self.assertEqual(asked, [False, True])
+
+    def test_a_wrong_firmware_file_is_left_out(self):
+        (self.s.game.root / "libsre.prx").write_bytes(b"\x7fELFsrX")
+        asked = []
+        rc, lines = self.s.run(phases=PHASES + ["compile"],
+                               compile_fn=lambda d, j, n, p, libsre: asked.append(libsre) or fake_compile(d, j, n, p))
+        self.assertEqual(rc, 0, lines)
+        self.assertTrue([x for x in lines if x.startswith("@check unused libsre.prx ")], lines)
+        self.assertEqual(asked, [False])
 
     def test_setup_folder_can_move(self):
         # Issue #364: ready.txt names the files in setup's folder relative to it, so the folder can move.
@@ -271,7 +309,7 @@ class RunTest(unittest.TestCase):
     def test_a_run_that_fails_leaves_no_ready_file(self):
         self.assertEqual(self.s.run(phases=PHASES + ["compile"], compile_fn=fake_compile)[0], 0)
 
-        def broken(data, jr, jobs, progress):
+        def broken(data, jr, jobs, progress, libsre):
             raise ValueError("a bug")
 
         rc, lines = self.s.run(phases=PHASES + ["compile"], compile_fn=broken)
@@ -482,6 +520,15 @@ class HostAgreesTest(unittest.TestCase):
         self.assertIn(f"kProtocol = {protocol.VERSION};", (UI / "setup_protocol.hpp").read_text(encoding="utf-8"))
         codes = set(re.findall(r'\{"(\w+)",\s*Fix::', (UI / "setup_window.cpp").read_text(encoding="utf-8")))
         self.assertEqual(codes, set(protocol.ERRORS))
+
+    def test_the_rpcs3_pages_know_a_left_out_file(self):
+        """An optional file the build goes on without ("unused", the firmware's libsre.prx, docs/133) is no problem to
+        show and nothing for the unlock to make: the RPCS3 pages pass over it."""
+        self.assertIn('"unused"', (REAL / "tools" / "setup" / "des_setup" / "gamefiles.py").read_text(encoding="utf-8"))
+        cpp = (UI / "setup_rpcs3_window.cpp").read_text(encoding="utf-8")
+        self.assertIn('if (good(c.key) || c.key == "unused") continue;', cpp)
+        self.assertIn('c->key != "unused"', cpp)
+        self.assertIn('fw->key == "unused"', cpp)
 
     def test_every_phase_has_a_task_line(self):
         """The progress page names each phase of the plan (the lift as its two steps, ppu and spu)."""

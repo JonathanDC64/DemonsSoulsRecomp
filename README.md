@@ -76,7 +76,7 @@ Press **F1** (or **L3 + R3** on a controller) at any time to open the menu. Most
 ## What you need
 
 - Your own copy of Demon's Souls for the PS3, US version (BLUS30443, version 1.00), as a folder with `PS3_GAME` in it. Setup cannot use ISO files yet.
-- RPCS3, the free PS3 emulator, with the PS3 system software installed (4.93, the version Sony offers now). Setup has it unlock the game's encrypted files. (Or decrypt the files yourself: see below.)
+- RPCS3, the free PS3 emulator. Setup has it unlock the game's encrypted files. You don't need the PS3 system software. (Or decrypt the files yourself: see below.)
 - Windows 10 or 11 (64-bit) with a graphics card that supports DirectX 12, or Linux (see [Linux](#linux)).
 - A processor with SSE4.1, which most have since about 2011.
 - An internet connection during setup. Setup downloads a compiler and Python (about 60 MB on Windows, about 130 MB on Linux).
@@ -89,7 +89,7 @@ These steps are for the release download.
 2. Start `Soulbrandt.exe` (on Linux, `Soulbrandt`). Setup opens.
 3. Pick how setup gets your game's files:
    - **Import from RPCS3**: setup finds the game in RPCS3's list and has your RPCS3 unlock its files. It can bring your save, trophies and some settings across too.
-   - **I have decrypted files**: your disc copy, plus the 28 files you decrypted yourself (`EBOOT.elf`, the `.sdat` files and `libsre.prx`).
+   - **I have decrypted files**: your disc copy, plus the 27 files you decrypted yourself (`EBOOT.elf` and the `.sdat` files).
    - **Show me how**: step by step, with free tools only.
 4. Start the build. It runs on your PC and can take a while; setup shows an estimate first. You can stop it and carry on later. Setup builds in AppData on Windows (`~/.local/share` on Linux) and needs about 4 GB free there; to build on another drive, press **Change** next to **Build folder** first.
 5. Pick a preset: **Original** plays as on the PS3; **Enhanced** sets 60 fps, a resolution that fits your display, SMAA, 16x anisotropic filtering, fullscreen, and HDR when Windows has HDR on for your display. Then a few choices (HDR among them, on Windows) and your online name. You can change anything later in Settings.
@@ -98,7 +98,7 @@ Then press **Play**.
 
 Windows may warn you the first time you start `Soulbrandt.exe` ("Windows protected your PC"), because the program isn't signed yet. Click **More info**, then **Run anyway**.
 
-If setup says your `libsre.prx` came out different, your RPCS3 probably has PS3 system software 4.90. Install 4.93 in RPCS3 (*File > Install Firmware*) and try again. If RPCS3 is set to run as administrator, setup cannot start it: untick that in `rpcs3.exe`'s Properties.
+If RPCS3 is set to run as administrator, setup cannot start it: untick that in `rpcs3.exe`'s Properties.
 
 ### Linux
 
@@ -141,7 +141,7 @@ On Windows, step 4 downloads FFmpeg's MPEG-2 video decoder for the game's movies
 
 - The game disc's files (`PS3_GAME`)
 - [RPCS3](https://rpcs3.net), to decrypt the game's `EBOOT.BIN`
-- `libsre.prx` from your PS3 firmware, decrypted
+- Optional: `libsre.prx` from your PS3 firmware, decrypted. The game doesn't need it; it is only for the `LIBSRE_OWN=0` fallback ([docs/88](docs/88-setup-screens.md)).
 
 **Steps**
 
@@ -163,7 +163,7 @@ On Windows, step 4 downloads FFmpeg's MPEG-2 video decoder for the game's movies
    python ps3recomp/tools/gen_hle_nids.py --all --out work/recomp/hle_nid_table.cpp
    python scripts/apply_boot_patches.py work/recomp
    ```
-   Then the SPU code with `python scripts/build_spu.py --eboot work/game/EBOOT.ELF` ([docs/09](docs/09-spu-spurs.md)), which first cuts the SPU programs out of the EBOOT, and libsre with `python scripts/build_libsre.py <libsre.prx>`. The lifter's flags above are also in `scripts/lift_ppu.json`, which setup reads; change both together.
+   Then the SPU code with `python scripts/build_spu.py --eboot work/game/EBOOT.ELF` ([docs/09](docs/09-spu-spurs.md)), which first cuts the SPU programs out of the EBOOT, and, if you have `libsre.prx`, libsre with `python scripts/build_libsre.py <libsre.prx>`. The lifter's flags above are also in `scripts/lift_ppu.json`, which setup reads; change both together.
 4. Compile the runtime, then the game. On Windows:
    ```sh
    cmake -S ps3recomp -B ps3recomp/build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release \

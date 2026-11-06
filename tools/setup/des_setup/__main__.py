@@ -126,9 +126,7 @@ def cmd_check(a) -> int:
         _print_found(found, from_library=False)
     also = {lift.EBOOT: [p for tid in gamefiles.titles(t) for p in rpcs3.ppu_debug_eboots(exe, tid)]}
     rep = gamefiles.check(game, a.decrypted, a.firmware, table=t, unlocks=True, also=also,
-                          firmware_unlock=found.firmware is not None,
-                          firmware_refused=rpcs3.firmware_refused(rpcs3_library.firmware_version(found.folders))
-                          if found.firmware is not None else "")
+                          firmware_unlock=found.firmware is not None)
     _print_report(rep, unlocks=True)
     return 1 if pipeline.blocking(rep, True) or rep.root is None else 0
 

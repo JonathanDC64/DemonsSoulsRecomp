@@ -364,7 +364,7 @@ def _game_check(req, t, data, unlocks, progress=None, unlocked=False):
     earlier run kept in inputs/ count too (docs/90 3.3), as does PPU Debug's
     dump of the EBOOT; after an unlock (`unlocked`), its outputs. There the
     unlock also makes libsre.prx when RPCS3 has the PS3 system software."""
-    dirs, also, fw, refused = list(req.get("decrypted") or []), {}, None, ""
+    dirs, also, fw = list(req.get("decrypted") or []), {}, None
     if unlocks:
         dirs.append(str(data / "inputs"))
         if unlocked:
@@ -375,11 +375,9 @@ def _game_check(req, t, data, unlocks, progress=None, unlocked=False):
         fw = True                       # (RPCS3 gone: the run says so, not that it lacks the system software)
         if exe:
             also[lift.EBOOT] = [p for tid in gamefiles.titles(t) for p in rpcs3.ppu_debug_eboots(exe, tid)]
-            f = rpcs3_library.folders(exe)
-            fw = rpcs3_library.firmware(f) is not None
-            refused = rpcs3.firmware_refused(rpcs3_library.firmware_version(f)) if fw else ""
+            fw = rpcs3_library.firmware(rpcs3_library.folders(exe)) is not None
     return gamefiles.check(req["game"], dirs, req.get("firmware"), table=t, progress=progress, unlocks=unlocks,
-                           also=also or None, firmware_unlock=fw, firmware_refused=refused)
+                           also=also or None, firmware_unlock=fw)
 
 
 def blocking(rep, unlocks=False) -> list:

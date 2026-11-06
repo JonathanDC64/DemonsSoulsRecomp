@@ -721,36 +721,35 @@ class FirmwareUnlockTest(Base):
         self.assertIn("@error rpcs3 unlock libsre.prx came out different from the known good version. Your RPCS3's "
                       "PS3 system software may be another version; setup works with 4.93, the one Sony offers now. "
                       "Install it in RPCS3 (File, then Install Firmware), then try again.", lines)
-        put(self.lib.root / "dev_flash" / "vsh" / "etc" / "version.txt", b"release:04.9100:\n")
+        put(self.lib.root / "dev_flash" / "vsh" / "etc" / "version.txt",
+            b"release:04.9000:\nbuild:00000,20230101:x\n")        # (made up beyond the first line)
         rc, lines = self.run_route(phases=("check", "unlock"))
         self.assertEqual(rc, 1)
         self.assertIn("@error rpcs3 unlock libsre.prx came out different from the known good version. Your RPCS3 "
-                      "has PS3 system software 4.91; setup works with 4.93, the one Sony offers now. Install it in "
+                      "has PS3 system software 4.90; setup works with 4.93, the one Sony offers now. Install it in "
                       "RPCS3 (File, then Install Firmware), then try again.", lines)
         put(self.lib.root / "dev_flash" / "vsh" / "etc" / "version.txt", b"release:04.9300:\n")
         rc, lines = self.run_route(phases=("check", "unlock"))
         self.assertEqual(rc, 1)
         self.assertIn("@error rpcs3 unlock libsre.prx came out different from the known good version.", lines)
 
-    def test_system_software_490_is_refused_at_the_check(self):
-        # 4.90's libsre.prx fails the sum every time (docs/90 9.2): the check says so, and RPCS3 is not started.
+    def test_a_copy_tested_as_it_is(self):
+        # 4.90's libsre.prx cannot be made into the table's (docs/90 9.2): the entry's "also" copy is taken as it is,
+        # by the unlock, the check and the stage, and kept for a rebuild.
+        other = b"\x7fELF" + b"N" * 30          # (another size, as 4.90's is)
+        self.t.table["firmware"][0]["also"] = [{"version": "0x00490000", "size": len(other), "sha256": sha(other)}]
         self.lib.firmware()
-        put(self.lib.root / "dev_flash" / "vsh" / "etc" / "version.txt",
-            b"release:04.9000:\nbuild:00000,20230101:x\n")        # (made up beyond the first line)
-        sentence = ("RPCS3 has PS3 system software 4.90, which setup cannot use. Install 4.93, the one Sony offers "
-                    "now, in RPCS3 (File, then Install Firmware), then press Check again.")
-        rc, lines = self.run_route(check_only=True)
-        self.assertEqual(rc, 1)
-        self.assertIn(f"@check missing libsre.prx {sentence}", lines)
-        rc, lines = self.run_route(phases=("check", "unlock"))
-        self.assertEqual(rc, 1)
-        self.assertEqual(lines[-2:], [f"@error game check {sentence}", "@done fix"])
-        self.assertEqual(self.t.calls(), [])
-        # A good copy an earlier run kept still counts.
-        put(self.t.data / "inputs" / "firmware" / "libsre.prx", LIBSRE_PRX)
-        rc, lines = self.run_route(check_only=True)
+        put(self.t.base / "fixtures" / "libsre.sprx", other)
+        put(self.lib.root / "dev_flash" / "vsh" / "etc" / "version.txt", b"release:04.9000:\n")
+        rc, lines = self.run_route(phases=("check", "unlock", "stage"))
         self.assertEqual(rc, 0, lines)
-        self.assertIn("@check ok libsre.prx libsre.prx matches.", lines)
+        self.assertEqual((self.t.data / "inputs" / "firmware" / "libsre.prx").read_bytes(), other)
+        rc, lines = self.run_route(phases=("check", "unlock", "stage"))     # a rebuild: kept in inputs/
+        self.assertEqual(rc, 0, lines)
+        self.assertIn("@check ok libsre.prx libsre.prx matches. It is from PS3 system software 4.90, which the port "
+                      "is tested with too.", lines)
+        self.assertIn("@step unlock skip", lines)
+        self.assertEqual(len(self.t.calls()), 1)
 
     def test_a_good_copy_beside_the_game_needs_no_unlock(self):
         self.lib.firmware()

@@ -96,6 +96,23 @@ def name(version) -> str:
     return f"{(version >> 20) & 0xF}.{(version >> 16) & 0xF}{(version >> 12) & 0xF}"
 
 
+def other_copy(path: Path, entry: dict):
+    """The entry of `entry`'s "also" list that `path` is, or None. "also" (game_table.json's firmware entry) holds
+    copies from other system software versions that are built and tested as they are, since setting their version
+    cannot make them into the table's: 4.90's, whose version 0x00490000 has a zero low half, so its 86 places have
+    no `ori` and the code after them is laid out differently (docs/90 9.2)."""
+    others = [o for o in entry.get("also") or [] if o.get("sha256")]
+    path = Path(path)
+    if not others or not path.is_file():
+        return None
+    size = path.stat().st_size
+    others = [o for o in others if o.get("size") in (None, size)]
+    if not others:
+        return None
+    got = hashlib.sha256(path.read_bytes()).hexdigest()
+    return next((o for o in others if o["sha256"] == got), None)
+
+
 def matched(path: Path, entry: dict):
     """The table's bytes made from `path` when it is the table's file from another system software version: (bytes,
     its version), or None. entry: game_table.json's firmware entry, with "version" (the version its sum is for)."""

@@ -184,7 +184,7 @@ def other_title(t, tid) -> str:
 
 
 def check(folder, decrypted_dirs=(), firmware=None, table=None, progress=None, unlocks=False, also=None,
-          firmware_unlock=None, firmware_refused="") -> Report:
+          firmware_unlock=None) -> Report:
     """Check a game folder. decrypted_dirs: more folders to look in for the
     decrypted files, by file name. firmware: the decrypted libsre.prx, or None
     to look for it by name in the game's folder and in decrypted_dirs (and
@@ -195,10 +195,7 @@ def check(folder, decrypted_dirs=(), firmware=None, table=None, progress=None, u
     A file is good when any of the places has a good copy.
     firmware_unlock, on the RPCS3 route: True when RPCS3 has the PS3 system
     software, so the unlock makes a missing or wrong libsre.prx; False when it
-    has none, so the player installs it first. None: the folder route.
-    firmware_refused: the sentence when RPCS3's system software is a version
-    setup cannot use (rpcs3.firmware_refused), so the player installs another
-    first; a good copy kept from an earlier run still counts."""
+    has none, so the player installs it first. None: the folder route."""
     t = table or load_table()
     rep = Report()
     root = find_root(folder)
@@ -267,7 +264,7 @@ def check(folder, decrypted_dirs=(), firmware=None, table=None, progress=None, u
     # folder of decrypted files. The build needs it (the lifted libsre), so it is always checked.
     for e in t.get("firmware", []):
         mismatch = f"{e['name']} does not match the copy the port was tested with ({e['from']})."
-        unlockable = firmware is None and firmware_unlock is True and not firmware_refused
+        unlockable = firmware is None and firmware_unlock is True
         if firmware is not None:
             places = [Path(firmware)]
             missing = f"{e['name']} was not found at {firmware}."
@@ -283,8 +280,6 @@ def check(folder, decrypted_dirs=(), firmware=None, table=None, progress=None, u
                 mismatch = f"{e['name']} does not match: your RPCS3 unlocks it again."
             elif firmware_unlock is False:
                 missing = mismatch = NO_FIRMWARE
-            elif firmware_refused:
-                missing = mismatch = firmware_refused
         first = None
         for p in places:
             if not p.is_file():
@@ -311,6 +306,12 @@ def _check_file(kind, e, path, progress, missing, mismatch) -> Item:
                     str(path))
     if e.get("magic") and head != bytes.fromhex(e["magic"]):
         return Item(kind, name, "mismatch", mismatch, str(path))
+    if kind == "firmware" and e.get("also"):
+        other = fwver.other_copy(path, e)   # (another version's copy, built as it is: firmware.py)
+        if other:
+            return Item(kind, name, "ok", f"{path.name} matches. It is from PS3 system software "
+                        f"{fwver.name(int(other['version'], 16))}, which the port is tested with too.", str(path),
+                        other["sha256"])
     if e.get("size") is not None and size != e["size"]:
         return Item(kind, name, "mismatch", mismatch, str(path))
     got = sha256_file(path, progress)

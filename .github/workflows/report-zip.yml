@@ -1,0 +1,35 @@
+# A problem report sent without its .zip gets the label "needs report zip" and one comment saying where the file is;
+# the label goes when a .zip is attached (.github/scripts/report_zip.py). The issue's text is read from the event
+# file, never put into a command.
+name: Report zip reminder
+
+on:
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: report-zip-${{ github.event.issue.number }}
+
+jobs:
+  remind:
+    name: Report zip reminder
+    if: ${{ !github.event.issue.pull_request }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Label and remind
+        run: python3 .github/scripts/report_zip.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}

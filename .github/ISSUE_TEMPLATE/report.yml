@@ -1,0 +1,33 @@
+# The problem report. The game's "Report an issue", its crash dialog and setup's "Report the problem" open this form
+# with "What happened" and "Details" filled in (port/ui/src/report.cpp issue_url), and the folder holding the report's
+# .zip. GitHub cannot attach a file from a link, so the zip box is required: the issue cannot be sent without it.
+# .github/workflows/report-zip.yml reminds a report sent with no .zip.
+name: Problem report
+description: Something went wrong in the game or in setup.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The quickest way to report is from the program itself: **Report an issue** in the game's menu, **Report on GitHub** when the game crashes, or **Report the problem** in setup. They fill this in and save a report file (.zip) with the logs.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you were doing, what went wrong, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: zip
+    attributes:
+      label: Report file (.zip)
+      description: >-
+        Drag the report's .zip into this box. When you report from the game or setup, the folder that holds it opens
+        on its own. It has the logs we need to find the problem: without it we usually can't.
+      placeholder: Drag the .zip here.
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Filled in by the game or setup. Leave it as it is.

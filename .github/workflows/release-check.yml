@@ -9,6 +9,14 @@ on:
       - '.github/workflows/release*.yml'
       - 'ps3recomp.pin'
       - 'VERSION'
+      # what the player's download takes from the tree (tools/release/player-files.txt)
+      - 'scripts/**'
+      - 'tools/setup/**'
+      - 'port/insn_hooks.txt'
+      - 'port/regions/**'
+      - 'port/compat/**'
+      - 'port/data/pso_index/**'
+      - 'port/des_game_module.cpp'
   workflow_dispatch:
 
 permissions:

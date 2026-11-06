@@ -159,6 +159,9 @@ endif()
 if(MSVC)
   target_compile_options(settings_check PRIVATE /EHsc /W3 /wd4100)
 endif()
+if(WIN32)
+  target_link_libraries(settings_check PRIVATE dxgi)   # (settings.cpp's renderer_gpu)
+endif()
 add_dependencies(settings_check des_version)
 
 # setup_folder.cpp on its own (tests/setup_folder_check.cpp): where setup builds, the usual folder or the one chosen on

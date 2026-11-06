@@ -302,3 +302,24 @@ bounds) or the reporter's PC (an overclock, the driver). Asked of the reporter:
 - whether the GPU is overclocked;
 - one session with `tools/des/play.sh D3D12_DRED=1`. DRED's breadcrumbs name the command the GPU was on, and the
   page fault its address. Their build already prints these at the next frame submit.
+
+## 9. GeForce GTX 1070: Vulkan by default (2026-11-06)
+
+Two GTX 1070 owners (#205, and #372 on 0.1.0) had the GPU stop responding on D3D12 again and again, each time
+Windows resetting the driver mid-frame (`DXGI_ERROR_DEVICE_HUNG`). Both found that Settings > Display > Renderer:
+Vulkan stops it. #205's DRED run showed an ordinary draw, no page fault, also at default settings. Other GPUs have
+not shown it.
+
+**What changed (port, `port/ui/src/settings.cpp`):**
+- On Windows, when the GPU the renderer draws on is a GeForce GTX 1070 (desktop or laptop, not the 1070 Ti), the
+  Renderer's default is Vulkan.
+- 0.1.0 wrote `RSX_BACKEND = d3d12` into every `settings.ini`, picked or not. So on that GPU a saved D3D12 becomes
+  Vulkan once, and `renderer_rule = 1` notes it. A D3D12 picked after that stays, and an `RSX_BACKEND` from the
+  environment wins as before.
+- The GPU is DXGI's first hardware adapter in high-performance order, the one ps3recomp's `adapter_pick` takes.
+  `DES_RENDERER_GPU=<name>` stands in for its name (`settings_check`).
+- Other GPUs: nothing changes. Older cards were left out on purpose: how well they run Vulkan is not known.
+
+**The cause is not known.** One difference between the two routes: the GPU vertex fetch reads t20, which D3D12
+binds as a root SRV. A root descriptor has no bounds check, while Vulkan reads 0 past the buffer's end
+(robustBufferAccess2, or edit E3). Nothing shows the game reading past it.

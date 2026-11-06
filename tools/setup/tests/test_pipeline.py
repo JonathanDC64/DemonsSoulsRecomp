@@ -217,22 +217,22 @@ class RunTest(unittest.TestCase):
         # setup's folder in data/setup-data beside the program, the game in a folder beside it: renamed, it plays,
         # and a later run (an update's rebuild) finds the game there from the last run's request.
         tmp = Path(self.s.game.tmp.name)
-        prog = tmp / "Soulbrandt"
+        prog = tmp / "install"
         prog.mkdir()
-        (prog / "Soulbrandt.exe").write_bytes(b"MZ")
+        (prog / "des_host.exe").write_bytes(b"MZ")
         shutil.copytree(self.s.game.root, prog / "Game")
         self.s.data = prog / "data" / "setup-data"
         rc, lines = self.s.run(request=pipeline.make_request(prog / "Game"), phases=PHASES + ["compile"],
-                               compile_fn=fake_compile, host=str(prog / "Soulbrandt.exe"))
+                               compile_fn=fake_compile, host=str(prog / "des_host.exe"))
         self.assertEqual(rc, 0, lines)
         self.assertEqual(pipeline.read_ready(self.s.data)["game"], "../../Game")
-        renamed = tmp / "Soulbrandt renamed"
+        renamed = tmp / "install renamed"
         shutil.move(str(prog), str(renamed))
         data = renamed / "data" / "setup-data"
         self.assertEqual(pipeline.status(data, "1.0")["state"], "ready")
         self.assertEqual(pipeline.ready_path(data, pipeline.read_ready(data), "game"), renamed / "Game")
         self.s.data = data
-        rc, lines = self.s.run(request=None, host=str(renamed / "Soulbrandt.exe"))
+        rc, lines = self.s.run(request=None, host=str(renamed / "des_host.exe"))
         self.assertEqual(rc, 0, lines)
         self.assertEqual(pipeline.load_request(data)["game"], str(renamed / "Game"))
 
@@ -241,7 +241,7 @@ class RunTest(unittest.TestCase):
         (tmp / "prog").mkdir()
         self.s.data = tmp / "prog" / "data" / "setup-data"
         rc, lines = self.s.run(phases=PHASES + ["compile"], compile_fn=fake_compile,
-                               host=str(tmp / "prog" / "Soulbrandt.exe"))
+                               host=str(tmp / "prog" / "des_host.exe"))
         self.assertEqual(rc, 0, lines)
         self.assertEqual(pipeline.read_ready(self.s.data)["game"], str(self.s.game.root))
 

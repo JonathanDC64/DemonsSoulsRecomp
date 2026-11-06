@@ -31,12 +31,12 @@ The flow (docs/52 1.2), with what this patch has:
 
 | # | Screen | Shows | The player can | In this patch |
 |---|---|---|---|---|
-| 1 | Start | By the state at start (section 3). The first time: "Set up Demon's Souls" and three rows (your copy of the game, the build tools downloaded once, stop and come back). Else "Welcome back" and what setup found: interrupted, a new version, setup's files missing, the game folder moved. Or "Ready to play" | Start; Resume setup or Start over; Update now; Repair; Choose the game folder; Play. Then Settings, Quit | **yes** (setup_screens.cpp, section 2a) |
+| 1 | Start | By the state at start (section 3). The first time: "Set up Demon's Souls" and four rows (your copy of the game, the build tools downloaded once, stop and come back, the build folder with Change: section 3). Else "Welcome back" and what setup found: interrupted, a new version, setup's files missing, the game folder moved. Or "Ready to play" | Start; Resume setup or Start over; Update now; Repair; Choose the game folder; Play. Then Settings, Quit | **yes** (setup_screens.cpp, section 2a) |
 | 1a | Where is your game? | A card for each way to the game's files: "Import from RPCS3" (its tag and second line say what the host found: docs/90 1.2), "I have decrypted files" and "Show me how" | pick a card, Back | **yes** |
 | 1b | Your game in RPCS3, RPCS3 was not found, Unlocking the game files | The RPCS3 route's pages (docs/90 1.3 to 1.5, setup_rpcs3_window.cpp) | as docs/90 | **yes** |
 | 2 | Your game folder | The folder (the system's dialog, and the copies found in the usual places), then the check's rows: the game, and the 27 decrypted files (a count, and up to 6 files to fix) | Choose folder, pick a copy found, choose the decrypted files' folder, How do I make these?, Check again, Continue, Back | **yes**; the rows read `run --check-only`'s `@check` lines |
 | 2a | Getting your game's files | Three steps: copy your disc to a folder, get RPCS3 ready (the system software, the game added), come back and import; or decrypt the 28 files yourself with RPCS3's Decrypt PS3 Binaries | Import from RPCS3, I have decrypted files, Back | **yes** |
-| 3 | Ready to build | Rows: the game (on the RPCS3 route, "From RPCS3's library", and a "From RPCS3" row for what comes across); the disk space ("Setup needs about 4 GB free on C: while it builds."); this PC, its time and how many files at a time; On battery or On a laptop | Start building, Back | **yes** |
+| 3 | Ready to build | Rows: the game (on the RPCS3 route, "From RPCS3's library", and a "From RPCS3" row for what comes across); the build folder (section 3); the disk space there ("Setup needs about 4 GB free on C: while it builds."); this PC, its time and how many files at a time; On battery or On a laptop | Change (the build folder), Start building, Back | **yes** |
 | 4 | Progress | The percent, the time left and one bar, then the tasks, each with a spinner, a tick or a cross and its count (docs/89 section 3); "Your PC stays awake until setup is done." when the engine says so; Details: the engine's last 12 lines | Stop (asks first: "Stop the build?"), Details | **yes** (setup_window.cpp) |
 | 5 | Failed | A page: "The build stopped" or "Some game files need fixing", a red callout with the engine's sentence (and the files to fix after the game check), the engine's last lines | Report the problem and Try again (step and internal errors), else Try again or Check again, with Report the problem after it; Show the full log; Close | **yes** |
 | 6 | Stopped | "The build is stopped" | Resume, Close | **yes** |
@@ -89,7 +89,7 @@ Continue is pressable only after a check that ended `ok`; it then has the focus.
 **The firmware** (`libsre.prx`, while libsre stays LLE). Until 10-23 the check left it out unless `DES_SETUP_FIRMWARE` named it, so a run from the screens lifted no libsre and stopped at the compile ("...is missing: run the lift first"). Now the check always asks for it, and looks for it by its name beside `PS3_GAME` and in the folder of decrypted files. The game folder page shows it as its own row, not as one of the 27 decrypted files: when it matches, one more row in the game's panel ("The PS3 system software's libsre.prx"); when it is missing, wrong or still encrypted, a part of its own ("One file of the PS3 system software") with the engine's sentence, which says where it comes from and where it goes. There is no file picker: the help page and the sentence say to put it in the game's folder. `DES_SETUP_FIRMWARE` still names one file in a test. docs/51's HLE removes it. The RPCS3 route's unlock makes it from RPCS3's `dev_flash` (10-23), and a copy from another system software version is set back to the table's (docs/90 9.2).
 
 **Ready to build's numbers** (setup_pc.cpp).
-- Disk: 4 GB (`kNeedBytes`), docs/52 10.2: about 2.5 GB at the peak, and it asks for 4 GB, after docs/45. Inferred from measured parts; no whole run has been measured. The free space is `std::filesystem::space` on the nearest folder of the data folder that exists. The disk is named by its drive letter, or by the folder on Linux, as the engine's own sentence names it. Below 4 GB the row turns red, with Check again, but Start building stays: the engine checks each phase less what its folders already hold (section 6).
+- Disk: 4 GB (`kNeedBytes`), docs/52 10.2: about 2.5 GB at the peak, and it asks for 4 GB, after docs/45. Inferred from measured parts; no whole run has been measured. The free space is `std::filesystem::space` on the nearest folder of the data folder that exists (the build folder, chosen or not: section 3). The disk is named by its drive letter, or by the folder on Linux, as the engine's own sentence names it. Below 4 GB the row turns red, with Check again, but Start building stays: the engine checks each phase less what its folders already hold (section 6).
 - Time: no player's PC has been measured, so it is a range from named constants (set again on 10-23 for compile.py's size rule, #148, and the 53 chunks, #158). 75 s for the check, the copy, the lift and the shaders (docs/53 16.6: run G's 443 s less its 371 s compile), plus the compile: about 1,500 s of CPU (docs/53 16.4) over the jobs, but never less than the longest job (about 60 s with 53 chunks, inferred). Jobs: the logical CPUs, at most (free memory - 2 GB) / 0.8 GB, the size rule's figure for the 53 chunks (compile.py, docs/81 section 8; 1.4 GB until the rule was set from a player's setup). The low end is that PC's speed per core (measured there); the high end takes cores 2 times slower on a desktop and 4 times on a laptop, one with a battery (inferred, from docs/45 3.1's guesses). Rounded to 5 minutes, or 10 above an hour. The compiler's download is not in it.
 - What the model gives (inferred, not run on other PCs): this PC with 8.6 GB free (4 jobs) "about 10 to 15 minutes", where run G took 7.4 minutes; with 5.5 GB free (2 jobs) "15 to 30 minutes"; a 4-core laptop with 10 GB free (5 jobs) "5 to 25 minutes"; one with 4 GB free (1 job) "25 minutes to 1 hour 50 minutes". Before 10-23 the constants were the 14 chunks' (2,250 s, 261 s, 2.6 GB a chunk), which said 40 minutes to 1 hour 20 minutes on this PC with 5.5 GB free.
 - The compile's own job count is compile.py's (on `feat/setup-compile`); when it merges, its rule and this one should be the same.
@@ -140,6 +140,55 @@ program, next to the player's settings and logs in `data/`. Updates leave `data/
   - "game moved" with the game's folder gone.
 
   The shared folder wasn't touched.
+
+**The build folder (a player's request, 2026-11-06).** A player asked for a way to choose where setup builds the game,
+rather than AppData on C:.
+- **On screen:** a "Build folder" row with the folder and a Change button. It is on the start screen before a build
+  (and while one is interrupted), and on Ready to build, above the disk space. Change opens the system's folder dialog
+  (folder_picker.cpp). Under `DES_SETUP_DATA` the row has no Change: the folder is given.
+- **The folder a pick gives** (setup_folder.cpp `folder_for_pick`):
+  - the folder itself, when it is new or empty, or setup's already: setup's work is in it (`setup/ready.txt` or
+    `setup/journal.json`: a folder moved there by hand), it is the usual folder (it holds `setup-folder.txt`), or it
+    is named `DemonsSoulsRecomp`;
+  - else a folder of setup's own in it, `DemonsSoulsRecomp`, so that setup's folders (inputs, work, game, setup...)
+    don't land among the player's files. A drive's root always gets that folder.
+- **Refused, with the reason on the page** (`cannot_use`):
+  - the program's folder itself;
+  - a folder in one of the program's own folders, which an update replaces: `setup`, `.update`, `.previous`, and the
+    names `setup/release-files.txt` lists;
+  - a folder setup can't make or write in;
+  - on Windows before 1903, a name the game can't be given (docs/126).
+- **Where the choice is kept:** `setup-folder.txt` in the usual folder (`%LOCALAPPDATA%\DemonsSoulsRecomp`,
+  `~/.local/share/DemonsSoulsRecomp`, or a portable install's `data/setup-data`). It is a comment line and the
+  folder's path.
+  - In full, or relative to the usual folder when both are in the program's folder: a portable install moves as one
+    folder, as above.
+  - Choosing the usual folder again removes the file.
+  - Every start reads it first (`find_folders`), so the game's own start, the update check and reports use the same
+    folder. des_setup's default `--data` follows it too (pipeline.py `chosen_folder`); the host always passes
+    `--data`.
+- **The order:**
+  1. `DES_SETUP_DATA`, as it is (nothing is read or chosen then);
+  2. the choice;
+  3. a portable install's 0.1.0 build in the shared folder (above);
+  4. the usual folder.
+- **Nothing moves.** What setup made in the folder in use stays there.
+  - When that is setup's work (a journal or a build), the page asks first: "Build in the new folder?", saying what
+    stays where.
+  - A folder that already holds setup's work is used as it is. A build moved there by hand plays, since `ready.txt`'s
+    paths are relative (issue #364, above); a part-built one carries on.
+- **To move a build that exists:** move its folder by hand. The start screen then reads "Set up Demon's Souls";
+  Change, and pick the moved folder. The screen then reads Ready.
+- **The free space** is the chosen folder's drive's: Ready to build's row and the first Python's download
+  (`data_space` reads `data_dir()`), and the engine's own check (its `--data`).
+- **A chosen folder that is gone** (an unplugged drive): the start screen says "The build folder is missing", with
+  its path. Setup builds nowhere else unless the player changes the folder.
+- **Not done:**
+  - A build that exists can't be moved from the screens: Ready, Outdated, Damaged and Game moved show no Change.
+  - After a change on Ready to build, the old folder keeps what the game check put there: the first Python (its
+    download, 11 MB on Windows and 35 MB on Linux, and the unpacked copy), the check's log and, on the RPCS3 route,
+    the unlocked files (the question says they stay). The run downloads Python again in the new folder, and unlocks
+    again. A change on the start screen, before Start, leaves only `setup-folder.txt` in the usual folder.
 
 | State | When (in this order) | Start screen |
 |---|---|---|

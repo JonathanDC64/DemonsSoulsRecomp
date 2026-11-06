@@ -83,9 +83,9 @@ add_custom_command(
 
 # ---- The UI ----
 # Each platform's mouse and crash reports (docs/76): Win32 on Windows (with the crash dialog and the D3D11 renderer),
-# SDL elsewhere. The setup screens' files (child_process, setup_engine, setup_python, setup_http, setup_unzip, sha256,
-# setup_protocol, setup_page, setup_window, setup_screens, setup_options, setup_options_window, setup_pc, setup_rpcs3,
-# folder_picker; docs/88, docs/89, docs/90, docs/91) build on both: child_process.cpp, setup_engine.cpp,
+# SDL elsewhere. The setup screens' files (child_process, setup_engine, setup_folder, setup_python, setup_http,
+# setup_unzip, sha256, setup_protocol, setup_page, setup_window, setup_screens, setup_options, setup_options_window,
+# setup_pc, setup_rpcs3, folder_picker; docs/88, docs/89, docs/90, docs/91) build on both: child_process.cpp, setup_engine.cpp,
 # setup_python.cpp, setup_http.cpp, setup_pc.cpp, setup_rpcs3.cpp and folder_picker.cpp hold their few functions for
 # each platform inside.
 file(GLOB DES_UI_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
@@ -160,6 +160,17 @@ if(MSVC)
   target_compile_options(settings_check PRIVATE /EHsc /W3 /wd4100)
 endif()
 add_dependencies(settings_check des_version)
+
+# setup_folder.cpp on its own (tests/setup_folder_check.cpp): where setup builds, the usual folder or the one chosen on
+# setup's screens (docs/88 section 3), in made-up folders under the system's temporary folder. The same on every
+# platform; CI runs it on both (host.yml). Built on demand:
+#   cmake --build <build> --target setup_folder_check, then setup_folder_check
+add_executable(setup_folder_check EXCLUDE_FROM_ALL tests/setup_folder_check.cpp src/setup_folder.cpp)
+target_include_directories(setup_folder_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_definitions(setup_folder_check PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+if(MSVC)
+  target_compile_options(setup_folder_check PRIVATE /EHsc /W3 /wd4100)
+endif()
 
 # The first Python's fetch on its own (tests/setup_fetch_check.cpp), the data folder and the free space stubbed: curl
 # and tar against the host's own download and unzip (what Wine and CrossOver get), a stopped download carried on, and

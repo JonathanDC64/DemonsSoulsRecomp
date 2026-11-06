@@ -295,7 +295,7 @@ An app update that changes none of these reuses the old build. FFCCEOT keys its 
 | host, scripts, toolchain | the folder the player extracted the zip to, or `app\<version>\` and `tools\` under it in stage B | read-only after install; no admin |
 | `settings.ini`, logs, crashes, reports | `%APPDATA%\DemonsSoulsRecomp\DemonsSouls\` (as now, docs/32) | small and per-user |
 | saves (`dev_hdd0`) | the same data folder | survive reinstalls; small |
-| game build, objects, `/dev_hdd1` cache, shader cache, downloads | `%LOCALAPPDATA%\DemonsSoulsRecomp\` | large; not roamed or synced; Controlled Folder Access does not cover AppData by default (inferred) |
+| game build, objects, `/dev_hdd1` cache, shader cache, downloads | `%LOCALAPPDATA%\DemonsSoulsRecomp\`, or a build folder the player chooses on setup's screens (docs/88 section 3) | large; not roamed or synced; Controlled Folder Access does not cover AppData by default (inferred) |
 | everything, in portable mode | `<exe folder>\data\` when `portable.txt` is there (docs/32) | as today |
 
 Today's cwd-relative paths (`gamedata\`, `work\libsre\libsre_image.bin`, `shader_cache`) and the run defaults from `deslib.sh` move into the exe. The new /dev_hdd1 override points at the local folder. Warn when the install or portable folder is under OneDrive.

@@ -500,6 +500,13 @@ class HostAgreesTest(unittest.TestCase):
         self.assertIn('"--shaders"', (REAL / "port" / "des_options.cpp").read_text(encoding="utf-8"))
         self.assertIn('"--host"', (UI / "setup_engine.cpp").read_text(encoding="utf-8"))
 
+    def test_build_folder_choice(self):
+        """The build folder's choice file and the shared folder's name (setup_folder.hpp), as des_setup has them."""
+        from des_setup import __main__ as cli
+        hpp = (UI / "setup_folder.hpp").read_text(encoding="utf-8")
+        self.assertIn(f'kChoiceFile = "{pipeline.CHOICE}";', hpp)
+        self.assertIn(f'kFolderName = "{cli.NAME}";', hpp)
+
     def test_python_pin(self):
         """The host's pins of the first Python (setup_engine.hpp), one set per platform, against toolchain.json."""
         tools = {t["name"]: t for t in fetch.load_manifest()["tools"]}
@@ -591,6 +598,68 @@ class DieWithParentTest(unittest.TestCase):
                 self.assertTrue(ready, f"{pid} still runs 10 s after the host ended")
             finally:
                 os.close(fd)
+
+
+class ChosenFolderTest(unittest.TestCase):
+    """The build folder the player chose on setup's screens (docs/88 section 3): <usual>/setup-folder.txt names it. The
+    host writes and reads it (setup_folder.cpp, its own check: port/ui/tests/setup_folder_check.cpp); des_setup's
+    default --data follows it the same way."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.usual = self.root / "shared" / "DemonsSoulsRecomp"
+        self.var = "LOCALAPPDATA" if os.name == "nt" else "XDG_DATA_HOME"
+        self.old = os.environ.get(self.var)
+        os.environ[self.var] = str(self.root / "shared")
+
+    def tearDown(self):
+        if self.old is None:
+            os.environ.pop(self.var, None)
+        else:
+            os.environ[self.var] = self.old
+        self.tmp.cleanup()
+
+    def choose(self, text):
+        self.usual.mkdir(parents=True, exist_ok=True)
+        (self.usual / pipeline.CHOICE).write_text(text, encoding="utf-8")
+
+    def test_none_without_a_choice(self):
+        self.assertIsNone(pipeline.chosen_folder(self.usual))
+        self.choose("# only a note\n\n")
+        self.assertIsNone(pipeline.chosen_folder(self.usual))
+
+    def test_in_full_relative_and_as_notepad_saves_it(self):
+        self.choose(f"# a note\n{self.root / 'D' / 'build'}\n")
+        self.assertEqual(pipeline.chosen_folder(self.usual), self.root / "D" / "build")
+        self.choose("../../build\n")                                  # (a portable install's: from the usual folder)
+        self.assertEqual(pipeline.chosen_folder(self.usual), self.root / "build")
+        (self.usual / pipeline.CHOICE).write_bytes(b"\xef\xbb\xbf# saved by Notepad\r\n\r\n  " +
+                                                   str(self.root / "x").encode("utf-8") + b"  \r\n")
+        self.assertEqual(pipeline.chosen_folder(self.usual), self.root / "x")
+
+    def test_default_data_follows_the_choice(self):
+        from des_setup import __main__ as cli
+        self.assertEqual(cli.default_data(), self.usual)
+        self.choose(f"{self.root / 'D' / 'build'}\n")
+        self.assertEqual(cli.default_data(), self.root / "D" / "build")
+
+    def test_a_build_in_the_chosen_folder(self):
+        # A whole run there: the usual folder holds only the choice, and the default folder's status is the build's.
+        from des_setup import __main__ as cli
+        s = Setup()
+        free = pipeline.free_bytes
+        pipeline.free_bytes = lambda p: 1 << 50
+        try:
+            s.data = self.root / "D" / "build"
+            self.choose(f"{s.data}\n")
+            rc, lines = s.run(phases=PHASES + ["compile"], compile_fn=fake_compile)
+            self.assertEqual(rc, 0, lines)
+            self.assertEqual(pipeline.status(cli.default_data(), "1.0")["state"], "ready")
+            self.assertEqual([p.name for p in self.usual.iterdir()], [pipeline.CHOICE])
+        finally:
+            pipeline.free_bytes = free
+            s.close()
 
 
 def _python_pins() -> dict:

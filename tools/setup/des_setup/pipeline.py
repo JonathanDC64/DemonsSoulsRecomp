@@ -45,6 +45,7 @@ from . import fetch, firmware, gamefiles, journal, lift, protocol, rpcs3, rpcs3_
 
 READY = "ready.txt"
 REQUEST = "request.json"
+CHOICE = "setup-folder.txt"        # in the usual folder: the build folder the player chose (the host's kChoiceFile)
 UNLOCK = "unlock"                  # setup/unlock: the unlock's copies, RPCS3's folder, then its outputs until the stage
 GB = 1 << 30
 # Each phase's share of a whole run, from its CPU time (docs/52 4.3: the compile is most of it).
@@ -205,6 +206,23 @@ def ready_path(data: Path, ready: dict, key: str):
     if old is None or os.path.normcase(str(old)) == os.path.normcase(os.path.abspath(data)) or not _inside(p, old):
         return p
     return Path(data) / p.relative_to(old)
+
+
+def chosen_folder(usual: Path):
+    """The build folder the player chose on setup's screens (docs/88 section 3), as <usual>/setup-folder.txt names
+    it: its first line that is not empty or a comment ('#'), a full path or one relative to the usual folder. The
+    host writes it and reads it the same way (setup_folder.cpp chosen_folder). None without one."""
+    try:
+        text = (Path(usual) / CHOICE).read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        p = Path(line)
+        return Path(os.path.normpath(p if p.is_absolute() else Path(usual) / p))
+    return None
 
 
 class _Held:

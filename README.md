@@ -91,7 +91,7 @@ These steps are for the release download.
    - **Import from RPCS3**: setup finds the game in RPCS3's list and has your RPCS3 unlock its files. It can bring your save, trophies and some settings across too.
    - **I have decrypted files**: your disc copy, plus the 28 files you decrypted yourself (`EBOOT.elf`, the `.sdat` files and `libsre.prx`).
    - **Show me how**: step by step, with free tools only.
-4. Start the build. It runs on your PC and can take a while; setup shows an estimate first. You can stop it and carry on later.
+4. Start the build. It runs on your PC and can take a while; setup shows an estimate first. You can stop it and carry on later. Setup builds in AppData on Windows (`~/.local/share` on Linux) and needs about 4 GB free there; to build on another drive, press **Change** next to **Build folder** first.
 5. Pick a preset: **Original** plays as on the PS3; **Enhanced** sets 60 fps, a resolution that fits your display, SMAA, 16x anisotropic filtering, fullscreen, and HDR when Windows has HDR on for your display. Then a few choices (HDR among them, on Windows) and your online name. You can change anything later in Settings.
 
 Then press **Play**.

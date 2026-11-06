@@ -7,7 +7,10 @@
 //  3. the game folder: the system's folder dialog, the dumps found in the usual places, and the engine's check
 //     (`run --check-only`) as rows, the decrypted files to fix first;
 //  4. "Getting your game's files": how to copy the disc and decrypt the files, with free tools;
-//  5. "Ready to build": the game, the free space, the time it takes on this PC and "Plug it in first".
+//  5. "Ready to build": the game, the build folder, the free space, the time it takes on this PC and "Plug it in
+//     first".
+// The build folder (where setup builds the game: setup::data_dir) can be changed on the start screen, before a build
+// or while one is stopped, and on Ready to build.
 // Start building opens the progress screen (setup_window.hpp) over the start screen, which comes back when it closes.
 #pragma once
 
@@ -54,6 +57,34 @@ private:
 // The rail's line under Build before a run: "About 10 to 20 minutes".
 std::string build_time_line();
 
+// The build folder's Change, on the start screen and Ready to build (docs/88 section 3): the system's folder dialog,
+// then what the folder picked leads to. The page asks its question, if there is one, then keeps the folder
+// (setup::choose_data_dir) and draws itself again.
+class BuildFolderPick {
+public:
+    struct Next {
+        std::filesystem::path folder;  // the folder setup would build in (setup::folder_for_pick); empty: no change
+        std::string problem;           // why not, for the player (the folder cannot be used, the dialog failed)
+        std::string askTitle, askRml;  // a question first: the folder in use holds setup's work, which stays there
+        bool made = false;             // the check made the folder (empty): its Cancel removes it again
+    };
+    // The question's Cancel: the folder the check made goes again.
+    static void cancel(const Next& next);
+
+    BuildFolderPick() : mBox(std::make_shared<Mailbox<std::pair<unsigned, PickedFolder>>>()) {}
+    void open();  // (one dialog at a time)
+    // Once the dialog has closed: true, and what comes next.
+    bool take(Next& next);
+    // The page went on (a run, another page): the dialog's answer, when it comes, is dropped. The folder never changes
+    // under a run, whose threads read it.
+    void forget();
+
+private:
+    std::shared_ptr<Mailbox<std::pair<unsigned, PickedFolder>>> mBox;  // (the dialog's answer, by its open())
+    unsigned mOpened = 0;  // which open() an answer must be for
+    bool mOpen = false;
+};
+
 // 1. The start screen: where setup stands, and the one thing to do about it (docs/88 section 3): Start, Resume setup
 // (or Start over), Update now, Repair, Choose the game folder, or Play; then Settings and Quit.
 class SetupStartWindow : public SetupPage {
@@ -67,14 +98,17 @@ public:
     explicit SetupStartWindow(Props props);
 
     void uncover() override;  // (back from a screen it opened: the state may have changed)
+    bool focus() override;    // (the main button first, not the build folder's Change above it)
 
 protected:
     std::vector<std::vector<Button*>> nav_lines() const override;
-    void tick() override;  // (the update check's answer: updates.hpp)
+    void tick() override;  // (the update check's answer: updates.hpp; the build folder's dialog)
     void back() override;
 
 private:
     void refresh();
+    void folder_row(Rml::Element* box);
+    void folder_picked(const BuildFolderPick::Next& next);
     void open_update();
     void open_source();
     void open_folder();
@@ -85,8 +119,10 @@ private:
     Props mProps;
     setup::Launch mLaunch;
     Rml::Element* mBody = nullptr;
-    Buttons mMain, mMore;
+    Buttons mMain, mMore, mFolderButton;
     std::string mUpdateShown;  // the newer release the screen shows (updates.hpp); empty: none
+    BuildFolderPick mFolderPick;
+    std::string mFolderProblem;  // the last pick's, until the next
 };
 
 // 2. "Where is your game?": a card for each way to the game's files. A card opens its page at once.
@@ -200,8 +236,8 @@ private:
     Buttons mActions;
 };
 
-// 5. "Ready to build": the game, the free space, about how long it takes on this PC, and "Plug it in first" while on
-// battery; Start building and Back.
+// 5. "Ready to build": the game, the build folder (with Change), the free space there, about how long it takes on this
+// PC, and "Plug it in first" while on battery; Start building and Back.
 class SetupBeforeWindow : public SetupPage {
 public:
     struct Props {
@@ -213,6 +249,8 @@ public:
 
     explicit SetupBeforeWindow(Props props);
 
+    bool focus() override;  // (Check again when the space is short, else Start building: not Change)
+
 protected:
     std::vector<std::vector<Button*>> nav_lines() const override;
     void tick() override;
@@ -221,13 +259,16 @@ protected:
 private:
     void start();
     void draw();
+    void folder_picked(const BuildFolderPick::Next& next);
 
     Props mProps;
     Rml::Element* mRows = nullptr;
     Rml::Element* mActionsRow = nullptr;
-    Buttons mSpaceButton, mActions;
+    Buttons mFolderButton, mSpaceButton, mActions;
     bool mShownBattery = false;
     unsigned long long mPowerAt = 0;  // when the power was last asked (now_ms)
+    BuildFolderPick mFolderPick;
+    std::string mFolderProblem;  // the last pick's, until the next
 };
 
 }  // namespace ui

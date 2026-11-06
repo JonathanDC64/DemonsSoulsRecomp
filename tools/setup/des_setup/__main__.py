@@ -19,7 +19,9 @@ docs/88). GAME is the folder of the disc dump that holds PS3_GAME. `run` does
 every phase in order with the setup screens' line protocol (pipeline.py,
 protocol.py); without GAME it takes the folders the last run used. The data
 folder defaults to %LOCALAPPDATA%\\DemonsSoulsRecomp (Linux:
-$XDG_DATA_HOME/DemonsSoulsRecomp). A developer's compiler (--cc and --ld, or
+$XDG_DATA_HOME/DemonsSoulsRecomp), or to the build folder the player chose on
+setup's screens, which that folder's setup-folder.txt names (docs/88 section
+3; the host always passes --data). A developer's compiler (--cc and --ld, or
 DES_SETUP_CC and DES_SETUP_LD in the environment, so the setup screens' runs
 use it too) replaces the pinned LLVM download, which is then not fetched.
 
@@ -61,11 +63,14 @@ NAME = "DemonsSoulsRecomp"
 
 
 def default_data() -> Path:
+    """The shared folder, or the build folder the player chose on setup's screens (pipeline.chosen_folder). A portable
+    install's folder is the host's to know (setup_engine.cpp data_dir): it always passes --data."""
     if os.name == "nt":
         base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
     else:
         base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(base) / NAME
+    usual = Path(base) / NAME
+    return pipeline.chosen_folder(usual) or usual
 
 
 def _print_report(rep, unlocks=False):

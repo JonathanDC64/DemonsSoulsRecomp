@@ -48,7 +48,7 @@ ERROR_ELEVATION_REQUIRED = 740
 NEEDS_ADMIN = ("Your RPCS3 is set to run as administrator, so setup cannot start it. In rpcs3.exe's Properties, "
                "Compatibility, untick \"Run this program as an administrator\".")
 # The PS3 system software Sony offers now, whose libsre.prx firmware.py makes into the table's (a tester's run, 10-30).
-# 4.90's cannot be (docs/90 9.2).
+# 4.90's cannot be made into it, so it is taken as it is, as the firmware entry's "also" copy (docs/90 9.2).
 FIRMWARE_WORKS = "4.93"
 
 
@@ -557,17 +557,22 @@ class Unlock:
         if not j.out.is_file():
             return False
         size = j.out.stat().st_size
-        return size == j.dec["size"] if j.dec.get("size") is not None else size > 0
+        if j.dec.get("size") is None:
+            return size > 0
+        return size == j.dec["size"] or (j.kind == "firmware" and
+                                         any(o.get("size") == size for o in j.dec.get("also") or []))
 
     def _good(self, j) -> bool:
         """The output is the table's: its size and SHA-256, or its first bytes when the table has no sum yet. The
-        firmware's file may be from another system software version (firmware.py): the stage makes it the table's."""
+        firmware's file may be from another system software version (firmware.py): the stage makes it the table's,
+        or it is one of the copies the port is tested with as they are (the entry's "also")."""
         if not self._done(j):
             return False
         if j.dec.get("sha256"):
             if gamefiles.sha256_file(j.out) == j.dec["sha256"]:
                 return True
-            return j.kind == "firmware" and firmware.matched(j.out, j.dec) is not None
+            return j.kind == "firmware" and (firmware.matched(j.out, j.dec) is not None or
+                                             firmware.other_copy(j.out, j.dec) is not None)
         with open(j.out, "rb") as f:
             return not j.dec.get("magic") or f.read(4) == bytes.fromhex(j.dec["magic"])
 

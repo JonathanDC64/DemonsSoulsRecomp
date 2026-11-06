@@ -760,6 +760,27 @@ Only 4.86 and 4.89 have been measured. Inferred: other 4.x versions differ the s
 
 So when libsre.prx fails the sum, the sentence names the version from RPCS3's `dev_flash/vsh/etc/version.txt` ("release:04.9000:") and says to install 4.93. Setup keeps working with 4.86 and 4.89 as before.
 
+**4.90 measured, and taken as it is (11-06, issue #369, a second player on 4.90).** 4.90 was installed into a copy of RPCS3 from Sony's PS3UPDAT.PUP (`--headless --installfw`), and its libsre.sprx decrypted with `--decrypt`.
+
+What 4.90's libsre.prx is:
+- 239,088 bytes, 256 fewer than 4.86's.
+- At all 86 places the version is one instruction, `lis rX,0x49`, with no `ori`.
+- Without that instruction the compiler laid out the code around some places differently: instructions moved, other registers used.
+- Everything after the places is shifted. The data segment starts 0x100 lower (0x2DF00), and the TOC is 0x300399B0.
+- The two SPU programs inside are byte-identical to 4.86's.
+
+So setting the version cannot make it into 4.86's file. Instead the table's firmware entry lists it under `"also"`: version, size and SHA-256 only, no bytes. A copy that matches one is taken as it is:
+- by the check: "It is from PS3 system software 4.90, which the port is tested with too";
+- by the unlock's output checks;
+- by the stage, unchanged.
+
+The lift then lifts 4.90's own file. It needs no change, since its TOC comes from the file.
+
+**Tested (11-06):**
+- Setup's real check, unlock and stage from no files, with the RPCS3 copy on 4.90: 28 files unlocked, and 4.90's libsre.prx staged as it is.
+- The 0.1.0 package's setup, with 4.90's sum in its table, built the game on 4.90's libsre: libsre lifted and compiled, 757 functions, 267 exports, 32 imports patched.
+- That game played from the regression save into the level and a cutscene: 6 minutes, 3.2 million draws, no stall.
+
 ### 9.3 The host's pages
 
 

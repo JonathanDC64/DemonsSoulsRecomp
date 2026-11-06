@@ -373,7 +373,14 @@
    "sha256": "115f9df9596dd0b358e5a8c4eaaf77ee44c1f3ec16f9056b3abc517b739140c9",
    "magic": "7f454c46",
    "from": "dev_flash/sys/external/libsre.sprx, decrypted",
-   "version": "0x00486000"
+   "version": "0x00486000",
+   "also": [
+    {
+     "version": "0x00490000",
+     "size": 239088,
+     "sha256": "3c52069c4045a43fb15c5e692e20d2569a3f9cd21f2ed7fa73cbdbd37841fc17"
+    }
+   ]
   }
  ]
 }

@@ -733,6 +733,24 @@ class FirmwareUnlockTest(Base):
         self.assertEqual(rc, 1)
         self.assertIn("@error rpcs3 unlock libsre.prx came out different from the known good version.", lines)
 
+    def test_a_copy_tested_as_it_is(self):
+        # 4.90's libsre.prx cannot be made into the table's (docs/90 9.2): the entry's "also" copy is taken as it is,
+        # by the unlock, the check and the stage, and kept for a rebuild.
+        other = b"\x7fELF" + b"N" * 30          # (another size, as 4.90's is)
+        self.t.table["firmware"][0]["also"] = [{"version": "0x00490000", "size": len(other), "sha256": sha(other)}]
+        self.lib.firmware()
+        put(self.t.base / "fixtures" / "libsre.sprx", other)
+        put(self.lib.root / "dev_flash" / "vsh" / "etc" / "version.txt", b"release:04.9000:\n")
+        rc, lines = self.run_route(phases=("check", "unlock", "stage"))
+        self.assertEqual(rc, 0, lines)
+        self.assertEqual((self.t.data / "inputs" / "firmware" / "libsre.prx").read_bytes(), other)
+        rc, lines = self.run_route(phases=("check", "unlock", "stage"))     # a rebuild: kept in inputs/
+        self.assertEqual(rc, 0, lines)
+        self.assertIn("@check ok libsre.prx libsre.prx matches. It is from PS3 system software 4.90, which the port "
+                      "is tested with too.", lines)
+        self.assertIn("@step unlock skip", lines)
+        self.assertEqual(len(self.t.calls()), 1)
+
     def test_a_good_copy_beside_the_game_needs_no_unlock(self):
         self.lib.firmware()
         put(self.t.dump / "libsre.prx", LIBSRE_PRX)

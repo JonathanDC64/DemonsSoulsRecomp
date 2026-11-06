@@ -306,6 +306,12 @@ def _check_file(kind, e, path, progress, missing, mismatch) -> Item:
                     str(path))
     if e.get("magic") and head != bytes.fromhex(e["magic"]):
         return Item(kind, name, "mismatch", mismatch, str(path))
+    if kind == "firmware" and e.get("also"):
+        other = fwver.other_copy(path, e)   # (another version's copy, built as it is: firmware.py)
+        if other:
+            return Item(kind, name, "ok", f"{path.name} matches. It is from PS3 system software "
+                        f"{fwver.name(int(other['version'], 16))}, which the port is tested with too.", str(path),
+                        other["sha256"])
     if e.get("size") is not None and size != e["size"]:
         return Item(kind, name, "mismatch", mismatch, str(path))
     got = sha256_file(path, progress)

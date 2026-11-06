@@ -27,6 +27,9 @@
 #   --any-replay   use an rsx_replay other than the one the set names (a
 #                  rebuild during a conversion step); the replay's own check
 #                  of the capture's state sizes still applies
+#   --exe-b <exe>  route B replays with this rsx_replay (two builds on one
+#                  route: -a d3d12 -b d3d12 --exe-b <new build>, with or
+#                  without --time); the same checks and limits
 #
 # Each replay (rsx_replay <capture> F, run from a staged copy of the exe)
 # writes into <out>/<pass>/<capture>/: shots/ (CELLMARK_DUMP: every present;
@@ -91,7 +94,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/perflib.sh"
 cd "$DES_ROOT" || exit 1
 A=legacy; B=d3d12; REPEAT=0; TIME=0; GPU=0; F=4; CHAIN=0; ONLY='*'; IMG=; TOL=1; COLD=0; RTCAP=1; OUTD=; ANY=0
-CS=
+CS=; REPLAY_B=
 while [ $# -gt 0 ]; do
   case "$1" in
     -a) A=${2:?-a needs a route}; shift ;;
@@ -108,6 +111,7 @@ while [ $# -gt 0 ]; do
     --no-rtcap) RTCAP=0 ;;
     --out) OUTD=${2:?--out needs a folder}; shift ;;
     --any-replay) ANY=1 ;;
+    --exe-b) REPLAY_B=${2:?--exe-b needs an rsx_replay}; shift ;;
     -h|--help) sed -n '2,/^set -uo/p' "$HERE/halgate.sh" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     -*) echo "[gate] unknown option $1"; exit 2 ;;
     *) [ -z "$CS" ] || { echo "[gate] one capture set only"; exit 2; }; CS=$1 ;;
@@ -132,6 +136,8 @@ JSON=$CS/capset.json
 [ -f "$JSON" ] || { echo "[gate] no capset.json in $CS (capset.sh makes it)"; exit 2; }
 REPLAY=${RSX_REPLAY:-${PS3RECOMP_DIR:-$DES_ROOT/ps3recomp}/build/rsx_replay.exe}
 [ -f "$REPLAY" ] || { echo "[gate] no rsx_replay at $REPLAY (RSX_REPLAY)"; exit 2; }
+[ -z "$REPLAY_B" ] || [ -f "$REPLAY_B" ] || { echo "[gate] no rsx_replay at $REPLAY_B (--exe-b)"; exit 2; }
+[ -z "$REPLAY_B" ] || [ "$REPEAT" = 0 ] || { echo "[gate] --exe-b or --repeat, not both"; exit 2; }
 
 # The captures: "<name>|<file>|<knobs, spaces>|<group>" ("|": a field can
 # be empty, and bash's read joins runs of tabs).
@@ -162,6 +168,7 @@ for f in $(printf '%s\n' "$SEL" | cut -d'|' -f2); do [ -f "$CS/$f" ] || { echo "
 if [ "$TIME" = 1 ]; then WHAT=time_${A}_vs_$B
 elif [ "$REPEAT" -gt 0 ]; then WHAT=repeat${REPEAT}_$A
 else WHAT=${A}_vs_$B; fi
+[ -n "$REPLAY_B" ] && WHAT=${WHAT}_exeb
 OUT=${OUTD:-$DES_SCRATCH/halgate/$(basename "$CS")_${WHAT}_$(date +%Y%m%d_%H%M%S)}
 [ -e "$OUT" ] && { echo "[gate] $OUT exists; pick another --out"; exit 2; }
 mkdir -p "$OUT/bin" || exit 2
@@ -175,9 +182,17 @@ cp -f "$REPLAY" "$OUT/bin/rsx_replay.exe" || exit 2
 for d in "$(dirname "$REPLAY")"/*.dll; do [ -f "$d" ] && cp -f "$d" "$OUT/bin/"; done
 BIN=$OUT/bin/rsx_replay.exe
 [ "$(md5sum < "$BIN" | cut -d' ' -f1)" = "$HAVE_MD5" ] || { echo "[gate] the staged rsx_replay differs from $REPLAY; stopping"; exit 2; }
+BIN_B=$BIN
+if [ -n "$REPLAY_B" ]; then   # (staged the same way, in a folder of its own: the same exe name)
+  mkdir -p "$OUT/bin_b" || exit 2
+  cp -f "$REPLAY_B" "$OUT/bin_b/rsx_replay.exe" || exit 2
+  for d in "$(dirname "$REPLAY_B")"/*.dll; do [ -f "$d" ] && cp -f "$d" "$OUT/bin_b/"; done
+  BIN_B=$OUT/bin_b/rsx_replay.exe
+fi
 TMO=${HALGATE_TIMEOUT:-900}
 echo "[gate] $(date '+%F %T') $WHAT on $(basename "$CS"): $(printf '%s\n' "$SEL" | grep -c .) capture(s)$([ "$TIME" = 1 ] || echo ", $F frame(s) each")"
 echo "[gate] replay md5 $HAVE_MD5  RSX_PRESENT=$RSX_PRESENT  cache seed $SEED  out $OUT"
+[ -n "$REPLAY_B" ] && echo "[gate] route B's replay: $REPLAY_B (md5 $(md5sum < "$BIN_B" | cut -d' ' -f1))"
 
 # new_cache <dir>: a pass's shader cache (empty with --cold), and its listing, in whole-line order for comm.
 new_cache() {
@@ -195,6 +210,8 @@ replay() {
   local p=$1 route=$2 name=$3 knobs=$4 fr=$5 diag=$6 d E=() k c caps=() rc
   shift 6
   d=$p/$name; mkdir -p "$d"
+  local bin=$BIN
+  case "${p##*/}" in B.*) bin=$BIN_B ;; esac
   for c in "$@"; do caps+=("$(cygpath -m "$CS/$c")"); done
   E=(RSX_BACKEND="$route" PS3_SHADER_CACHE="$(cygpath -m "$p/cache")")
   if [ "$diag" = 1 ]; then
@@ -211,12 +228,12 @@ replay() {
   for k in $knobs; do E+=("$k"); done
   des_window_launch   # (DES_WINDOW: hidden while someone is at the PC)
   if [ "$diag" = 1 ]; then
-    ( cd "$d" && env "${E[@]}" RSX_REPLAY_TIMES=1 timeout "$TMO" "${DES_LAUNCH[@]}" "$BIN" "${caps[@]}" "$fr" ) > "$d/replay.txt" 2>&1
+    ( cd "$d" && env "${E[@]}" RSX_REPLAY_TIMES=1 timeout "$TMO" "${DES_LAUNCH[@]}" "$bin" "${caps[@]}" "$fr" ) > "$d/replay.txt" 2>&1
     rc=$?
   else
     # Timing: each line as it arrives (the replay's stdout is unbuffered) with
     # the wall clock, in stamped.txt, and "end <time>" once it has exited.
-    ( cd "$d" && env "${E[@]}" RSX_REPLAY_TIMES=1 timeout "$TMO" "${DES_LAUNCH[@]}" "$BIN" "${caps[@]}" "$fr" 2>&1 ) |
+    ( cd "$d" && env "${E[@]}" RSX_REPLAY_TIMES=1 timeout "$TMO" "${DES_LAUNCH[@]}" "$bin" "${caps[@]}" "$fr" 2>&1 ) |
       { while IFS= read -r l; do printf '%s\n' "$l" >&5; printf '%s %s\n' "$EPOCHREALTIME" "$l" >&6; done
         printf 'end %s\n' "$EPOCHREALTIME" >&6; } 5> "$d/replay.txt" 6> "$d/stamped.txt"
     rc=${PIPESTATUS[0]}
@@ -354,10 +371,11 @@ if [ "$TIME" = 1 ]; then
   NC=$(printf '%s\n' "$TC" | grep -c .)
   [ "$NC" -gt 0 ] || { echo "[gate] no capture without knobs to time"; exit 2; }
   echo "[gate] timing $NC capture(s), $TF frames each, $TR rounds, RSX_PRESENT=$RSX_PRESENT RSX_VSYNC=$RSX_VSYNC"
-  for r in "$A" "$B"; do   # a warm shader cache and pipelines, and the captures in the file cache
-    new_cache "$OUT/time/$r/cache" || exit 2
-    replay "$OUT/time/$r" "$r" warmup "" 2 0 $TC
-    p=$(replay_problem "$OUT/time/$r/warmup" "$r"); [ -z "$p" ] || { echo "[gate] $r: $p"; exit 1; }
+  for sd in "A.$A" "B.$B"; do   # a warm shader cache and pipelines, and the captures in the file cache
+    r=${sd#?.}
+    new_cache "$OUT/time/$sd/cache" || exit 2
+    replay "$OUT/time/$sd" "$r" warmup "" 2 0 $TC
+    p=$(replay_problem "$OUT/time/$sd/warmup" "$r"); [ -z "$p" ] || { echo "[gate] $sd: $p"; exit 1; }
   done
   # per_frame <dir>: "<ms a frame> <source>" for one capture's replay.
   per_frame() {
@@ -378,30 +396,31 @@ if [ "$TIME" = 1 ]; then
   }
   : > "$OUT/times.tsv"
   for i in $(seq 1 "$TR"); do
-    if [ $((i % 2)) = 1 ]; then order="$A $B"; else order="$B $A"; fi
-    for r in $order; do
+    if [ $((i % 2)) = 1 ]; then order="A.$A B.$B"; else order="B.$B A.$A"; fi
+    for sd in $order; do
+      r=${sd#?.}
       perf_wait_quiet 3 || { echo "[gate] the PC stayed busy; stopping"; exit 4; }
       perf_present_ok || { echo "[gate] the session locked under a presenting run; stopping"; exit 4; }
       sum=0; srcs=; gsum=0; gn=0
       for c in $TC; do
         x=r${i}_${c%.rcap}
-        replay "$OUT/time/$r" "$r" "$x" "" "$TF" 0 "$c"
-        p=$(replay_problem "$OUT/time/$r/$x" "$r"); [ -z "$p" ] || { echo "[gate] $r $x: $p"; exit 1; }
-        read -r pf src <<< "$(per_frame "$OUT/time/$r/$x")"
-        [ "$pf" != - ] || { echo "[gate] $r $x: no frame 2 line to time from"; exit 1; }
+        replay "$OUT/time/$sd" "$r" "$x" "" "$TF" 0 "$c"
+        p=$(replay_problem "$OUT/time/$sd/$x" "$r"); [ -z "$p" ] || { echo "[gate] $sd $x: $p"; exit 1; }
+        read -r pf src <<< "$(per_frame "$OUT/time/$sd/$x")"
+        [ "$pf" != - ] || { echo "[gate] $sd $x: no frame 2 line to time from"; exit 1; }
         sum=$(awk -v a="$sum" -v b="$pf" 'BEGIN {print a + b}'); srcs="$srcs $src"
-        g=$(gpu_of "$OUT/time/$r/$x")
+        g=$(gpu_of "$OUT/time/$sd/$x")
         [ "$g" = - ] || { gsum=$(awk -v a="$gsum" -v b="$g" 'BEGIN {print a + b}'); gn=$((gn + 1)); }
       done
       pf=$(awk -v s="$sum" -v n="$NC" 'BEGIN {printf "%.4f", s / n}')
       src=$(printf '%s\n' $srcs | sort -u | tr '\n' '+' | sed 's/+$//')
       # A round's GPU figure only when every capture gave one.
       gpf=-; [ "$gn" = "$NC" ] && gpf=$(awk -v s="$gsum" -v n="$NC" 'BEGIN {printf "%.4f", s / n}')
-      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$r" "$i" "$pf" "$src" "${PERF_BG:-?}" "$gpf" >> "$OUT/times.tsv"
-      echo "[gate] round $i $r: $pf ms a frame ($src; background cpu ${PERF_BG:-?}%)$([ "$GPU" = 1 ] && echo ", gpu $gpf ms")"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$sd" "$i" "$pf" "$src" "${PERF_BG:-?}" "$gpf" >> "$OUT/times.tsv"
+      echo "[gate] round $i $sd: $pf ms a frame ($src; background cpu ${PERF_BG:-?}%)$([ "$GPU" = 1 ] && echo ", gpu $gpf ms")"
     done
   done
-  awk -F '\t' -v a="$A" -v b="$B" -v gpu="$GPU" '
+  awk -F '\t' -v a="A.$A" -v b="B.$B" -v rb="$B" -v gpu="$GPU" '
     function med(r,   n, i, j, t, v) { n = 0; for (i = 1; i <= cnt[r]; i++) v[++n] = x[r, i]
       for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (v[j] < v[i]) { t = v[i]; v[i] = v[j]; v[j] = t }
       return (n % 2) ? v[(n + 1) / 2] : (v[n / 2] + v[n / 2 + 1]) / 2 }
@@ -415,7 +434,7 @@ if [ "$TIME" = 1 ]; then
       ma = med(a); mb = med(b)
       if (ma <= 0 || mb <= 0) { printf "no valid time (%s %.4f, %s %.4f ms a frame): FAIL\n", a, ma, b, mb; exit 1 }
       d = 100 * (mb / ma - 1)
-      lim = (b == "d3d12") ? 0.5 : (b == "vulkan") ? 0.0 : ""
+      lim = (rb == "d3d12") ? 0.5 : (rb == "vulkan") ? 0.0 : ""
       if (gpu == 1) {
         ga = gmed(a); gb = gmed(b)
         printf "%-10s %6s %12s %12s %s\n", "route", "runs", "ms a frame", "gpu ms", "(median)"
@@ -426,7 +445,7 @@ if [ "$TIME" = 1 ]; then
         printf "%-10s %6d %12.4f %s\n", a, cnt[a], ma, src[a]
         printf "%-10s %6d %12.4f %s\n", b, cnt[b], mb, src[b]
       }
-      if (lim == "") printf "B against A: %+.2f%% (no limit for %s)\n", d, b
+      if (lim == "") printf "B against A: %+.2f%% (no limit for %s)\n", d, rb
       else printf "B against A: %+.2f%%, limit %+.1f%%: %s\n", d, lim, (d <= lim ? "ok" : "FAIL")
       if (gpu == 1) {
         if (ga > 0 && gb > 0) printf "GPU, B against A: %+.2f%% (a report, no limit)\n", 100 * (gb / ga - 1)

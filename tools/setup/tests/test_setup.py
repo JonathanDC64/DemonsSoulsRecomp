@@ -30,6 +30,8 @@ EBOOT_ELF = b"\x7fELF" + b"y" * 60        # what RPCS3 writes beside it
 SDAT = b"NPD\0" + b"z" * 28
 SDAT_DEC = b"DCX\0" + b"w" * 20
 LIBSRE = b"\x7fELFsre"                   # the firmware's file, decrypted
+EBOOT_BIN_EU = b"SCE\0" + b"e" * 60       # the European disc's
+EBOOT_ELF_EU = b"\x7fELF" + b"f" * 60
 
 
 def make_table(sfo_bytes):
@@ -55,17 +57,18 @@ def make_table(sfo_bytes):
 class GameTree:
     """A fake disc dump in a temporary folder."""
 
-    def __init__(self, title="BLUS30443", ver="01.00", eboot_name="EBOOT.elf", decrypted=True, firmware=True):
+    def __init__(self, title="BLUS30443", ver="01.00", eboot_name="EBOOT.elf", decrypted=True, firmware=True,
+                 eboot=(EBOOT_BIN, EBOOT_ELF)):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name) / "dump"
         g = self.root / "PS3_GAME"
         (g / "USRDIR" / "script").mkdir(parents=True)
         self.sfo = sfo.build({"TITLE_ID": title, "APP_VER": ver, "VERSION": ver, "CATEGORY": "DG"})
         (g / "PARAM.SFO").write_bytes(self.sfo)
-        (g / "USRDIR" / "EBOOT.BIN").write_bytes(EBOOT_BIN)
+        (g / "USRDIR" / "EBOOT.BIN").write_bytes(eboot[0])
         (g / "USRDIR" / "script" / "m01.luabnd.dcx.sdat").write_bytes(SDAT)
         if decrypted:
-            (g / "USRDIR" / eboot_name).write_bytes(EBOOT_ELF)
+            (g / "USRDIR" / eboot_name).write_bytes(eboot[1])
             (g / "USRDIR" / "script" / "m01.luabnd.dcx.sdat.unedat").write_bytes(SDAT_DEC)
         if firmware:
             (self.root / "libsre.prx").write_bytes(LIBSRE)
@@ -74,6 +77,65 @@ class GameTree:
 
     def close(self):
         self.tmp.cleanup()
+
+
+def with_european_disc(table, sfo_eu):
+    """`table` with a made-up European disc, as game_table.json's "titles" has the real one."""
+    t = dict(table, disc="the US disc", other_titles={"BLJM60011": "the Japanese disc"})
+    t["titles"] = {"BLES00932": {
+        "disc": "the European disc", "app_ver": "01.00", "version": "01.00",
+        "files": {"PS3_GAME/PARAM.SFO": {"size": len(sfo_eu), "sha256": sha(sfo_eu)},
+                  "PS3_GAME/USRDIR/EBOOT.BIN": {"size": len(EBOOT_BIN_EU), "sha256": sha(EBOOT_BIN_EU)},
+                  "PS3_GAME/USRDIR/EBOOT.elf": {"size": len(EBOOT_ELF_EU), "sha256": sha(EBOOT_ELF_EU)}}}}
+    return t
+
+
+class EuropeanDiscTest(unittest.TestCase):
+    def tree(self, title="BLES00932", eboot=(EBOOT_BIN_EU, EBOOT_ELF_EU)):
+        t = GameTree(title=title, eboot=eboot)
+        self.addCleanup(t.close)
+        eu_sfo = sfo.build({"TITLE_ID": "BLES00932", "APP_VER": "01.00", "VERSION": "01.00", "CATEGORY": "DG"})
+        t.table = with_european_disc(t.table, eu_sfo)
+        return t
+
+    def test_ok(self):
+        t = self.tree()
+        rep = gamefiles.check(t.root, table=t.table)
+        self.assertTrue(rep.ok, [i.message for i in rep.problems()])
+        self.assertEqual(rep.title_id, "BLES00932")
+        self.assertIn("the European disc", rep.items[0].message)
+        self.assertEqual(gamefiles.title_of(t.root), "BLES00932")
+
+    def test_the_us_disc_still_ok(self):
+        t = self.tree(title="BLUS30443", eboot=(EBOOT_BIN, EBOOT_ELF))
+        rep = gamefiles.check(t.root, table=t.table)
+        self.assertTrue(rep.ok, [i.message for i in rep.problems()])
+        self.assertEqual(rep.title_id, "BLUS30443")
+
+    def test_european_folder_with_the_us_eboot(self):
+        t = self.tree(eboot=(EBOOT_BIN, EBOOT_ELF))
+        rep = gamefiles.check(t.root, table=t.table)
+        self.assertFalse(rep.ok)
+        bad = [i.message for i in rep.problems()]
+        self.assertTrue(any("does not match the European disc" in m for m in bad), bad)
+
+    def test_another_title_names_both_discs(self):
+        t = self.tree(title="BLJM60011")
+        rep = gamefiles.check(t.root, table=t.table)
+        self.assertFalse(rep.ok)
+        self.assertIn("the US disc (BLUS30443) or the European disc (BLES00932)", rep.items[0].message)
+        self.assertIn("the Japanese disc", rep.items[0].message)
+
+    def test_real_table(self):
+        tb = gamefiles.load_table()
+        self.assertEqual(gamefiles.titles(tb), ["BLUS30443", "BLES00932"])
+        eu = gamefiles.for_title(tb, "BLES00932")
+        self.assertNotIn("BLES00932", tb["other_titles"])
+        by_path = {e["path"]: e for e in eu["originals"] + eu["decrypted"]}
+        us = {e["path"]: e for e in tb["originals"] + tb["decrypted"]}
+        changed = sorted(p for p in by_path if by_path[p]["sha256"] != us[p]["sha256"])
+        self.assertEqual(changed, ["PS3_GAME/PARAM.SFO", "PS3_GAME/USRDIR/EBOOT.BIN", "PS3_GAME/USRDIR/EBOOT.elf"])
+        self.assertIsNone(gamefiles.for_title(tb, "BLJM60011"))
 
 
 class SfoTest(unittest.TestCase):

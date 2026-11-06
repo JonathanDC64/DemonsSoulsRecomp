@@ -41,6 +41,7 @@
  * happen, so a line in the default mode means another cause.
  */
 #include "ps3emu/ppu_lift.h"   /* ppu_context, DS_FRAME: the fixed part of the lift's header */
+#include "des_region.h"      /* DES_AT: the running disc's addresses */
 #include "des_game_calls.h"     /* the lifted functions below (the game DLL's with DES_SPLIT) */
 #include <atomic>
 #include <cstdint>
@@ -121,28 +122,28 @@ void step(ppu_context* ctx, uint32_t obj, uint32_t toc)
         if (vm_read32(lock + kLockCount) != 0) return;
         vm_write64(lock + kLockOwner, ~0ull);
         ctx->gpr[3] = lock + kLockSys;
-        call(ctx, func_00A8CA48, 0x002A6CA8u);
+        call(ctx, func_00A8CA48, DES_AT(0x002A6CA8u));
     };
 
     bool mine = false;
-    uint32_t lock = big_lock(ctx, 0x002A6B50u, 0x002A6B60u, &mine);
+    uint32_t lock = big_lock(ctx, DES_AT(0x002A6B50u), DES_AT(0x002A6B60u), &mine);
     if (!mine) {
         ctx->gpr[3] = lock + kLockSys;
         ctx->gpr[4] = 0;
-        call(ctx, func_00A8CBF0, 0x002A6B7Cu);
+        call(ctx, func_00A8CBF0, DES_AT(0x002A6B7Cu));
         if ((int32_t)ctx->gpr[3] == 0) {
-            vm_write64(lock + kLockOwner, thread_id(ctx, 0x002A6C34u));
+            vm_write64(lock + kLockOwner, thread_id(ctx, DES_AT(0x002A6C34u)));
             mine = true;
         }
     }
     if (mine) {
         vm_write32(lock + kLockCount, vm_read32(lock + kLockCount) + 1);
-        run(0x002A6C58u);
-        lock = big_lock(ctx, 0x002A6C60u, 0x002A6C70u, &mine);
+        run(DES_AT(0x002A6C58u));
+        lock = big_lock(ctx, DES_AT(0x002A6C60u), DES_AT(0x002A6C70u), &mine);
     } else {
         // 0x00A8CBF0 failed: the game steps anyway, without the lock.
-        run(0x002A6B98u);
-        lock = big_lock(ctx, 0x002A6BA0u, 0x002A6BB0u, &mine);
+        run(DES_AT(0x002A6B98u));
+        lock = big_lock(ctx, DES_AT(0x002A6BA0u), DES_AT(0x002A6BB0u), &mine);
     }
     if (mine) leave(lock);
 }
@@ -181,15 +182,15 @@ void chrins_thread(ppu_context* ctx)
     ctx->gpr[30] = toc;
 
     ctx->gpr[3] = vm_read32(reg);
-    call(ctx, func_001D17A0, 0x002A6AF4u);
+    call(ctx, func_001D17A0, DES_AT(0x002A6AF4u));
     uint32_t msg = 0;
     for (;;) {
         ctx->gpr[3] = queue;
         ctx->gpr[4] = 1;
-        call(ctx, func_00B5D548, 0x002A6B24u);
+        call(ctx, func_00B5D548, DES_AT(0x002A6B24u));
         msg = (uint32_t)ctx->gpr[3];
         ctx->gpr[28] = ctx->gpr[3] = msg;
-        call(ctx, func_00B5CFA0, 0x002A6B34u);
+        call(ctx, func_00B5CFA0, DES_AT(0x002A6B34u));
         const int32_t type = (int32_t)ctx->gpr[3];
         if (type == 1) break;
         if (type == 0 && vm_read8(obj + kDone) == 0) {
@@ -197,20 +198,20 @@ void chrins_thread(ppu_context* ctx)
             if (g_mode != 2) vm_write8(obj + kDone, 1);   // before the event: the kick that follows sees it
             ctx->gpr[3] = obj + kDoneEvent;
             ctx->gpr[4] = 1;
-            call(ctx, func_009E0148, 0x002A6BD0u);
+            call(ctx, func_009E0148, DES_AT(0x002A6BD0u));
             if (g_mode == 2) vm_write8(obj + kDone, 1);
         } else if (type == 0) {
             skipped(obj);
         }
         ctx->gpr[3] = queue;
         ctx->gpr[4] = msg;
-        call(ctx, func_00B5D2F8, 0x002A6B14u);
+        call(ctx, func_00B5D2F8, DES_AT(0x002A6B14u));
     }
     ctx->gpr[3] = queue;
     ctx->gpr[4] = msg;
-    call(ctx, func_00B5D2F8, 0x002A6BECu);
+    call(ctx, func_00B5D2F8, DES_AT(0x002A6BECu));
     ctx->gpr[3] = vm_read32(reg);
-    call(ctx, func_001D35D8, 0x002A6BF8u);
+    call(ctx, func_001D35D8, DES_AT(0x002A6BF8u));
 
     for (int r = 23; r < 32; r++) ctx->gpr[r] = saved[r - 23];
     ctx->gpr[1] = sp;
@@ -231,5 +232,5 @@ extern "C" void des_chrins_init(void)
     if (g_mode == 2)
         std::fprintf(stderr, "[des] DES_CHRINSFIX=2: the ChrIns worker in the game's order (done event, then done flag), "
                      "skipped step requests logged\n");
-    ppu_register_function(kChrInsThread, chrins_thread);
+    DES_REGISTER_FUNCTION(kChrInsThread, chrins_thread);
 }

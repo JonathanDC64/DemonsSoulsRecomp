@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <format>
@@ -381,6 +382,7 @@ constexpr Credit kCredits[] = {
 // ps3emu/ps3_net_signin.h (declared here: des_ui does not take ps3recomp's include paths). Its outcome comes back
 // through ps3_net_erase_result, which net_notices.cpp shows.
 extern "C" int ps3_net_player_erase(void);
+extern "C" uint8_t g_des_region;  // des_region.h: 1 = the European disc
 
 // Delete my data (the server's docs/social.md), asked first.
 void ask_erase() {
@@ -572,6 +574,14 @@ SettingsWindow::SettingsWindow(bool prelaunch) : mPrelaunch(prelaunch) {
             "Skips the movie after the logos. Other movies still play.<br/><br/>(DES_SKIP_INTRO_MOVIE)");
         bool_row(leftPane, rightPane, "Continue automatically", "DES_AUTO_CONTINUE",
             "After Play, goes straight into your last save.<br/><br/>(DES_AUTO_CONTINUE)");
+
+        if (g_des_region == 1) {  // (the US disc is English only)
+            leftPane.add_section("Language");
+            choice_row(leftPane, rightPane, "Language", "DES_LANGUAGE", {"", "en", "fr", "de", "es", "it"},
+                {"PC's language", "English", "Fran\u00e7ais", "Deutsch", "Espa\u00f1ol", "Italiano"},
+                "The game's text and trophy names. PC's language uses your PC's when the disc has it, else "
+                "English. Restart to apply.<br/><br/>(DES_LANGUAGE)");
+        }
 
         leftPane.add_section("Sound");
         bool_row(leftPane, rightPane, "Sound", "AUDIO_MUTE",

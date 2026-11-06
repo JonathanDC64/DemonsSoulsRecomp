@@ -1,10 +1,11 @@
 {
  "about": [
-  "Demon's Souls (BLUS30443, version 1.00): the SPU programs inside the decrypted EBOOT.ELF, for",
-  "scripts/build_spu.py --eboot. Images: each embedded SPU ELF by its name (index and file offset), its",
-  "size and its FNV-1a-64 fingerprint (build_spu.py img_size and fnv, the runtime's workload key). Jobs:",
-  "the SPURS job binaries, raw blobs cut at a virtual address, with size and fingerprint.",
-  "Addresses, sizes and hashes only; no bytes of the game."
+  "Demon's Souls (BLUS30443 and BLES00932, version 1.00): the SPU programs inside the decrypted EBOOT.ELF,",
+  "for scripts/build_spu.py --eboot. Images: each embedded SPU ELF by its name (index and file offset in",
+  "the US EBOOT), its size and its FNV-1a-64 fingerprint (build_spu.py img_size and fnv, the runtime's",
+  "workload key); an image is found by its fingerprint, so the European EBOOT's, at other offsets, get the",
+  "same names. Jobs: the SPURS job binaries, raw blobs cut at a virtual address (vaddr; vaddr_eu in the",
+  "European EBOOT), with size and fingerprint. Addresses, sizes and hashes only; no bytes of the game."
  ],
  "images": {
   "spu_0000_at_01760280": {
@@ -59,11 +60,13 @@
  "jobs": {
   "spujob_0177B480": {
    "vaddr": "0x0177B480",
+   "vaddr_eu": "0x0177D580",
    "size": 384,
    "fnv": "0xB1463A6F2DF960AC"
   },
   "spujob_0177B600": {
    "vaddr": "0x0177B600",
+   "vaddr_eu": "0x0177D700",
    "size": 2064,
    "fnv": "0xBD46853E5ADE5098"
   }

@@ -299,8 +299,8 @@ void SetupRpcs3Window::draw() {
             check_again(row);
         } else if (mRequest.game.empty() && mStatus.libraryKind == "store") {
             auto* row = found(box, "setup-err", "Demon's Souls, PlayStation Store version (NPUB30910)",
-                              "Only the disc version, BLUS30443, is supported. The store version is packaged and "
-                              "locked differently.");
+                              "Only the disc versions, BLUS30443 (US) and BLES00932 (Europe), are supported. The "
+                              "store version is packaged and locked differently.");
             tag(row, "err", "Not supported");
         } else if (mRequest.game.empty() && (mStatus.libraryKind == "none" || mStatus.libraryKind.empty()) &&
                    game.empty()) {
@@ -313,11 +313,16 @@ void SetupRpcs3Window::draw() {
             set_buttons(mGameButtons, more, {{"Choose the game folder", [this] { choose(Picking::Game); }, Look::Plain}});
         } else if (isGame) {
             const auto wrong = std::find_if(disc.begin(), disc.end(), bad);
+            // The game's line starts with its TITLE_ID ("BLES00932, version 01.00 (the European disc).").
+            const setup::Disc* which = setup::disc_of(std::string_view(game.front()->text).substr(0, 9));
+            const std::string title = which ? which->title : setup::kDiscs[0].title;
+            const std::string name = std::string("Demon's Souls, ") + (which ? which->name : setup::kDiscs[0].name) +
+                                     ", version 1.00";
             if (wrong == disc.end()) {
-                auto* row = found(box, "setup-ok", "Demon's Souls, US disc, version 1.00", "BLUS30443 · " + where);
+                auto* row = found(box, "setup-ok", name, title + " · " + where);
                 tag(row, "ok", "Supported");
             } else {
-                auto* row = found(box, "setup-err", "Demon's Souls, US disc, version 1.00", (*wrong)->text);
+                auto* row = found(box, "setup-err", name, (*wrong)->text);
                 tag(row, "err", "Needs fixing");
                 check_again(row);
             }

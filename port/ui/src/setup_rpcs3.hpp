@@ -18,7 +18,7 @@ struct Rpcs3 {
     std::filesystem::path folder;   // the folder that holds the program; empty: no RPCS3
     std::filesystem::path program;  // what the engine runs (--rpcs3): rpcs3.exe, rpcs3 or an AppImage
     bool portable = false;          // a portable folder beside the program: setup starts it only while it is closed
-    Library library = Library::None;  // Demon's Souls (BLUS30443) in RPCS3's game list
+    Library library = Library::None;  // Demon's Souls (BLUS30443, else BLES00932) in RPCS3's game list
     std::filesystem::path game;       // that entry: the folder that holds PS3_GAME, or the ISO file
 
     bool found() const { return !folder.empty(); }

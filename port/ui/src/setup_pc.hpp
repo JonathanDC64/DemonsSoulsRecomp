@@ -6,12 +6,23 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ui::setup {
 
-// The one title the port supports (tools/setup/des_setup/game_table.json). The engine checks the rest.
-inline constexpr const char* kTitleId = "BLUS30443";
+// The discs the port supports (tools/setup/des_setup/game_table.json), the US disc first. The engine checks the rest.
+struct Disc {
+    const char* title;  // its TITLE_ID
+    const char* name;   // "US disc"
+};
+inline constexpr Disc kDiscs[] = {{"BLUS30443", "US disc"}, {"BLES00932", "European disc"}};
+// The supported disc with this TITLE_ID, or nullptr.
+inline const Disc* disc_of(std::string_view title) {
+    for (const Disc& d : kDiscs)
+        if (title == d.title) return &d;
+    return nullptr;
+}
 
 // Setup's peak disk use from scratch: about 2.5 GB during the compile and link, and it asks for 4 GB free (docs/52
 // 10.2, after docs/45). Inferred from measured parts; a whole run on a player's PC has not been measured.
@@ -20,7 +31,7 @@ inline constexpr unsigned long long kNeedBytes = 4ull << 30;
 // A folder that holds PS3_GAME/PARAM.SFO.
 struct Place {
     std::filesystem::path folder;
-    std::string title;    // PARAM.SFO's TITLE_ID ("BLUS30443")
+    std::string title;    // PARAM.SFO's TITLE_ID ("BLUS30443", "BLES00932")
     std::string version;  // its APP_VER ("01.00")
     bool library = false;  // the folder RPCS3's game list gives for the game (likely_places' `library`)
 };

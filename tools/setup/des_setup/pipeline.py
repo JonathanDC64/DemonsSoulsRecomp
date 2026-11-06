@@ -374,7 +374,7 @@ def _game_check(req, t, data, unlocks, progress=None, unlocked=False):
         exe = rpcs3.find(req.get("rpcs3"))
         fw = True                       # (RPCS3 gone: the run says so, not that it lacks the system software)
         if exe:
-            also[lift.EBOOT] = rpcs3.ppu_debug_eboots(exe, t["title_id"])
+            also[lift.EBOOT] = [p for tid in gamefiles.titles(t) for p in rpcs3.ppu_debug_eboots(exe, tid)]
             fw = rpcs3_library.firmware(rpcs3_library.folders(exe)) is not None
     return gamefiles.check(req["game"], dirs, req.get("firmware"), table=t, progress=progress, unlocks=unlocks,
                            also=also or None, firmware_unlock=fw)
@@ -410,7 +410,7 @@ def _unlock(rep, req, data, jr, emit, total, table, kw):
     fw = [i for i in rep.items if i.kind == "firmware" and not i.good and i.unlock]
     if not need and not fw:
         return rep, True
-    t = table or gamefiles.load_table()
+    t = rep.table or table or gamefiles.load_table()
     exe, state = _rpcs3_state(req, data)
     if exe is None:
         raise rpcs3.UnlockFailed("unlock", f"RPCS3 is not in {rpcs3.where(req['rpcs3'])} any more.")
@@ -687,13 +687,14 @@ def _run(data, req, app, jobs, check_only, emit, src, table, manifest, phases, c
             elif phase == "lift":
                 sums = {i.name: i.sha256 for i in rep.inputs()}
                 lift.Lift(data, jr, src=src or lift.SRC, workers=jobs, progress=total.step).run_all(
-                    sums.get(lift.EBOOT), sums.get("libsre.prx"))
+                    sums.get(lift.EBOOT), sums.get("libsre.prx"), title=rep.title_id)
             elif phase == "compile":
                 module = compile_fn(data, jr, jobs, total.step)
             elif phase == "import":
                 skipped = True
                 if importing:
-                    skipped = rpcs3_import.run(req, data, jr, table or gamefiles.load_table(), progress=total.part)
+                    skipped = rpcs3_import.run(req, data, jr, rep.table or table or gamefiles.load_table(),
+                                               progress=total.part)
                     req.pop("import", None)                   # done: a later run brings nothing across again
                     save_request(data, req)
             elif phase == "shaders":
@@ -765,7 +766,8 @@ def _rpcs3_found(req, exe, emit, t, from_library, gamedata):
         emit.error("rpcs3", "check", f"RPCS3 is not in {rpcs3.where(req['rpcs3'])} any more.")
         emit.done("fix")
         return 1
-    found = rpcs3_library.read(exe, t, gamedata)
+    title = None if from_library else gamefiles.title_of(req.get("game") or "")
+    found = rpcs3_library.read(exe, t, gamedata, title=title or None)
     emit.user(found.user, len(found.users), found.user_name)
     emit.library(found.library.kind, found.library.path)
     if from_library:

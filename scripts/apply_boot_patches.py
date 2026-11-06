@@ -6,7 +6,10 @@ hand fixes don't survive a re-lift. This script re-injects the small, well-under
 fixes that get Demon's Souls past its C++ static-init memory bootstrap. Run it after
 every `ppu_lifter.py` invocation, before building.
 
-Usage: python scripts/apply_boot_patches.py [lift dir, default work/recomp]
+Usage: python scripts/apply_boot_patches.py [lift dir, default work/recomp] [--title BLES00932]
+
+--title is the disc the lift is of (default BLUS30443). The European disc's functions are at other
+addresses, so their lifted names differ (scripts/des_region.py).
 
 Fixes:
 
@@ -27,6 +30,9 @@ Idempotent: running twice is a no-op. See docs/07-m2-boot-debug.md.
 If another program holds the chunk open, the write is retried for up to 30 s.
 """
 import sys, pathlib, time
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import des_region
 
 LIFT = pathlib.Path(__file__).resolve().parent.parent / "work" / "recomp"
 
@@ -49,22 +55,27 @@ LIFT = pathlib.Path(__file__).resolve().parent.parent / "work" / "recomp"
 # (confirmed via probe: 0x180), fall back to r5 if larger, min 16.
 # Patch 2 (force-build singleton X) stays DISABLED -- it was obsoleted by the rotl-UB fix
 # and corrupts a downstream singleton (see _OBSOLETE_PATCHES / commit history).
-PATCHES = [
-    (
-        "func_00AC8078 NULL-heap -> ds_heap",
-        "void func_00AC8078(ppu_context* ctx) {",
-        # Insert right after the opening brace (robust to a leading DS_FRAME(...)
-        # guard line from a --shadow-stack lift, which used to break the old
-        # signature+_cs_24 match). The NULL-heap check returns early before
-        # DS_FRAME is constructed, so the shadow stack stays balanced.
-        "void func_00AC8078(ppu_context* ctx) {\n",
-        "void func_00AC8078(ppu_context* ctx) {\n"
-        "        if ((uint32_t)ctx->gpr[3] == 0) { /* boot-patch: NULL heap pool -> ds_heap */\n"
-        "            uint32_t _sz = (uint32_t)ctx->gpr[4]; uint32_t _al = (uint32_t)ctx->gpr[5];\n"
-        "            if (_al > _sz) _sz = _al; if (_sz < 16) _sz = 16;\n"
-        "            ctx->gpr[3] = _sz; ds_malloc(ctx); return; }\n",
-    ),
-]
+def patches(title=des_region.US):
+    """The patches for a lift of the disc `title`, by the lifted names of its functions (the European
+    disc's functions are at other addresses: scripts/des_region.py)."""
+    f = des_region.func_name(des_region.load_table(), 0x00AC8078, title) if title != des_region.US \
+        else "func_00AC8078"
+    return [
+        (
+            f"{f} NULL-heap -> ds_heap",
+            f"void {f}(ppu_context* ctx) {{",
+            # Insert right after the opening brace (robust to a leading DS_FRAME(...)
+            # guard line from a --shadow-stack lift, which used to break the old
+            # signature+_cs_24 match). The NULL-heap check returns early before
+            # DS_FRAME is constructed, so the shadow stack stays balanced.
+            f"void {f}(ppu_context* ctx) {{\n",
+            f"void {f}(ppu_context* ctx) {{\n"
+            "        if ((uint32_t)ctx->gpr[3] == 0) { /* boot-patch: NULL heap pool -> ds_heap */\n"
+            "            uint32_t _sz = (uint32_t)ctx->gpr[4]; uint32_t _al = (uint32_t)ctx->gpr[5];\n"
+            "            if (_al > _sz) _sz = _al; if (_sz < 16) _sz = 16;\n"
+            "            ctx->gpr[3] = _sz; ds_malloc(ctx); return; }\n",
+        ),
+    ]
 _OBSOLETE_PATCHES = [
     (
         "func_00B0AF28 lazy-build singleton X",
@@ -116,13 +127,22 @@ def write_chunk(chunk, text):
 def main():
     # Optional argument: the lift directory (default work/recomp). The patched
     # function moves between chunks from one lift to the next, so find it.
-    lift = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else LIFT
+    args = sys.argv[1:]
+    title = des_region.US
+    if "--title" in args:
+        i = args.index("--title")
+        title = args[i + 1] if i + 1 < len(args) else ""
+        del args[i:i + 2]
+        if title not in des_region.TITLES:
+            print(f"ERROR: --title {title!r}: the port supports {', '.join(des_region.TITLES)}", file=sys.stderr)
+            return 1
+    lift = pathlib.Path(args[0]) if args else LIFT
     chunks = sorted(lift.glob("ppu_recomp_*.cpp"))
     if not chunks:
         print(f"ERROR: no chunks in {lift} (run the lifter first)", file=sys.stderr)
         return 1
     applied = 0
-    for desc, anchor, old, new in PATCHES:
+    for desc, anchor, old, new in patches(title):
         CHUNK = next((c for c in chunks if anchor in
                       c.read_text(encoding="utf-8", errors="surrogateescape")), chunks[0])
         text = CHUNK.read_text(encoding="utf-8", errors="surrogateescape")

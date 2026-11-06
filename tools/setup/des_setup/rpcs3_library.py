@@ -10,11 +10,11 @@ gets an answer.
 Where things are (Windows; on Linux the .yml files sit in <R> itself):
   <R>                         RPCS3's config folder (rpcs3.player_dirs)
   <R>config/vfs.yml           $(EmulatorDir), /dev_hdd0/ and /dev_flash/ (RPCS3's defaults when absent)
-  <R>config/games.yml         the library: BLUS30443's folder or ISO file (older builds: <R>games.yml)
+  <R>config/games.yml         the library: BLUS30443's or BLES00932's folder or ISO file (older builds: <R>games.yml)
   <R>GuiConfigs/persistent_settings.dat   [Users] active_user, the user RPCS3 uses
   <hdd0>home/<8 digits>/      each user: localusername, savedata/, trophy/
   <hdd0>game/NPUB30910/       the PlayStation Store version, which the port does not support
-  <R>config/config.yml, custom_configs/config_BLUS30443.yml, patch_config.yml   the settings and patches
+  <R>config/config.yml, custom_configs/config_<title>.yml, patch_config.yml   the settings and patches
   <dev_flash>sys/external/libsre.sprx     the PS3 system software's file the build lifts
   <dev_flash>vsh/etc/version.txt          its version
 """
@@ -26,10 +26,22 @@ from pathlib import Path
 
 from . import rpcs3, sfo, yaml_subset
 
-SAVE_DIR = "BLUS30443DEMONSS005"    # the game's save folder: one folder holds the system data and every character
-TROPHY_DIR = "NPWR00881_00"         # its trophy set, under home/<user>/trophy/
-TROPHY_FILE = "NPWR00881.json"      # the port's own trophy file (ps3recomp sceNpTrophy.c)
-TROPHY_COUNT = 38                   # the trophies the set has
+
+
+@dataclass(frozen=True)
+class Title:
+    """What a disc keeps under its own names."""
+    id: str             # its TITLE_ID
+    save_dir: str       # the game's save folder (the game names it): the system data and every character
+    trophy_dir: str     # its trophy set, under home/<user>/trophy/
+    trophy_file: str    # the port's own trophy file (ps3recomp sceNpTrophy.c)
+
+
+US_ID, EU_ID = "BLUS30443", "BLES00932"
+TITLES = {US_ID: Title(US_ID, "BLUS30443DEMONSS005", "NPWR00881_00", "NPWR00881.json"),
+          EU_ID: Title(EU_ID, "BLES00932DEMONSS005", "NPWR01249_00", "NPWR01249.json")}
+SAVE_DIR, TROPHY_DIR, TROPHY_FILE = TITLES[US_ID].save_dir, TITLES[US_ID].trophy_dir, TITLES[US_ID].trophy_file
+TROPHY_COUNT = 38                   # the trophies the set has (both discs' sets)
 STORE_ID = "NPUB30910"              # the US PlayStation Store version
 DEFAULT_USER = "00000001"
 SPRX = "sys/external/libsre.sprx"   # under dev_flash
@@ -72,6 +84,7 @@ class User:
 class Library:
     kind: str           # folder, iso, store or none
     path: Path = None   # the folder that holds PS3_GAME, the ISO file, or the store version's folder
+    title: str = ""     # the disc's TITLE_ID, for a folder or an ISO file
 
 
 @dataclass
@@ -103,20 +116,34 @@ class Found:
     trophies: Trophies
     settings: dict          # {settings.ini name: value}, only those that differ from the port's defaults
     firmware: Path = None   # libsre.sprx, or None when RPCS3 has no PS3 system software
+    title: str = US_ID      # the disc whose save, trophies and settings these are
 
     @property
     def user_name(self) -> str:
         return next((u.name for u in self.users if u.id == self.user), "")
 
 
-def read(exe, table, gamedata=None) -> Found:
-    """Everything the check reports about this RPCS3, for the table's title. gamedata: the port's gamedata folder (its
-    own save), or None."""
+def title_ids(table) -> list:
+    """The table's discs (gamefiles.titles), the table's own first."""
+    ids = [table["title_id"], US_ID] + list(table.get("titles", {}))
+    return [t for k, t in enumerate(ids) if t in TITLES and t not in ids[:k]]
+
+
+def read(exe, table, gamedata=None, title=None) -> Found:
+    """Everything the check reports about this RPCS3. gamedata: the port's gamedata folder (its own save), or None.
+    title: the disc whose save, trophies and settings to read (the game folder's); None: the one in RPCS3's library,
+    else the table's."""
     f = folders(exe)
     us = users(f)
     user = active_user(f, us)
-    return Found(f, us, user, library(f, table["title_id"]), save(f, user, us), port_save(gamedata),
-                 trophies(f, user), settings(f, table["title_id"], table["app_ver"]), firmware(f))
+    ids = title_ids(table)
+    lib = library(f, [title] + ids if title in TITLES else ids)
+    tid = title if title in TITLES else lib.title or ids[0]
+    t = TITLES[tid]
+    app_ver = table["app_ver"] if tid == table["title_id"] else \
+        table.get("titles", {}).get(tid, {}).get("app_ver", table["app_ver"])
+    return Found(f, us, user, lib, save(f, user, us, t.save_dir), port_save(gamedata, t.save_dir),
+                 trophies(f, user, t.trophy_dir), settings(f, tid, app_ver), firmware(f), tid)
 
 
 # ---- where things are ----
@@ -159,13 +186,19 @@ def firmware_version(f: Folders) -> str:
 
 # ---- the library ----
 
-def library(f: Folders, title_id) -> Library:
-    """The title's games.yml entry (System.cpp, game_enumeration.h): a disc root, a PS3_GAME folder marked by a
-    trailing "/./", or an ISO file. With none, the store version's folder if RPCS3 has it."""
-    for p in (f.config / "games.yml", f.root / "games.yml"):
-        v = yaml_subset.load_file(p).get(title_id)
-        if isinstance(v, str) and v.strip():
-            return entry(v.strip())
+def library(f: Folders, title_ids) -> Library:
+    """The first of the titles with a games.yml entry (System.cpp, game_enumeration.h): a disc root, a PS3_GAME folder
+    marked by a trailing "/./", or an ISO file. With none, the store version's folder if RPCS3 has it."""
+    if isinstance(title_ids, str):
+        title_ids = [title_ids]
+    ymls = [yaml_subset.load_file(p) for p in (f.config / "games.yml", f.root / "games.yml")]
+    for tid in title_ids:
+        for y in ymls:
+            v = y.get(tid)
+            if isinstance(v, str) and v.strip():
+                lib = entry(v.strip())
+                lib.title = tid
+                return lib
     store = f.hdd0 / "game" / STORE_ID
     return Library("store", store) if store.is_dir() else Library("none")
 
@@ -232,16 +265,16 @@ def ini_value(path, section, key) -> str:
 
 # ---- the save ----
 
-def save(f: Folders, user, found: list) -> Save:
+def save(f: Folders, user, found: list, save_dir=SAVE_DIR) -> Save:
     """The user's save: busy while a .working_ or .backup_ folder sits beside it (RPCS3 is mid-save, cellSaveData.cpp),
     ok when its PARAM.SFO reads, else other-user when another user has one, else none."""
     base = f.hdd0 / "home" / user / "savedata"
-    folder = base / SAVE_DIR
-    if any((base / (pre + SAVE_DIR)).exists() for pre in (".working_", ".backup_")):
+    folder = base / save_dir
+    if any((base / (pre + save_dir)).exists() for pre in (".working_", ".backup_")):
         return Save("busy", folder, newest(folder))
     if psf_save(folder):
         return Save("ok", folder, newest(folder))
-    others = [u.id for u in found if u.id != user and psf_save(f.hdd0 / "home" / u.id / "savedata" / SAVE_DIR)]
+    others = [u.id for u in found if u.id != user and psf_save(f.hdd0 / "home" / u.id / "savedata" / save_dir)]
     return Save("other-user" if others else "none")
 
 
@@ -254,21 +287,21 @@ def psf_save(folder: Path) -> bool:
         return False
 
 
-def port_save_folder(gamedata) -> Path:
+def port_save_folder(gamedata, save_dir=SAVE_DIR) -> Path:
     """Where the game keeps its save (ps3recomp cellSaveData.c): PS3_SAVEDATA_ROOT, else
     gamedata/dev_hdd0/home/00000001/savedata. A relative root is the game's working folder's (the gamedata's
     parent)."""
     gamedata = Path(gamedata)
     root = os.environ.get("PS3_SAVEDATA_ROOT")
     base = (gamedata.parent / root) if root else gamedata / "dev_hdd0" / "home" / DEFAULT_USER / "savedata"
-    return base / SAVE_DIR
+    return base / save_dir
 
 
-def port_save(gamedata) -> Save:
+def port_save(gamedata, save_dir=SAVE_DIR) -> Save:
     """The port's own save: ok when it has a PARAM.SFO (the game's own test, dir_has_save), else none."""
     if gamedata is None:
         return Save("none")
-    folder = port_save_folder(gamedata)
+    folder = port_save_folder(gamedata, save_dir)
     return Save("ok", folder, newest(folder)) if (folder / "PARAM.SFO").is_file() else Save("none", folder)
 
 
@@ -308,8 +341,8 @@ def stamp(folder: Path) -> list:
 
 # ---- trophies ----
 
-def trophies(f: Folders, user) -> Trophies:
-    p = f.hdd0 / "home" / user / "trophy" / TROPHY_DIR / "TROPUSR.DAT"
+def trophies(f: Folders, user, trophy_dir=TROPHY_DIR) -> Trophies:
+    p = f.hdd0 / "home" / user / "trophy" / trophy_dir / "TROPUSR.DAT"
     try:
         total, unlocked = read_tropusr(p.read_bytes())
     except (OSError, TrophyError):

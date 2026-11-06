@@ -2,6 +2,7 @@
 // is called, where it keeps its settings and where to look for it; checking a folder and reading the game list's line
 // are the same everywhere.
 #include "setup_rpcs3.hpp"
+#include "setup_pc.hpp"   // kDiscs
 
 #ifdef _WIN32
 #include <windows.h>
@@ -25,7 +26,6 @@
 namespace ui::setup {
 namespace {
 
-constexpr const char* kTitle = "BLUS30443";  // the one title the port supports (setup_pc.hpp's kTitleId)
 constexpr size_t kMaxEntries = 400;           // folders looked at in one folder, at most (as setup_pc.cpp's scan)
 
 std::string utf8(const std::filesystem::path& p) {
@@ -318,34 +318,44 @@ std::string yaml_scalar(std::string v) {
     return v;
 }
 
-// The BLUS30443 line of RPCS3's game list: config/games.yml (or games.yml, in builds before 2023) in its settings
-// folder, "BLUS30443: <path>". The path is the disc copy's folder, or its PS3_GAME folder written with "/./" at the
-// end, or an ISO file.
+// The line of a supported disc in RPCS3's game list, the US disc's first (setup_pc.hpp's kDiscs):
+// config/games.yml (or games.yml, in builds before 2023) in its settings folder, "BLUS30443: <path>". The path is the
+// disc copy's folder, or its PS3_GAME folder written with "/./" at the end, or an ISO file.
+bool library_entry(const std::vector<std::string>& lines, const char* title, Rpcs3& r) {
+    const std::string head = std::string(title) + ":";
+    for (const std::string& line : lines) {
+        if (line.compare(0, head.size(), head) != 0) continue;
+        std::string v = yaml_scalar(line.substr(head.size()));
+        if (v.empty()) return false;
+        if (lower(v).size() > 4 && lower(v).substr(v.size() - 4) == ".iso") {
+            r.library = Rpcs3::Library::Iso;
+            r.game = from_utf8(v);
+            return true;
+        }
+        std::replace(v.begin(), v.end(), '\\', '/');
+        while (v.size() > 1 && (v.back() == '/' || (v.size() >= 2 && v.compare(v.size() - 2, 2, "/.") == 0)))
+            v.pop_back();
+        std::filesystem::path game = from_utf8(v);
+        if (lower(utf8(game.filename())) == "ps3_game") game = game.parent_path();
+        r.library = Rpcs3::Library::Folder;
+        r.game = game;
+        return true;
+    }
+    return false;
+}
+
 void read_library(Rpcs3& r) {
     const auto cfg = config_dir(r.program);
     for (const auto& list : {cfg / "config" / "games.yml", cfg / "games.yml"}) {
         std::ifstream in(list, std::ios::binary);
         if (!in) continue;
-        const std::string head = std::string(kTitle) + ":";
+        std::vector<std::string> lines;
         for (std::string line; std::getline(in, line);) {
             if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.compare(0, head.size(), head) != 0) continue;
-            std::string v = yaml_scalar(line.substr(head.size()));
-            if (v.empty()) return;
-            if (lower(v).size() > 4 && lower(v).substr(v.size() - 4) == ".iso") {
-                r.library = Rpcs3::Library::Iso;
-                r.game = from_utf8(v);
-                return;
-            }
-            std::replace(v.begin(), v.end(), '\\', '/');
-            while (v.size() > 1 && (v.back() == '/' || (v.size() >= 2 && v.compare(v.size() - 2, 2, "/.") == 0)))
-                v.pop_back();
-            std::filesystem::path game = from_utf8(v);
-            if (lower(utf8(game.filename())) == "ps3_game") game = game.parent_path();
-            r.library = Rpcs3::Library::Folder;
-            r.game = game;
-            return;
+            lines.push_back(std::move(line));
         }
+        for (const Disc& disc : kDiscs)
+            if (library_entry(lines, disc.title, r)) return;
         return;  // (the first list found is the one RPCS3 reads)
     }
 }

@@ -13,6 +13,7 @@
  * DES_UI_SOUND=0 keeps the UI silent. */
 
 #include "ps3emu/ppu_lift.h"   /* ppu_context: the fixed part of the lift's header */
+#include "des_region.h"      /* DES_AT: the running disc's addresses */
 #include "des_game_calls.h"     /* the lifted functions below (the game DLL's with DES_SPLIT) */
 #include "ui/include/des_ui.h"
 #include <atomic>
@@ -157,13 +158,13 @@ extern "C" void des_menu_tick(ppu_context* ctx)
             const int32_t id = s_q[t % kQ].id.load(std::memory_order_relaxed);
             const bool fresh = now - s_q[t % kQ].at_ms.load(std::memory_order_relaxed) <= kMaxAgeMs;
             s_tail.store(++t, std::memory_order_release);
-            if (!fresh || !allowed(id) || vm_read32(kMenuSeMgr) == 0) continue;
-            const uint32_t slot_ea = vm_read32(kMenuSeMgr) + 8 + 16 * slot_of(id);
+            if (!fresh || !allowed(id) || vm_read32(DES_AT(kMenuSeMgr)) == 0) continue;
+            const uint32_t slot_ea = vm_read32(DES_AT(kMenuSeMgr)) + 8 + 16 * slot_of(id);
             uint32_t before[4] = {};
             if (s_test)
                 for (int i = 0; i < 4; i++) before[i] = vm_read32(slot_ea + 4 * i);
             ctx->gpr[3] = (uint32_t)id;
-            ctx->lr = 0x00724E40u;
+            ctx->lr = DES_AT(0x00724E40u);
             func_0072D970(ctx);   /* tail-calls 0x72D538(mgr, id, 2) */
             while (g_trampoline_fn) {
                 void (*tf)(void*) = g_trampoline_fn;

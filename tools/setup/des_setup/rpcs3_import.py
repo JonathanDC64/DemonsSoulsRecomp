@@ -53,12 +53,12 @@ def items(req) -> list:
     return [i for i in ITEMS if i in (imp.get("items") or [])]
 
 
-def trophy_file(gamedata) -> Path:
-    """The port's trophy file (sceNpTrophy.c): PS3_TROPHY_DIR, else gamedata/trophies; a relative folder is the game's
-    working folder's (the gamedata's parent)."""
+def trophy_file(gamedata, name=lib.TROPHY_FILE) -> Path:
+    """The port's trophy file (sceNpTrophy.c), named by the disc's trophy set: PS3_TROPHY_DIR, else gamedata/trophies;
+    a relative folder is the game's working folder's (the gamedata's parent)."""
     gamedata = Path(gamedata)
     d = os.environ.get("PS3_TROPHY_DIR")
-    return (gamedata.parent / d if d else gamedata / "trophies") / lib.TROPHY_FILE
+    return (gamedata.parent / d if d else gamedata / "trophies") / name
 
 
 class _Log:
@@ -114,7 +114,7 @@ def run(req, data, jr, table, progress=None) -> bool:
             log.note("no gamedata folder: run with --gamedata")
             raise ImportFailed(step, sentence(step), log.path)
         (data / "setup" / IMPORTED).unlink(missing_ok=True)
-        found = lib.read(exe, table, gamedata)
+        found = lib.read(exe, table, gamedata, title=table["title_id"])
         log.note(f"RPCS3: {exe}; user {found.user}; save {found.save.state}; trophies {found.trophies.state} "
                  f"{found.trophies.earned}/{found.trophies.total}; settings: {', '.join(found.settings) or 'none'}")
         backups, results, ran = _Backups(gamedata), {}, False
@@ -137,7 +137,7 @@ def run(req, data, jr, table, progress=None) -> bool:
 # ---- the save ----
 
 def _save_step(found, imp, gamedata, jr, log, backups):
-    src, dest = found.save, lib.port_save_folder(gamedata)
+    src, dest = found.save, lib.port_save_folder(gamedata, lib.TITLES[found.title].save_dir)
     fp = journal.fingerprint("import-save", imp.get("asked"), str(src.folder or ""),
                              lib.stamp(src.folder) if src.folder else None, str(dest))
     ran, res = jr.run("import-save", fp, lambda: import_save(src, dest, Path(gamedata), log, backups),
@@ -147,14 +147,16 @@ def _save_step(found, imp, gamedata, jr, log, backups):
 
 def import_save(src: lib.Save, dest: Path, gamedata: Path, log, backups) -> dict:
     """docs/90 3.5: stop on a busy save; back up the port's own; stage the copy in <gamedata>/import/ with the port's
-    PARAM.SFO and PARAM.PFD; check that RPCS3 did not save meanwhile; then swap the folders by two renames."""
+    PARAM.SFO and PARAM.PFD; check that RPCS3 did not save meanwhile; then swap the folders by two renames. The folders
+    are named as dest, the disc's save folder."""
     step = "import-save"
+    name = dest.name
     if src.state == "busy":
         raise ImportFailed(step, SAVE_BUSY, log.path)
     if src.state != "ok":
         raise ImportFailed(step, NO_SAVE, log.path)
-    staging = gamedata / "import" / lib.SAVE_DIR
-    aside = gamedata / "import" / (lib.SAVE_DIR + ".old")
+    staging = gamedata / "import" / name
+    aside = gamedata / "import" / (name + ".old")
     try:
         before = lib.stamp(src.folder)
         log.note(f"RPCS3's save: {src.folder}, {len(before)} files, newest {src.saved}")
@@ -162,7 +164,7 @@ def import_save(src: lib.Save, dest: Path, gamedata: Path, log, backups) -> dict
         _put_back(aside, dest, log, backups)
         backup = None
         if dest.is_dir() and any(dest.iterdir()):
-            backup = backups.folder() / lib.SAVE_DIR
+            backup = backups.folder() / name
             copy_checked(dest, backup)
             log.note(f"the port's own save is backed up in {backup}")
         n = stage(src.folder, vals, staging)
@@ -259,7 +261,7 @@ def _put_back(aside: Path, dest: Path, log, backups):
         os.rename(aside, dest)
         log.note(f"put back the save a stopped import had moved to {aside}")
     else:
-        keep = backups.folder() / (lib.SAVE_DIR + ".old")
+        keep = backups.folder() / (dest.name + ".old")
         os.rename(aside, keep)
         log.note(f"kept a folder a stopped import left in {aside} as {keep}")
 
@@ -284,7 +286,7 @@ def swap(staging: Path, dest: Path, aside: Path):
 # ---- trophies ----
 
 def _trophies_step(found, imp, gamedata, jr, log, backups):
-    t, path = found.trophies, trophy_file(gamedata)
+    t, path = found.trophies, trophy_file(gamedata, lib.TITLES[found.title].trophy_file)
     src_sum = gamefiles.sha256_file(t.path) if t.path and t.path.is_file() else None
     fp = journal.fingerprint("import-trophies", imp.get("asked"), str(t.path or ""), src_sum, str(path))
     ran, res = jr.run("import-trophies", fp, lambda: import_trophies(t, path, log, backups), outputs=[path],

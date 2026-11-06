@@ -118,13 +118,13 @@ def cmd_check(a) -> int:
     t = gamefiles.load_table()
     print(f"ok   RPCS3: {exe}" + (" (a portable install: setup runs it only while it is closed)"
                                   if (exe.parent / "portable").is_dir() else ""))
-    found = rpcs3_library.read(exe, t, a.gamedata)
+    found = rpcs3_library.read(exe, t, a.gamedata, title=gamefiles.title_of(a.game) if a.game else None)
     game = a.game or _print_found(found, from_library=not a.game)
     if not game:
         return 1
     if a.game:
         _print_found(found, from_library=False)
-    also = {lift.EBOOT: rpcs3.ppu_debug_eboots(exe, t["title_id"])}
+    also = {lift.EBOOT: [p for tid in gamefiles.titles(t) for p in rpcs3.ppu_debug_eboots(exe, tid)]}
     rep = gamefiles.check(game, a.decrypted, a.firmware, table=t, unlocks=True, also=also,
                           firmware_unlock=found.firmware is not None)
     _print_report(rep, unlocks=True)

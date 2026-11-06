@@ -96,6 +96,7 @@
  */
 
 #include "ps3emu/ppu_lift.h"   /* ppu_context: the fixed part of the lift's header */
+#include "des_region.h"      /* DES_AT: the running disc's addresses */
 #include "des_game_calls.h"     /* the lifted functions below (the game DLL's with DES_SPLIT) */
 #include "ps3emu/ps3_knob.h"   /* ps3_setenv: through the runtime's getenv cache */
 #include <cmath>
@@ -270,14 +271,14 @@ void fade_plate_update(ppu_context* ctx)   /* for 0x0071A6B8 */
 {
     const uint32_t dlg = (uint32_t)ctx->gpr[3];
     func_0071A6B8(ctx);
-    if (dlg && vm_read32(dlg) == kFadePlateVt) plate_after_update(dlg, s_fade_log);
+    if (dlg && vm_read32(dlg) == DES_AT(kFadePlateVt)) plate_after_update(dlg, s_fade_log);
 }
 
 void back_plate_update(ppu_context* ctx)   /* for 0x008F2A58 */
 {
     const uint32_t dlg = (uint32_t)ctx->gpr[3];
     func_008F2A58(ctx);
-    if (dlg && vm_read32(dlg) == kBackPlateVt) plate_after_update(dlg, s_back_log);
+    if (dlg && vm_read32(dlg) == DES_AT(kBackPlateVt)) plate_after_update(dlg, s_back_log);
 }
 
 /* For 0x0012EE08, which records a camera's projection (command 0x39) from
@@ -521,8 +522,8 @@ void aspect_apply(const char* v, const char* hud, bool live)
     if (s_off) {
         if (a != kGameAspect)
             fprintf(stderr, "[des] DES_ASPECT: the default aspect words hold %g and %g, not 16:9 (another release "
-                    "of the game?): left alone, the picture stays 16:9\n", vm_readf(kCameraAspect),
-                    vm_readf(kContextAspect));
+                    "of the game?): left alone, the picture stays 16:9\n", vm_readf(DES_AT(kCameraAspect)),
+                    vm_readf(DES_AT(kContextAspect)));
         return;
     }
     int changed = 0;
@@ -536,8 +537,8 @@ void aspect_apply(const char* v, const char* hud, bool live)
         const uint32_t was = float_bits(s_aspect), now = float_bits(world);
         listed = s_cams.size();
         if (was != now) {
-            vm_writef(kCameraAspect, world);
-            vm_writef(kContextAspect, world);
+            vm_writef(DES_AT(kCameraAspect), world);
+            vm_writef(DES_AT(kContextAspect), world);
             for (uint32_t c : s_cams)
                 if (camera_holds(c, was)) {
                     vm_write32(c + kCamAspect, now);
@@ -556,7 +557,7 @@ void aspect_apply(const char* v, const char* hud, bool live)
     s_hud_t = !stretch && a < kGameAspect ? (kCanvasW / a - kCanvasH) * 0.5f : 0.0f;
     s_hud_ky = (kCanvasH + 2.0f * s_hud_t) / kCanvasH;
     if (a < kGameAspect) {
-        const double half = std::tan(vm_readf(kCameraFov) * 0.5), deg = 360.0 / 3.14159265358979;
+        const double half = std::tan(vm_readf(DES_AT(kCameraFov)) * 0.5), deg = 360.0 / 3.14159265358979;
         fprintf(stderr, "[des] DES_ASPECT=%s: the picture is %.4f:1, as wide a view as 16:9 and %.0f degrees high at the "
                 "default FOV (16:9: %.0f); HUD canvas y %.2f to %.2f\n", v, a, std::atan(half * s_tall_k) * deg,
                 std::atan(half) * deg, -s_hud_t, kCanvasH + s_hud_t);
@@ -574,7 +575,7 @@ void aspect_apply(const char* v, const char* hud, bool live)
         fprintf(stderr, "[des] DES_ASPECT=%s, live: the picture is 16:9", name);
     } else {
         /* The horizontal FOV at the default (vertical) one, in degrees. */
-        const double half = std::tan(vm_readf(kCameraFov) * 0.5), deg = 360.0 / 3.14159265358979;
+        const double half = std::tan(vm_readf(DES_AT(kCameraFov)) * 0.5), deg = 360.0 / 3.14159265358979;
         fprintf(stderr, "[des] DES_ASPECT=%s%s: the picture is %.4f:1, %.0f degrees across at the default FOV (16:9: %.0f)",
                 name, live ? ", live" : "", a, std::atan(half * a) * deg, std::atan(half * kGameAspect) * deg);
     }
@@ -597,12 +598,12 @@ extern "C" void des_aspect_init(void)
 {
     const char* shown = getenv("RSX_ASPECT");
     s_rsx_pinned = shown && *shown;
-    const float was_camera = vm_readf(kCameraAspect), was_context = vm_readf(kContextAspect);
+    const float was_camera = vm_readf(DES_AT(kCameraAspect)), was_context = vm_readf(DES_AT(kContextAspect));
     s_off = std::fabs(was_camera - kGameAspect) > 1e-5f || std::fabs(was_context - kGameAspect) > 1e-5f;
     /* Wrapped whatever the HUD is at start: a live change can centre it. */
-    ppu_register_function(kDlgBaseUpdate, fade_plate_update);
-    ppu_register_function(kBackPlateUpdate, back_plate_update);
-    ppu_register_function(0x0012EE08u, cam_record_projection);
+    DES_REGISTER_FUNCTION(kDlgBaseUpdate, fade_plate_update);
+    DES_REGISTER_FUNCTION(kBackPlateUpdate, back_plate_update);
+    DES_REGISTER_FUNCTION(0x0012EE08u, cam_record_projection);
     aspect_apply(getenv("DES_ASPECT"), getenv("DES_HUD"), false);
 }
 

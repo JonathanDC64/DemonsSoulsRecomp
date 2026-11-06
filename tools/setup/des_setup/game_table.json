@@ -1,10 +1,32 @@
 {
- "comment": "BLUS30443 version 1.00, the one version the port supports (docs/51 appendix A). SHA-256 sums and sizes only: no bytes of the game. sha256 null = not measured yet; then the file is checked by its magic instead.",
+ "comment": "BLUS30443 version 1.00, the US disc, and BLES00932 version 1.00, the European disc: the versions the port supports (docs/51 appendix A). SHA-256 sums and sizes only: no bytes of the game. sha256 null = not measured yet; then the file is checked by its magic instead.",
  "title_id": "BLUS30443",
  "app_ver": "01.00",
  "version": "01.00",
+ "disc": "the US disc",
+ "titles": {
+  "BLES00932": {
+   "comment": "The European disc (English, French, German, Spanish and Italian), version 1.00. Its files are the US disc's but for these, and 211 more files of its four other languages.",
+   "disc": "the European disc",
+   "app_ver": "01.00",
+   "version": "01.00",
+   "files": {
+    "PS3_GAME/PARAM.SFO": {
+     "size": 1008,
+     "sha256": "00bf7171fde35853bb1dbac91d131ce21682a724b27fa7004753c39bc645b299"
+    },
+    "PS3_GAME/USRDIR/EBOOT.BIN": {
+     "size": 28225480,
+     "sha256": "0245165fd097c0135f8da1007ec0d2fcc0b1de1305946b619457d9dc06a80a2c"
+    },
+    "PS3_GAME/USRDIR/EBOOT.elf": {
+     "size": 28223048,
+     "sha256": "ad67e0b852faa2b459a2344f80dbae21ce3c92263ebea67c643231c653e30ed3"
+    }
+   }
+  }
+ },
  "other_titles": {
-  "BLES00932": "the European disc",
   "BCAS20071": "the Asian disc",
   "BCJS30022": "the Japanese disc",
   "BLUD80018": "the US trade demo",

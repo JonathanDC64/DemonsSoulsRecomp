@@ -50,6 +50,8 @@ NEEDS_ADMIN = ("Your RPCS3 is set to run as administrator, so setup cannot start
 # The PS3 system software Sony offers now, whose libsre.prx firmware.py makes into the table's (a tester's run, 10-30).
 # 4.90's cannot be (docs/90 9.2).
 FIRMWARE_WORKS = "4.93"
+# The versions whose libsre.prx fails the sum every time (docs/90 9.2), so the check says so before RPCS3 runs.
+FIRMWARE_FAILS = ("4.90",)
 
 
 class UnlockFailed(journal.StepFailed):
@@ -81,6 +83,14 @@ class Job:
 def usrdir(path: str) -> str:
     """A table path under USRDIR: "PS3_GAME/USRDIR/chr/m02.chresdbnd.dcx.sdat" is "chr/m02.chresdbnd.dcx.sdat"."""
     return path.split("USRDIR/", 1)[-1]
+
+
+def firmware_refused(version: str) -> str:
+    """The check's sentence when RPCS3's PS3 system software is a version setup cannot use, else ""."""
+    if version not in FIRMWARE_FAILS:
+        return ""
+    return (f"RPCS3 has PS3 system software {version}, which setup cannot use. Install {FIRMWARE_WORKS}, the one Sony "
+            f"offers now, in RPCS3 (File, then Install Firmware), then press Check again.")
 
 
 def different(name: str, kind="decrypted", version="") -> str:

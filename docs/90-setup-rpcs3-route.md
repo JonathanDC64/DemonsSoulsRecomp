@@ -760,6 +760,8 @@ Only 4.86 and 4.89 have been measured. Inferred: other 4.x versions differ the s
 
 So when libsre.prx fails the sum, the sentence names the version from RPCS3's `dev_flash/vsh/etc/version.txt` ("release:04.9000:") and says to install 4.93. Setup keeps working with 4.86 and 4.89 as before.
 
+**4.90 is refused at the check (11-06, issue #369, a second player on 4.90).** Before, the player waited for the whole unlock, and only libsre.prx failed at its end. Now, when `version.txt` says 4.90 (`rpcs3.FIRMWARE_FAILS`), the check marks libsre.prx with "RPCS3 has PS3 system software 4.90, which setup cannot use. Install 4.93, the one Sony offers now, in RPCS3 (File, then Install Firmware), then press Check again." RPCS3 is not started. A good copy kept in `inputs/` from an earlier run still counts.
+
 ### 9.3 The host's pages
 
 

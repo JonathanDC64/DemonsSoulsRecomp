@@ -271,9 +271,12 @@ class Compile:
         self._sums, self._sums_lock = {}, threading.Lock()
 
     # ---- the description ----
-    def expand(self, s: str) -> str:
-        return (s.replace("{src}", self.src.as_posix()).replace("{work}", self.work.as_posix())
-                .replace("{gen}", self.gen.as_posix()))
+    def expand(self, s: str, pattern: bool = False) -> str:
+        """The description's {src}, {work} and {gen} as paths. pattern: for a glob, with
+        the folders escaped, so a folder named "Games [PS3]" is not read as a character class."""
+        q = globmod.escape if pattern else (lambda p: p)
+        return (s.replace("{src}", q(self.src.as_posix())).replace("{work}", q(self.work.as_posix()))
+                .replace("{gen}", q(self.gen.as_posix())))
 
     def plan(self) -> list:
         """The objects, in the description's order (sources of a glob sorted by
@@ -282,7 +285,7 @@ class Compile:
         for o in self.desc["objects"]:
             args = [self.expand(a) for a in o["args"]]
             if "glob" in o:
-                found = sorted(globmod.glob(self.expand(o["glob"])))
+                found = sorted(globmod.glob(self.expand(o["glob"], pattern=True)))
                 if not found:
                     raise journal.StepFailed("compile", f"no {o['name']} sources ({o['glob']}): run the lift first")
                 for f in found:

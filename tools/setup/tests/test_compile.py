@@ -111,10 +111,10 @@ __attribute__((constructor)) static void des_spu_autoreg(void) { des_spu_registe
 
 
 class Tree:
-    def __init__(self):
+    def __init__(self, src="src with space", data="data"):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.src, self.data, self.tools = root / "src with space", root / "data", root / "tools"
+        self.src, self.data, self.tools = root / src, root / data, root / "tools"
         for rel, text in {
             "inc/rt.h": "// runtime header\n",
             "ps3recomp/runtime/spu/spu_workload.h": "// the workload registry\n",
@@ -337,6 +337,17 @@ class TestCompile(unittest.TestCase):
         log = (self.t.data / "setup/logs/cc_ppu_recomp_000.log").read_text()
         self.assertIn(" -MF ", log)
         self.assertNotIn("/Fo", log)
+
+    def test_folders_with_glob_characters(self):
+        """Issue #385: the program in "Demon's soul [PS3] Recomp", the build folder in "Games [PS3]". A glob read
+        each folder's brackets as a character class and found no lifted sources."""
+        t = Tree(src="PC Comp & Recomp/Demon's soul [PS3] Recomp", data="Games [PS3]/data")
+        self.addCleanup(t.tmp.cleanup)
+        c = t.make()
+        c._gen()
+        self.assertEqual([o.name for o in c.plan()], ["ppu_recomp_000", "ppu_recomp_001", "spu_0000_at_01760280",
+                                                      "spujob_0177B480", "spu_workloads", "des_game_module"])
+        self.assertTrue(t.make().run_all().is_file())
 
     def test_build_then_nothing_to_do(self):
         dll = self.t.make().run_all()

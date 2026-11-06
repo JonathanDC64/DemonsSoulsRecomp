@@ -341,24 +341,23 @@ std::string make_report(Dialog& d) {
     const auto zip = report::write_bundle(report::narrow(d.txt.stem().wstring()), files);
 
     const bool running = d.hang || d.lost;
-    std::string body = std::string("## What happened\n(Please say what you were doing when the game ") +
-                       (d.lost   ? "stopped drawing.)\n\n## Graphics device lost\n"
-                        : d.hang ? "stopped.)\n\n## Not responding\n"
-                                 : "crashed.)\n\n## Crash\n") +
-                       d.what + "\n\n```\n" +
-                       (running ? top_of_stack(txt, 24, "--- guest threads") : top_of_stack(txt, 20)) +
-                       "```\n\n## System\n```\n" + system + report::redact(save_note) + "```\n\n## Attachments\n";
+    // (What happened is the player's to write: what they were doing. The form asks for it, and for the zip.)
+    std::string details = std::string(d.lost ? "## Graphics device lost\n" : d.hang ? "## Not responding\n" : "## Crash\n") +
+                          d.what + "\n\n```\n" +
+                          (running ? top_of_stack(txt, 24, "--- guest threads") : top_of_stack(txt, 20)) +
+                          "```\n\n## System\n```\n" + system + report::redact(save_note) + "```\n\n";
     const std::string name = report::narrow(zip.filename().wstring());
     const char* holds = running ? "what every thread was doing, your settings, the game's recent messages and your save"
                                 : "the full stack, your settings, the game's recent messages and your save";
-    body += zip.empty() ? "(The report files could not be saved.)\n"
-                        : "Drag `" + name + "` (its folder is open) into this issue: it has " + holds + ".\n";
+    details += zip.empty() ? "(The report file could not be saved.)\n"
+                           : "Report file: `" + name + "` (its folder is open). It has " + holds + ".\n";
     report::open_issue(
-        report::issue_url((d.lost ? "Graphics lost: " : d.hang ? "Not responding: " : "Crash: ") + d.what.substr(0, 80), body),
+        report::issue_url((d.lost ? "Graphics lost: " : d.hang ? "Not responding: " : "Crash: ") + d.what.substr(0, 80),
+                          "", details),
         zip);
-    return zip.empty() ? "The report files could not be saved. The issue form is open in your browser."
-                       : "The issue form is open in your browser, with the folder holding " + name +
-                             ". Drag that file into the issue to attach the details: " + holds + ". Thank you!";
+    return zip.empty() ? "The report file could not be saved. The issue page is open in your browser."
+                       : "The issue page is open in your browser, with the folder holding " + name +
+                             ". Drag that file into the form's Report file box: it has " + holds + ". Thank you!";
 }
 
 // A hang's "Close the game": the game is still running.

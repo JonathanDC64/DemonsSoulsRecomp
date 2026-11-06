@@ -81,8 +81,10 @@ std::vector<File> save_files(std::string& note);
 std::filesystem::path write_bundle(const std::string& stem, const std::vector<File>& files);
 std::string timestamp();  // "20261017-153012", for file names
 
-// The new-issue page of the repository with the title and text filled in (cut to what a link can hold).
-std::string issue_url(const std::string& title, const std::string& body);
+// The repository's report form (.github/ISSUE_TEMPLATE/report.yml) with the title, its "What happened" and its
+// "Details" filled in, cut to what a link can hold (Details first). Its "Report file (.zip)" box stays empty: GitHub
+// cannot attach a file from a link, and the form does not send the issue until the player has put the zip there.
+std::string issue_url(const std::string& title, const std::string& what, const std::string& details);
 // Opens the issue form in the browser and shows `zip` in Explorer. With DES_REPORT_NO_OPEN=1 (tests) or no_desktop()
 // neither is opened: the link is written to <zip>.url.txt instead.
 void open_issue(const std::string& url, const std::filesystem::path& zip);

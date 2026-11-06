@@ -2,6 +2,7 @@
 #include "setup_page.hpp"
 
 #include "host.hpp"
+#include "report_ack.hpp"
 #include "settings.hpp"
 #include "setup_report.hpp"
 #include "ui.hpp"
@@ -303,8 +304,10 @@ void SetupPage::ask_report(const setup::Status& failure) {
                "nothing from the game."),
         {{"Save and open the issue page",
           [this, failure] {
-              const std::string said = setup::send_report(failure);
-              ask("Report the problem", escape(said), {{"Close", {}, Look::Plain}});
+              with_zip_ack([this, failure] {  // (the first report on this PC: report_ack.hpp)
+                  const std::string said = setup::send_report(failure);
+                  ask("Report the problem", escape(said), {{"Close", {}, Look::Plain}});
+              });
           },
           Look::Primary},
          {"Close", {}, Look::Quiet}},

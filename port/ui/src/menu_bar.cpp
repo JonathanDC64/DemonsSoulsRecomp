@@ -5,6 +5,7 @@
 #include "app.hpp"
 #include "host.hpp"
 #include "modal.hpp"
+#include "report_ack.hpp"
 #include "settings_window.hpp"
 #include "trophies_window.hpp"
 #include "ui.hpp"
@@ -131,10 +132,12 @@ void MenuBar::build_tabs() {
                             [this, dismiss](Modal& modal) {
                                 play_sound(kSoundClick);
                                 dismiss(modal);
-                                hide(false);
-                                if (app().report_issue) {
-                                    app().report_issue();
-                                }
+                                with_zip_ack([this] {  // (the first report on this PC: report_ack.hpp)
+                                    hide(false);
+                                    if (app().report_issue) {
+                                        app().report_issue();
+                                    }
+                                });
                             },
                     },
                 },

@@ -149,6 +149,35 @@ Reports are posted on a public GitHub issue, so:
 - Nothing is sent by the game. The zip is saved and the issue form opens in
   the browser. The player decides whether to attach the zip and submit.
 
+## The report form, and the first report's question (2026-11-06)
+
+**The links.** All three report links open the repository's report form,
+`.github/ISSUE_TEMPLATE/report.yml` (`report::issue_url`):
+- the title;
+- "What happened": setup's error text, and left to the player for the
+  game's and the crash dialog's reports;
+- "Details": the system block, the crash's stack, and the zip's name.
+
+The form's "Report file (.zip)" box is left empty, so GitHub won't send the
+issue until the player has put something there. A link GitHub refuses as too
+long is still cut, Details first.
+
+**The question.** Before the first report on a PC, `report_ack.cpp` asks once:
+- **The text:** GitHub can't attach the file, so drag it into the form's
+  "Report file (.zip)" box; without it, a report can rarely be solved.
+- **The tick:** "I'll attach the report file to my issue", a check box drawn
+  with Material Symbols' `check_box` and `check_box_outline_blank`. The focus
+  starts on it, and Continue waits for it.
+- **Where it shows:** the menu's Report, the crash dialog's Report on GitHub,
+  and setup's "Save and open the issue page".
+- **The answer** is kept as `report_zip_ack.txt` in the data folder, which
+  the game, the crash dialog and setup share.
+  - It isn't a setting, because the crash dialog's process never reads
+    `settings.ini` and must not write it.
+  - A test run with no data folder keeps nothing, so it asks every time.
+- **On a Steam Deck's Game Mode** the text says the link is saved beside the
+  report, to open on a PC.
+
 ## Test knobs
 
 All are live: the debug console's `setenv` sets them in a running game.
@@ -163,7 +192,8 @@ All are live: the debug console's `setenv` sets them in a running game.
 | `DES_UI_PRESS=KEY` | presses F1, ESC, ENTER, UP/DOWN/LEFT/RIGHT, TAB, SPACE as the window procedure would, then clears itself. Test runs set `PS3_NO_USER_INPUT=1`, which drops keys posted to the window. |
 | `DES_REPORT_NO_OPEN=1` | no browser or Explorer; the issue link goes to `<zip>.url.txt` |
 | `GAMESCOPE_WAYLAND_DISPLAY` set, or `XDG_CURRENT_DESKTOP=gamescope` | not a knob: the session says so, as a Steam Deck's Game Mode does. Nothing is opened (no desktop to open it on, and a browser could take the screen); the issue link goes to `<zip>.url.txt`, and a toast says where the zip is and to send it from Desktop Mode. `system.txt` has a `Session:` line |
-| `DES_CRASH_DIALOG_REPORT=1`, `_DETAILS=1`, `_SHOT=<bmp>`, `_EXIT_MS=<ms>` | the dialog presses Report or Show details by itself, saves its picture, closes after that long |
+| `DES_CRASH_DIALOG_REPORT=1`, `_DETAILS=1`, `_SHOT=<bmp>`, `_EXIT_MS=<ms>` | the dialog makes the report (past the first report's question) or presses Show details by itself, saves its picture, closes after that long |
+| `DES_CRASH_DIALOG_REPORT=ask`, `DES_CRASH_DIALOG_SHOT_FRAME=<n>` | the dialog presses Report on GitHub as the player does, so the first report's question shows when it hasn't been answered; the picture is taken at frame n (default 40) |
 | `PS3_FREEZE_SNAPSHOT=<s>` | seconds without a frame before the log snapshot (default 10, 0 = off) |
 
 With `PS3_NO_USER_INPUT=1` the hang dialog shows without taking the focus.

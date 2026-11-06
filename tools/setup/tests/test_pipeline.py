@@ -7,6 +7,7 @@ data, no real lifter). The last two check that the host's C++ agrees with them.
 import io
 import os
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -16,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from des_setup import compile as compile_step, fetch, journal, lift, pipeline, protocol  # noqa: E402
 from test_lift import PPU_STEPS, REAL, FakeTree  # noqa: E402
-from test_setup import GameTree  # noqa: E402
+from test_setup import EBOOT_ELF, LIBSRE, SDAT_DEC, GameTree  # noqa: E402
 
 PHASES = ["check", "fetch", "stage", "lift"]
 UI = REAL / "port" / "ui" / "src"
@@ -152,7 +153,7 @@ class RunTest(unittest.TestCase):
         self.assertEqual(rc, 0, lines)
         ready = pipeline.read_ready(self.s.data)
         self.assertEqual((ready["app"], ready["module_size"]), ("1.0", str(len(b"MZ module"))))
-        self.assertEqual(ready["eboot"], str(self.s.data / "inputs" / "PS3_GAME" / "USRDIR" / "EBOOT.elf"))
+        self.assertEqual(ready["eboot"], "inputs/PS3_GAME/USRDIR/EBOOT.elf")     # (in setup's folder: relative)
         self.assertEqual(pipeline.status(self.s.data, "1.0")["state"], "ready")
         self.assertEqual(pipeline.status(self.s.data, "2.0")["state"], "outdated")
         (self.s.data / "game" / "des_game.dll").write_bytes(b"MZ")
@@ -169,7 +170,7 @@ class RunTest(unittest.TestCase):
         rc, lines = self.s.run(phases=PHASES + ["compile"], compile_fn=with_image)
         self.assertEqual(rc, 0, lines)
         ready = pipeline.read_ready(self.s.data)
-        self.assertEqual((ready["libsre_image"], ready["libsre_image_size"]), (str(image), "5"))
+        self.assertEqual((ready["libsre_image"], ready["libsre_image_size"]), ("work/libsre/libsre_image.bin", "5"))
         self.assertEqual(pipeline.status(self.s.data, "1.0")["state"], "ready")
         image.write_bytes(b"cut")
         self.assertEqual(pipeline.status(self.s.data, "1.0")["state"], "damaged")
@@ -185,6 +186,87 @@ class RunTest(unittest.TestCase):
         self.assertEqual(rc, 0, lines)
         self.assertNotIn("libsre_image", pipeline.read_ready(self.s.data))
         self.assertEqual(pipeline.status(self.s.data, "1.0")["state"], "ready")
+
+    def test_setup_folder_can_move(self):
+        # Issue #364: ready.txt names the files in setup's folder relative to it, so the folder can move.
+        rc, lines = self.s.run(phases=PHASES + ["compile"], compile_fn=fake_compile)
+        self.assertEqual(rc, 0, lines)
+        ready = pipeline.read_ready(self.s.data)
+        self.assertEqual(ready["module"], "game/des_game.dll")
+        self.assertEqual(ready["game"], str(self.s.game.root))           # (outside it and no program: in full)
+        moved = self.s.data.with_name("moved")
+        shutil.move(str(self.s.data), str(moved))
+        self.assertEqual(pipeline.status(moved, "1.0")["state"], "ready")
+        self.assertEqual(pipeline.ready_path(moved, pipeline.read_ready(moved), "module"),
+                         moved / "game" / "des_game.dll")
+
+    def test_an_older_ready_file_follows_a_moved_folder(self):
+        # 0.1.0 wrote full paths: one moved by hand is read from the folder it is in now (the EBOOT's tells the old).
+        rc, lines = self.s.run(phases=PHASES + ["compile"], compile_fn=fake_compile)
+        self.assertEqual(rc, 0, lines)
+        d = self.s.data
+        ready = pipeline.read_ready(d)
+        pipeline.write_ready(d, dict(ready, eboot=str(d / ready["eboot"]), module=str(d / ready["module"])))
+        moved = d.with_name("moved")
+        shutil.move(str(d), str(moved))
+        self.assertEqual(pipeline.status(moved, "1.0")["state"], "ready")
+        (moved / "game" / "des_game.dll").unlink()
+        self.assertEqual(pipeline.status(moved, "1.0")["state"], "damaged")
+
+    def test_a_portable_install_moves_as_one_folder(self):
+        # setup's folder in data/setup-data beside the program, the game in a folder beside it: renamed, it plays,
+        # and a later run (an update's rebuild) finds the game there from the last run's request.
+        tmp = Path(self.s.game.tmp.name)
+        prog = tmp / "Soulbrandt"
+        prog.mkdir()
+        (prog / "Soulbrandt.exe").write_bytes(b"MZ")
+        shutil.copytree(self.s.game.root, prog / "Game")
+        self.s.data = prog / "data" / "setup-data"
+        rc, lines = self.s.run(request=pipeline.make_request(prog / "Game"), phases=PHASES + ["compile"],
+                               compile_fn=fake_compile, host=str(prog / "Soulbrandt.exe"))
+        self.assertEqual(rc, 0, lines)
+        self.assertEqual(pipeline.read_ready(self.s.data)["game"], "../../Game")
+        renamed = tmp / "Soulbrandt renamed"
+        shutil.move(str(prog), str(renamed))
+        data = renamed / "data" / "setup-data"
+        self.assertEqual(pipeline.status(data, "1.0")["state"], "ready")
+        self.assertEqual(pipeline.ready_path(data, pipeline.read_ready(data), "game"), renamed / "Game")
+        self.s.data = data
+        rc, lines = self.s.run(request=None, host=str(renamed / "Soulbrandt.exe"))
+        self.assertEqual(rc, 0, lines)
+        self.assertEqual(pipeline.load_request(data)["game"], str(renamed / "Game"))
+
+    def test_a_game_outside_the_program_stays_in_full(self):
+        tmp = Path(self.s.game.tmp.name)
+        (tmp / "prog").mkdir()
+        self.s.data = tmp / "prog" / "data" / "setup-data"
+        rc, lines = self.s.run(phases=PHASES + ["compile"], compile_fn=fake_compile,
+                               host=str(tmp / "prog" / "Soulbrandt.exe"))
+        self.assertEqual(rc, 0, lines)
+        self.assertEqual(pipeline.read_ready(self.s.data)["game"], str(self.s.game.root))
+
+    def test_moved_decrypted_files_count_from_inputs(self):
+        # The manual route: the decrypted files' folder and the firmware's file chosen before are gone (the install
+        # moved, issue #364). A later run counts the copies the first one kept in inputs/, as the RPCS3 route does.
+        self.s.close()
+        self.s = Setup(decrypted=False, firmware=False)
+        tmp = Path(self.s.game.tmp.name)
+        dec = tmp / "decrypted"
+        dec.mkdir()
+        (dec / "EBOOT.elf").write_bytes(EBOOT_ELF)
+        (dec / "m01.luabnd.dcx.sdat.unedat").write_bytes(SDAT_DEC)
+        (tmp / "libsre.prx").write_bytes(LIBSRE)
+        req = pipeline.make_request(self.s.game.root, decrypted=[dec], firmware=tmp / "libsre.prx")
+        rc, lines = self.s.run(request=req)
+        self.assertEqual(rc, 0, lines)
+        shutil.move(str(dec), str(tmp / "elsewhere"))
+        (tmp / "libsre.prx").rename(tmp / "libsre.prx.moved")
+        rc, lines = self.s.run(request=None)
+        self.assertEqual(rc, 0, lines)
+        # With nothing kept (a first run), a missing folder is still reported.
+        shutil.rmtree(self.s.data / "inputs")
+        rc, lines = self.s.run(request=None)
+        self.assertEqual(rc, 1, lines)
 
     def test_a_run_that_fails_leaves_no_ready_file(self):
         self.assertEqual(self.s.run(phases=PHASES + ["compile"], compile_fn=fake_compile)[0], 0)

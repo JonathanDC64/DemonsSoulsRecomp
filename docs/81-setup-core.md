@@ -74,7 +74,7 @@ The unit tests (24, on made-up files) cover:
 - An entry without a SHA-256 is refused, so nothing unchecked is ever used.
 - Downloads are `https://` only. They resume with HTTP Range, go to a `.part` file, and are renamed only once size and sum match. A mismatch is deleted.
 - Zips unpack into a folder of their own. Absolute paths, drive letters, `..` and symlinks are refused.
-- Everything stays in setup's data folder (`%LOCALAPPDATA%\DemonsSoulsRecomp`). Nothing is installed.
+- Everything stays in setup's data folder (`%LOCALAPPDATA%\DemonsSoulsRecomp`, or `data\setup-data` beside the program in a portable install: docs/88 section 3). Nothing is installed.
 
 Entries today:
 
@@ -122,7 +122,7 @@ Entries today:
 - **Against the README's commands with the same ps3recomp** (step 3 as written: no `-X utf8`, the lifter at `-j 16` against setup's `-j 8`, on the same `EBOOT.ELF`): the whole PPU lift (16 files, 436 MB), the loader output, the 12 SPU images, the 2 job blobs, all 6 libsre files and 30 of the 31 SPU lift files are byte for byte the same. The two that differ: the SPU registration's header comment, whose dash `-X utf8` writes as UTF-8 and a Windows console default as cp1252; and the libsre glue's image path (the next point). So the worker count does not change the lift, and setup makes what a developer makes.
 - **The libsre glue named the data folder** (fixed 10-23). `--runtime-image` was an absolute path into it, built into the game.
   - Now setup passes `@module/../work/libsre/libsre_image.bin`. The glue joins the rest to the folder of the game module, `PS3_GAME_MODULE`, which the launch hook sets to `<data>/game/des_game.dll`. `PS3_LIBSRE_IMAGE` still overrides it, and a path without `@module/` is used as it is, as before.
-  - So the DLL holds no folder of the PC, and two PCs that build the same game get the same glue. (ready.txt still names the data folder, so moving it still needs setup again.)
+  - So the DLL holds no folder of the PC, and two PCs that build the same game get the same glue. (ready.txt named the data folder until issue #364: since then its paths are relative, docs/88 section 3.)
   - Tested on a real data folder, as an update would find it. Setup again with the change redid only the libsre lift, its glue and the link: 11 s. The DLL then held `../work/libsre/libsre_image.bin` and no folder name. The player's start loaded libsre (`[libsre] LLE load: ok=1`) and played.
 - **The lifted SPU code includes `../../runtime/spu/...`.** Outside `ps3recomp/work_spu` it still resolves, through the `ps3recomp/runtime/ppu` include folder the commands already have (section 7, measured).
 

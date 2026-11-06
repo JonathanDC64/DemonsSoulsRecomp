@@ -801,16 +801,21 @@ bool replace_file(const std::filesystem::path& from, const std::filesystem::path
 }
 #endif
 
+bool portable() {
+    std::error_code ec;
+    const auto dir = exe_dir();
+    return !dir.empty() && std::filesystem::exists(dir / L"portable.txt", ec);
+}
+
 const std::filesystem::path& data_dir() {
     if (g_data_dir_resolved) return g_data_dir;
     g_data_dir_resolved = true;
-    std::error_code ec;
     if (const char* given = std::getenv("DES_DATA_DIR"); given && *given) {
         g_data_dir = std::filesystem::path(widen(given));
     } else if (settings::harness_run()) {
         g_data_dir.clear();  // test runs keep nothing
-    } else if (const auto dir = exe_dir(); !dir.empty() && std::filesystem::exists(dir / L"portable.txt", ec)) {
-        g_data_dir = dir / L"data";
+    } else if (portable()) {
+        g_data_dir = exe_dir() / L"data";
     } else {
         g_data_dir = pref_dir();
     }

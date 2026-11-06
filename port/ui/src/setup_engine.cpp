@@ -120,9 +120,52 @@ const std::filesystem::path& data_dir() {
     static const std::filesystem::path dir = [] {
         if (const std::string given = env("DES_SETUP_DATA"); !given.empty()) return from_utf8(given);
         const auto base = local_data_base();
-        return base.empty() ? base : base / kFolderName;
+        const auto shared = base.empty() ? base : base / kFolderName;
+        if (!report::portable() || report::program_dir().empty()) return shared;
+        // A portable install (issue #364, docs/45 section 4.4): beside the player's data, in data\ beside the program.
+        // One that was built in the shared folder before (0.1.0 put it there) keeps using it until it is moved here,
+        // rather than build the game again.
+        const auto own = report::program_dir() / "data" / "setup-data";
+        std::error_code ec;
+        if (!std::filesystem::exists(own / "setup", ec) && !shared.empty() &&
+            std::filesystem::exists(shared / "setup" / "ready.txt", ec)) {
+            std::fprintf(stderr,
+                         "[setup] portable install, built in %s before: setup's folder stays there (to take it along, "
+                         "move it to %s)\n",
+                         utf8(shared).c_str(), utf8(own).c_str());
+            return shared;
+        }
+        return own;
     }();
     return dir;
+}
+
+namespace {
+
+// <data>/inputs/PS3_GAME/USRDIR/EBOOT.elf -> <data>: the folder a ready.txt was written in, from its EBOOT's path.
+std::filesystem::path written_in(const std::filesystem::path& eboot) {
+    if (!eboot.is_absolute()) return {};
+    for (auto p = eboot.parent_path(); !p.empty() && p != p.parent_path(); p = p.parent_path())
+        if (p.filename() == "inputs") return p.parent_path();
+    return {};
+}
+
+}  // namespace
+
+std::filesystem::path ready_path(const std::string& value, const std::filesystem::path& eboot_as_written) {
+    if (value.empty()) return {};
+    const auto p = from_utf8(value);
+    // Since 0.1.1 des_setup writes the paths in setup's folder relative to it, so the folder can move.
+    if (p.is_relative()) return (data_dir() / p).lexically_normal();
+    // An older ready.txt names them in full: one that is gone, in the folder it was written in, is in the same place
+    // in this one (a folder moved by hand).
+    std::error_code ec;
+    if (std::filesystem::exists(p, ec)) return p;
+    const auto old = written_in(eboot_as_written);
+    if (old.empty() || old == data_dir()) return p;
+    const auto rel = p.lexically_relative(old);
+    if (rel.empty() || *rel.begin() == "..") return p;
+    return (data_dir() / rel).lexically_normal();
 }
 
 Request request_from_env() {
@@ -170,14 +213,15 @@ Launch launch_state() {
         out.state = std::filesystem::exists(setup / "journal.json", ec) ? State::Interrupted : State::Missing;
         return out;
     }
-    out.game = from_utf8(ready["game"]);
-    out.eboot = from_utf8(ready["eboot"]);
-    out.module = from_utf8(ready["module"]);
+    const auto eboot = from_utf8(ready["eboot"]);
+    out.game = ready_path(ready["game"], eboot);
+    out.eboot = ready_path(ready["eboot"], eboot);
+    out.module = ready_path(ready["module"], eboot);
     const auto size = std::filesystem::file_size(out.module, ec);
     bool whole = !ec && std::to_string(size) == ready["module_size"] && std::filesystem::is_regular_file(out.eboot, ec);
     // The game reads libsre's image at its start. Without it the game runs on, on a black screen (issue #355).
     if (whole && !ready["libsre_image"].empty()) {
-        const auto image_size = std::filesystem::file_size(from_utf8(ready["libsre_image"]), ec);
+        const auto image_size = std::filesystem::file_size(ready_path(ready["libsre_image"], eboot), ec);
         whole = !ec && std::to_string(image_size) == ready["libsre_image_size"];
     }
     if (!whole)

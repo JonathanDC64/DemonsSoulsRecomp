@@ -3025,6 +3025,13 @@ static void run_defaults()
          * buffers left texels between the taps: blurred areas came out as
          * offset copies with stripes instead of a smooth blur (docs/37). */
         {"RSX_SCALE_MIN", "640"},
+#ifdef __linux__
+        /* The RSX thread alone on one CPU of a core, and the rest of the
+         * process off that core (ps3recomp's RSX_CORE). On a Steam Deck that
+         * thread holds the frame, and it ran 4-8% faster so. auto: only with
+         * SMT and at least 4 cores, from the game's first frame. */
+        {"RSX_CORE", "auto"},
+#endif
     };
     for (const auto& d : kDefaults)
         if (!getenv(d.name)) ps3_setenv(d.name, d.value);

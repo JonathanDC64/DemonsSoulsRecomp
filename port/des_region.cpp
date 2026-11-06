@@ -10,7 +10,9 @@
 #include <windows.h>
 #endif
 
-extern "C" uint8_t g_des_region = static_cast<uint8_t>(DesRegion::US);
+extern "C" {
+uint8_t g_des_region = static_cast<uint8_t>(DesRegion::US);
+}
 
 const char* des_region_title_id(DesRegion r)
 {

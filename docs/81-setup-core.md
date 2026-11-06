@@ -74,7 +74,7 @@ The unit tests (24, on made-up files) cover:
 - An entry without a SHA-256 is refused, so nothing unchecked is ever used.
 - Downloads are `https://` only. They resume with HTTP Range, go to a `.part` file, and are renamed only once size and sum match. A mismatch is deleted.
 - Zips unpack into a folder of their own. Absolute paths, drive letters, `..` and symlinks are refused.
-- Everything stays in setup's data folder (`%LOCALAPPDATA%\DemonsSoulsRecomp`, or `data\setup-data` beside the program in a portable install: docs/88 section 3). Nothing is installed.
+- Everything stays in setup's data folder (`%LOCALAPPDATA%\DemonsSoulsRecomp`, or `data\setup-data` beside the program in a portable install, or the build folder the player chose on setup's screens: docs/88 section 3). Nothing is installed.
 
 Entries today:
 

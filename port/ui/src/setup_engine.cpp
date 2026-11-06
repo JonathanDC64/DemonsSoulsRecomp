@@ -3,6 +3,7 @@
 #include "setup_engine.hpp"
 
 #include "report.hpp"
+#include "setup_folder.hpp"
 #include "version.hpp"
 
 #ifdef _WIN32
@@ -21,8 +22,6 @@
 
 namespace ui::setup {
 namespace {
-
-constexpr const char* kFolderName = "DemonsSoulsRecomp";  // des_setup's NAME
 
 std::string utf8(const std::filesystem::path& p) {
     const std::u8string s = p.u8string();
@@ -114,30 +113,56 @@ std::vector<std::filesystem::path> split_paths(const std::string& s) {
     return out;
 }
 
+// Setup's folder and the usual one (setup_folder.hpp), found at the first call. The player's choice changes `dir`
+// later, on the UI's thread, between runs.
+Folders& folders() {
+    static Folders f = [] {
+        const auto base = local_data_base();
+        const auto shared = base.empty() ? base : base / kFolderName;
+        // A portable install (issue #364, docs/45 section 4.4): beside the player's data, in data\ beside the program.
+        const auto program = report::portable() ? report::program_dir() : std::filesystem::path{};
+        return find_folders(from_utf8(env("DES_SETUP_DATA")), shared, program);
+    }();
+    return f;
+}
+
 }  // namespace
 
 const std::filesystem::path& data_dir() {
-    static const std::filesystem::path dir = [] {
-        if (const std::string given = env("DES_SETUP_DATA"); !given.empty()) return from_utf8(given);
-        const auto base = local_data_base();
-        const auto shared = base.empty() ? base : base / kFolderName;
-        if (!report::portable() || report::program_dir().empty()) return shared;
-        // A portable install (issue #364, docs/45 section 4.4): beside the player's data, in data\ beside the program.
-        // One that was built in the shared folder before (0.1.0 put it there) keeps using it until it is moved here,
-        // rather than build the game again.
-        const auto own = report::program_dir() / "data" / "setup-data";
-        std::error_code ec;
-        if (!std::filesystem::exists(own / "setup", ec) && !shared.empty() &&
-            std::filesystem::exists(shared / "setup" / "ready.txt", ec)) {
-            std::fprintf(stderr,
-                         "[setup] portable install, built in %s before: setup's folder stays there (to take it along, "
-                         "move it to %s)\n",
-                         utf8(shared).c_str(), utf8(own).c_str());
-            return shared;
-        }
-        return own;
-    }();
-    return dir;
+    return folders().dir;
+}
+
+const std::filesystem::path& usual_data_dir() {
+    return folders().usual;
+}
+
+bool data_dir_chosen() {
+    return folders().chosen;
+}
+
+std::string cannot_build_in(const std::filesystem::path& folder) {
+    if (std::string why = cannot_use(folder, report::program_dir()); !why.empty()) return why;
+    if (!folders_usable({folder}, true))
+        return "This Windows cannot use a folder with this name. Update Windows, or choose a folder named with the "
+               "letters A to Z only.";
+    return {};
+}
+
+bool choose_data_dir(const std::filesystem::path& folder, std::string& why) {
+    Folders& f = folders();
+    why.clear();
+    if (f.usual.empty()) {
+        why = "Setup's folder is set for this PC (DES_SETUP_DATA), so it cannot be changed here.";
+        return false;
+    }
+    if (same_folder(folder, f.dir)) return true;
+    if (why = cannot_build_in(folder); !why.empty()) return false;
+    if (!keep_choice(f.usual, folder, report::program_dir(), why)) return false;
+    f.chosen = !same_folder(folder, f.usual);
+    f.dir = f.chosen ? folder : f.usual;
+    std::fprintf(stderr, "[setup] setup's folder is now %s (%s)\n", utf8(f.dir).c_str(),
+                 f.chosen ? "chosen" : "the usual one");
+    return true;
 }
 
 namespace {

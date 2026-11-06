@@ -339,6 +339,14 @@ jobs:
       - name: Build des_host
         run: cmake --build build/host --target des_host
 
+      # setup_folder.cpp on its own (port/ui/tests/setup_folder_check.cpp): where setup builds, the usual folder or
+      # the one the player chose on setup's screens (docs/88 section 3), in made-up folders. Linux runs it below.
+      - name: The build folder's choice
+        shell: bash
+        run: |
+          cmake --build build/host --target setup_folder_check
+          build/host/ui/setup_folder_check.exe
+
       # Both routes: the runtime has the Vulkan backend, and des_host links the route switch, the core on D3D12
       # and on Vulkan, and the Vulkan start's fallback (the port finds PS3RECOMP_RSX_HAL itself, DES_RSX_HAL=AUTO).
       - name: Both routes in des_host
@@ -796,6 +804,12 @@ jobs:
 
       - name: Build des_host
         run: cmake --build build/host --target des_host
+
+      # setup_folder.cpp on its own, as on Windows above: the same code path, with Linux's folders.
+      - name: The build folder's choice
+        run: |
+          cmake --build build/host --target setup_folder_check
+          build/host/ui/setup_folder_check
 
       # The libraries under their sonames, each finding the others beside it, and their licences (package.py puts
       # the folder at the top of the Linux tarball).

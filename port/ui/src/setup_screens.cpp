@@ -12,6 +12,7 @@
 #include "portable.hpp"
 #include "settings.hpp"
 #include "settings_window.hpp"
+#include "setup_folder.hpp"
 #include "setup_options_window.hpp"
 #include "setup_rpcs3.hpp"
 #include "setup_rpcs3_window.hpp"
@@ -26,6 +27,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iterator>
+#include <system_error>
 #include <thread>
 #include <utility>
 
@@ -166,6 +168,64 @@ std::string build_time_line() {
     return build_time();
 }
 
+// ---- The build folder ----
+
+// The dialog opens in the folder in use, or in the nearest folder of it that exists.
+void BuildFolderPick::open() {
+    if (mOpen) return;
+    mOpen = true;
+    std::filesystem::path from = setup::data_dir();
+    std::error_code ec;
+    while (!from.empty() && !std::filesystem::is_directory(from, ec) && from != from.parent_path())
+        from = from.parent_path();
+    pick_folder(from, "Choose where setup builds the game", host::window(),
+                [box = mBox, opened = ++mOpened](PickedFolder folder) { box->put({opened, std::move(folder)}); });
+}
+
+void BuildFolderPick::forget() {
+    if (mOpen) std::fprintf(stderr, "[setup] the build folder's dialog: its answer is dropped (the page went on)\n");
+    ++mOpened;
+    mOpen = false;
+}
+
+bool BuildFolderPick::take(Next& next) {
+    std::pair<unsigned, PickedFolder> answer;
+    if (!mBox->take(answer) || answer.first != mOpened) return false;
+    const PickedFolder& picked = answer.second;
+    mOpen = false;
+    next = {};
+    if (picked.failed) {
+        next.problem = "The folder window could not open on this PC.";
+        return true;
+    }
+    if (picked.folder.empty()) return true;  // (closed without a choice)
+    const auto folder = setup::folder_for_pick(picked.folder);
+    const auto& now = setup::data_dir();
+    if (setup::same_folder(folder, now)) return true;
+    std::error_code ec;
+    next.made = !std::filesystem::exists(folder, ec);
+    if (next.problem = setup::cannot_build_in(folder); !next.problem.empty()) {
+        std::fprintf(stderr, "[setup] build folder %s: %s\n", utf8(folder).c_str(), next.problem.c_str());
+        return true;
+    }
+    next.folder = folder;
+    // Nothing moves: what setup made in the folder in use stays there, and it is used again if it is chosen again.
+    if (setup::holds_setup(now)) {
+        next.askTitle = "Build in the new folder?";
+        next.askRml = escape("What setup made so far stays in " + utf8(now) + ". " +
+                             (setup::holds_setup(folder) ? "Setup carries on with what it made in "
+                                                         : "Setup starts again in ") +
+                             utf8(folder) + ".");
+    }
+    std::fprintf(stderr, "[setup] build folder picked: %s\n", utf8(folder).c_str());
+    return true;
+}
+
+void BuildFolderPick::cancel(const Next& next) {
+    std::error_code ec;
+    if (next.made) std::filesystem::remove(next.folder, ec);  // (only an empty folder goes)
+}
+
 // ---- 1. The start screen ----
 
 SetupStartWindow::SetupStartWindow(Props props) : SetupPage("setup-start"), mProps(std::move(props)) {
@@ -178,6 +238,7 @@ SetupStartWindow::SetupStartWindow(Props props) : SetupPage("setup-start"), mPro
 // the focus (Settings after the settings window, the main button after a run).
 void SetupStartWindow::uncover() {
     SetupPage::uncover();
+    mFolderPick.forget();  // (a folder picked while the screens above it, or a run, were up: dropped)
     const auto place = focus_place();
     refresh();
     if (visible() && !focus_at(place) && !button_focused()) focus();
@@ -189,6 +250,7 @@ void SetupStartWindow::refresh() {
     mLaunch = setup::launch_state();
     mMain.clear();  // (their listeners go before their elements)
     mMore.clear();
+    mFolderButton.clear();
     clear_children(mBody);
     std::vector<Action> main;
     Rml::Element* row = nullptr;
@@ -204,6 +266,12 @@ void SetupStartWindow::refresh() {
                                             "takes " + std::string(1, char(std::tolower(time[0]))) + time.substr(1) +
                                             " here and needs " + gigabytes(setup::kNeedBytes) +
                                             " of free space while it works.");
+        // A folder chosen before that is not there: its drive may be unplugged (nothing is built elsewhere unasked).
+        std::error_code ec;
+        if (setup::data_dir_chosen() && !std::filesystem::exists(setup::data_dir(), ec))
+            callout(mBody, "warn", "The build folder is missing",
+                    "Setup cannot find " + utf8(setup::data_dir()) +
+                        ". If its drive is unplugged, plug it in and start setup again. Or change the folder.");
         auto* box = panel(mBody);
         found(box, "setup-info", "You need your copy of the game",
               "The US disc (BLUS30443) or the European disc (BLES00932), version 1.00, copied to a folder. If you "
@@ -212,6 +280,7 @@ void SetupStartWindow::refresh() {
               "The compiler and the tools it needs, each checked before it is used. Later builds use the same copy.");
         found(box, "setup-info", "You can stop and come back",
               "Close the window at any point. Setup carries on where it stopped the next time.");
+        folder_row(box);
         row = footer_row();
         main.push_back({"Start", [this] { open_source(); }, Look::Primary});
         set_rail({{"Your game", "", S::Now}, {"Build", time, S::Todo}, options_step(), {"Play", "", S::Todo}});
@@ -219,6 +288,7 @@ void SetupStartWindow::refresh() {
     }
     case State::Interrupted:
         welcome_back("info", "Setup was interrupted", "It carries on where it stopped. The finished parts are kept.");
+        folder_row(panel(mBody));
         main.push_back({"Resume setup", [this] { run(mProps.request); }, Look::Primary});
         main.push_back({"Start over", [this] { open_source(); }, Look::Quiet});
         set_rail({{"Your game", "", S::Done}, {"Build", "Stopped", S::Now}, options_step(), {"Play", "", S::Todo}});
@@ -283,7 +353,43 @@ void SetupStartWindow::refresh() {
     std::fprintf(stderr, "[setup] the start screen: %s\n", state_name(mLaunch.state));
 }
 
+// The build folder's row, with Change (none under DES_SETUP_DATA: the folder is given), then what the last pick ran
+// into, if anything: before a build, or while one is stopped.
+void SetupStartWindow::folder_row(Rml::Element* box) {
+    auto* row = found(box, "setup-folder", "Build folder", utf8(setup::data_dir()));
+    if (!setup::usual_data_dir().empty())
+        set_buttons(mFolderButton, append(row, "setup-row-end"),
+                    {{"Change", [this] { mFolderPick.open(); }, Look::Quiet}});
+    if (!mFolderProblem.empty()) callout(mBody, "err", mFolderProblem, "");
+}
+
+// The folder picked, after the question if there is one: kept, and the screen drawn again for it (the state is the new
+// folder's: a build moved there by hand plays).
+void SetupStartWindow::folder_picked(const BuildFolderPick::Next& next) {
+    mFolderProblem = next.problem;
+    const auto use = [this, folder = next.folder] {
+        std::string why;
+        if (!folder.empty() && !setup::choose_data_dir(folder, why)) mFolderProblem = why;
+        const auto place = focus_place();
+        refresh();
+        if (visible() && !focus_at(place) && !button_focused()) focus();
+    };
+    if (next.askTitle.empty()) use();
+    else
+        ask(next.askTitle, next.askRml,
+            {{"Use the new folder", use, Look::Primary},
+             {"Cancel", [next] { BuildFolderPick::cancel(next); }, Look::Plain}});
+}
+
+bool SetupStartWindow::focus() {
+    if (asking()) return SetupPage::focus();
+    if (!mMain.empty() && mMain[0]->focus()) return true;
+    return SetupPage::focus();
+}
+
 void SetupStartWindow::tick() {
+    if (!visible()) mFolderPick.forget();
+    else if (BuildFolderPick::Next next; mFolderPick.take(next)) folder_picked(next);
     const bool found = updates::state() == updates::State::Found && !updates::skipped();
     if ((found ? updates::found().version : std::string()) == mUpdateShown || asking()) return;
     const auto place = focus_place();
@@ -346,11 +452,12 @@ void SetupStartWindow::ask_quit() {
         1);
 }
 
-// One line: Settings and Quit are at the end of the main buttons' row.
+// One line: Settings and Quit are at the end of the main buttons' row. Above it, the build folder's Change.
 std::vector<std::vector<Button*>> SetupStartWindow::nav_lines() const {
     std::vector<Button*> all = line(mMain);
     for (Button* button : line(mMore)) all.push_back(button);
-    return {all};
+    if (mFolderButton.empty()) return {all};
+    return {line(mFolderButton), all};
 }
 
 void SetupStartWindow::back() {
@@ -954,18 +1061,27 @@ SetupBeforeWindow::SetupBeforeWindow(Props props) : SetupPage("setup-before"), m
 }
 
 std::vector<std::vector<Button*>> SetupBeforeWindow::nav_lines() const {
-    return {line(mSpaceButton), line(mActions)};
+    return {line(mFolderButton), line(mSpaceButton), line(mActions)};
 }
 
-// The power, asked again every 2 s: the player may plug in while this is up.
+bool SetupBeforeWindow::focus() {
+    if (asking()) return SetupPage::focus();
+    if (!mSpaceButton.empty() && mSpaceButton[0]->focus()) return true;
+    if (!mActions.empty() && mActions[0]->focus()) return true;
+    return SetupPage::focus();
+}
+
+// The build folder's dialog's answer; the power, asked again every 2 s: the player may plug in while this is up.
 void SetupBeforeWindow::tick() {
+    if (BuildFolderPick::Next next; mFolderPick.take(next)) folder_picked(next);
     if (now_ms() - mPowerAt < 2000) return;
     mPowerAt = now_ms();
     if (setup::power().onBattery != mShownBattery) draw();
 }
 
-// The rows: the game, the free space (with Check again when it is short), this PC's time, and the power. Start
-// building stays open with too little space: the need is an estimate, and the engine stops on a full disk itself.
+// The rows: the game, the build folder (with Change), the free space there (with Check again when it is short), this
+// PC's time, and the power. Start building stays open with too little space: the need is an estimate, and the engine
+// stops on a full disk itself.
 void SetupBeforeWindow::draw() {
     const setup::Space space = setup::data_space();
     const setup::Estimate time = setup::setup_time();
@@ -974,13 +1090,18 @@ void SetupBeforeWindow::draw() {
     mShownBattery = power.onBattery;
     const std::string where = space.where.empty() ? std::string("the disk") : space.where;
     const bool hadFocus = has_focus();
-    mSpaceButton.clear();  // (their listeners go before their elements)
+    mFolderButton.clear();  // (their listeners go before their elements)
+    mSpaceButton.clear();
     clear_children(mRows);
     auto* box = panel(mRows);
     found(box, "setup-ok", "Demon's Souls, US disc, version 1.00",
           mProps.fromLine.empty() ? "From " + utf8(mProps.request.game) + ". The game files check out."
                                   : mProps.fromLine);
     if (!mProps.importLine.empty()) found(box, "setup-ok", "From RPCS3", mProps.importLine);
+    auto* folderRow = found(box, "setup-folder", "Build folder", utf8(setup::data_dir()));
+    if (!setup::usual_data_dir().empty())  // (none under DES_SETUP_DATA: the folder is given)
+        set_buttons(mFolderButton, append(folderRow, "setup-row-end"),
+                    {{"Change", [this] { mFolderPick.open(); }, Look::Quiet}});
     const bool tight = space.known && space.free < setup::kNeedBytes;
     std::string room = "Setup needs about " + gigabytes(setup::kNeedBytes) + " free on " + where + " while it builds. ";
     if (!space.known) room += "How much is free could not be read.";
@@ -996,11 +1117,29 @@ void SetupBeforeWindow::draw() {
         found(box, "setup-warn", "On battery", "Plug it in first: setup keeps this PC busy for a long time.");
     else if (power.battery)
         found(box, "setup-info", "On a laptop", "Keep it plugged in: the build is heavy work.");
+    if (!mFolderProblem.empty()) callout(mRows, "err", mFolderProblem, "");
     text(mRows, "setup-note", "You can stop setup and carry on later.")->SetClass("after", true);
     if (hadFocus && !button_focused() && visible()) focus();
-    std::fprintf(stderr, "[setup] ready to build: %s free on %s, %u jobs, about %d to %d minutes, %s\n",
+    std::fprintf(stderr, "[setup] ready to build: %s free on %s, %u jobs, about %d to %d minutes, %s, in %s\n",
                  space.known ? gigabytes(space.free).c_str() : "unknown", where.c_str(), time.jobs, time.lowMinutes,
-                 time.highMinutes, power.onBattery ? "on battery" : power.battery ? "plugged in" : "no battery");
+                 time.highMinutes, power.onBattery ? "on battery" : power.battery ? "plugged in" : "no battery",
+                 utf8(setup::data_dir()).c_str());
+}
+
+// The folder picked, after the question if there is one: kept, and the rows drawn again, the free space the new
+// folder's.
+void SetupBeforeWindow::folder_picked(const BuildFolderPick::Next& next) {
+    mFolderProblem = next.problem;
+    const auto use = [this, folder = next.folder] {
+        std::string why;
+        if (!folder.empty() && !setup::choose_data_dir(folder, why)) mFolderProblem = why;
+        draw();
+    };
+    if (next.askTitle.empty()) use();
+    else
+        ask(next.askTitle, next.askRml,
+            {{"Use the new folder", use, Look::Primary},
+             {"Cancel", [next] { BuildFolderPick::cancel(next); }, Look::Plain}});
 }
 
 void SetupBeforeWindow::back() {
@@ -1008,6 +1147,7 @@ void SetupBeforeWindow::back() {
 }
 
 void SetupBeforeWindow::start() {
+    mFolderPick.forget();  // (the folder stays as it is shown: a dialog still open is not waited for)
     if (!mProps.onStart) {
         pop();
         return;

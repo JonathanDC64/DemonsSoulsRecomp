@@ -37,12 +37,26 @@ inline constexpr const char* kPythonSuffix = ".tar.gz";
 inline constexpr const char* kPythonProgram = "python/bin/python3";
 #endif
 
-// Setup's data folder (docs/81): DES_SETUP_DATA, else %LOCALAPPDATA%\DemonsSoulsRecomp, on Linux
-// $XDG_DATA_HOME/DemonsSoulsRecomp (or ~/.local/share/...), as des_setup's own default; the host always passes it to
-// the engine. In a portable install (report::portable) it is data\setup-data beside the program, unless the game was
-// built in the shared folder before. Not the player's folder of settings, logs and reports (report::data_dir): this
-// one holds the copied inputs, the lift and the build.
+// Setup's data folder (docs/81, docs/88 section 3): DES_SETUP_DATA; else the folder the player chose on setup's screens
+// (choose_data_dir); else the usual one: %LOCALAPPDATA%\DemonsSoulsRecomp, on Linux $XDG_DATA_HOME/DemonsSoulsRecomp
+// (or ~/.local/share/...), as des_setup's own default, and in a portable install (report::portable) data\setup-data
+// beside the program, unless the game was built in the shared folder before (setup_folder.hpp find_folders). The host
+// always passes it to the engine. Not the player's folder of settings, logs and reports (report::data_dir): this one
+// holds the copied inputs, the lift and the build.
 const std::filesystem::path& data_dir();
+// The usual folder, which keeps the choice (setup_folder.hpp); empty under DES_SETUP_DATA, which leaves nothing to
+// choose.
+const std::filesystem::path& usual_data_dir();
+// data_dir() is the player's choice.
+bool data_dir_chosen();
+// Empty when setup can build in `folder`, else why not, for the player (setup_folder.hpp cannot_use, and a name this
+// Windows can give the game: folders_usable). It makes the folder.
+std::string cannot_build_in(const std::filesystem::path& folder);
+// The player's choice of setup's folder (a pick, setup_folder.hpp folder_for_pick): data_dir() from now on, and at
+// every later start. The usual folder's own path is no choice: setup-folder.txt goes. False, with why (for the player),
+// when setup cannot build in it or cannot keep the choice; nothing changes then. Only between runs, on the UI's thread:
+// a run's threads read data_dir().
+bool choose_data_dir(const std::filesystem::path& folder, std::string& why);
 // A path from setup/ready.txt: a relative one is in setup's folder (or, the game's folder of a portable install,
 // beside it); a full one written before the folder moved is found in the same place in the folder now.
 // eboot_as_written: ready.txt's eboot, as written, which tells the folder it was written in.

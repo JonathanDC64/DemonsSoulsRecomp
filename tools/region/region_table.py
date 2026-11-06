@@ -5,7 +5,7 @@
       For CI. The table is sorted, with one line per address, and every line is used. Every guest address in the
       port (its sources, the hook list, the lift's overrides and the boot patch) is in the table. In the port's
       sources, each one is read through DES_AT or DES_REGISTER_FUNCTION, unless it is a hook key (`case`, `addr ==`),
-      which stays the US address.
+      which stays the US address. No hook handler reads guest memory at its key without des_region_addr.
 
   region_table.py find US.elf EU.elf 0xADDR [0xADDR ...]
       The European address of each US address, from both decrypted EBOOTs, for a new table line.
@@ -195,6 +195,47 @@ def check(root=ROOT):
 
     for us in sorted(set(table) - used):
         errors.append(f"{table_path.name}: 0x{us:08X} is not used by the port: remove its line")
+    errors += key_reads(hooks, texts, rel)
+    return errors
+
+
+_HANDLER = r"\bvoid\s+{name}\s*\(\s*(?:struct\s+)?ppu_context\s*\*\s*\w+\s*,\s*uint32_t\s+(\w+)\s*\)\s*\{{"
+
+
+def block_at(code, brace):
+    """The braced block that starts at `brace`."""
+    depth = 0
+    for j in range(brace, len(code)):
+        if code[j] == "{":
+            depth += 1
+        elif code[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return code[brace:j + 1]
+    return code[brace:]
+
+
+def key_reads(hooks, texts, rel):
+    """A hook handler's key is the US address (des_region.h). A handler, or a helper it hands the key to, that reads
+    or writes guest memory at the key, or at an offset from it, works on the US disc only."""
+    errors, seen = [], set()
+    todo = [line.partition("#")[0].partition("=")[2].strip()
+            for line in hooks.read_text(encoding="utf-8").splitlines()]
+    while todo:
+        name = todo.pop()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        pat = re.compile(_HANDLER.format(name=re.escape(name)))
+        for p, code in texts.items():
+            for m in pat.finditer(code):
+                key, start = m.group(1), m.end() - 1
+                body = block_at(code, start)
+                k = re.escape(key)
+                for u in re.finditer(r"\bvm_\w+\s*\(\s*" + k + r"\b|\b" + k + r"\s*[+-]\s*(?:0[xX]|\d)", body):
+                    errors.append(f"{rel(p)}:{line_of(code, start + u.start())}: {name} uses its key {key} as a "
+                                  f"guest address: it is the US disc's; read at des_region_addr({key})")
+                todo += [c.group(1) for c in re.finditer(r"\b(\w+)\s*\(\s*\w+\s*,\s*" + k + r"\s*\)", body)]
     return errors
 
 

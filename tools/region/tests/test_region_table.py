@@ -99,6 +99,18 @@ class CheckTest(unittest.TestCase):
                                 {"des_x.cpp": "void f(ppu_context* ctx) { ctx->lr = DES_AT(0x00500000u); }\n"})
         self.assertEqual(errors, ["BLES00932.inc: European address 0x00401000 is on 2 lines"])
 
+    def test_hook_reading_its_key_is_caught(self):
+        src = ("static void helper(ppu_context* ctx, uint32_t addr) { ctx->fpr[1] = vm_readf(addr + 4); }\n"
+               "extern \"C\" void hook_a(ppu_context* ctx, uint32_t addr) {\n"
+               "    if (addr == 0x00200000u) helper(ctx, addr);\n"
+               "    const uint32_t insn = vm_read32(addr);\n"
+               "    const uint32_t ok = vm_read32(des_region_addr(addr));\n"
+               "}\n")
+        errors = self.run_check(BASE, {"des_x.cpp": src})
+        self.assertEqual(len(errors), 2, errors)
+        self.assertIn("des_x.cpp:4: hook_a uses its key addr as a guest address", errors[0])
+        self.assertIn("des_x.cpp:1: helper uses its key addr", "\n".join(errors))
+
     def test_the_port_itself(self):
         self.assertEqual(region_table.check(), [])
 

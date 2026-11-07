@@ -1,0 +1,43 @@
+# Posts each game release (vX.Y.Z) and its notes on Discord when it is published, through the webhook in the
+# DISCORD_RELEASE_WEBHOOK secret: tools/release/discord_post.py, docs/54 section 8.7. Other releases (the compiler
+# downloads, the third-party sources) are not posted. Without the secret it posts nothing and says so.
+#
+# By hand (Actions > Discord release post > Run workflow): post a published release again, or with "Only print"
+# (the default) see the messages in the log first.
+name: Discord release post
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release to post (vX.Y.Z)
+        required: true
+      dry_run:
+        description: Only print the messages in the log, post nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read   # to read the release
+
+concurrency:
+  group: release-discord
+  cancel-in-progress: false
+
+jobs:
+  post:
+    name: Post the release on Discord
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Post
+        env:
+          DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+          DRY: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '--dry-run' || '' }}
+        run: python3 tools/release/discord_post.py --repo "$REPO" --tag "$TAG" $DRY

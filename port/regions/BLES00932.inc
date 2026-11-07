@@ -3,6 +3,7 @@
  * tools/region/region_table.py checks that every address in the port is here (CI), and
  * finds and checks the European address from both decrypted EBOOTs. */
 DES_REGION_ADDR(0x000112E8, 0x000112E8)  /* hook des_body_sample */
+DES_REGION_ADDR(0x00011768, 0x00011768)  /* hook des_kf_target */
 DES_REGION_ADDR(0x00023750, 0x00024338)  /* call */
 DES_REGION_ADDR(0x000B14C8, 0x000B22B0)  /* call kSpacingPlay */
 DES_REGION_ADDR(0x000B15C8, 0x000B23B0)  /* call kFontPlay */
@@ -192,6 +193,7 @@ DES_REGION_ADDR(0x00FF54D4, 0x00FF6F4C)  /* hook des_ik_rate */
 DES_REGION_ADDR(0x00FF5680, 0x00FF70F8)  /* hook des_ik_rate */
 DES_REGION_ADDR(0x00FF58CC, 0x00FF7344)  /* hook des_ik_rate */
 DES_REGION_ADDR(0x0109F2C4, 0x010A0D3C)  /* hook des_body_xform */
+DES_REGION_ADDR(0x011B1D6C, 0x011B37E4)  /* hook des_body_sampled */
 DES_REGION_ADDR(0x012D86C4, 0x012DA13C)  /* hook des_rag_pose_a */
 DES_REGION_ADDR(0x012D9354, 0x012DADCC)  /* hook des_rag_pose_b */
 DES_REGION_ADDR(0x013B75A8, 0x013B9020)  /* hook des_fx_state */

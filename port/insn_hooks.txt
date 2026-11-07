@@ -120,7 +120,9 @@
 0x012D86C4=des_rag_pose_a  # ld r2 after a ragdoll pose reader's transform-to-pose call: bone pose between steps
 0x012D9354=des_rag_pose_b  # the same, second pose reader
 0x0109F2C4=des_body_xform  # last stvx of the hkTransform-to-matrix copy: a moving body's matrix between steps
-0x000112E8=des_body_sample # addi r2 in the stub to Havok's approxTransformAt: r3 = a body's motion, f1 = the time
+0x000112E8=des_body_sample # addi r2 in the stub to Havok's approxTransformAt: r3 = a body's motion, f1 = the time, r5 = out
+0x011B1D6C=des_body_sampled # ld r0 after approxTransformAt's sampler call: des_body_sample's pose over its result
+0x00011768=des_kf_target   # addi r2 in the stub to Havok's hard keyframe: r3 = the pose's position, r4 = rotation, r6 = body
 
 # des_viewer_rate (port/des_options.cpp): the character creation previews'
 # stick steps add the right stick to the yaw and pitch once a frame, tuned

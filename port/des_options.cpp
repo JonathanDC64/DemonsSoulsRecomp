@@ -1375,9 +1375,11 @@ static int phys_hz()
     return hz;
 }
 static std::atomic<double> s_phys_clock{0.0};   /* game seconds, summed frame dts */
+static std::atomic<unsigned> s_phys_frame{0};   /* frames, counted with it */
 static std::atomic<bool> s_phys_capped{false};  /* this frame is under the cap */
 static std::atomic<bool> s_phys_ride{false};    /* this frame steps uncapped: the player rides a moving body */
 static std::atomic<double> s_phys_world_now{0.0}; /* under the cap: the world's time that matches the game's */
+static std::atomic<double> s_phys_left{0.0};      /* under the cap: game time the world has not stepped yet */
 
 /* The cap and moving bodies. An elevator, a lift, a paternoster or a turning
  * bridge is a keyframed body, moved by the world step, so under the cap it
@@ -1458,6 +1460,7 @@ extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
     const double dt = ctx->fpr[31];
     if (dt > 0.0) {
         s_phys_clock.store(s_phys_clock.load() + dt);
+        s_phys_frame++;
         recent[frames++ % 8] = dt;
     }
     const unsigned nr = frames < 8 ? frames : 8;
@@ -1483,7 +1486,7 @@ extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
     const bool cap = capping && !ride && dt > 0.0;
     const double h = cap ? 1.0 / hz : 0.0;
     s_phys_capped.store(cap);
-    if (!cap || ctx->gpr[28] != 0) { acc = 0.0; return; }
+    if (!cap || ctx->gpr[28] != 0) { acc = 0.0; s_phys_left.store(0.0); return; }
     /* for DES_PARTINTERP: the world's time before this frame's step (the
      * world *(*(r31 + 0x10) + 4), vtable 0x018B4F98; its simulation, +8;
      * the time, +0x14) */
@@ -1495,6 +1498,7 @@ extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
     if (acc < h) {
         ctx->gpr[28] = 1;              /* skip this frame's step */
         s_phys_world_now.store(wt + acc);
+        s_phys_left.store(acc);
         return;
     }
     const double step = dt >= h ? dt : h;   /* a long frame keeps what the short ones before it held */
@@ -1502,6 +1506,7 @@ extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
     acc -= step;
     if (acc >= h) acc = 0.0;
     s_phys_world_now.store(wt + step + acc);
+    s_phys_left.store(acc);
 }
 
 /* With DES_PHYS_HZ: the passes that drive a character's bodies to its
@@ -1510,9 +1515,12 @@ extern "C" void des_phys_rate(ppu_context* ctx, uint32_t)
  * 1/dt. Under the cap the world steps 1/n, so a frame's 1/dt would carry the
  * body n*dt times too far. The hook runs after their fdivs f31, f0, f1 and
  * makes 1/dt n when the frame is shorter than 1/n under the cap (not while
- * the world steps every frame for a ride). */
+ * the world steps every frame for a ride). It also keeps the pass's frame
+ * time (f1) for des_kf_target, which the pass calls on the same thread. */
+static thread_local double s_kf_pass_dt = 0.0;   /* the frame time of the pose pass running on this thread */
 extern "C" void des_phys_kf(ppu_context* ctx, uint32_t)
 {
+    s_kf_pass_dt = ctx->fpr[1];
     const int hz = phys_hz();
     if (!s_phys_capped.load() || hz <= 0 || !(ctx->fpr[1] > 0.0) || ctx->fpr[1] >= 1.0 / hz) return;
     ctx->fpr[31] = (float)(ctx->fpr[0] * hz);
@@ -1524,8 +1532,8 @@ extern "C" void des_phys_kf(ppu_context* ctx, uint32_t)
  * at +0x120, whose w is the step's start time, centre of mass 1 at +0x130,
  * whose w is 1 / the step length, rotations at +0x140 and +0x150, local
  * centre of mass at +0x160). Two hooks draw the pose between the two instead,
- * blended by the game time since the body last got a new step over the step
- * length, so the drawn pose runs one step behind:
+ * blended by the game time the world has not stepped yet (des_phys_rate's
+ * leftover) over the step length, so the drawn pose runs one step behind:
  *  - ragdolls: Havok's pose readers (0x012D85E8, 0x012D9288) turn each bone's
  *    body transform into a position and rotation (0x0109FB30, through
  *    0x011801C8); the hook runs after that call;
@@ -1536,9 +1544,6 @@ extern "C" void des_phys_kf(ppu_context* ctx, uint32_t)
  * stepping shows its own transform, keyframed bodies (inverse mass 0) are
  * left to the game, and frames of a step or longer are left alone. */
 namespace {
-struct RagSeen { float t0; double at; };
-std::mutex s_rag_mu;
-std::unordered_map<uint32_t, RagSeen> s_rag_seen;
 void vm_read4f(uint32_t ea, float* v) { for (int i = 0; i < 4; i++) v[i] = vm_readf(ea + 4 * i); }
 /* v rotated by the quaternion q (x, y, z, w) */
 void quat_rotate(const float* q, const float* v, float* r)
@@ -1556,16 +1561,21 @@ static bool rag_interp_on()
     PS3_KNOB(on, ps3_env_int("DES_RAGINTERP", 1));
     return on && s_phys_capped.load();
 }
-/* Game seconds since the body got the step that starts at t0 (its swept
- * transform's start time). */
-static double body_since(uint32_t body, float t0)
+/* How far into its last step (from t0, span long: its swept transform) a
+ * body is to be drawn, in game seconds: the time the world has not stepped
+ * yet, when the step is the world's last one (it ends at the body's world's
+ * time: world at +8, its simulation at +8, the time at +0x14); span when the
+ * body did not step then (it sleeps or stopped). The leftover grows with
+ * each frame's time and drops by the step at a step, so the pose moves on
+ * evenly. The game time since the step frame did not: the frames between
+ * two steps hold 4 or 5 frames' time at 144 fps (28 or 35 ms) for a step
+ * of 1/30 s, so the pose hopped at the step. */
+static double body_left(uint32_t body, float t0, double span)
 {
-    const double now = s_phys_clock.load();
-    std::lock_guard<std::mutex> lk(s_rag_mu);
-    if (s_rag_seen.size() > 8192) s_rag_seen.clear();
-    RagSeen& s = s_rag_seen[body];
-    if (s.t0 != t0) { s.t0 = t0; s.at = now; }
-    return now - s.at;
+    const uint32_t world = vm_read32(body + 8);
+    const uint32_t sim = guest_ptr_ok(world) && vm_read32(world) == DES_AT(0x018B4F98u) ? vm_read32(world + 8) : 0;
+    if (!guest_ptr_ok(sim) || std::fabs(t0 + span - vm_readf(sim + 0x14)) > 0.25 * span) return span;
+    return s_phys_left.load();
 }
 /* The body's pose between the start and the end of its last step: the
  * position of its origin in pos, its rotation (x, y, z, w) in q. False when
@@ -1577,7 +1587,7 @@ static bool body_pose_between(uint32_t body, float* pos, float* q)
     vm_read4f(body + 0x140, q0); vm_read4f(body + 0x150, q1);
     vm_read4f(body + 0x160, cl);
     if (!(c1[3] > 0.0f)) return false;
-    const double span = 1.0 / c1[3], since = body_since(body, c0[3]);
+    const double span = 1.0 / c1[3], since = body_left(body, c0[3], span);
     if (since >= span) return false;
     static int log = 0; static std::atomic<int> nlog{0};
     PS3_KNOB(log, ps3_env_int("DES_RAGINTERP_LOG", 0));
@@ -1628,6 +1638,19 @@ extern "C" void des_rag_pose_b(ppu_context* ctx, uint32_t)
 {
     rag_interp((uint32_t)ctx->gpr[29], (uint32_t)ctx->gpr[30], (uint32_t)ctx->gpr[28]);
 }
+/* The rotation of q (x, y, z, w) as three columns of four floats (the w left
+ * as it is), then pos: Havok's hkTransform and the game's 4x4 matrices. */
+static void write_rotation_pos(uint32_t dst, const float* q, const float* pos)
+{
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float col[3][3] = {
+        {1.0f - 2.0f * (y * y + z * z), 2.0f * (x * y + w * z), 2.0f * (x * z - w * y)},
+        {2.0f * (x * y - w * z), 1.0f - 2.0f * (x * x + z * z), 2.0f * (y * z + w * x)},
+        {2.0f * (x * z + w * y), 2.0f * (y * z - w * x), 1.0f - 2.0f * (x * x + y * y)}};
+    for (int c = 0; c < 3; c++)
+        for (int i = 0; i < 3; i++) vm_writef(dst + 0x10 * c + 4 * i, col[c][i]);
+    for (int i = 0; i < 3; i++) vm_writef(dst + 0x30 + 4 * i, pos[i]);
+}
 /* After 0x0109F2C4, the last store of the transform-to-matrix copy: r3 and r4
  * are the source and the destination plus 0x30. A source at +0xE0 of a moving
  * dynamic rigid body (vtable 0x018B4810) gets the in-between pose. */
@@ -1638,14 +1661,7 @@ extern "C" void des_body_xform(ppu_context* ctx, uint32_t)
     if (!guest_ptr_ok(body) || !guest_ptr_ok(dst) || vm_read32(body) != DES_AT(0x018B4810u) || !(vm_readf(body + 0x19C) > 0.0f)) return;
     float pos[3], q[4];
     if (!body_pose_between(body, pos, q)) return;
-    const float x = q[0], y = q[1], z = q[2], w = q[3];
-    const float col[3][3] = {
-        {1.0f - 2.0f * (y * y + z * z), 2.0f * (x * y + w * z), 2.0f * (x * z - w * y)},
-        {2.0f * (x * y - w * z), 1.0f - 2.0f * (x * x + z * z), 2.0f * (y * z + w * x)},
-        {2.0f * (x * z + w * y), 2.0f * (y * z - w * x), 1.0f - 2.0f * (x * x + y * y)}};
-    for (int c = 0; c < 3; c++)
-        for (int i = 0; i < 3; i++) vm_writef(dst + 0x10 * c + 4 * i, col[c][i]);
-    for (int i = 0; i < 3; i++) vm_writef(dst + 0x30 + 4 * i, pos[i]);
+    write_rotation_pos(dst, q, pos);
 }
 
 /* DES_PARTINTERP (default 1; 0 = off): with DES_PHYS_HZ capping the steps.
@@ -1658,22 +1674,113 @@ extern "C" void des_body_xform(ppu_context* ctx, uint32_t)
  * 0x000112E0, which nothing else calls). The world's time stands still
  * between steps, so these moved in 30 Hz steps while the character's model
  * moves every frame. The hook in the stub (r3 = the body's motion, body +
- * 0xD0; f1 = the time) moves the time on:
+ * 0xD0; f1 = the time; r5 = the transform out) handles:
  *  - a keyframed body (inverse mass 0: a living character's parts, driven to
- *    the animation pose) by the game time the world has not stepped yet
- *    (des_phys_rate's world time for now, less the body's world's time:
- *    world at +8, its simulation at +8, the time at +0x14), so it carries on
- *    its last step and keeps up with the model. Not after a jump of more
- *    than 1 m in one step, or two steps or more behind;
+ *    the animation pose): the pose it is driven to this frame (des_kf_target),
+ *    carried on by the game's own look-ahead (the time less the world's time:
+ *    world at +8, its simulation at +8, the time at +0x14) at the pace from
+ *    the frame before. That is where the world would have it if it stepped
+ *    every frame. The hook keeps it for des_body_sampled, which writes it
+ *    over the sampler's result. Carrying on the body's last step instead (by
+ *    the game time the world has not stepped yet) hops at each step: a step
+ *    holds 4 or 5 frames' move at 144 fps but is filed as 1/30 s, and a
+ *    swinging limb leaves the line within a step. Without the last two
+ *    frames' poses, or after a jump of more than 1 m, it falls back to that,
+ *    and to nothing two steps or more behind or after a jump in one step;
  *  - a dynamic body (a ragdoll's parts) to the pose between the start and the
  *    end of its last step, where DES_RAGINTERP draws it.
  * DES_PARTINTERP_LOG=1 prints the first samples it moves. */
+namespace {
+/* A keyframed part's last two poses: position (the body's origin) and
+ * rotation, the frame each came in (des_phys_rate's count), and the frame
+ * time of the pass that set the last one. */
+struct PartPose { float p[4], q[4], pp[4], pq[4]; double dt; unsigned f, pf; };
+std::mutex s_part_mu;
+std::unordered_map<uint32_t, PartPose> s_part_pose;
+/* The pose for the sample in flight on this thread, for des_body_sampled:
+ * the stack pointer at the stub, the transform out, the position, the
+ * rotation. */
+struct PartOut { uint32_t sp, out; float p[3], q[4]; bool on; };
+thread_local PartOut s_part_out;
+}
+static bool part_interp_on()
+{
+    static int on = 1;
+    PS3_KNOB(on, ps3_env_int("DES_PARTINTERP", 1));
+    return on && s_phys_capped.load();
+}
+/* In the stub to Havok's hard keyframe (0x00011760, to 0x0131BAF8), called
+ * for each body by the passes that drive a character's bodies to the
+ * animation pose (0x001EF670, 0x001DF7C0) once a frame, stepped or not:
+ * r3 = the pose's position, r4 = its rotation, r6 = the body. The passes run
+ * before des_phys_rate in the frame, so the frame count is the last frame's;
+ * the pass's own frame time comes from des_phys_kf. */
+extern "C" void des_kf_target(ppu_context* ctx, uint32_t)
+{
+    if (!part_interp_on()) return;
+    const uint32_t pos = (uint32_t)ctx->gpr[3], rot = (uint32_t)ctx->gpr[4], body = (uint32_t)ctx->gpr[6];
+    if (!guest_ptr_ok(pos) || !guest_ptr_ok(rot) || !guest_ptr_ok(body)) return;
+    float p[4], q[4];
+    vm_read4f(pos, p); vm_read4f(rot, q);
+    const unsigned f = s_phys_frame.load();
+    std::lock_guard<std::mutex> lk(s_part_mu);
+    if (s_part_pose.size() > 8192) s_part_pose.clear();
+    PartPose& k = s_part_pose[body];
+    memcpy(k.pp, k.p, sizeof k.p); memcpy(k.pq, k.q, sizeof k.q);
+    k.pf = k.f;
+    memcpy(k.p, p, sizeof p); memcpy(k.q, q, sizeof q);
+    k.f = f; k.dt = s_kf_pass_dt;
+}
+/* A keyframed body's pose for this sample (ahead = the game's look-ahead in
+ * seconds), kept in s_part_out: its last pose carried on at the pace from
+ * the one before. False unless the last pose came in this frame or the one
+ * before and the one before it at most a frame earlier, within 1 m. */
+static bool part_pose_pick(ppu_context* ctx, uint32_t body, double ahead)
+{
+    const uint32_t out = (uint32_t)ctx->gpr[5];
+    if (!guest_ptr_ok(out) || !(ahead >= 0.0)) return false;
+    PartPose k;
+    {
+        std::lock_guard<std::mutex> lk(s_part_mu);
+        const auto it = s_part_pose.find(body);
+        if (it == s_part_pose.end()) return false;
+        k = it->second;
+    }
+    if (s_phys_frame.load() - k.f > 1u || k.f - k.pf > 1u || !(k.dt > 0.0) || k.dt > 0.25) return false;
+    float d[3], d2 = 0.0f;
+    for (int i = 0; i < 3; i++) { d[i] = k.p[i] - k.pp[i]; d2 += d[i] * d[i]; }
+    if (d2 > 1.0f) return false;
+    const float e = (float)(ahead / k.dt);
+    if (!(e <= 4.0f)) return false;
+    PartOut& o = s_part_out;
+    for (int i = 0; i < 3; i++) o.p[i] = k.p[i] + d[i] * e;
+    const float dot = k.pq[0] * k.q[0] + k.pq[1] * k.q[1] + k.pq[2] * k.q[2] + k.pq[3] * k.q[3];
+    const float s1 = dot < 0.0f ? -(1.0f + e) : 1.0f + e;
+    float n = 0.0f;
+    for (int i = 0; i < 4; i++) { o.q[i] = k.pq[i] * -e + k.q[i] * s1; n += o.q[i] * o.q[i]; }
+    if (!(n > 1e-12f)) return false;
+    n = 1.0f / std::sqrt(n);
+    for (int i = 0; i < 4; i++) o.q[i] *= n;
+    o.sp = (uint32_t)ctx->gpr[1]; o.out = out; o.on = true;
+    return true;
+}
+/* After 0x011B1D6C, past approxTransformAt's sampler call (0x015C6880), in
+ * the function the stub branches to (its frame is 0x70 below the stub's): the
+ * pose des_body_sample picked goes over the transform it wrote. */
+extern "C" void des_body_sampled(ppu_context* ctx, uint32_t)
+{
+    PartOut& o = s_part_out;
+    if (!o.on) return;
+    o.on = false;
+    if ((uint32_t)ctx->gpr[1] + 0x70u != o.sp) return;
+    write_rotation_pos(o.out, o.q, o.p);
+}
 extern "C" void des_body_sample(ppu_context* ctx, uint32_t)
 {
-    static int on = 1, log = 0;
-    PS3_KNOB(on, ps3_env_int("DES_PARTINTERP", 1));
+    static int log = 0;
     PS3_KNOB(log, ps3_env_int("DES_PARTINTERP_LOG", 0));
-    if (!on || !s_phys_capped.load()) return;
+    s_part_out.on = false;
+    if (!part_interp_on()) return;
     const uint32_t body = (uint32_t)ctx->gpr[3] - 0xD0;
     if (!guest_ptr_ok(body) || vm_read32(body) != DES_AT(0x018B4810u)) return;
     float c0[4], c1[4];
@@ -1686,11 +1793,19 @@ extern "C" void des_body_sample(ppu_context* ctx, uint32_t)
         const uint32_t world = vm_read32(body + 8);
         const uint32_t sim = guest_ptr_ok(world) && vm_read32(world) == DES_AT(0x018B4F98u) ? vm_read32(world + 8) : 0;
         if (!guest_ptr_ok(sim)) return;
+        const double wt = vm_readf(sim + 0x14);
+        if (part_pose_pick(ctx, body, ctx->fpr[1] - wt)) {
+            static std::atomic<int> nlog{0};
+            if (log && nlog++ < 60)
+                fprintf(stderr, "[partinterp] body %08X kf pose %.3f %.3f %.3f ahead %.4f\n", body, s_part_out.p[0],
+                        s_part_out.p[1], s_part_out.p[2], ctx->fpr[1] - wt);
+            return;
+        }
         const float dx = c1[0] - c0[0], dy = c1[1] - c0[1], dz = c1[2] - c0[2];
-        add = s_phys_world_now.load() - vm_readf(sim + 0x14);
+        add = s_phys_world_now.load() - wt;
         if (!(add > 0.0) || add >= 2.0 * span || dx * dx + dy * dy + dz * dz > 1.0f) return;
     } else {
-        const double since = body_since(body, c0[3]);
+        const double since = body_left(body, c0[3], span);
         if (since >= span) return;
         add = since - span;
     }

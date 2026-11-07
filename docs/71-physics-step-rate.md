@@ -31,8 +31,9 @@ walks into them. RPCS3's DeS FPS patch has the same warning: above 60 fps "users
   `0x012D9288`) turn each bone's body transform into a position and rotation (`0x0109FB30`). Hooks after that call
   (`0x012D86C4`, `0x012D9354`) put in the pose between the start and end of the body's last step, from its swept
   transform (centre of mass at +0x120 and +0x130, rotations at +0x140 and +0x150, local centre of mass at +0x160).
-  The blend is the game time since the body got a new step over the step length, so the drawn pose runs one step
-  (33 ms) behind. A body that sleeps shows its own transform. `DES_RAGINTERP_LOG=1` checks the swept end against
+  The blend is the time the world has not stepped yet (the cap's leftover) over the step length, so the drawn pose
+  runs one step (33 ms) behind. Until 2026-11-07 it was the game time since the body got a new step (see "Steps of
+  4 or 5 frames" below). A body that sleeps shows its own transform. `DES_RAGINTERP_LOG=1` checks the swept end against
   the transform (they matched for every body tested).
 - Breakables, debris and loose objects are drawn between steps too. The game reads their body transform through
   `0x0109F250`, which copies an hkTransform into a 4x4 matrix; a hook after its last store (`0x0109F2C4`) writes
@@ -170,6 +171,8 @@ Above 30 fps, arrows stuck in the player jittered.
   stride is a few millimetres off until the next step.
 - `DES_PARTINTERP=0` turns it off. `DES_PARTINTERP_LOG=1` prints the first samples it moves. The hook is new, so the
   game needs a re-lift.
+- 2026-11-07: a keyframed part now follows the pose it is driven to each frame instead (see "Steps of 4 or 5
+  frames" below). The biggest moves in the table's fix row were the hops that change removes.
 
 Measured on the deep Palace save, under the four 1-1 archers:
 - 13 arrows over three rounds. An arrow is a position that appeared after the arrows hit and moves with the player.
@@ -184,6 +187,66 @@ Measured on the deep Palace save, under the four 1-1 archers:
 | Unlocked, cap 30, fix | 0-2% | 4.1-6.8 mm | 26-34 mm |
 
 The player moved 9-13 mm a frame in the capped rows.
+
+## Steps of 4 or 5 frames (2026-11-07)
+
+Above 30 fps, arrows stuck in the player still looked choppy at a walk or a run (a 0.1.1 report). Ragdolls and
+debris had a smaller form of the same thing.
+
+- **Cause.** The in-between poses treated the frames since a step as one step's time. They are not: at 144 fps a
+  step of 1/30 s comes every 4 or 5 frames (28 or 35 ms).
+  - A stuck arrow carried the body's last step on at that step's pace. The step held 4 or 5 frames' move but is
+    filed as 1/30 s long, so the pace was up to 17% off, and a swinging limb leaves a straight line within a step
+    anyway. At each step the arrow hopped back by up to 3-4 cm. The table above shows it: the biggest move in one
+    update was 26-34 mm with that fix, 11-18 mm with no cap.
+  - Ragdolls and debris blended by the game time since the body's step changed, over the step's length. That time
+    counts the 4 or 5 frames since the step frame, but the blend spans 1/30 s, so at 144 fps the step frame moved
+    the pose 0.37 or 0.17 of a step where any other frame moved it 0.21.
+- **Fix for stuck arrows (`DES_PARTINTERP`).** A keyframed part is drawn where the world would have it if it
+  stepped every frame.
+  - The passes that drive a character's bodies to the animation pose (`0x001EF670`, `0x001DF7C0`) hand Havok's hard
+    keyframe each body's pose every frame, stepped or not. `des_kf_target` runs after `0x00011768`, in the stub to
+    the hard keyframe (`0x00011760`, to `0x0131BAF8`): r3 is the pose's position, r4 its rotation, r6 the body. It
+    keeps each body's last two poses.
+  - These passes run before `des_phys_rate` in the frame. So a pose's pace comes from the frame time its own pass
+    used (`des_phys_kf` sees it before it changes 1/dt), not from the game clock: by the clock, a long frame read
+    as twice as fast and the arrow overshot.
+  - `des_body_sample` takes the last pose and carries it on at the pace from the one before, by the game's own
+    look-ahead (the sample time less the world's time, about one frame). Without the cap the game does the same:
+    the body ends each frame's step at that frame's pose, and the getter samples it a frame ahead.
+  - Havok's sampler takes a time, not a pose, so a second hook writes the pose. `des_body_sampled` runs after
+    `0x011B1D6C`, past the sampler's call (`0x015C6880`) in the function the stub branches to, and writes the pose
+    over the transform the sampler wrote (r5 at the stub). Its stack frame is 0x70 below the stub's, which ties
+    the two calls together.
+  - Without poses from this frame or the one before, or with the two more than 1 m apart, it carries the last
+    step on as before.
+- **Fix for ragdolls, debris and a dead character's parts (`DES_RAGINTERP`).** The blend is the time the world has
+  not stepped yet (the cap's leftover in `des_phys_rate`) over the step length, for a body that got the world's
+  last step (its step ends at its world's time). The leftover grows with each frame's time and drops by the step
+  at a step, so the pose moves on evenly.
+- The two new hooks need a re-lift (setup does it).
+
+Measured on the deep Palace save with a scratch trace of every sample of a keyframed part near the player: the
+transform the getter got, the player's position, and what the merged hook gives, all from the same frames. Under
+the four 1-1 archers, walking with the arrows in. Only frames where the player moved 5-120 mm count, so a hit's
+throw is left out. The number is how far the part moved against the player from one frame to the next.
+
+| Setting | Median | 95th percentile | 99th percentile |
+|---|---|---|---|
+| 144 fps, no cap (`DES_PHYS_HZ=0`) | 3.6-4.3 mm | 6.2-7.1 mm | 8.8-11.0 mm |
+| 144 fps, cap 30, merged hook | 5.2 mm | 32.7 mm | 58.2 mm |
+| 144 fps, cap 30, fix | 3.9 mm | 7.5 mm | 24.4 mm |
+| 60 fps, no cap | 9.0 mm | 17.8 mm | 53.6 mm |
+| 60 fps, cap 30, merged hook | 12.0 mm | 54.6 mm | 211.7 mm |
+| 60 fps, cap 30, fix | 9.0 mm | 19.5 mm | 93.9 mm |
+
+The part's rotation, at 60 fps: the change of its turn from one frame to the next (median / 95th percentile) was
+0.25 / 2.0 degrees with no cap, 1.12 / 13.0 with the merged hook, 0.39 / 4.7 with the fix.
+
+Ragdolls: 144 fps, the player killing soldiers (26 ragdoll bodies, 7,837 moving samples). The number is how
+unevenly the drawn centre of mass moves (|p(n+1) - 2 p(n) + p(n-1)|, median / 95th / 99th percentile): 0.08 /
+1.26 / 4.23 mm with the old blend, 0.06 / 0.75 / 2.34 mm with the new one. Bodies drawn at their own transform
+stayed at 0.5% of the samples.
 
 ## Moving platforms (2026-10-26)
 

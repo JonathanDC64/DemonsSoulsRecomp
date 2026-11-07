@@ -41,8 +41,8 @@ constexpr Def kDefs[] = {
     {"DES_MAXIMIZED", "1", Apply::Restart},    // 1 = the window opens maximized (apply_window: RSX_MAXIMIZED)
 #if DES_RSX_VULKAN
     // Renderer: d3d12 or vulkan; the runtime's route switch, once at start. Its default is the runtime's: D3D12 on
-    // Windows, Vulkan off it (ps3recomp's rsx_out.c), where d3d12 is the legacy renderer on vkd3d. On a GeForce GTX
-    // 1070 the default is Vulkan (default_of, apply_renderer).
+    // Windows, Vulkan off it (ps3recomp's rsx_out.c), where d3d12 is the legacy renderer on vkd3d. On a GeForce card
+    // before the RTX 20 series the default is Vulkan (default_of, apply_renderer).
 #if defined(_WIN32)
     {"RSX_BACKEND", "d3d12", Apply::Restart},
     {"renderer_rule", "", Apply::UiOnly},      // apply_renderer: the GPU rule the saved Renderer was checked against
@@ -146,39 +146,56 @@ bool env_set(const char* name) {
 
 #if DES_RSX_VULKAN && defined(_WIN32)
 // The GPU the renderer draws on: the first that is not a software adapter, in DXGI's high-performance order (as
-// ps3recomp's gpu_d3d12.c adapter_pick takes it). DES_RENDERER_GPU=<name> stands in for its name (settings_check).
-const std::string& renderer_gpu() {
-    static const std::string name = [] {
-        if (const char* v = std::getenv("DES_RENDERER_GPU"); v && *v) return std::string(v);
-        std::string n;
+// ps3recomp's gpu_d3d12.c adapter_pick takes it). DES_RENDERER_GPU=<name> and DES_RENDERER_GPU_ID=<vendor>:<device>
+// (PCI IDs in hex) stand in for it (settings_check).
+struct RendererGpu {
+    std::string name;
+    unsigned vendor = 0, device = 0;  // DXGI_ADAPTER_DESC1's VendorId and DeviceId
+};
+const RendererGpu& renderer_gpu() {
+    static const RendererGpu gpu = [] {
+        RendererGpu g;
+        const char* nv = std::getenv("DES_RENDERER_GPU");
+        const char* iv = std::getenv("DES_RENDERER_GPU_ID");
+        if ((nv && *nv) || (iv && *iv)) {
+            if (nv) g.name = nv;
+            if (!iv || std::sscanf(iv, "%x:%x", &g.vendor, &g.device) != 2) g.vendor = g.device = 0;
+            return g;
+        }
         IDXGIFactory6* f = nullptr;
-        if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory6), reinterpret_cast<void**>(&f)))) return n;
+        if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory6), reinterpret_cast<void**>(&f)))) return g;
         IDXGIAdapter1* a = nullptr;
-        for (UINT i = 0; n.empty() && f->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
-                                                                    __uuidof(IDXGIAdapter1),
-                                                                    reinterpret_cast<void**>(&a)) != DXGI_ERROR_NOT_FOUND;
+        bool found = false;
+        for (UINT i = 0; !found && f->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+                                                                 __uuidof(IDXGIAdapter1),
+                                                                 reinterpret_cast<void**>(&a)) != DXGI_ERROR_NOT_FOUND;
              i++) {
             DXGI_ADAPTER_DESC1 d{};
-            if (SUCCEEDED(a->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) n = report::narrow(d.Description);
+            if (SUCCEEDED(a->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+                g.name = report::narrow(d.Description);
+                g.vendor = d.VendorId;
+                g.device = d.DeviceId;
+                found = true;
+            }
             a->Release();
         }
         f->Release();
-        return n;
+        return g;
     }();
-    return name;
+    return gpu;
 }
 
-// A GeForce GTX 1070 (desktop or laptop, not the 1070 Ti) hangs on the D3D12 renderer: Windows resets its driver in
-// the middle of a frame, again and again, while Vulkan draws on it fine (issues #205 and #372). So its Renderer
-// default is Vulkan.
+// GeForce cards before the RTX 20 series (the GTX 10 series and older: Pascal, Volta, Maxwell, Kepler) hang on the
+// D3D12 renderer: Windows resets the driver in the middle of a frame, again and again, while Vulkan draws on them fine
+// (issues #205 and #372 on a GTX 1070, #398 on a GTX 1060). So their Renderer default is Vulkan. NVIDIA numbers its
+// chips in order: Turing (the RTX 20 and GTX 16 series) starts at device ID 0x1E00, and every later chip is above it.
 bool vulkan_by_default() {
-    const std::string& g = renderer_gpu();
-    const size_t at = g.find("GTX 1070");
-    return at != std::string::npos && g.compare(at, 11, "GTX 1070 Ti") != 0;
+    const RendererGpu& g = renderer_gpu();
+    return g.vendor == 0x10DE && g.device != 0 && g.device < 0x1E00;
 }
 
-// renderer_rule's value once a saved Renderer was checked against the rule above. A rule for more GPUs takes the next
-// number, so the saved D3D12 of a player whose GPU it adds is switched once too.
+// renderer_rule's value once a saved Renderer was checked against the rule above. It is written only on a GPU the
+// rule covers, so a GPU the rule takes in later has its saved D3D12 switched once too, under the same number.
 constexpr const char* kRendererRule = "1";
 #endif
 
@@ -558,8 +575,9 @@ void apply_renderer() {
         if (get("renderer_rule") != kRendererRule) {
             if (get("RSX_BACKEND") == "d3d12") {
                 sValues["RSX_BACKEND"] = "vulkan";
-                std::fprintf(stderr, "[ui] renderer: Vulkan, the default on this GPU (%s hangs on D3D12); Settings > "
-                             "Display > Renderer can pick D3D12\n", renderer_gpu().c_str());
+                std::fprintf(stderr, "[ui] renderer: Vulkan, the default on this GPU (%s, %04x:%04x: GeForce cards "
+                             "before the RTX 20 series hang on D3D12); Settings > Display > Renderer can pick D3D12\n",
+                             renderer_gpu().name.c_str(), renderer_gpu().vendor, renderer_gpu().device);
             }
             sValues["renderer_rule"] = kRendererRule;
             save();

@@ -594,7 +594,8 @@ Nothing is published. You read the draft and publish it. Only this workflow has 
    - Run `git tag -a v0.1.0 -m "DemonsSoulsRecomp 0.1.0" origin/master`.
    - Run `git push origin v0.1.0`.
 5. **Sign it:** `python tools/release/sign_release.py v0.1.0 --key <your key file>` (it checks the draft's files and
-   their attestations first). Then read the draft release and publish it.
+   their attestations first). Then read the draft release and publish it. Publishing posts it on Discord (section
+   8.7).
 6. In the next PR, move `VERSION` to 0.1.1 or 0.2.0.
 
 ### 8.5 What a player's download holds (11-04)
@@ -666,6 +667,32 @@ like the compiler's.
 
 The LGPL's wording is that the source is offered "from the same place". A release of the same repository, linked from
 the places above, is taken to meet that. This is not a lawyer's reading.
+
+### 8.7 The Discord post (11-07)
+
+When a game release (`vX.Y.Z`) is published, `release-discord.yml` posts it in the project's Discord channel with
+its notes. Before this, a GitHub webhook to Discord's `/github` address posted only a link: Discord shows a release
+from GitHub as its name and nothing else.
+
+- **What it posts:** `tools/release/discord_post.py` reads the published release and turns its notes into Discord's
+  markdown:
+  - headings become bold lines and list items bullets;
+  - wrapped lines are joined, because Discord keeps every line break;
+  - issue numbers become links;
+  - the `<details>` block (every change in the release) stays on GitHub, behind a link.
+
+  The first embed has the release's name as its title, linked to the release page, and the last one lists the
+  downloads, Windows and Linux first. Long notes take several messages (an embed holds 4,096 characters, a message
+  6,000); after five, the rest is a link. 0.1.0's and 0.1.1's notes take two messages each.
+- **Nobody is pinged:** the messages allow no mentions.
+- **Not posted:** other releases (`llvm-*`, `third-party-sources`), and a release that is only edited.
+- **The webhook** is the repository secret `DISCORD_RELEASE_WEBHOOK`: a Discord webhook address, made in the channel's
+  settings (Integrations > Webhooks). An address ending in `/github` works too, because the script drops that
+  ending. Without the secret, the workflow posts nothing and says so.
+- **By hand:** Actions > Discord release post > Run workflow, with a published tag. "Only print" (on by default) shows
+  the messages in the log without posting. Off, it posts the release again.
+- **The old webhook** (repository Settings > Webhooks, to `discord.com`, release events) has to go once this one
+  works, or each release is posted twice.
 
 ## 9. Game-file check
 
